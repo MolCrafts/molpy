@@ -9,9 +9,9 @@
 27 dihedrals
 8 dihedral types
 
-0.00 0.00 xlo xhi
-0.00 0.00 ylo yhi
-0.00 0.00 zlo zhi
+-10.00 10.00 xlo xhi
+-10.00 10.00 ylo yhi
+-10.00 10.00 zlo zhi
 
 Atom Type Labels
 

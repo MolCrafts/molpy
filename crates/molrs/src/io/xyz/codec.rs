@@ -2,7 +2,7 @@
 //! writer classes, the path doors.
 
 use crate::core::Cell;
-use crate::io::reader::{FrameIndex, FrameReader, Reader, TrajectoryReader};
+use crate::io::reader::{FrameReader, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use crate::io::{Sink, SinkWriter, Source, invalid_data};
 use molrs::core::Block;
@@ -301,6 +301,37 @@ const EXTXYZ_RESNAME: &str = "resname";
 /// The extxyz property name of the canonical `element` column; the writer
 /// always declares it first (`species:S:1`).
 const EXTXYZ_SPECIES: &str = "species";
+
+/// Row `row` of `column` as EXTXYZ property tokens: one per value of the
+/// row, logicals as `T` / `F`.
+fn row_tokens(column: &molrs::core::ColumnView<'_>, row: usize) -> Vec<String> {
+    use ndarray::Axis;
+    fn shown<T: std::fmt::Display>(a: &ndarray::ArrayViewD<'_, T>, row: usize) -> Vec<String> {
+        a.index_axis(Axis(0), row)
+            .iter()
+            .map(T::to_string)
+            .collect()
+    }
+    match column {
+        molrs::core::ColumnView::Bool(a) => a
+            .index_axis(Axis(0), row)
+            .iter()
+            .map(|v| if *v { "T" } else { "F" }.to_string())
+            .collect(),
+        molrs::core::ColumnView::Float(a) => shown(a, row),
+        molrs::core::ColumnView::I8(a) => shown(a, row),
+        molrs::core::ColumnView::I16(a) => shown(a, row),
+        molrs::core::ColumnView::Int(a) => shown(a, row),
+        molrs::core::ColumnView::I64(a) => shown(a, row),
+        molrs::core::ColumnView::U8(a) => shown(a, row),
+        molrs::core::ColumnView::U16(a) => shown(a, row),
+        molrs::core::ColumnView::U32(a) => shown(a, row),
+        molrs::core::ColumnView::Uint(a) => shown(a, row),
+        molrs::core::ColumnView::String(a) => shown(a, row),
+        molrs::core::ColumnView::C64(a) => shown(a, row),
+        molrs::core::ColumnView::C128(a) => shown(a, row),
+    }
+}
 
 /// The extxyz property a frame column is written as.
 fn extxyz_property_name(column: &str) -> &str {
@@ -770,6 +801,9 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Frame>>
         frame.simbox = Some(simbox);
     }
 
+    // Every door reads through here, so every door checks here: a frame that
+    // violates the vocabulary is a malformed file or a reader bug.
+    crate::io::reader::check_read_frame(&frame)?;
     Ok(Some(frame))
 }
 
@@ -910,7 +944,7 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
 /// ```
 pub struct XyzReader<R: BufRead> {
     reader: R,
-    index: OnceLock<FrameIndex>,
+    index: OnceLock<Vec<FrameOffset>>,
 }
 
 impl XyzReader<Box<dyn crate::io::reader::ReadSeek>> {
@@ -929,94 +963,18 @@ impl<R: BufRead + Seek> XyzReader<R> {
         }
     }
 
-    /// Build frame index by scanning the entire file
+    /// Index the file's frames ([`XyzIndexBuilder`], the one XYZ indexer).
     fn build_index(&mut self) -> std::io::Result<()> {
         if self.index.get().is_some() {
-            return Ok(()); // Already built
+            return Ok(());
         }
-
-        let mut frame_index = FrameIndex::new();
-
-        // Try to seek to beginning if seekable
-        let start_pos = if let Ok(pos) = self.reader.stream_position() {
-            // Seekable stream - record starting position
-            self.reader.seek(SeekFrom::Start(0))?;
-            Some(pos)
-        } else {
-            // Non-seekable stream (e.g., gzip) - can only scan forward
-            None
-        };
-
-        let mut current_pos: u64 = 0;
-        let mut line = String::new();
-
-        'frames: loop {
-            // Locate the next atom-count line. Blank lines between frames
-            // (and trailing blanks at EOF) are skipped — same rule as
-            // `read_frame_from` and `XyzIndexBuilder` in the
-            // AwaitingNatoms state. A frame is recorded only after a valid
-            // count, so a lone `\n` is never read as an atom count.
-            let n = loop {
-                let frame_start = current_pos;
-                line.clear();
-                let bytes = self.reader.read_line(&mut line)?;
-                if bytes == 0 {
-                    break 'frames; // EOF while searching for a frame
-                }
-                current_pos += bytes as u64;
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                match trimmed.parse::<usize>() {
-                    Ok(v) => {
-                        frame_index.add_frame(frame_start);
-                        break v;
-                    }
-                    Err(_) => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("invalid atom count: {}", trimmed),
-                        ));
-                    }
-                }
-            };
-
-            // Skip comment line
-            line.clear();
-            let bytes = self.reader.read_line(&mut line)?;
-            if bytes == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "unexpected EOF after atom count (missing comment line)",
-                ));
-            }
-            current_pos += bytes as u64;
-
-            // Skip N atom lines
-            for _ in 0..n {
-                line.clear();
-                let bytes = self.reader.read_line(&mut line)?;
-                if bytes == 0 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        "unexpected EOF in atom lines",
-                    ));
-                }
-                current_pos += bytes as u64;
-            }
-        }
-
-        // Restore original position if seekable
-        if let Some(pos) = start_pos {
-            self.reader.seek(SeekFrom::Start(pos))?;
-        }
-
+        let offsets = crate::io::frame_index::index_stream(
+            &mut self.reader,
+            Box::new(XyzIndexBuilder::new()),
+        )?;
         self.index
-            .set(frame_index)
-            .map_err(|_| std::io::Error::other("failed to set index"))?;
-
-        Ok(())
+            .set(offsets)
+            .map_err(|_| std::io::Error::other("failed to set index"))
     }
 
     /// Read frame at specific offset
@@ -1039,12 +997,8 @@ impl<R: BufRead + Seek> Reader for XyzReader<R> {
 
 impl<R: BufRead + Seek> FrameReader for XyzReader<R> {
     fn read(&mut self) -> std::io::Result<Option<Frame>> {
-        // Validate on the way out: a frame that violates the vocabulary
-        // is a malformed file or a reader bug, not a result to return.
-        crate::io::reader::check_read_frame(
-            // Always read the first frame from the current stream position.
-            read_frame_from(&mut self.reader)?,
-        )
+        // Always read the first frame from the current stream position.
+        read_frame_from(&mut self.reader)
     }
 }
 
@@ -1073,7 +1027,7 @@ impl<R: BufRead + Seek> TrajectoryReader for XyzReader<R> {
             return Ok(None);
         }
 
-        let offset = offsets.get(index).unwrap();
+        let offset = offsets[index].byte_offset;
         self.read_at_offset(offset)
     }
 
@@ -1105,9 +1059,7 @@ pub fn read_xyz<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
 
 /// Write one frame as an (extended) XYZ file.
 pub fn write_xyz<'a>(sink: impl Into<Sink<'a>>, frame: &impl FrameAccess) -> std::io::Result<()> {
-    let mut out = sink.into().writer()?;
-    write_frame_to(&mut out, frame)?;
-    out.flush()
+    sink.into().put_with(|out| write_frame_to(out, frame))
 }
 
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset, LineAccumulator};
@@ -1126,11 +1078,14 @@ enum XyzPhase {
 /// Streaming frame indexer for XYZ / Extended-XYZ files.
 ///
 /// State machine: `AwaitingNatoms` → `AwaitingComment` → `ConsumingAtoms` →
-/// emit and reset to `AwaitingNatoms`. Blank or non-integer lines in
-/// `AwaitingNatoms` are skipped (matching the lenient
-/// `read_frame_from` behavior).
+/// emit and reset to `AwaitingNatoms`. Blank lines in `AwaitingNatoms` are
+/// skipped; any other line there must be an atom count, and the last frame
+/// must be whole — the rules of `read_frame_from`, so an index and a reader
+/// never disagree about a file.
 pub struct XyzIndexBuilder {
     lines: LineAccumulator,
+    /// The first malformed line `feed` met, reported by `finish`.
+    error: Option<std::io::Error>,
     phase: XyzPhase,
     pending_frame_start: Option<u64>,
     pending_entries: Vec<FrameOffset>,
@@ -1150,6 +1105,7 @@ impl XyzIndexBuilder {
     pub fn new() -> Self {
         Self {
             lines: LineAccumulator::new(),
+            error: None,
             phase: XyzPhase::AwaitingNatoms,
             pending_frame_start: None,
             pending_entries: Vec::new(),
@@ -1168,15 +1124,12 @@ impl XyzIndexBuilder {
                     // `read_frame_from` does.
                     return Ok(());
                 }
-                let n = match trimmed.parse::<usize>() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        // Garbage line in AwaitingNatoms is also skipped per
-                        // spec ("blank/garbage lines in AwaitingNatoms state
-                        // are skipped not crashed").
-                        return Ok(());
-                    }
-                };
+                let n = trimmed.parse::<usize>().map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("invalid atom count line at byte {line_offset}: {trimmed}"),
+                    )
+                })?;
                 self.pending_frame_start = Some(line_offset);
                 self.phase = XyzPhase::AwaitingComment { natoms: n };
                 Ok(())
@@ -1236,10 +1189,14 @@ impl FrameIndexBuilder for XyzIndexBuilder {
                 staged.push((line.to_string(), line_offset, line_len));
             });
         for (line, off, len) in staged {
-            // `feed` has no error channel: a malformed line here ends no
-            // frame, and `read_xyz` of the indexed slice reports it.
-            // `finish` re-runs the tail and does raise.
-            let _ = self.process_line(&line, off, len);
+            if self.error.is_some() {
+                return;
+            }
+            // `feed` has no error channel: the first malformed line is kept
+            // and `finish` reports it.
+            if let Err(e) = self.process_line(&line, off, len) {
+                self.error = Some(e);
+            }
         }
     }
 
@@ -1248,6 +1205,9 @@ impl FrameIndexBuilder for XyzIndexBuilder {
     }
 
     fn finish(mut self: Box<Self>) -> std::io::Result<Vec<FrameOffset>> {
+        if let Some(e) = self.error.take() {
+            return Err(e);
+        }
         self.lines.check_line_budget()?;
         let mut staged: Vec<(String, u64, u32)> = Vec::new();
         self.lines.finish(|line, line_offset, line_len| {
@@ -1256,11 +1216,14 @@ impl FrameIndexBuilder for XyzIndexBuilder {
         for (line, off, len) in staged {
             self.process_line(&line, off, len)?;
         }
-        // Trailing partial frame: if pending_frame_start is still Some,
-        // we have an incomplete frame at EOF. The spec for XYZ says
-        // ConsumingAtoms must reach zero before emit; an incomplete final
-        // frame is malformed. It is dropped from the index (no offset
-        // names it), so no reader is handed a truncated frame.
+        // A frame cut short at EOF is a malformed file, as `read_frame_from`
+        // finds it.
+        if let Some(start) = self.pending_frame_start {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("XYZ frame at byte {start} ends before its atoms do"),
+            ));
+        }
         Ok(std::mem::take(&mut self.pending_entries))
     }
 
@@ -1274,6 +1237,51 @@ impl FrameIndexBuilder for XyzIndexBuilder {
 mod tests {
     use super::*;
     use crate::core::Cell;
+
+    /// The index reads a file by the reader's rules: a line that is no atom
+    /// count, or a last frame cut short, is refused rather than skipped.
+    #[test]
+    fn the_index_refuses_what_the_reader_refuses() {
+        for (text, kind) in [
+            (
+                "1\n\nO 0 0 0\ngarbage\n1\n\nO 0 0 0\n",
+                std::io::ErrorKind::InvalidData,
+            ),
+            (
+                "1\n\nO 0 0 0\n2\n\nO 0 0 0\n",
+                std::io::ErrorKind::UnexpectedEof,
+            ),
+        ] {
+            let mut reader = XyzReader::new(std::io::Cursor::new(text.as_bytes()));
+            assert_eq!(reader.len().unwrap_err().kind(), kind, "{text:?}");
+        }
+        let mut whole =
+            XyzReader::new(std::io::Cursor::new(&b"1\n\nO 0 0 0\n\n1\n\nH 0 0 0\n"[..]));
+        assert_eq!(whole.len().unwrap(), 2);
+    }
+
+    /// The single-frame door checks the Frame schema as the streaming writer
+    /// does, and refuses before it touches its sink.
+    #[test]
+    fn write_xyz_refuses_a_frame_off_the_schema_and_keeps_the_file() {
+        let mut frame = parse_frame_str("1\n\nO 0 0 0\n").unwrap();
+        // A `bonds` block without its second endpoint column.
+        let mut bonds = Block::new();
+        bonds
+            .insert(
+                "atomi",
+                ndarray::Array1::from_vec(vec![0_u64]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        frame.insert("bonds", bonds);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.xyz");
+        std::fs::write(&path, b"kept").unwrap();
+        let err = write_xyz(&path, &frame).unwrap_err();
+        assert!(err.to_string().contains("Frame schema"), "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"kept");
+    }
 
     /// extxyz `Lattice="R1 R2 R3"` lists the vectors in sequence; `SimBox`
     /// keeps them as the columns of H.
@@ -1827,9 +1835,6 @@ impl<'a> XyzWriter<SinkWriter<'a>> {
 
 impl<W: Write> FrameWriter for XyzWriter<W> {
     fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         write_frame_to(&mut self.writer, frame)?;
         self.writer.flush()
     }
@@ -1842,6 +1847,10 @@ impl<W: Write> FrameWriter for XyzWriter<W> {
 /// continue to work without changes.
 fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
     use molrs::core::DType;
+
+    // Every door writes through here, so every door checks here: a frame that
+    // violates the vocabulary makes a file that looks fine and is wrong.
+    crate::io::writer::check_write_frame(frame)?;
 
     // 1. Build per-atom data from the atoms block via visit_block.
     //    We collect everything we need into owned data structures inside the closure,
@@ -1956,8 +1965,8 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
         for i in 0..n {
             let mut line_parts = Vec::new();
             for k in &columns {
-                if let Some(tokens) = atoms.xyz_row_tokens(k, i) {
-                    line_parts.extend(tokens);
+                if let Some(column) = atoms.column(k) {
+                    line_parts.extend(row_tokens(&column, i));
                 }
             }
             row_values.push(line_parts);

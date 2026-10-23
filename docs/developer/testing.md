@@ -1,19 +1,28 @@
 # Testing
 
-MolPy uses pytest. Tests live under `tests/`, mirroring the package structure
-(`src/molpy/io/data/lammps.py` → `tests/test_io/test_data/test_lammps.py`) with no
-`__init__.py` files (`--import-mode=importlib`). Fixture files are small,
-committed under `tests/tests-data/<format>/`, and reached through the
-`TEST_DATA_DIR` fixture; nothing is downloaded.
+MolPy's Rust core is tested by unit tests next to the code
+(`#[cfg(test)]` modules in `crates/molrs/src/**`, run with `cargo mrs-test`),
+and the Python binding by pytest. The Python tests live under
+`molpy/tests/`, mirroring the package structure
+(`molpy/molpy/engine/lammps.py` → `molpy/tests/test_engine/test_lammps.py`;
+the former native-binding suite is `molpy/tests/test_bindings/`) with no
+`__init__.py` files (`--import-mode=importlib`), and warnings are errors.
+Fixture files are small, committed under `molpy/tests/tests-data/<format>/`,
+and reached through the `TEST_DATA_DIR` fixture; nothing is downloaded.
 
 
 ## Running tests
 
 ```bash
-uv run --extra dev python -m pytest tests/ -n auto                         # the CI command
-uv run --extra dev python -m pytest tests/test_io/test_data/test_lammps.py # one file
-uv run --extra dev python -m pytest tests/ -k "lammps"                     # keyword filter
+scripts/check.sh python                        # the CI command: build the wheel, run the suite
+cd molpy
+uv run --no-sync pytest tests/test_engine/test_lammps.py   # one file, on the installed wheel
+uv run --no-sync pytest tests/ -k "lammps"                 # keyword filter
+cargo mrs-test -- io::lammps                   # one Rust module
 ```
+
+Run `pytest`, never `python -m pytest`: the latter puts the source tree on
+`sys.path` ahead of the built package, which has the native `molpy._core`.
 
 The suite is pure unit tests: the engines and the AmberTools programs mock
 `subprocess`; nothing requires LAMMPS, GROMACS, OpenMM or AmberTools on the
@@ -75,9 +84,9 @@ def test_pdb_round_trip(tmp_path):
 - **Engines / AmberTools programs**: mock `subprocess` and assert argv /
   script *literals* written to disk. Never launch antechamber, tleap, or lmp
   in unit tests.
-- **Doc code blocks** are not executed by the test gate. Blocks that shell out
-  or need offline artifacts still declare `# docs: skip — <reason>` as the first
-  non-empty line so a reader knows they are not runnable as-is.
+- **Doc code blocks** are not tests. The manual is kept executable against
+  the current API; a block that shells out or needs a program the docs
+  environment lacks declares `# docs: skip — <reason>` as its first line.
 
 
 ## Writing good tests

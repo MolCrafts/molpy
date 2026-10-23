@@ -89,6 +89,12 @@ pub const AMBER_COULOMB: F = 332.052_217_29;
 /// it from `√`[`COULOMB_REAL`], which would shift every charge by ~1.7e-5.
 pub const AMBER_CHARGE_FACTOR: F = 18.2223;
 
+/// AMBER's internal time unit is `1/20.455` ps (the unit in which kcal/mol,
+/// Å and g/mol make a consistent mechanics), so a restart file's velocities
+/// are in Å per that unit: multiplying by this gives Å/ps. The literal is
+/// sander's own (and ParmEd's `VELSCALE`).
+pub const AMBER_VELOCITY_TO_ANGSTROM_PER_PS: F = 20.455;
+
 /// CHARMM's `CCELEC`, kcal·Å·mol⁻¹·e⁻²: the Coulomb constant CHARMM (and a
 /// chamber prmtop, which stores `CHARGE` as `q·√332.0716`, ParmEd's
 /// `CHARMM_ELECTROSTATIC`) evaluates.
@@ -193,7 +199,7 @@ pub const AMBER_SCEE: F = 1.2;
 pub const AMBER_SCNB: F = 2.0;
 
 /// Every constant of this module, by its name: the table the bindings
-/// expose (Python `molrs.core.constants`), so a constant added here needs
+/// expose (Python `molpy.core.constants`), so a constant added here needs
 /// no binding edit.
 pub const ALL: &[(&str, F)] = &[
     ("AVOGADRO", AVOGADRO),
@@ -209,6 +215,10 @@ pub const ALL: &[(&str, F)] = &[
     ("COULOMB_METAL", COULOMB_METAL),
     ("AMBER_COULOMB", AMBER_COULOMB),
     ("AMBER_CHARGE_FACTOR", AMBER_CHARGE_FACTOR),
+    (
+        "AMBER_VELOCITY_TO_ANGSTROM_PER_PS",
+        AMBER_VELOCITY_TO_ANGSTROM_PER_PS,
+    ),
     ("CHARMM_COULOMB", CHARMM_COULOMB),
     ("OPENMM_ONE_4PI_EPS0", OPENMM_ONE_4PI_EPS0),
     ("GROMACS_ONE_4PI_EPS0", GROMACS_ONE_4PI_EPS0),

@@ -146,29 +146,24 @@ impl GraphView {
     /// (bond order bits) from each incident relation, then compute initial
     /// colors from element/bead label + degree + charge + aromatic flag.
     pub(crate) fn build(g: &MolGraph) -> Self {
+        // Node index = the node table's row, the order `node_ids` yields.
         let nodes: Vec<NodeId> = g.node_ids().collect();
-        let index: HashMap<NodeId, usize> =
-            nodes.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+        let rows = g.node_table();
 
         let mut adj: Vec<Vec<(usize, u64)>> = vec![Vec::new(); nodes.len()];
         let mut edge_count = 0usize;
         for (i, &id) in nodes.iter().enumerate() {
             for (kind, rid, other) in g.neighbor_relations(id) {
-                let Some(&j) = index.get(&other) else {
-                    continue;
-                };
+                let j = rows.row(other).expect("a neighbour is a live node");
                 // Both facts enter the hash: two molecules differing only in
                 // whether a bond is aromatic are different molecules, and so are
                 // two differing only in their Kekulé phase.
-                let edge = g
+                let relation = g
                     .get_relation(kind, rid)
-                    .ok()
-                    .map(|r| {
-                        let t = prop_as_f64(r.props.get(keys::BOND_TYPE)).unwrap_or(0.0) as u64;
-                        let n = prop_as_f64(r.props.get(keys::BOND_NUMBER)).unwrap_or(0.0) as u64;
-                        (t << 32) | n
-                    })
-                    .unwrap_or(0);
+                    .expect("a neighbour relation is live");
+                let t = prop_as_f64(relation.props.get(keys::BOND_TYPE)).unwrap_or(0.0) as u64;
+                let n = prop_as_f64(relation.props.get(keys::BOND_NUMBER)).unwrap_or(0.0) as u64;
+                let edge = (t << 32) | n;
                 adj[i].push((j, edge));
             }
             // Each undirected edge is seen once from each endpoint.
@@ -707,6 +702,7 @@ mod tests {
     use crate::core::Atomistic;
     use crate::core::CoarseGrain;
     use crate::core::Element;
+    use crate::core::NeighborKinds;
     use crate::core::NodeId;
     use crate::core::keys;
     use crate::props;
@@ -978,7 +974,10 @@ mod tests {
             let ea = a.get_atom(*ia).unwrap();
             let eb = b.get_atom(*ib).unwrap();
             assert_eq!(ea.atomic_number(), eb.atomic_number());
-            assert_eq!(a.neighbor_bonds(*ia).count(), b.neighbor_bonds(*ib).count());
+            assert_eq!(
+                a.neighbors(*ia, NeighborKinds::BONDS).count(),
+                b.neighbors(*ib, NeighborKinds::BONDS).count()
+            );
         }
     }
 

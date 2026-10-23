@@ -17,48 +17,37 @@
 //! deliberate (see the spec's "Out of scope"); the specificity ranking is the
 //! **typifier's** job and lives here.
 //!
-//! This is a 1:1 Rust replica of molpy's
-//! `typifier/atomistic.ForceField{Bond,Angle,Dihedral}Typifier`
-//! (`_end_score` / `_sequence_score` + `(score, layer)` ranking).
+//! The ranking is `(score, layer)`: [`end_score`] per endpoint, summed by
+//! [`sequence_score`] over the better orientation, ties broken by the
+//! candidate's overlay layer.
 //!
-//! # Wildcard vocabulary
+//! # Wildcard
 //!
-//! molpy normalizes an empty / absent class attribute to `"*"` at XML read time;
-//! the molrs [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader)
-//! transcribes the `class*` attributes verbatim, so an OPLS wildcard end arrives
-//! here as the **empty string** `""`. To stay bit-for-bit compatible with
-//! molpy's matcher, the private `end_score` helper treats `""`, `"*"`, and `"X"`
-//! all as the score-0 wildcard.
+//! The [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader) transcribes
+//! the `class*` attributes verbatim, so an OPLS wildcard end arrives here as the
+//! **empty string** `""` — the one spelling the shipped tables use too.
 //!
-//! # No-match seam (parameter interpolation)
+//! # No match
 //!
-//! A term that matches no candidate is routed through the estimator seam, an
-//! OPLS-bonded specialization of the generic [`ParameterInterpolator`] trait. If
-//! an interpolator is attached, it is asked to fill the missing params, and the
-//! term is named by [`BondedTerm::type_name`]; otherwise the configured strict
-//! policy applies (`strict=true` → `Err`, `strict=false` → the term is left
-//! unparametrized).
+//! A term that matches no candidate follows the configured [`NoMatch`] policy:
+//! `Err` when strict, left unparametrized otherwise.
 
 use std::collections::HashMap;
 
-use molrs::core::keys;
 use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
 use molrs::core::{Atomistic, NodeId};
 
-use crate::ff::forcefield::{ForceField, StyleDefs};
+use crate::ff::forcefield::{ForceField, TypeDef};
 use crate::ff::ir::Params;
-use crate::ff::typifier::ParameterInterpolator;
-use crate::ff::typifier::estimate::candidate::is_wildcard;
-use crate::ff::typifier::{Annotation, TypeAssignment, species_label};
+use crate::ff::typifier::{Annotation, TypeAssignment};
 
 use super::typing_metadata::OplsTypingMetadata;
 
 /// Specificity of one bonded-type *end pattern* against one atom.
 ///
-/// Mirrors molpy's `_end_score`:
 /// - exact `opls_NNN` type match → `3`;
 /// - class match → `1`;
-/// - wildcard (`""`, `"*"`, or `"X"`) → `0`;
+/// - wildcard (`""`) → `0`;
 /// - no match → `None`.
 ///
 /// `pattern` is the bonded-type endpoint name (a class name, a wildcard, or — in
@@ -82,8 +71,7 @@ fn end_score(pattern: &str, atom_type: &str, atom_class: Option<&str>) -> Option
 /// Best specificity of an ordered bonded-term pattern against an ordered atom
 /// list, trying forward and end-for-end-reversed orientations.
 ///
-/// Mirrors molpy's `_sequence_score`: bonded terms are symmetric under
-/// reversal, so both orientations are scored and the larger total returned. An
+/// Bonded terms are symmetric under reversal, so both orientations are scored and the larger total returned. An
 /// orientation in which any end scores `None` is rejected; the whole call
 /// returns `None` only if *both* orientations have a non-matching end.
 ///
@@ -110,11 +98,6 @@ fn sequence_score(pattern: &[&str], atoms: &[(&str, Option<&str>)]) -> Option<i6
 const BOND_STYLE: &str = "harmonic";
 /// The angle style the candidate tables are read from.
 const ANGLE_STYLE: &str = "harmonic";
-/// The dihedral style of the shipped library, and of an estimated dihedral.
-/// Candidates are read from every dihedral style of the force field: an
-/// OpenMM-XML read stores `<RBTorsionForce>` rows as `multi/harmonic`.
-const DIHEDRAL_STYLE: &str = "opls";
-
 /// A bonded-term candidate from the force field: its type name, endpoint class
 /// pattern (length 2 / 3 / 4), the precomputed overlay layer, and the params to
 /// write on a match.
@@ -133,9 +116,9 @@ struct Candidate {
 
 /// Per-arity candidate tables, built once from the force field.
 ///
-/// `bonds` / `angles` / `dihedrals` mirror molpy's `_bond_table` /
-/// `_angle_table` / `_dihedral_table`. Built from the OPLS potential styles
-/// (`("bond","harmonic")`, `("angle","harmonic")`, `("dihedral","opls")`).
+/// Built from the `bond/harmonic` and `angle/harmonic` styles and every
+/// `dihedral` style of the force field (an OpenMM-XML read stores
+/// `<RBTorsionForce>` rows as `multi/harmonic`).
 pub struct CandidateTables {
     bonds: Vec<Candidate>,
     angles: Vec<Candidate>,
@@ -150,7 +133,7 @@ impl CandidateTables {
     ///
     /// The class→layer map (used to compute each candidate's overlay layer) is
     /// derived from `meta`: `class → max(layer)` over every type carrying that
-    /// class, replicating molpy's `_build_type_class_layer`.
+    /// class ([`build_type_class_layer`]).
     pub fn build(ff: &ForceField, meta: &OplsTypingMetadata) -> Self {
         let (type_to_class, class_to_layer) = build_type_class_layer(meta);
 
@@ -162,52 +145,40 @@ impl CandidateTables {
                 .unwrap_or(0)
         };
 
-        let bonds = match ff.get_style("bond", BOND_STYLE).map(|s| s.defs()) {
-            Some(StyleDefs::Bond(types)) => types
-                .iter()
-                .map(|t| Candidate {
-                    name: t.name.clone(),
-                    pattern: vec![t.itom.clone(), t.jtom.clone()],
-                    layer: layer_of(&[&t.itom, &t.jtom]),
-                    params: t.params.clone(),
-                    style: BOND_STYLE.to_owned(),
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-
-        let angles = match ff.get_style("angle", ANGLE_STYLE).map(|s| s.defs()) {
-            Some(StyleDefs::Angle(types)) => types
-                .iter()
-                .map(|t| Candidate {
-                    name: t.name.clone(),
-                    pattern: vec![t.itom.clone(), t.jtom.clone(), t.ktom.clone()],
-                    layer: layer_of(&[&t.itom, &t.jtom, &t.ktom]),
-                    params: t.params.clone(),
-                    style: ANGLE_STYLE.to_owned(),
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-
-        let mut dihedrals = Vec::new();
-        for style in ff.get_styles("dihedral") {
-            let StyleDefs::Dihedral(types) = style.defs() else {
-                continue;
-            };
-            dihedrals.extend(types.iter().map(|t| Candidate {
+        let candidate = |t: &TypeDef, style: &str| {
+            let classes: Vec<&str> = t.endpoints.iter().map(String::as_str).collect();
+            Candidate {
                 name: t.name.clone(),
-                pattern: vec![
-                    t.itom.clone(),
-                    t.jtom.clone(),
-                    t.ktom.clone(),
-                    t.ltom.clone(),
-                ],
-                layer: layer_of(&[&t.itom, &t.jtom, &t.ktom, &t.ltom]),
+                pattern: t.endpoints.to_vec(),
+                layer: layer_of(&classes),
                 params: t.params.clone(),
-                style: style.name().to_owned(),
-            }));
-        }
+                style: style.to_owned(),
+            }
+        };
+        let candidates = |category: &str, style: &str| -> Vec<Candidate> {
+            ff.get_style(category, style)
+                .map(|s| {
+                    s.defs()
+                        .types()
+                        .iter()
+                        .map(|t| candidate(t, style))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let bonds = candidates("bond", BOND_STYLE);
+        let angles = candidates("angle", ANGLE_STYLE);
+        let dihedrals = ff
+            .get_styles("dihedral")
+            .into_iter()
+            .flat_map(|style| {
+                style
+                    .defs()
+                    .types()
+                    .iter()
+                    .map(move |t| candidate(t, style.name()))
+            })
+            .collect();
 
         Self {
             bonds,
@@ -245,14 +216,11 @@ impl CandidateTables {
     }
 
     /// The annotations of one bonded term with endpoint atoms `ends`, matched
-    /// against `table` (read from the `style` style).
+    /// against `table`.
     ///
     /// A match is `type` → [`Annotation::Type`] named by the winning
-    /// candidate, with its endpoint pattern and params. No match asks
-    /// `estimator`: its params become a `Type` on
-    /// [`BondedTerm::endpoints`], named [`BondedTerm::type_name`]. A term with
-    /// an untyped endpoint, or that no candidate or estimate covers, follows
-    /// `policy`: [`NoMatch::Skip`] gives it no annotation, [`NoMatch::Error`]
+    /// candidate, with its endpoint pattern and params. A term with an
+    /// untyped endpoint, or that no candidate covers, follows `policy`: [`NoMatch::Skip`] gives it no annotation, [`NoMatch::Error`]
     /// is an `Err`.
     #[allow(clippy::too_many_arguments)]
     fn annotate(
@@ -261,9 +229,7 @@ impl CandidateTables {
         types: &HashMap<NodeId, String>,
         ends: &[NodeId],
         table: &[Candidate],
-        style: &str,
         policy: NoMatch,
-        estimator: Option<&dyn ParameterInterpolator<Term = BondedTerm>>,
     ) -> Result<Vec<(String, Annotation)>, String> {
         let Some(names) = ends
             .iter()
@@ -285,39 +251,22 @@ impl CandidateTables {
                 },
             )]);
         }
-        let term = match <[String; 2]>::try_from(names) {
-            Ok(pair) => BondedTerm::Bond(pair),
-            Err(names) => match <[String; 3]>::try_from(names) {
-                Ok(triple) => BondedTerm::Angle(triple),
-                Err(names) => BondedTerm::Dihedral(
-                    <[String; 4]>::try_from(names)
-                        .map_err(|names| format!("OPLS: a bonded term of {} atoms", names.len()))?,
-                ),
-            },
-        };
-        if let Some(est) = estimator
-            && let Some(params) = est.interpolate(&term)?
-        {
-            return Ok(vec![(
-                "type".to_owned(),
-                Annotation::Type {
-                    style: style.to_owned(),
-                    endpoints: term.endpoints().into_iter().map(str::to_owned).collect(),
-                    name: term.type_name()?.to_string(),
-                    params,
-                },
-            )]);
-        }
         match policy {
-            NoMatch::Error => Err(format!("OPLS: no bonded type for {term:?}")),
+            NoMatch::Error => Err(format!("OPLS: no bonded type for {}", names.join("-"))),
             NoMatch::Skip => Ok(Vec::new()), // leave the term unparametrized
         }
     }
 }
 
+/// Whether an endpoint pattern is the IR's wildcard, `""`: what the OpenMM
+/// reader transcribes an absent class as and what the OPLS tables are
+/// generated with.
+fn is_wildcard(pattern: &str) -> bool {
+    pattern.is_empty()
+}
+
 /// Map each `opls_NNN` type to its class, and each class to its highest overlay
-/// layer. Replicates molpy's `_build_type_class_layer`, sourced from chain-1's
-/// [`OplsTypingMetadata`] (each row carries `class` + `layer`).
+/// layer, from the [`OplsTypingMetadata`] rows (each carries `class` + `layer`).
 fn build_type_class_layer(
     meta: &OplsTypingMetadata,
 ) -> (HashMap<String, String>, HashMap<String, u32>) {
@@ -325,7 +274,7 @@ fn build_type_class_layer(
     let mut class_to_layer: HashMap<String, u32> = HashMap::new();
     for (name, row) in meta.iter() {
         type_to_class.insert(name.clone(), row.class.clone());
-        if !row.class.is_empty() && row.class != "*" {
+        if !is_wildcard(&row.class) {
             let e = class_to_layer.entry(row.class.clone()).or_insert(0);
             *e = (*e).max(row.layer);
         }
@@ -333,8 +282,7 @@ fn build_type_class_layer(
     (type_to_class, class_to_layer)
 }
 
-/// Strict-mode policy for a term that matches no candidate (and has no
-/// estimator attached).
+/// Strict-mode policy for a term that matches no candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoMatch {
     /// Strict: a missing bonded parameter is a hard error.
@@ -343,20 +291,15 @@ pub enum NoMatch {
     Skip,
 }
 
-use crate::ff::typifier::BondedTerm;
-
 /// The bonded annotations of a graph whose atoms carry the OPLS `types`,
-/// choosing each term's type by the OPLS specificity + layer ranking, with an
-/// optional estimator seam.
+/// choosing each term's type by the OPLS specificity + layer ranking.
 ///
 /// For every enumerated bond / angle / dihedral:
 /// 1. resolve each endpoint atom's `(type, class)`;
 /// 2. scan the matching candidate table for the highest `(score, layer)`;
 /// 3. on a match, annotate `type` with the winning type (name, endpoint
-///    pattern, params), matching molpy's
-///    `term.data["type"] = name; term.data.update(**type.params.kwargs)`;
-/// 4. on no match, ask `estimator` (if any); if it declines or is absent, apply
-///    `policy`.
+///    pattern, params);
+/// 4. on no match, apply `policy`.
 ///
 /// Angles and dihedrals are enumerated onto `graph` from the bond graph via
 /// the shared typifier topology helper (clearing any pre-existing generated
@@ -369,14 +312,13 @@ use crate::ff::typifier::BondedTerm;
 /// # Errors
 ///
 /// Returns `Err` if `policy` is [`NoMatch::Error`] and a term has an untyped
-/// endpoint, or a term matches no candidate and the estimator declines; if the
-/// estimator itself errors; or if topology enumeration fails.
+/// endpoint or a term matches no candidate; or if topology enumeration
+/// fails.
 pub(crate) fn typify_bonded_with(
     graph: &mut Atomistic,
     types: &HashMap<NodeId, String>,
     tables: &CandidateTables,
     policy: NoMatch,
-    estimator: Option<&dyn ParameterInterpolator<Term = BondedTerm>>,
 ) -> Result<TypeAssignment, String> {
     let mut m = TypeAssignment::default();
 
@@ -387,21 +329,13 @@ pub(crate) fn typify_bonded_with(
         .collect();
     *m.link_mut(BONDS) = bonds
         .iter()
-        .map(|ends| {
-            tables.annotate(
-                graph,
-                types,
-                ends,
-                &tables.bonds,
-                BOND_STYLE,
-                policy,
-                estimator,
-            )
-        })
+        .map(|ends| tables.annotate(graph, types, ends, &tables.bonds, policy))
         .collect::<Result<_, _>>()?;
 
     // --- enumerate angles + dihedrals from the bond graph (clear existing) ---
-    crate::ff::typifier::topology::typify_bonded_topology(graph)?;
+    graph
+        .generate_topology(true, true, false, true)
+        .map_err(|e| e.to_string())?;
 
     let angles: Vec<[NodeId; 3]> = graph
         .angles()
@@ -409,17 +343,7 @@ pub(crate) fn typify_bonded_with(
         .collect();
     *m.link_mut(ANGLES) = angles
         .iter()
-        .map(|ends| {
-            tables.annotate(
-                graph,
-                types,
-                ends,
-                &tables.angles,
-                ANGLE_STYLE,
-                policy,
-                estimator,
-            )
-        })
+        .map(|ends| tables.annotate(graph, types, ends, &tables.angles, policy))
         .collect::<Result<_, _>>()?;
 
     let dihedrals: Vec<[NodeId; 4]> = graph
@@ -428,17 +352,7 @@ pub(crate) fn typify_bonded_with(
         .collect();
     *m.link_mut(DIHEDRALS) = dihedrals
         .iter()
-        .map(|ends| {
-            tables.annotate(
-                graph,
-                types,
-                ends,
-                &tables.dihedrals,
-                DIHEDRAL_STYLE,
-                policy,
-                estimator,
-            )
-        })
+        .map(|ends| tables.annotate(graph, types, ends, &tables.dihedrals, policy))
         .collect::<Result<_, _>>()?;
 
     Ok(m)
@@ -463,26 +377,10 @@ fn untyped_endpoint(
                 .collect();
             Err(format!(
                 "OPLS: bonded term has untyped endpoint {}",
-                name_atoms(mol, &untyped)
+                crate::ff::typifier::name_atoms(mol, &untyped)
             ))
         }
     }
-}
-
-/// Name the atoms `ids` of `mol` as the ATD typifier names an atom it cannot
-/// type — `atom {i} ({element})`, `i` the 0-based position in `mol.atoms()`
-/// order and the element spelled from the atom's atomic number (`*` for a
-/// wildcard) — comma-separated, in that order.
-pub(super) fn name_atoms(mol: &Atomistic, ids: &[NodeId]) -> String {
-    mol.atoms()
-        .enumerate()
-        .filter(|(_, (id, _))| ids.contains(id))
-        .map(|(i, (_, atom))| match atom.atomic_number() {
-            Some(z) => format!("atom {i} ({})", species_label(z)),
-            None => format!("atom {i} (no valid '{}')", keys::ATOMIC_NUMBER),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 #[cfg(test)]
@@ -507,10 +405,10 @@ mod tests {
 
     #[test]
     fn end_score_wildcard_is_0() {
-        // Empty string (OPLS XML reader's wildcard), "*", and "X" all score 0.
+        // The empty string is the wildcard; `*` and `X` are names like any other.
         assert_eq!(end_score("", "opls_135", Some("CT")), Some(0));
-        assert_eq!(end_score("*", "opls_135", Some("CT")), Some(0));
-        assert_eq!(end_score("X", "opls_135", Some("CT")), Some(0));
+        assert_eq!(end_score("*", "opls_135", Some("CT")), None);
+        assert_eq!(end_score("X", "opls_135", Some("CT")), None);
     }
 
     #[test]
@@ -689,14 +587,8 @@ mod tests {
     #[test]
     fn strict_policy_refuses_untyped_endpoint() {
         let (mut g, types) = half_typed_bond();
-        let err = typify_bonded_with(
-            &mut g,
-            &types,
-            &wildcard_bond_tables(),
-            NoMatch::Error,
-            None,
-        )
-        .expect_err("strict bonded typing must refuse an untyped endpoint");
+        let err = typify_bonded_with(&mut g, &types, &wildcard_bond_tables(), NoMatch::Error)
+            .expect_err("strict bonded typing must refuse an untyped endpoint");
         assert!(err.contains("atom 1 (O)"), "err names the untyped O: {err}");
     }
 
@@ -705,14 +597,8 @@ mod tests {
     #[test]
     fn skip_policy_leaves_untyped_endpoint_bond_unlabelled() {
         let (mut out, types) = half_typed_bond();
-        let mut m = typify_bonded_with(
-            &mut out,
-            &types,
-            &wildcard_bond_tables(),
-            NoMatch::Skip,
-            None,
-        )
-        .expect("lenient bonded typing accepts an untyped endpoint");
+        let mut m = typify_bonded_with(&mut out, &types, &wildcard_bond_tables(), NoMatch::Skip)
+            .expect("lenient bonded typing accepts an untyped endpoint");
         m.declare_styles_of(&wildcard_bond_ff());
         m.apply_to(&mut out, &mut ForceField::new("out"))
             .expect("the match writes");

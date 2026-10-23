@@ -326,6 +326,7 @@ mod tests {
     use crate::io::smiles::{BondKind, SmilesErrorKind, Span};
     use molrs::core::Atomistic;
     use molrs::core::Element;
+    use molrs::core::NeighborKinds;
     use molrs::core::NodeId;
     use molrs::core::PropValue;
     use molrs::core::keys;
@@ -389,7 +390,7 @@ mod tests {
         let mut degrees: Vec<usize> = mol
             .atoms()
             .filter(|(id, _)| frag_id(mol, *id) == instance)
-            .map(|(id, _)| mol.neighbor_bonds(id).count())
+            .map(|(id, _)| mol.neighbors(id, NeighborKinds::BONDS).count())
             .collect();
         degrees.sort();
         degrees
@@ -620,7 +621,9 @@ mod tests {
         let start = mol
             .atoms()
             .map(|(id, _)| id)
-            .find(|&id| frag_id(&mol, id) == 0 && mol.neighbor_bonds(id).count() == 1)
+            .find(|&id| {
+                frag_id(&mol, id) == 0 && mol.neighbors(id, NeighborKinds::BONDS).count() == 1
+            })
             .expect("instance 0 holds a chain end");
         let element = |id: NodeId| -> Element {
             let z = mol
@@ -635,7 +638,7 @@ mod tests {
         let mut frags = vec![frag_id(&mol, start)];
         let (mut prev, mut here) = (None, start);
         while let Some((next, bid)) = mol
-            .neighbor_bonds(here)
+            .neighbors(here, NeighborKinds::BONDS)
             .find(|&(other, _)| Some(other) != prev)
         {
             elements.push(element(next));

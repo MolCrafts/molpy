@@ -600,7 +600,7 @@ fn unregister_style(category: &str, name: &str) -> PyResult<()> {
 /// Examples
 /// --------
 /// >>> {s.kernel for s in style_registry.styles("bond") if s.name == "harmonic"}
-/// {'constructor'}
+/// {'scalar'}
 #[pyfunction]
 #[pyo3(signature = (category=None))]
 fn styles(category: Option<&str>) -> Vec<PyStyleSpec> {

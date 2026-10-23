@@ -168,7 +168,8 @@ impl<'a> From<&'a mut Vec<u8>> for Sink<'a> {
 
 impl<'a> Sink<'a> {
     /// Open the sink for writing: create (truncate) the file, or clear the
-    /// buffer.
+    /// buffer. For a streaming writer only; a single-frame door renders
+    /// first ([`put_with`](Self::put_with)).
     pub(crate) fn writer(self) -> std::io::Result<SinkWriter<'a>> {
         match self {
             Sink::Path(p) => Ok(SinkWriter::File(BufWriter::new(File::create(p)?))),
@@ -184,6 +185,22 @@ impl<'a> Sink<'a> {
         let mut w = self.writer()?;
         w.write_all(bytes)?;
         w.flush()
+    }
+
+    /// Render the sink's whole content with `render`, then write it.
+    ///
+    /// The one door of every single-frame writer: the file is rendered in
+    /// memory first, so a frame the format refuses leaves the sink as it was
+    /// — an existing file is not truncated, a buffer not cleared. Only a
+    /// streaming writer (one frame at a time) opens the sink before it has
+    /// its content ([`writer`](Self::writer)).
+    pub(crate) fn put_with(
+        self,
+        render: impl FnOnce(&mut Cursor<Vec<u8>>) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        let mut bytes = Cursor::new(Vec::new());
+        render(&mut bytes)?;
+        self.put(bytes.get_ref())
     }
 }
 

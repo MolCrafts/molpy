@@ -59,6 +59,13 @@ pub enum BlockError {
         /// Number of entries the mask carries.
         got: usize,
     },
+    /// A row the operation needs a value from is null in that column.
+    NullRow {
+        /// The column holding the null.
+        key: String,
+        /// The first null row.
+        row: usize,
+    },
     /// A column the operation reads is not in the block.
     MissingColumn {
         /// The column that is absent.
@@ -109,6 +116,12 @@ impl fmt::Display for BlockError {
                 f,
                 "column '{key}' is declared {expected} by the Frame schema, got {got:?}"
             ),
+            BlockError::NullRow { key, row } => {
+                write!(
+                    f,
+                    "column '{key}' is null at row {row}, which has no value to read"
+                )
+            }
             BlockError::RankZero { key } => {
                 write!(
                     f,

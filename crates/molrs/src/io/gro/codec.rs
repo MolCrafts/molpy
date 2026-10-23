@@ -10,7 +10,7 @@ use std::io::{BufRead, Result, Seek, SeekFrom, Write};
 use ndarray::Array2;
 
 use crate::core::unit_factors::NM_TO_ANGSTROM;
-use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
+use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -314,6 +314,8 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
         );
     }
 
+    // Every door reads through here, so every door checks here.
+    crate::io::reader::check_read_frame(&frame)?;
     Ok(Some(frame))
 }
 
@@ -373,7 +375,8 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
 /// normalised at the boundary is not a property of the frame.
 pub struct GroReader<R: BufRead> {
     reader: R,
-    index: Option<FrameIndex>,
+    /// The byte offset of each frame.
+    index: Option<Vec<u64>>,
 }
 
 impl<R: BufRead> GroReader<R> {
@@ -407,7 +410,7 @@ impl<R: BufRead + Seek> TrajectoryReader for GroReader<R> {
         }
         let start = self.reader.stream_position()?;
         self.reader.seek(SeekFrom::Start(0))?;
-        let mut index = FrameIndex::new();
+        let mut index = Vec::new();
         let mut offset = 0u64;
         let mut line = String::new();
         loop {
@@ -417,7 +420,7 @@ impl<R: BufRead + Seek> TrajectoryReader for GroReader<R> {
             if n == 0 {
                 break;
             }
-            index.add_frame(offset);
+            index.push(offset);
             offset += n as u64;
             line.clear();
             let n = self.reader.read_line(&mut line)?;
@@ -445,24 +448,26 @@ impl<R: BufRead + Seek> TrajectoryReader for GroReader<R> {
 
     fn read_frame(&mut self, index: usize) -> Result<Option<Frame>> {
         self.build_index()?;
-        let Some(at) = self.index.as_ref().and_then(|offsets| offsets.get(index)) else {
+        let Some(at) = self
+            .index
+            .as_ref()
+            .and_then(|offsets| offsets.get(index).copied())
+        else {
             return Ok(None);
         };
         self.reader.seek(SeekFrom::Start(at))?;
-        crate::io::reader::check_read_frame(read_frame_from(&mut self.reader)?)
+        read_frame_from(&mut self.reader)
     }
 
     fn len(&mut self) -> Result<usize> {
         self.build_index()?;
-        Ok(self.index.as_ref().map_or(0, FrameIndex::len))
+        Ok(self.index.as_ref().map_or(0, Vec::len))
     }
 }
 
 impl<R: BufRead> FrameReader for GroReader<R> {
     fn read(&mut self) -> Result<Option<Frame>> {
-        // Validate on the way out: a frame that violates the vocabulary
-        // is a malformed file or a reader bug, not a result to return.
-        crate::io::reader::check_read_frame(read_frame_from(&mut self.reader)?)
+        read_frame_from(&mut self.reader)
     }
 }
 
@@ -487,13 +492,13 @@ impl<R: BufRead> FrameReader for GroReader<R> {
 /// `x`/`y`/`z` or `vx`/`vy`/`vz` (named by column and rows: no placeholder
 /// is written for it); a `bonds` row naming an atom past the frame.
 pub fn write_gro<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
-    let mut w = sink.into().writer()?;
-    write_frame_to(&mut w, frame)?;
-    w.flush()
+    sink.into().put_with(|w| write_frame_to(w, frame))
 }
 
 /// Write a single frame in GRO format.
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("GRO write: frame has no atoms block"))?;
@@ -599,9 +604,6 @@ impl<W: Write> Writer for GroWriter<W> {
 
 impl<W: Write> FrameWriter for GroWriter<W> {
     fn write(&mut self, frame: &Frame) -> Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         write_frame_to(&mut self.writer, frame)?;
         self.writer.flush()
     }

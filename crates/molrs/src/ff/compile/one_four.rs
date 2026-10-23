@@ -29,60 +29,25 @@ use std::collections::HashMap;
 
 use ndarray::Array1;
 
-use crate::ff::compile::exceptions::dihedral_weights;
+use crate::ff::compile::exceptions::{Vdw, dihedral_weights, pair_styles};
 use crate::ff::compile::gathered;
 use crate::ff::forcefield::ForceField;
-use crate::ff::ir::{CombiningRule, OneFour, Params};
+use crate::ff::ir::{OneFour, Params};
 use crate::ff::potential::intramolecular_pairs;
-use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
-use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
-use crate::ff::potential::param_reads;
+use crate::ff::potential::pair::lj_rows::{charmm_pair_params, lj_pair_params, mixing_of};
 use molrs::core::Frame;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use molrs::op::F;
 
-/// The van-der-Waals style a 1-4 pair's parameters come from.
-enum Vdw {
-    None,
-    LjCut(HashMap<String, Params>, CombiningRule),
-    Charmm(HashMap<String, Params>, CombiningRule, OneFour),
-}
-
-fn vdw_style(ff: &ForceField) -> Result<Vdw, String> {
-    let mut found = Vdw::None;
-    for style in ff.get_styles("pair") {
-        let next = match style.name() {
-            "lj/charmm" => {
-                let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
-                Vdw::Charmm(
-                    rows.into_iter().collect(),
-                    charmm_mixing(&p).map_err(|e| e.to_string())?,
-                    OneFour::of(&p)?,
-                )
-            }
-            "lj/cut" => {
-                let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
-                let num =
-                    |k: &str| param_reads::style_num("lj/cut", &p, k).map_err(|e| e.to_string());
-                if num("n")? != 12.0 || num("m")? != 6.0 {
-                    return Err(
-                        "materialize_one_four: pair lj/cut with n/m ≠ 12/6 has no 1-4 row form"
-                            .into(),
-                    );
-                }
-                let mixing = mixing_of("lj/cut", &p).map_err(|e| e.to_string())?;
-                Vdw::LjCut(rows.into_iter().collect(), mixing)
-            }
-            _ => continue,
-        };
-        if !matches!(found, Vdw::None) {
-            return Err(
-                "materialize_one_four: the force field has two Lennard-Jones styles".into(),
-            );
-        }
-        found = next;
+/// The van-der-Waals style a 1-4 row's Lennard-Jones parameters come from
+/// ([`pair_styles`]); a style with no LJ 12-6 form has no row form.
+fn vdw_style(ff: &ForceField) -> Result<Vdw<'_>, String> {
+    match pair_styles(ff)?.0 {
+        Vdw::Other(name) => Err(format!(
+            "materialize_one_four: pair style '{name}' has no Lennard-Jones 12-6 1-4 row form"
+        )),
+        vdw => Ok(vdw),
     }
-    Ok(found)
 }
 
 impl ForceField {
@@ -116,12 +81,12 @@ impl ForceField {
     /// [`intramolecular_pairs`].
     pub fn materialize_one_four(&self, frame: &mut Frame) -> Result<usize, String> {
         if frame.get(PAIRS).is_none() {
-            let pairs = intramolecular_pairs(frame, self.special_bonds(), None)?;
+            let pairs = intramolecular_pairs(frame, self.required_special_bonds()?, None)?;
             frame.insert(PAIRS, pairs);
         }
         let vdw = vdw_style(self)?;
         let covered = dihedral_weights(self, frame)?;
-        let sb = self.special_bonds();
+        let sb = self.required_special_bonds()?;
         let (lj14, coul14) = (sb.lj_14(), sb.coul_14());
 
         let block = frame.get(PAIRS).expect("inserted above");
@@ -182,7 +147,8 @@ impl ForceField {
                 continue;
             }
             let lj = match &vdw {
-                Vdw::None => None,
+                // `vdw_style` refused a style with no row form above.
+                Vdw::None | Vdw::Other(_) => None,
                 Vdw::LjCut(rows, mixing) | Vdw::Charmm(rows, mixing, _) => {
                     let t = types.ok_or(
                         "materialize_one_four: atoms block missing a string \"type\" column",
@@ -243,25 +209,28 @@ pub(crate) fn check_materialized(
     pairs_14: &[(usize, usize)],
     covered: &dyn Fn(usize, usize) -> bool,
 ) -> Result<(), String> {
-    if ff.special_bonds().lj_14() == 0.0 {
-        return Ok(());
-    }
     let Some(style) = ff.get_style("pair", "lj/charmm") else {
         return Ok(());
     };
-    let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
+    if ff.required_special_bonds()?.lj_14() == 0.0 {
+        return Ok(());
+    }
+    let (p, rows) = gathered(ff, style).map_err(|e| e.to_string())?;
     if OneFour::of(&p)? != OneFour::Epsilon14 {
         return Ok(());
     }
     let refs: HashMap<&str, &Params> = rows.iter().map(|(k, v)| (k.as_str(), v)).collect();
-    let mixing = charmm_mixing(&p).map_err(|e| e.to_string())?;
-    let Some(types) = frame
+    let mixing = mixing_of("lj/charmm", &p).map_err(|e| e.to_string())?;
+    if pairs_14.is_empty() {
+        return Ok(());
+    }
+    // A 1-4 pair's parameters are its two atoms' types: without them the
+    // check cannot say the pair is priced as meant, so it refuses.
+    let types = frame
         .get(ATOMS)
         .and_then(|b| b.get("type"))
         .and_then(|c| c.get::<String>())
-    else {
-        return Ok(());
-    };
+        .ok_or("pair lj/charmm with one_four = \"epsilon14\": the atoms block has no string \"type\" column to price the 1-4 pairs by")?;
     for &(i, j) in pairs_14 {
         if covered(i, j) {
             continue;
@@ -433,7 +402,7 @@ mod tests {
         let mut frame = chain();
         frame.insert(
             PAIRS,
-            intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap(),
+            intramolecular_pairs(&frame, ff.special_bonds().unwrap(), None).unwrap(),
         );
         let x: Vec<F> = frame.coords().unwrap().into_iter().collect();
         let before = PotentialCompiler::new(&ff)
@@ -462,7 +431,7 @@ mod tests {
         let mut frame = chain();
         frame.insert(
             PAIRS,
-            intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap(),
+            intramolecular_pairs(&frame, ff.special_bonds().unwrap(), None).unwrap(),
         );
         let err = PotentialCompiler::new(&ff).compile(&frame).err().unwrap();
         assert!(err.to_string().contains("materialize_one_four"), "{err}");
@@ -480,7 +449,7 @@ mod tests {
         let mut plain = chain();
         plain.insert(
             PAIRS,
-            intramolecular_pairs(&plain, ff.special_bonds(), None).unwrap(),
+            intramolecular_pairs(&plain, ff.special_bonds().unwrap(), None).unwrap(),
         );
         let without = PotentialCompiler::new(&regular)
             .compile(&plain)

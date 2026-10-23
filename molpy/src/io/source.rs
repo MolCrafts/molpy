@@ -141,6 +141,25 @@ impl<'a, 'py> FromPyObject<'a, 'py> for PySource<'py> {
     }
 }
 
+/// A filesystem path argument: an ``os.PathLike``, never a ``str`` (a
+/// string is text or a path only by the caller's say, so a path is spelled
+/// ``pathlib.Path(s)``).
+pub(crate) struct PyPath(pub(crate) PathBuf);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for PyPath {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if obj.hasattr("__fspath__")? && !obj.is_instance_of::<PyString>() {
+            return Ok(PyPath(obj.extract::<PathBuf>()?));
+        }
+        Err(PyTypeError::new_err(format!(
+            "a path is an os.PathLike, not {}: pass pathlib.Path(s)",
+            type_name(&obj)
+        )))
+    }
+}
+
 /// Where a writer writes: a file (created or truncated), or a ``bytearray``
 /// (cleared, then holding exactly the file's bytes) — `molrs::io::Sink`.
 pub(crate) enum PySink<'py> {

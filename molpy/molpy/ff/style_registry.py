@@ -51,23 +51,23 @@ compile or a registration surfaces as
 ``__cause__``.
 """
 
-from molpy._core import style_registry as _style_registry
+from molpy import _core
 
 from molpy.ff.style_declaration import StyleDeclaration
 
-register_category = _style_registry.register_category
+register_category = _core.style_registry.register_category
 
-register_style = _style_registry.register_style
+register_style = _core.style_registry.register_style
 
-register_engine_form = _style_registry.register_engine_form
+register_engine_form = _core.style_registry.register_engine_form
 
-unregister_style = _style_registry.unregister_style
+unregister_style = _core.style_registry.unregister_style
 
-styles = _style_registry.styles
+styles = _core.style_registry.styles
 
-categories = _style_registry.categories
+categories = _core.style_registry.categories
 
-evaluate = _style_registry.evaluate
+evaluate = _core.style_registry.evaluate
 
 StyleDeclaration.__module__ = __name__
 

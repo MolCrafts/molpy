@@ -23,7 +23,7 @@ OPLS-AA is not a bundled file: it ships with molrs and comes from
 ```python
 import molpy as mp
 
-ff = mp.io.read_openmm_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
+ff = mp.io.openmm_xml.OpenmmXmlReader().read(mp.resources.get_path("forcefield/tip3p.xml"))
 
 opls = mp.ff.typifier.OplsAaTypifier().source_forcefield() # all OPLS-AA types, from molrs
 ```

@@ -62,7 +62,7 @@ def _atom(ff: mp.ff.forcefield.ForceField) -> mp.ff.forcefield.AtomType:
 
 
 def _fene() -> mp.ff.forcefield.ForceField:
-    ff = mp.ff.forcefield.ForceField("fene")
+    ff = mp.ff.forcefield.ForceField("fene", units="real")
     a = _atom(ff)
     ff.def_style("bond", "fene", {"expression": FENE}).def_type(
         "t", a, a, k=30.0, r0=2.25, epsilon=1.1, sigma=1.4
@@ -71,7 +71,7 @@ def _fene() -> mp.ff.forcefield.ForceField:
 
 
 def _fene_registered() -> mp.ff.forcefield.ForceField:
-    ff = mp.ff.forcefield.ForceField("fene")
+    ff = mp.ff.forcefield.ForceField("fene", units="real")
     a = _atom(ff)
     ff.def_style("bond", "fene/registered").def_type(
         "t", a, a, k=30.0, r0=2.25, epsilon=1.1, sigma=1.4
@@ -80,7 +80,7 @@ def _fene_registered() -> mp.ff.forcefield.ForceField:
 
 
 def _ub(style: str, expression: str | None) -> mp.ff.forcefield.ForceField:
-    ff = mp.ff.forcefield.ForceField("ub")
+    ff = mp.ff.forcefield.ForceField("ub", units="real")
     a = _atom(ff)
     params = {} if expression is None else {"expression": expression}
     s = ff.def_style("urey_bradley", style, params)
@@ -90,7 +90,7 @@ def _ub(style: str, expression: str | None) -> mp.ff.forcefield.ForceField:
 
 
 def _table() -> mp.ff.forcefield.ForceField:
-    ff = mp.ff.forcefield.ForceField("table")
+    ff = mp.ff.forcefield.ForceField("table", units="real")
     a = _atom(ff)
     style = ff.def_style("dihedral", "table/linear")
     style.def_type("t", a, a, a, a, table=TABLE)
@@ -156,7 +156,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict]:
         }
         cases[name] = [str(path), block, rows, types]
     done = subprocess.run(
-        [sys.executable, str(CHILD), json.dumps(cases)],
+        [sys.executable, "-I", str(CHILD), json.dumps(cases)],
         capture_output=True,
         text=True,
         check=False,
@@ -170,6 +170,7 @@ def test_the_fresh_process_registered_nothing() -> None:
     done = subprocess.run(
         [
             sys.executable,
+            "-I",
             "-c",
             (
                 "import molpy as mp\n"

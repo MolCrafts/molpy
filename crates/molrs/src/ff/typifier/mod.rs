@@ -21,21 +21,16 @@ pub(crate) mod estimate;
 mod gaff;
 pub mod mmff;
 mod opls;
-pub(crate) mod topology;
 pub(crate) mod uff;
 
 pub use atd::{AtdParameterSet, AtdTypifier};
 pub use element::ElementTypifier;
-pub use estimate::{
-    BondedTerm, EmpiricalSet, Estimate, EstimateMethod, EstimationInputs, ParameterInterpolator,
-    Parmchk2Estimator, PenaltyTier, Provenance,
-};
+pub use estimate::{BondedTerm, EmpiricalSet, Estimate, EstimateMethod, PenaltyTier, Provenance};
 pub use gaff::{GaffParameterSet, GaffTypifier};
 pub use opls::{OplsAaTypifier, OplsTypeRow, OplsTypingMetadata};
 pub use uff::UffTypifier;
 
-use crate::ff::forcefield::Category;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
@@ -45,7 +40,22 @@ use molrs::core::{MolRsError, NodeId, PropValue, Relation, RelationId};
 use crate::ff::forcefield::{ForceField, Style};
 use crate::ff::ir::Params;
 use crate::ff::ir::{Arity, EndpointOrder};
-use estimate::candidate::is_wildcard;
+
+/// Name the atoms `ids` of `mol` as the ATD typifier names an atom it cannot
+/// type — `atom {i} ({element})`, `i` the 0-based position in `mol.atoms()`
+/// order and the element spelled from the atom's atomic number (`*` for a
+/// wildcard) — comma-separated, in that order.
+pub(crate) fn name_atoms(mol: &Atomistic, ids: &[NodeId]) -> String {
+    mol.atoms()
+        .enumerate()
+        .filter(|(_, (id, _))| ids.contains(id))
+        .map(|(i, (_, atom))| match atom.atomic_number() {
+            Some(z) => format!("atom {i} ({})", species_label(z)),
+            None => format!("atom {i} (no valid '{}')", molrs::core::keys::ATOMIC_NUMBER),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// The symbol an error message spells for atomic number `z`: the element's
 /// symbol, or the wildcard `"*"` for `z = 0` (the spelling
@@ -54,6 +64,76 @@ use estimate::candidate::is_wildcard;
 pub(crate) fn species_label(z: u8) -> &'static str {
     molrs::core::Element::by_number(z).map_or("*", molrs::core::Element::symbol)
 }
+
+/// Why a molecule could not be typed.
+///
+/// One error for every typifier, so a caller can tell "no rule covers this
+/// atom" (a permanent property of the table) from "the library lacks terms
+/// for this molecule" and from "this graph is malformed".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypingError {
+    /// No rule of `table` covers one or more atoms; `detail` names every one.
+    MissingAtomType {
+        /// The rule table or force field that was walked.
+        table: String,
+        /// The untyped atoms (index in graph atom order, element).
+        detail: String,
+    },
+    /// The library has no parameters for terms of the molecule; `detail`
+    /// names them all.
+    MissingTerms {
+        /// Every missing term.
+        detail: String,
+    },
+    /// The molecule cannot be typed as given: a malformed graph, an element
+    /// the typifier does not know, an input it cannot read.
+    Malformed {
+        /// What is wrong.
+        detail: String,
+    },
+    /// The assignment contradicts what the output force field already holds.
+    Conflict {
+        /// The contradiction.
+        detail: String,
+    },
+    /// A typifier outside molrs (a Python subclass) refused, in its own terms.
+    Implementor {
+        /// Its message.
+        detail: String,
+    },
+}
+
+impl TypingError {
+    /// A [`TypingError::MissingAtomType`] for the single atom `atom` (graph
+    /// atom order) of atomic number `atomic_number`.
+    pub fn missing_atom(table: &str, atom: usize, atomic_number: u8) -> Self {
+        Self::MissingAtomType {
+            table: table.to_owned(),
+            detail: format!("atom {atom} (atomic number {atomic_number})"),
+        }
+    }
+
+    /// A [`TypingError::Malformed`] carrying `detail`.
+    pub fn malformed(detail: impl std::fmt::Display) -> Self {
+        Self::Malformed {
+            detail: detail.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for TypingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingAtomType { table, detail } => write!(f, "{table}: no type for {detail}"),
+            Self::MissingTerms { detail }
+            | Self::Malformed { detail }
+            | Self::Conflict { detail }
+            | Self::Implementor { detail } => f.write_str(detail),
+        }
+    }
+}
+
+impl std::error::Error for TypingError {}
 
 /// A graph typifier: what matching a molecule against a force field produces.
 ///
@@ -70,7 +150,7 @@ pub trait Typifier {
     /// topology, perceived bond types), and those stay on the graph
     /// [`Typing::typify`] returns. Types and parameters are not stamped here;
     /// they travel in the [`TypeAssignment`], positional against this same graph.
-    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String>;
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError>;
 
     /// The force field this typifier matches against. [`Typing::new`] seeds
     /// its output from it with [`ForceField::empty_like`].
@@ -78,7 +158,7 @@ pub trait Typifier {
 }
 
 impl Typifier for Box<dyn Typifier + Send + Sync> {
-    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
         (**self).assign(graph)
     }
 
@@ -162,48 +242,6 @@ pub fn link_category(kind: &str) -> Option<(String, EndpointOrder)> {
             .strip_suffix('s')
             .filter(|c| !c.is_empty())
             .map(|c| (c.to_owned(), EndpointOrder::Reversible)),
-    }
-}
-
-/// Whether the type-row endpoints `pattern` name a term over atoms of the
-/// types `atoms` under `order`: slot by slot, a wildcard
-/// ([`is_wildcard`]) matching any type. [`EndpointOrder::Reversible`] also
-/// tries `pattern` reversed; [`EndpointOrder::Unordered`] any permutation.
-fn endpoints_match(pattern: &[&str], atoms: &[&str], order: EndpointOrder) -> bool {
-    fn slot(pattern: &str, atom: &str) -> bool {
-        is_wildcard(pattern) || pattern == atom
-    }
-    /// Whether `pattern[i..]` can be assigned to the atoms `used` leaves.
-    fn permuted(pattern: &[&str], atoms: &[&str], used: &mut [bool]) -> bool {
-        let Some((first, rest)) = pattern.split_first() else {
-            return true;
-        };
-        for j in 0..atoms.len() {
-            if !used[j] && slot(first, atoms[j]) {
-                used[j] = true;
-                let found = permuted(rest, atoms, used);
-                used[j] = false;
-                if found {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-    if pattern.len() != atoms.len() {
-        return false;
-    }
-    let forward = || pattern.iter().zip(atoms).all(|(p, a)| slot(p, a));
-    match order {
-        EndpointOrder::Ordered => forward(),
-        EndpointOrder::Reversible => {
-            forward()
-                || pattern
-                    .iter()
-                    .zip(atoms.iter().rev())
-                    .all(|(p, a)| slot(p, a))
-        }
-        EndpointOrder::Unordered => permuted(pattern, atoms, &mut vec![false; atoms.len()]),
     }
 }
 
@@ -558,8 +596,9 @@ impl TypeAssignment {
         // `forcefield`, so `def_style` returns it in place.
         for style in batch.styles() {
             let target = forcefield
-                .def_style(
-                    Category::new(style.category()).arity(style.arity()),
+                .def_style_with_arity(
+                    style.category(),
+                    style.arity(),
                     style.name(),
                     style.params().clone(),
                 )
@@ -597,7 +636,7 @@ impl TypeAssignment {
             }
         };
         batch
-            .def_style(Category::new(category).arity(arity), style, params)
+            .def_style_with_arity(category, arity, style, params)
             .map_err(|e| format!("match: {e}"))
     }
 
@@ -636,156 +675,6 @@ impl TypeAssignment {
     pub fn link_mut(&mut self, kind: &str) -> &mut Vec<Annotations> {
         self.links.entry(kind.to_owned()).or_default()
     }
-
-    /// Type every row of relation kind `kind` of `graph` by its atoms' types
-    /// against the type rows `library` holds in the kind's category
-    /// ([`link_category`]): the one generic endpoint matcher, for a built-in
-    /// kind and a registered one alike.
-    ///
-    /// An atom's type is its `key` annotation in [`TypeAssignment::nodes`] (a
-    /// [`Annotation::Type`]'s name or a string [`Annotation::Value`]), else
-    /// its string `key` property on `graph`. A type row matches a term when
-    /// its endpoints equal the atoms' types slot by slot, a wildcard (`""`,
-    /// `*`, `X`) matching any type, in the orders the category's
-    /// [`EndpointOrder`] allows: as listed or reversed
-    /// ([`Reversible`](EndpointOrder::Reversible): bonds, angles, proper
-    /// dihedrals, a custom category by default), as listed only
-    /// ([`Ordered`](EndpointOrder::Ordered): impropers), or in any order
-    /// ([`Unordered`](EndpointOrder::Unordered)). Among the rows that match,
-    /// the one with the fewest wildcards wins, and among those the first in
-    /// table order (the library's styles in order, each style's rows in
-    /// definition order) — molrec's rule.
-    ///
-    /// The winner is added to the term's annotations as
-    /// `key = (style, name, endpoints, params)` exactly as the library holds
-    /// it, and its style, with the library's style params, is added to
-    /// [`TypeAssignment::styles`] unless already there.
-    ///
-    /// Returns the positions (in the kind's own row order) no row matched;
-    /// they gain nothing. A graph without the kind assigns nothing.
-    ///
-    /// # Errors
-    ///
-    /// A `kind` no category names, an atom of a term without a type, and an
-    /// existing non-empty vector for `kind` of another length than the
-    /// graph's count of it.
-    pub fn assign_terms(
-        &mut self,
-        graph: &Atomistic,
-        kind: &str,
-        library: &ForceField,
-        key: &str,
-    ) -> Result<Vec<usize>, String> {
-        let Some(terms) = link_rows(graph, kind)? else {
-            return Ok(Vec::new());
-        };
-        let (category, order) = link_category(kind)
-            .ok_or_else(|| format!("relation kind '{kind}' is the block of no category"))?;
-
-        let candidates: Vec<(&Style, &str, Vec<&str>, &Params)> = library
-            .get_styles(&category)
-            .into_iter()
-            .flat_map(|style| {
-                style
-                    .type_rows()
-                    .into_iter()
-                    .map(move |(name, endpoints, params)| (style, name, endpoints, params))
-            })
-            .collect();
-
-        let row_of: HashMap<NodeId, usize> = graph
-            .atom_ids()
-            .enumerate()
-            .map(|(row, id)| (id, row))
-            .collect();
-        let atom_type = |node: NodeId| -> Option<String> {
-            let row = *row_of.get(&node)?;
-            let annotated = self.nodes.get(row).and_then(|annotations| {
-                annotations
-                    .iter()
-                    .find(|(k, _)| k == key)
-                    .and_then(|(_, a)| match a {
-                        Annotation::Type { name, .. } => Some(name.clone()),
-                        Annotation::Value(PropValue::Str(s)) => Some(s.clone()),
-                        Annotation::Value(_) => None,
-                    })
-            });
-            annotated.or_else(|| {
-                graph
-                    .atom_table()
-                    .get::<String>(node, key)
-                    .ok()
-                    .map(str::to_owned)
-            })
-        };
-
-        let mut assigned: Vec<Option<usize>> = Vec::new();
-        let mut cache: HashMap<Vec<String>, Option<usize>> = HashMap::new();
-        for (position, (_, term)) in terms.iter().enumerate() {
-            let types: Vec<String> = term
-                .nodes
-                .iter()
-                .map(|&n| {
-                    atom_type(n).ok_or_else(|| {
-                        format!("{category} {position}: atom {n:?} has no '{key}' type")
-                    })
-                })
-                .collect::<Result<_, _>>()?;
-            let best = *cache.entry(types).or_insert_with_key(|types| {
-                let atoms: Vec<&str> = types.iter().map(String::as_str).collect();
-                candidates
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, (_, _, pattern, _))| endpoints_match(pattern, &atoms, order))
-                    .min_by_key(|(i, (_, _, pattern, _))| {
-                        (pattern.iter().filter(|p| is_wildcard(p)).count(), *i)
-                    })
-                    .map(|(i, _)| i)
-            });
-            assigned.push(best);
-        }
-
-        let rows = self.links.entry(kind.to_owned()).or_default();
-        if rows.is_empty() {
-            rows.resize(assigned.len(), Vec::new());
-        } else if rows.len() != assigned.len() {
-            return Err(format!(
-                "match has {} {category} annotation rows, the graph has {} {category} rows",
-                rows.len(),
-                assigned.len()
-            ));
-        }
-        let mut unmatched = Vec::new();
-        for (position, (best, annotations)) in assigned.iter().zip(rows.iter_mut()).enumerate() {
-            let Some(&(style, name, ref endpoints, params)) = best.map(|i| &candidates[i]) else {
-                unmatched.push(position);
-                continue;
-            };
-            annotations.push((
-                key.to_owned(),
-                Annotation::Type {
-                    style: style.name().to_owned(),
-                    name: name.to_owned(),
-                    endpoints: endpoints.iter().map(|e| (*e).to_owned()).collect(),
-                    params: params.clone(),
-                },
-            ));
-        }
-        for &(style, ..) in assigned.iter().flatten().map(|&i| &candidates[i]) {
-            let declared = self
-                .styles
-                .iter()
-                .any(|(c, s, _)| *c == category && s == style.name());
-            if !declared {
-                self.styles.push((
-                    category.clone(),
-                    style.name().to_owned(),
-                    style.params().clone(),
-                ));
-            }
-        }
-        Ok(unmatched)
-    }
 }
 
 /// The base of every typifier: one [`Typifier`] plus the output force field
@@ -813,10 +702,16 @@ impl<T: Typifier> Typing<T> {
     /// and the output ([`TypeAssignment::apply_to`]). Returns the typed copy.
     ///
     /// `mol` is never touched. On `Err` the output is unchanged.
-    pub fn typify(&mut self, mol: &Atomistic) -> Result<Atomistic, String> {
+    ///
+    /// # Errors
+    ///
+    /// The typifier's [`TypingError`]; [`TypingError::Conflict`] when the
+    /// assignment contradicts the output.
+    pub fn typify(&mut self, mol: &Atomistic) -> Result<Atomistic, TypingError> {
         let mut graph = mol.clone();
         let m = self.typifier.assign(&mut graph)?;
-        m.apply_to(&mut graph, &mut self.output)?;
+        m.apply_to(&mut graph, &mut self.output)
+            .map_err(|detail| TypingError::Conflict { detail })?;
         Ok(graph)
     }
 
@@ -871,12 +766,12 @@ mod tests {
     }
 
     impl Typifier for ScriptedTypifier {
-        fn assign(&self, _graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+        fn assign(&self, _graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
             self.script
                 .lock()
                 .expect("script lock")
                 .pop_front()
-                .ok_or_else(|| "script exhausted".to_owned())
+                .ok_or_else(|| TypingError::malformed("script exhausted"))
         }
 
         fn source_forcefield(&self) -> &ForceField {
@@ -891,12 +786,12 @@ mod tests {
     }
 
     impl Typifier for PerceivingTypifier {
-        fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+        fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
             let ids: Vec<_> = graph.atoms().map(|(id, _)| id).collect();
             for id in ids {
                 graph
                     .set_atom(id, "perceived", true)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(TypingError::malformed)?;
             }
             Ok(TypeAssignment::default())
         }
@@ -1167,7 +1062,11 @@ mod tests {
                 "k = {k}"
             );
         }
-        let names: Vec<_> = ff.get_bondtypes().iter().map(|t| t.name.clone()).collect();
+        let names: Vec<_> = ff
+            .get_types("bond")
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
         assert_eq!(names, ["C-O", "C-O@2", "C-O@3"]);
 
         let matched = bond(Params::from_iter(
@@ -1684,8 +1583,8 @@ mod tests {
         let out = typing.forcefield();
 
         assert_eq!(out.name, "lib");
-        assert_eq!(out.declared_units(), Some("metal"));
-        assert_eq!(out.declared_special_bonds(), Some(&SB));
+        assert_eq!(out.units(), Some("metal"));
+        assert_eq!(out.special_bonds(), Some(&SB));
         assert!(out.styles().is_empty(), "{:?}", out.styles());
     }
 
@@ -1801,7 +1700,10 @@ mod tests {
 
         let result = typing.typify(&pair2());
 
-        assert_eq!(result.err().as_deref(), Some("script exhausted"));
+        assert_eq!(
+            result.err().map(|e| e.to_string()).as_deref(),
+            Some("script exhausted")
+        );
         assert_same_definitions(typing.forcefield(), &before);
     }
 
@@ -1911,14 +1813,15 @@ mod tests {
         lib
     }
 
-    /// Types atoms `A`..`D` in row order and assigns `kind` from its library.
+    /// Types atoms `A`..`D` in row order and gives the chain's two `kind`
+    /// terms (`A-B-C`, `B-C-D`) the library's rows `t` and `u`.
     struct ChainTypifier {
         library: ForceField,
         kind: &'static str,
     }
 
     impl Typifier for ChainTypifier {
-        fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+        fn assign(&self, _graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
             let mut m = TypeAssignment {
                 nodes: ["A", "B", "C", "D"]
                     .iter()
@@ -1935,8 +1838,32 @@ mod tests {
                 styles: vec![atom_full_style()],
                 ..TypeAssignment::default()
             };
-            let missing = m.assign_terms(graph, self.kind, &self.library, "type")?;
-            assert!(missing.is_empty(), "{missing:?}");
+            let style = self
+                .library
+                .styles()
+                .iter()
+                .find(|s| s.category() != "atom")
+                .expect("one term style");
+            *m.link_mut(self.kind) = ["t", "u"]
+                .iter()
+                .map(|&name| {
+                    let (_, ends, params) = style
+                        .type_rows()
+                        .into_iter()
+                        .find(|(n, ..)| *n == name)
+                        .expect("the library row");
+                    vec![(
+                        "type".to_owned(),
+                        Annotation::Type {
+                            style: style.name().to_owned(),
+                            name: name.to_owned(),
+                            endpoints: ends.iter().map(|e| (*e).to_owned()).collect(),
+                            params: params.clone(),
+                        },
+                    )]
+                })
+                .collect();
+            m.declare_styles_of(&self.library);
             Ok(m)
         }
 
@@ -1954,8 +1881,8 @@ mod tests {
             .energy_forces_at(&coords)
     }
 
-    /// A registered custom category is typified exactly like `angles`: the
-    /// same matcher assigns its terms, they land in the block `urey_bradleys`
+    /// A registered custom category is typified exactly like `angles`: its
+    /// terms' types land in the block `urey_bradleys`
     /// (`atomi`, `atomj`, `atomk`, `type`), and the typed output prices them
     /// as LAMMPS `angle charmm` with K = 0 prices the same two terms.
     #[test]
@@ -2075,166 +2002,6 @@ mod tests {
             "{err}"
         );
         assert!(ff.styles().is_empty());
-    }
-
-    /// Fewest wildcards wins, then table order; `Reversible` matches a row
-    /// written end-for-end, `Ordered` (impropers) only as written.
-    #[test]
-    fn assign_terms_prefers_fewest_wildcards_then_table_order_by_endpoint_order() {
-        let mut lib = ForceField::new("lib");
-        let bond = lib.def_style("bond", "harmonic", Params::new()).unwrap();
-        for (name, ends) in [
-            ("any", ["", ""]),
-            ("x-b", ["X", "B"]),
-            ("b-a", ["B", "A"]),
-            ("a-b", ["A", "B"]),
-        ] {
-            bond.def_type(name, &ends, Params::from_iter([("k", 1.0), ("r0", 1.0)]))
-                .unwrap();
-        }
-        let dihedral = lib.def_style("dihedral", "charmm", Params::new()).unwrap();
-        dihedral
-            .def_type(
-                "dcba",
-                &["D", "C", "B", "A"],
-                Params::from_iter([("k", 1.0)]),
-            )
-            .unwrap();
-        let improper = lib.def_style("improper", "cvff", Params::new()).unwrap();
-        improper
-            .def_type(
-                "dcba",
-                &["D", "C", "B", "A"],
-                Params::from_iter([("k", 1.0)]),
-            )
-            .unwrap();
-        improper
-            .def_type(
-                "b-wild",
-                &["B", "*", "*", "*"],
-                Params::from_iter([("k", 2.0)]),
-            )
-            .unwrap();
-
-        let mut g = Atomistic::new();
-        let ids: Vec<_> = ["A", "B", "C", "D"]
-            .iter()
-            .map(|t| {
-                let id = g
-                    .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
-                    .unwrap();
-                g.set_atom(id, "type", *t).unwrap();
-                id
-            })
-            .collect();
-        g.add_bond(ids[0], ids[1], props! {}).unwrap(); // A-B: `b-a` and `a-b` tie, `b-a` first
-        g.add_bond(ids[1], ids[2], props! {}).unwrap(); // B-C: only wildcards; `x-b` reversed
-        g.add_bond(ids[2], ids[3], props! {}).unwrap(); // C-D: only `any`
-        g.add_dihedral(ids[0], ids[1], ids[2], ids[3], props! {})
-            .unwrap();
-        g.add_improper(ids[0], ids[1], ids[2], ids[3], props! {})
-            .unwrap();
-        g.add_improper(ids[1], ids[0], ids[2], ids[3], props! {})
-            .unwrap();
-
-        let mut m = TypeAssignment::default();
-        let graph = &g;
-        assert_eq!(m.assign_terms(graph, "bonds", &lib, "type"), Ok(vec![]));
-        assert_eq!(m.assign_terms(graph, "dihedrals", &lib, "type"), Ok(vec![]));
-        // The first improper is A-B-C-D: `dcba` only reversed, refused.
-        assert_eq!(
-            m.assign_terms(graph, "impropers", &lib, "type"),
-            Ok(vec![0])
-        );
-        // No graph kind, nothing to assign.
-        assert_eq!(m.assign_terms(graph, "cmaps", &lib, "type"), Ok(vec![]));
-
-        let names = |kind: &str| -> Vec<Option<String>> {
-            m.links[kind]
-                .iter()
-                .map(|a| match a.first() {
-                    Some((_, Annotation::Type { name, .. })) => Some(name.clone()),
-                    _ => None,
-                })
-                .collect()
-        };
-        assert_eq!(
-            names("bonds"),
-            [Some("b-a"), Some("x-b"), Some("any")].map(|n| n.map(str::to_owned))
-        );
-        assert_eq!(names("dihedrals"), vec![Some("dcba".to_owned())]);
-        assert_eq!(names("impropers"), vec![None, Some("b-wild".to_owned())]);
-        // The styles used, once each, with the library's style params.
-        assert_eq!(
-            m.styles
-                .iter()
-                .map(|(c, s, _)| (c.as_str(), s.as_str()))
-                .collect::<Vec<_>>(),
-            vec![
-                ("bond", "harmonic"),
-                ("dihedral", "charmm"),
-                ("improper", "cvff")
-            ]
-        );
-
-        let mut ff = ForceField::new("out");
-        m.apply_to(&mut g, &mut ff).unwrap();
-        assert_eq!(
-            type_names(&ff, "bond", "harmonic"),
-            vec!["b-a", "x-b", "any"]
-        );
-        assert_eq!(
-            ff.get_style("bond", "harmonic")
-                .unwrap()
-                .type_endpoints("x-b"),
-            Some(vec!["X".to_owned(), "B".to_owned()])
-        );
-    }
-
-    /// CMAP is directional — φ is the dihedral of its first four atoms and ψ
-    /// of its last four, the grid's two axes in that order — so its category
-    /// is `Ordered`: a row written end-for-end names another term, and a
-    /// reversed five-atom match would read φ and ψ off the wrong axes.
-    #[test]
-    fn a_cmap_row_is_not_matched_reversed() {
-        assert_eq!(
-            link_category("cmaps"),
-            Some(("cmap".to_owned(), EndpointOrder::Ordered))
-        );
-        let mut lib = ForceField::new("lib");
-        lib.def_style("cmap", "charmm", Params::new())
-            .unwrap()
-            .def_type("edcba", &["E", "D", "C", "B", "A"], Params::new())
-            .unwrap();
-        let mut g = Atomistic::new();
-        let ids: Vec<_> = ["A", "B", "C", "D", "E"]
-            .iter()
-            .map(|t| {
-                let id = g
-                    .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
-                    .unwrap();
-                g.set_atom(id, "type", *t).unwrap();
-                id
-            })
-            .collect();
-        g.add_term("cmaps", &ids, props! {}).unwrap();
-        let mut m = TypeAssignment::default();
-        // The only row reads E-D-C-B-A; the term is A-B-C-D-E.
-        assert_eq!(m.assign_terms(&g, "cmaps", &lib, "type"), Ok(vec![0]));
-    }
-
-    /// `Unordered` matches any permutation, wildcards included.
-    #[test]
-    fn unordered_endpoints_match_any_permutation() {
-        use EndpointOrder::{Ordered, Reversible, Unordered};
-        let atoms = ["A", "B", "C"];
-        assert!(endpoints_match(&["B", "C", "A"], &atoms, Unordered));
-        assert!(!endpoints_match(&["B", "C", "A"], &atoms, Reversible));
-        assert!(endpoints_match(&["C", "B", "A"], &atoms, Reversible));
-        assert!(!endpoints_match(&["C", "B", "A"], &atoms, Ordered));
-        assert!(endpoints_match(&["C", "", "B"], &atoms, Unordered));
-        assert!(!endpoints_match(&["C", "C", ""], &atoms, Unordered));
-        assert!(!endpoints_match(&["A", "B"], &atoms, Unordered));
     }
 
     /// The category of a relation kind is the registered one whose block it

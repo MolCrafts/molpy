@@ -2,14 +2,14 @@
 //! every other format's writer ([`register_doors`]), and the `_core.mrec`
 //! submodule, `molpy.io.mrec` ([`register`]): [`PyMrecFile`] (a record's
 //! per-section reads), the store reader and writer ([`PyMrecReader`],
-//! [`PySequenceSchema`], [`PyMrecWriter`]), [`pack_mrec_zip`], the
-//! `ForceFieldSection` and the `validation` submodule
-//! (`molpy.io.mrec.validation`) — each named as `molrs::io::mrec`'s.
+//! [`PySequenceSchema`], [`PyMrecWriter`]), [`pack_mrec_zip`] and the
+//! `ForceFieldSection` — each named as `molrs::io::mrec`'s.
 
 pub mod section;
 
-use std::path::PathBuf;
+use crate::error::io_error_to_pyerr;
 
+use crate::core::block::{column_from_py, column_to_numpy};
 use crate::core::frame::{
     PyFrame, PyMetaValue, infer_meta_value, json_map_to_plain_dict, meta_document_arg,
     meta_value_from_dtype,
@@ -17,13 +17,13 @@ use crate::core::frame::{
 use crate::core::simbox::PyBox;
 use crate::core::trajectory::PyTrajectory;
 use crate::error::molrs_error_to_pyerr;
-use crate::io::{PySink, PySource, data_error};
-use molrs::io::mrec::{
-    Compression, MolRec, MrecFile, MrecReader, MrecWriter, SequenceSchema, dtype_from_schema_tag,
-};
-use pyo3::exceptions::{PyIndexError, PyValueError};
+use crate::io::source::PyPath;
+use crate::io::{PySink, PySource};
+use molrs::core::{DType, ObservableKind, ObservableRecord};
+use molrs::io::mrec::{Compression, MolRec, MrecFile, MrecReader, MrecWriter, SequenceSchema};
+use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict};
+use pyo3::types::{PyAny, PyDict, PyList};
 use section::PyForceFieldSection;
 
 /// Write a record — its ``meta`` document and whichever state sections are
@@ -53,20 +53,49 @@ use section::PyForceFieldSection;
 ///     :class:`~molpy.io.mrec.ForceFieldSection` as given, or a
 ///     :class:`~molpy.ff.forcefield.ForceField` through
 ///     :meth:`~molpy.io.mrec.ForceFieldSection.from_forcefield`.
+/// status : Mapping, optional
+///     The lifecycle document (``status/``), written as given.
+/// method : Mapping, optional
+///     The method document (``method/``), written as given.
+/// metrics : Mapping, optional
+///     The metrics section. ``catalog`` is the group document; ``series``,
+///     ``steps`` and ``wall_time`` map a logical series name (``train/loss``)
+///     to a 1-d array (``f64``, ``i64``, string); ``wal`` is the
+///     ``metrics.jsonl`` text. A name is stored under its safe name.
+/// observables : Mapping, optional
+///     ``name → {"meta": document, "data": array}``. ``meta`` is the
+///     observable's document (``kind``, ``description``, ``time_dependent``,
+///     and whatever else the producer set). ``data`` is the array at its
+///     own dtype and shape, a 0-d array included.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If the record has no state section, a section fails to encode, or
-///     the force field is invalid or has no section form.
+///     If the record has no state section, a section fails to encode, a
+///     metrics axis disagrees with its series, an observable name is
+///     reserved or its array has no axis while ``time_dependent``, or the
+///     force field is invalid or has no section form.
 /// TypeError
-///     If ``meta`` is not a mapping or holds a value JSON cannot, or
+///     If a document is not a mapping or holds a value JSON cannot, or
 ///     ``forcefield`` is neither a ``ForceField`` nor a
 ///     ``ForceFieldSection``.
 /// OSError
 ///     If the store cannot be written.
 #[pyfunction]
-#[pyo3(signature = (sink, *, meta=None, frame=None, system=None, trajectory=None, forcefield=None))]
+#[pyo3(signature = (
+    sink,
+    *,
+    meta=None,
+    frame=None,
+    system=None,
+    trajectory=None,
+    forcefield=None,
+    status=None,
+    method=None,
+    metrics=None,
+    observables=None,
+))]
+#[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
 pub fn write_mrec(
     sink: PySink<'_>,
     meta: Option<&Bound<'_, PyAny>>,
@@ -74,6 +103,10 @@ pub fn write_mrec(
     system: Option<&Bound<'_, PyFrame>>,
     trajectory: Option<PyRef<'_, PyTrajectory>>,
     forcefield: Option<&Bound<'_, PyAny>>,
+    status: Option<&Bound<'_, PyAny>>,
+    method: Option<&Bound<'_, PyAny>>,
+    metrics: Option<&Bound<'_, PyAny>>,
+    observables: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
     let mut record = MolRec::new();
     if let Some(meta) = meta {
@@ -81,9 +114,21 @@ pub fn write_mrec(
     }
     record.frame = frame.map(|f| f.borrow().clone_core_frame()).transpose()?;
     record.system = system.map(|s| s.borrow().clone_core_frame()).transpose()?;
-    record.trajectory = trajectory.map(|t| t.inner.clone());
+    record.trajectory = trajectory.map(|t| t.to_core(t.py())).transpose()?;
     record.forcefield = forcefield.map(PyForceFieldSection::from_arg).transpose()?;
-    sink.put(|s| molrs::io::write_mrec(s, &record), data_error)
+    if let Some(status) = status {
+        record.status = meta_document_arg(status)?;
+    }
+    if let Some(method) = method {
+        record.method = meta_document_arg(method)?;
+    }
+    if let Some(metrics) = metrics {
+        apply_metrics(&mut record, metrics)?;
+    }
+    if let Some(observables) = observables {
+        record.observables = observables_from_py(observables)?;
+    }
+    sink.put(|s| molrs::io::write_mrec(s, &record), io_error_to_pyerr)
 }
 
 /// A ``*.mrec`` record opened for its sections (``molrs::io::mrec::MrecFile``):
@@ -115,7 +160,7 @@ pub struct PyMrecFile {
 impl PyMrecFile {
     #[new]
     fn new(source: PySource<'_>) -> PyResult<Self> {
-        let inner = source.read(MrecFile::open).map_err(data_error)?;
+        let inner = source.read(MrecFile::open).map_err(io_error_to_pyerr)?;
         Ok(Self { inner })
     }
 
@@ -126,7 +171,7 @@ impl PyMrecFile {
     /// -------
     /// list[str]
     fn sections(&self) -> PyResult<Vec<String>> {
-        self.inner.sections().map_err(data_error)
+        self.inner.sections().map_err(io_error_to_pyerr)
     }
 
     /// The record's ``meta`` document, as the producer wrote it; empty when
@@ -136,7 +181,7 @@ impl PyMrecFile {
     /// -------
     /// dict
     fn meta<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let map = self.inner.meta().map_err(data_error)?;
+        let map = self.inner.meta().map_err(io_error_to_pyerr)?;
         json_map_to_plain_dict(py, &map)
     }
 
@@ -154,7 +199,7 @@ impl PyMrecFile {
     fn frame(&self) -> PyResult<Option<PyFrame>> {
         self.inner
             .frame()
-            .map_err(data_error)?
+            .map_err(io_error_to_pyerr)?
             .map(PyFrame::from_core_frame)
             .transpose()
     }
@@ -173,7 +218,7 @@ impl PyMrecFile {
     fn system(&self) -> PyResult<Option<PyFrame>> {
         self.inner
             .system()
-            .map_err(data_error)?
+            .map_err(io_error_to_pyerr)?
             .map(PyFrame::from_core_frame)
             .transpose()
     }
@@ -195,8 +240,70 @@ impl PyMrecFile {
         Ok(self
             .inner
             .forcefield()
-            .map_err(data_error)?
+            .map_err(io_error_to_pyerr)?
             .map(|inner| PyForceFieldSection { inner }))
+    }
+
+    /// The ``status`` document, or ``None`` when the record has none.
+    fn status<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        optional_document(py, self.inner.status().map_err(io_error_to_pyerr)?)
+    }
+
+    /// The ``method`` document, or ``None`` when the record has none.
+    fn method<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        optional_document(py, self.inner.method().map_err(io_error_to_pyerr)?)
+    }
+
+    /// The ``metrics`` section, or ``None`` when the record has none.
+    ///
+    /// Returns
+    /// -------
+    /// dict | None
+    ///     ``catalog``, ``series``, ``steps`` and ``wall_time`` (logical
+    ///     series name → 1-d array), and ``wal`` when the JSONL file is there.
+    fn metrics<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(metrics) = self.inner.metrics().map_err(io_error_to_pyerr)? else {
+            return Ok(None);
+        };
+        let out = PyDict::new(py);
+        out.set_item("catalog", json_map_to_plain_dict(py, &metrics.catalog)?)?;
+        out.set_item(
+            "series",
+            number_series_dict(py, &metrics.series, "float64")?,
+        )?;
+        out.set_item("steps", number_series_dict(py, &metrics.steps, "int64")?)?;
+        out.set_item("wall_time", string_series_dict(py, &metrics.wall_time)?)?;
+        if let Some(wal) = metrics.wal {
+            out.set_item("wal", wal)?;
+        }
+        Ok(Some(out))
+    }
+
+    /// The ``observables`` section, or ``None`` when the record has none.
+    ///
+    /// Returns
+    /// -------
+    /// dict | None
+    ///     ``name → {"meta": document, "data": array}``, the document as
+    ///     stored and the array at its stored dtype and shape.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A data array without its metadata, metadata without its array,
+    ///     or a document without ``kind``.
+    fn observables<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(entries) = self.inner.observables().map_err(io_error_to_pyerr)? else {
+            return Ok(None);
+        };
+        let out = PyDict::new(py);
+        for entry in entries {
+            let item = PyDict::new(py);
+            item.set_item("meta", json_map_to_plain_dict(py, &entry.meta)?)?;
+            item.set_item("data", column_to_numpy(py, &entry.values)?)?;
+            out.set_item(entry.name, item)?;
+        }
+        Ok(Some(out))
     }
 }
 
@@ -243,7 +350,7 @@ impl PyMrecReader {
 impl PyMrecReader {
     #[new]
     fn py_new(source: PySource<'_>) -> PyResult<Self> {
-        let inner = source.read(MrecReader::open).map_err(data_error)?;
+        let inner = source.read(MrecReader::open).map_err(io_error_to_pyerr)?;
         Ok(Self { inner, cursor: 0 })
     }
 
@@ -353,9 +460,9 @@ impl PyMrecReader {
     /// ------
     /// ValueError
     ///     On the first frame that fails to decode.
-    fn to_trajectory(&self) -> PyResult<PyTrajectory> {
+    fn to_trajectory(&self, py: Python<'_>) -> PyResult<PyTrajectory> {
         let inner = self.inner.to_trajectory().map_err(molrs_error_to_pyerr)?;
-        Ok(PyTrajectory { inner })
+        PyTrajectory::from_core(py, inner)
     }
 
     /// Step numbers of the committed frames.
@@ -476,7 +583,8 @@ impl PySequenceSchema {
         dtype: &str,
         trailing: Option<Vec<u64>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let dtype = dtype_from_schema_tag(dtype).map_err(molrs_error_to_pyerr)?;
+        let dtype = DType::from_name(dtype)
+            .ok_or_else(|| PyValueError::new_err(format!("unknown column dtype {dtype:?}")))?;
         slf.inner
             .declare_column(block, column, dtype, &trailing.unwrap_or_default())
             .map_err(molrs_error_to_pyerr)?;
@@ -620,32 +728,12 @@ impl PySequenceSchema {
     }
 }
 
-/// Parse a compression spec: ``None`` / ``"none"``, ``"gzip"`` (level 1),
-/// ``"gzip:5"``, ``"zstd"`` (level 3), ``"zstd:7"``.
+/// The compression of a spec: ``None`` is no compression, a string is
+/// [`Compression`]'s own spelling (``"gzip:5"``, ``"zstd"``, …).
 fn parse_compression(spec: Option<&str>) -> PyResult<Compression> {
-    let Some(spec) = spec else {
-        return Ok(Compression::None);
-    };
-    let (name, level) = match spec.split_once(':') {
-        Some((name, level)) => (name, Some(level)),
-        None => (spec, None),
-    };
-    let level = |default: i64| -> PyResult<i64> {
-        match level {
-            Some(text) => text.parse::<i64>().map_err(|_| {
-                PyValueError::new_err(format!("compression level {text:?} is not an integer"))
-            }),
-            None => Ok(default),
-        }
-    };
-    match name {
-        "none" => Ok(Compression::None),
-        "gzip" => Ok(Compression::Gzip(level(1)? as u32)),
-        "zstd" => Ok(Compression::Zstd(level(3)? as i32)),
-        other => Err(PyValueError::new_err(format!(
-            "unknown compression {other:?}; use None, \"gzip[:level]\" or \"zstd[:level]\""
-        ))),
-    }
+    spec.map_or(Ok(Compression::None), |text| {
+        text.parse::<Compression>().map_err(PyValueError::new_err)
+    })
 }
 
 /// Append-first writer for a ``*.mrec`` trajectory store.
@@ -687,7 +775,7 @@ impl PyMrecWriter {
     #[new]
     #[pyo3(signature = (path, schema, *, flush_every=None, compression=None, durable=true, meta=None))]
     fn py_new(
-        path: PathBuf,
+        path: PyPath,
         schema: &Bound<'_, PySequenceSchema>,
         flush_every: Option<u64>,
         compression: Option<&str>,
@@ -695,7 +783,7 @@ impl PyMrecWriter {
         meta: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let schema = schema.borrow().inner.clone();
-        let mut writer = MrecWriter::create(&path, schema)
+        let mut writer = MrecWriter::create(&path.0, schema)
             .map_err(molrs_error_to_pyerr)?
             .with_compression(parse_compression(compression)?)
             .map_err(molrs_error_to_pyerr)?
@@ -720,8 +808,8 @@ impl PyMrecWriter {
     /// rolled back first.
     #[staticmethod]
     #[pyo3(signature = (path, *, flush_every=None, durable=true))]
-    fn open(path: PathBuf, flush_every: Option<u64>, durable: bool) -> PyResult<Self> {
-        let mut writer = MrecWriter::open(&path)
+    fn open(path: PyPath, flush_every: Option<u64>, durable: bool) -> PyResult<Self> {
+        let mut writer = MrecWriter::open(&path.0)
             .map_err(molrs_error_to_pyerr)?
             .with_durable(durable);
         if let Some(frames) = flush_every {
@@ -825,28 +913,226 @@ impl PyMrecWriter {
 /// str
 ///     The path of the archive.
 #[pyfunction]
-pub fn pack_mrec_zip(path: PathBuf) -> PyResult<String> {
-    let archive = molrs::io::mrec::pack_mrec_zip(&path).map_err(molrs_error_to_pyerr)?;
+pub fn pack_mrec_zip(path: PyPath) -> PyResult<String> {
+    let archive = molrs::io::mrec::pack_mrec_zip(&path.0).map_err(molrs_error_to_pyerr)?;
     Ok(archive.to_string_lossy().into_owned())
 }
 
-/// Judge a snapshot or system-definition frame against the Frame vocabulary.
-///
-/// Parameters
-/// ----------
-/// frame
-///     In-memory :class:`~molpy.core.Frame`.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If the frame fails the canonical vocabulary.
-#[pyfunction]
-pub fn validate_frame(frame: &Bound<'_, PyFrame>) -> PyResult<()> {
-    frame
-        .borrow()
-        .with_frame(molrs::io::mrec::validation::validate_frame)?
-        .map_err(molrs_error_to_pyerr)
+fn optional_document<'py>(
+    py: Python<'py>,
+    document: Option<serde_json::Map<String, serde_json::Value>>,
+) -> PyResult<Option<Bound<'py, PyDict>>> {
+    document
+        .map(|map| json_map_to_plain_dict(py, &map))
+        .transpose()
+}
+
+fn as_dict<'py>(value: &Bound<'py, PyAny>, what: &str) -> PyResult<Bound<'py, PyDict>> {
+    if let Ok(dict) = value.cast::<PyDict>() {
+        return Ok(dict.clone());
+    }
+    if let Ok(mapping) = value.cast::<pyo3::types::PyMapping>() {
+        let dict = PyDict::new(value.py());
+        dict.update(mapping)?;
+        return Ok(dict);
+    }
+    Err(PyTypeError::new_err(format!(
+        "{what} must be a mapping, got {}",
+        value.get_type().name()?
+    )))
+}
+
+fn number_series_dict<'py, T>(
+    py: Python<'py>,
+    values: &std::collections::BTreeMap<String, Vec<T>>,
+    dtype: &str,
+) -> PyResult<Bound<'py, PyDict>>
+where
+    T: Clone + IntoPyObject<'py>,
+{
+    let out = PyDict::new(py);
+    let numpy = py.import("numpy")?;
+    let dtype = numpy.getattr(dtype)?;
+    for (name, column) in values {
+        let items = PyList::new(py, column.iter().cloned())?;
+        out.set_item(name, numpy.call_method1("array", (items, &dtype))?)?;
+    }
+    Ok(out)
+}
+
+fn string_series_dict<'py>(
+    py: Python<'py>,
+    values: &std::collections::BTreeMap<String, Vec<String>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let out = PyDict::new(py);
+    let numpy = py.import("numpy")?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("dtype", numpy.getattr("str_")?)?;
+    for (name, column) in values {
+        out.set_item(
+            name,
+            numpy.call_method("array", (column.clone(),), Some(&kwargs))?,
+        )?;
+    }
+    Ok(out)
+}
+
+fn apply_metrics(record: &mut MolRec, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    for (key, item) in as_dict(value, "metrics")?.iter() {
+        match key.extract::<String>()?.as_str() {
+            "catalog" => record.metrics = meta_document_arg(&item)?,
+            "series" => record.metrics_series = numeric_series(&item, "series")?,
+            "steps" => record.metrics_steps = numeric_series(&item, "steps")?,
+            "wall_time" => record.metrics_wall_time = text_series(&item)?,
+            "wal" if item.is_none() => record.metrics_wal = None,
+            "wal" => record.metrics_wal = Some(item.extract()?),
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "metrics has no {other} field"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn numeric_series<T>(
+    value: &Bound<'_, PyAny>,
+    what: &str,
+) -> PyResult<std::collections::BTreeMap<String, Vec<T>>>
+where
+    T: numpy::Element + Copy + molrs::core::BlockDtype,
+{
+    let mut out = std::collections::BTreeMap::new();
+    for (key, array) in as_dict(value, &format!("metrics {what}"))?.iter() {
+        let name: String = key.extract()?;
+        let column = column_from_py(&array)?;
+        if column.shape().len() != 1 {
+            return Err(PyValueError::new_err(format!(
+                "metrics {what} '{name}' is one-dimensional"
+            )));
+        }
+        let values = column.get::<T>().ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "metrics {what} '{name}' has dtype {}, not the series dtype",
+                column.dtype().name()
+            ))
+        })?;
+        out.insert(name, values.iter().copied().collect());
+    }
+    Ok(out)
+}
+
+fn text_series(
+    value: &Bound<'_, PyAny>,
+) -> PyResult<std::collections::BTreeMap<String, Vec<String>>> {
+    let mut out = std::collections::BTreeMap::new();
+    for (key, array) in as_dict(value, "metrics wall_time")?.iter() {
+        let name: String = key.extract()?;
+        let column = column_from_py(&array)?;
+        if column.shape().len() != 1 {
+            return Err(PyValueError::new_err(format!(
+                "metrics wall_time '{name}' is one-dimensional"
+            )));
+        }
+        let values = column.get::<String>().ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "metrics wall_time '{name}' is a string array, found {}",
+                column.dtype().name()
+            ))
+        })?;
+        out.insert(name, values.iter().cloned().collect());
+    }
+    Ok(out)
+}
+
+fn observables_from_py(value: &Bound<'_, PyAny>) -> PyResult<molrs::io::mrec::Observables> {
+    let mut out = molrs::io::mrec::Observables::new();
+    for (key, item) in as_dict(value, "observables")?.iter() {
+        let name: String = key.extract()?;
+        let item = as_dict(&item, &format!("observable '{name}'"))?;
+        let meta = item.get_item("meta")?.ok_or_else(|| {
+            PyValueError::new_err(format!("observable '{name}' has no meta document"))
+        })?;
+        let data = item.get_item("data")?.ok_or_else(|| {
+            PyValueError::new_err(format!("observable '{name}' has no data array"))
+        })?;
+        let mut document = meta_document_arg(&meta)?;
+        let kind = required_string(&mut document, "kind", &name)?;
+        let description = required_string(&mut document, "description", &name)?;
+        let time_dependent = match document.remove("time_dependent") {
+            Some(serde_json::Value::Bool(flag)) => flag,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "observable '{name}' needs a boolean time_dependent"
+                )));
+            }
+        };
+        let axes = match document.remove("axes") {
+            None => Vec::new(),
+            Some(serde_json::Value::Array(items)) => items
+                .into_iter()
+                .map(|item| match item {
+                    serde_json::Value::String(text) => Ok(text),
+                    _ => Err(PyValueError::new_err(format!(
+                        "observable '{name}' axes are strings"
+                    ))),
+                })
+                .collect::<PyResult<Vec<_>>>()?,
+            Some(_) => {
+                return Err(PyValueError::new_err(format!(
+                    "observable '{name}' axes are a list of strings"
+                )));
+            }
+        };
+        let mut obs = ObservableRecord::new(
+            name.clone(),
+            ObservableKind::from(kind),
+            column_from_py(&data)?,
+        );
+        obs.description = description;
+        obs.time_dependent = time_dependent;
+        obs.unit = optional_string(&mut document, "unit", &name)?;
+        obs.axes = axes;
+        obs.sampling = optional_string(&mut document, "sampling", &name)?;
+        obs.domain = optional_string(&mut document, "domain", &name)?;
+        obs.target = optional_string(&mut document, "target", &name)?;
+        obs.extra = document;
+        out.insert(obs).map_err(molrs_error_to_pyerr)?;
+    }
+    Ok(out)
+}
+
+fn required_string(
+    document: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    name: &str,
+) -> PyResult<String> {
+    match document.remove(key) {
+        Some(serde_json::Value::String(text)) if !text.is_empty() || key == "description" => {
+            Ok(text)
+        }
+        Some(serde_json::Value::String(_)) => Err(PyValueError::new_err(format!(
+            "observable '{name}' needs a non-empty {key}"
+        ))),
+        _ => Err(PyValueError::new_err(format!(
+            "observable '{name}' needs a string {key}"
+        ))),
+    }
+}
+
+fn optional_string(
+    document: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    name: &str,
+) -> PyResult<Option<String>> {
+    match document.remove(key) {
+        None => Ok(None),
+        Some(serde_json::Value::String(text)) => Ok(Some(text)),
+        Some(_) => Err(PyValueError::new_err(format!(
+            "observable '{name}' {key} is a string"
+        ))),
+    }
 }
 
 /// Register [`write_mrec`] flat on the native module, as `molpy.io`'s.
@@ -854,8 +1140,7 @@ pub(crate) fn register_doors(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(m, "molpy.io", wrap_pyfunction!(write_mrec, m)?)
 }
 
-/// Register `molpy.io.mrec` on its `_core.mrec` submodule, with
-/// `molpy.io.mrec.validation` as that submodule's `validation`.
+/// Register `molpy.io.mrec` on its `_core.mrec` submodule.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(pack_mrec_zip, m)?)?;
     m.add_class::<PyMrecFile>()?;
@@ -863,16 +1148,5 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySequenceSchema>()?;
     m.add_class::<PyMrecWriter>()?;
     m.add_class::<section::PyForceFieldSection>()?;
-    crate::add_submodule(
-        m,
-        "validation",
-        "molpy.io.mrec.validation",
-        register_validation,
-    )
-}
-
-/// Register `molpy.io.mrec.validation`: the record contract's runtime checks.
-fn register_validation(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(validate_frame, m)?)?;
     Ok(())
 }

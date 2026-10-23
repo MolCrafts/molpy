@@ -40,21 +40,18 @@ mod tests {
     // XML loading tests
     // -----------------------------------------------------------------------
 
+    /// MMFF types drawn hydrogens only: a molecule whose hydrogens are
+    /// implicit is refused with the atom named, not typed as a radical.
     #[test]
-    fn test_load_mmff_params() {
-        let typifier = test_typifier();
-        let params = typifier.params();
-        // Should have loaded ~90+ atom types
+    fn implicit_hydrogens_are_refused() {
+        let mut mol = Atomistic::new();
+        mol.add_atom(atom(Element::C)).unwrap();
+        let mut typing = crate::ff::typifier::Typing::new(test_typifier());
+        let err = typing.typify(&mol).unwrap_err().to_string();
         assert!(
-            params.rows.len() > 80,
-            "expected >80 atom props, got {}",
-            params.rows.len()
+            err.contains("atom 0") && err.contains("does not draw"),
+            "{err}"
         );
-        // Type 1 = CR (sp3 carbon)
-        let p1 = params.get(1).expect("type 1 should exist");
-        assert_eq!(p1.atno, 6);
-        assert_eq!(p1.crd, 4);
-        assert_eq!(p1.val, 4);
     }
 
     // -----------------------------------------------------------------------

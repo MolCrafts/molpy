@@ -531,7 +531,11 @@ pub mod positional {
     /// The style-level keys a LAMMPS file never carries, which a writer
     /// passes over: the instance expression (the IR's own), and the 1-4
     /// weights a compile projects.
-    const PASSED: [&str; 3] = ["expression", "lj14scale", "coulomb14scale"];
+    const PASSED: [&str; 3] = [
+        "expression",
+        crate::ff::ir::LJ_14_SCALE,
+        crate::ff::ir::COULOMB_14_SCALE,
+    ];
 
     /// Every style-level parameter is `cutoff`, `mixing`, or at its declared
     /// default.
@@ -623,7 +627,7 @@ pub mod positional {
             .get("mixing")
             .and_then(|v| v.as_text())
             .or_else(|| p.default.as_ref().and_then(ParamValue::as_text))
-            .unwrap_or("arithmetic");
+            .unwrap_or(crate::ff::ir::CombiningRule::UNDECLARED.name());
         match fixed {
             Some(fixed) if fixed == rule => Ok(Vec::new()),
             Some(fixed) => Err(format!(

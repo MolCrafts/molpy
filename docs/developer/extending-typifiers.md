@@ -46,7 +46,9 @@ synthesize one just to satisfy a generic abstraction.
 - `nodes`: one mapping of `key -> annotation` per atom, positional against
   `graph.atoms`.
 - `links`: relation class (`mp.Bond`, `mp.Angle`, `mp.Dihedral`, `mp.Improper`)
-  to one mapping per row, positional against `graph.links.exact_bucket(cls)`.
+  to one mapping per row, positional against that relation's rows
+  (`graph.bonds`, `graph.angles`, …); a term block is keyed by its block name
+  (`"urey_bradleys"`, rows as `graph.terms(block)`).
 - `styles`: `(category, style, params)` to declare.
 - `pairs`: `(style, name, endpoints, params)` pair rows.
 
@@ -60,13 +62,16 @@ class ElementBondTypifier(mp.ff.typifier.Typifier):
     """Atom types from elements; one harmonic bond type per element pair."""
 
     def assign(self, graph):
+        def symbol(atom):
+            return mp.Element.by_number(atom["atomic_number"]).symbol
+
         nodes = [
-            {"type": ("full", atom["element"], (), {"mass": atom["mass"]})}
+            {"type": ("full", symbol(atom), (), {"mass": atom["mass"]})}
             for atom in graph.atoms
         ]
         bonds = []
-        for bond in graph.links.exact_bucket(mp.Bond):
-            ends = sorted(atom["element"] for atom in bond.endpoints)
+        for bond in graph.bonds:
+            ends = sorted(symbol(atom) for atom in bond.endpoints)
             bonds.append({"type": ("harmonic", "-".join(ends), ends, {"k": 300.0, "r0": 1.5})})
         return mp.ff.typifier.TypeAssignment(
             nodes, {mp.Bond: bonds}, styles=[("atom", "full", {}), ("bond", "harmonic", {})]

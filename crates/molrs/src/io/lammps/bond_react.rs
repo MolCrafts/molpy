@@ -68,19 +68,21 @@ fn react_ids(frame: &Frame, which: &str) -> Result<Vec<i64>> {
             "the {which} template's atoms have no '{REACT_ID}' column pairing them"
         ))
     })?;
-    if let Some(v) = column.get::<i32>() {
-        Ok(v.iter().map(|&x| x as i64).collect())
-    } else if let Some(v) = column.get::<u64>() {
-        Ok(v.iter().map(|&x| x as i64).collect())
-    } else if let Some(v) = column.get::<i64>() {
-        Ok(v.iter().copied().collect())
-    } else if let Some(v) = column.get::<u32>() {
-        Ok(v.iter().map(|&x| x as i64).collect())
-    } else {
-        Err(invalid_data(format!(
-            "the {which} template's '{REACT_ID}' column must hold integers"
-        )))
-    }
+    // The schema declares `react_id` u64, so no other width can be stored.
+    let ids = column.get::<u64>().ok_or_else(|| {
+        invalid_data(format!(
+            "the {which} template's '{REACT_ID}' column is not u64"
+        ))
+    })?;
+    ids.iter()
+        .map(|&id| {
+            i64::try_from(id).map_err(|_| {
+                invalid_data(format!(
+                    "the {which} template's {REACT_ID} {id} is past the ids a map file holds"
+                ))
+            })
+        })
+        .collect()
 }
 
 /// `react_id` → 1-based template atom id; a repeated `react_id` is an error.
@@ -207,7 +209,7 @@ pub(crate) mod tests {
     }
 
     /// `atoms` with `react_id`, `type`, coordinates, and `bonds` among them.
-    pub(crate) fn template(types: &[&str], rids: &[i64], bonds: &[(Idx, Idx, &str)]) -> Frame {
+    pub(crate) fn template(types: &[&str], rids: &[u64], bonds: &[(Idx, Idx, &str)]) -> Frame {
         let n = types.len();
         let mut atoms = Block::new();
         atoms.insert("type", strings(types), None).unwrap();

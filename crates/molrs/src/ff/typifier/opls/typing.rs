@@ -79,7 +79,7 @@ pub(crate) struct AtomTyping {
 
 /// Type the atoms of `mol` with OPLS-AA atom types.
 ///
-/// Drives the [`LayeredTypingEngine`] over `meta`, matching a privately
+/// Drives `engine` (built from `meta`), matching a privately
 /// aromaticity-perceived copy of `mol` (same [`NodeId`]s; `mol` itself is never
 /// changed). Every atom assigned a type gets two annotations:
 /// - `type` → [`Annotation::Type`] under the `atom/full` style of `ff`, named
@@ -94,14 +94,13 @@ pub(crate) struct AtomTyping {
 ///
 /// # Errors
 ///
-/// Returns `Err` if the engine cannot be built from `meta`: a malformed SMARTS
-/// `def`, an override naming an absent type, or an overrides cycle.
+/// Returns `Err` if aromaticity cannot be perceived on `mol`.
 pub(crate) fn typify_atoms(
     mol: &Atomistic,
+    engine: &LayeredTypingEngine,
     meta: &OplsTypingMetadata,
     ff: &ForceField,
 ) -> Result<AtomTyping, String> {
-    let engine = LayeredTypingEngine::build(meta)?;
     let mut perceived = mol.clone();
     assign_aromaticity(&mut perceived).map_err(|e| e.to_string())?;
     let types = engine.assign(&perceived);
@@ -158,7 +157,8 @@ mod tests {
         meta: &OplsTypingMetadata,
         ff: &ForceField,
     ) -> Result<Atomistic, String> {
-        let typing = typify_atoms(mol, meta, ff)?;
+        let engine = LayeredTypingEngine::build(meta)?;
+        let typing = typify_atoms(mol, &engine, meta, ff)?;
         let mut graph = mol.clone();
         let mut m = TypeAssignment {
             nodes: typing.nodes,

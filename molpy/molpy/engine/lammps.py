@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from molpy.engine.engine import Engine
-from molpy.engine.nonbonded import is_periodic, nonbonded_of, refuse_box_free
+from molpy.engine.nonbonded import is_periodic, refuse_box_free
 from molpy.engine.script import Script
 from molpy.io import read_lammps_data, write_lammps_data
 from molpy.io.lammps import infer_lammps_atom_style
@@ -232,7 +232,7 @@ class LammpsEngine(Engine):
                 f"units must be one of {list(_LAMMPS_UNITS)}, got {units!r}."
             )
         periodic = is_periodic(frame)
-        long_range = pair_style is None and nonbonded_of(forcefield).coulomb == "long"
+        long_range = pair_style is None and forcefield.nonbonded().coulomb == "long"
         if long_range and not periodic:
             raise refuse_box_free("LAMMPS", "a long-range Coulomb style (PPPM)")
         if "atoms" in frame and "mass" not in frame["atoms"]:

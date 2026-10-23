@@ -24,15 +24,15 @@ mod torsion_refinement;
 
 use rand::{SeedableRng, random, rngs::StdRng};
 
+use crate::conformer::ConformerOptions;
 use crate::conformer::distgeom::{self, ChiralSign, DgConstraints};
-use crate::conformer::{ConformerOptions, ForceFieldKind};
 use crate::conformer::{ConformerReport, ConformerStageReport, StageKind};
 use molrs::core::Atomistic;
 use molrs::core::MolRsError;
 use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::potential::{Accumulator, Potential, intramolecular_pairs};
-use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::Mmff94Typifier;
+use molrs::ff::typifier::{Typing, TypingError};
 use molrs::perceive::add_hydrogens;
 
 /// Embedding dimension for the first stage (RDKit ETKDG uses 4D).
@@ -61,7 +61,7 @@ pub(crate) fn generate_3d_impl(
         ));
     }
 
-    let mut report = ConformerReport::new(ForceFieldKind::Mmff94);
+    let mut report = ConformerReport::new();
 
     let seed = opts.rng_seed.unwrap_or_else(random::<u64>);
     if opts.rng_seed.is_none() {
@@ -97,13 +97,15 @@ pub(crate) fn generate_3d_impl(
     };
     push_embedding_stages(&mut report, &embedding);
 
-    let final_energy = run_mmff_cleanup_stage(&work, &mut coords3d, opts, &mut report);
+    let final_energy = run_mmff_cleanup_stage(&work, &mut coords3d, &mut report)?;
     run_stereo_check(&constraints, &coords3d, &mut report);
 
     // --- Write coordinates back ------------------------------------------
     let mut out = work;
     apply_coords(&mut out, &coords3d)?;
-    report.final_energy = final_energy.or(Some(embedding.coarse_energy));
+    // The MMFF94 energy, when the cleanup ran; the distance-geometry
+    // objective is no force-field energy, so it never stands in for one.
+    report.final_energy = final_energy;
     Ok((out, report))
 }
 
@@ -126,7 +128,6 @@ fn run_preprocess(
         energy_after: None,
         steps: preprocess_steps,
         converged: true,
-        elapsed_ms: 0,
     });
     Ok(work)
 }
@@ -145,7 +146,6 @@ fn embed_single_atom(
         energy_after: None,
         steps: 1,
         converged: true,
-        elapsed_ms: 0,
     });
     report.final_energy = Some(0.0);
     Ok((out, report))
@@ -177,7 +177,7 @@ fn run_embedding(
     opts: &ConformerOptions,
     report: &mut ConformerReport,
 ) -> EmbedOutcome {
-    let max_iters = retry::effective_max_iterations(opts.max_iterations_internal(), n);
+    let max_iters = retry::effective_max_iterations(opts.max_steps, n);
     let mut outcome = EmbedOutcome {
         best: None,
         embed4d_steps: 0,
@@ -210,8 +210,7 @@ fn run_embedding(
     }
 
     // useRandomCoords fallback.
-    if (outcome.best.is_none() || !outcome.chiral_ok) && opts.use_random_coords_fallback_internal()
-    {
+    if outcome.best.is_none() || !outcome.chiral_ok {
         let aseed = retry::attempt_seed(seed, max_iters + 1);
         let mut rng = StdRng::seed_from_u64(aseed);
         let (coords3d, e4d_steps, coarse_e, coarse_steps, coarse_conv, chiral_pass) =
@@ -242,7 +241,6 @@ fn push_embedding_stages(report: &mut ConformerReport, outcome: &EmbedOutcome) {
         energy_after: None,
         steps: outcome.embed4d_steps,
         converged: true,
-        elapsed_ms: 0,
     });
     report.stages.push(ConformerStageReport {
         stage: StageKind::CoarseOptimize,
@@ -250,48 +248,42 @@ fn push_embedding_stages(report: &mut ConformerReport, outcome: &EmbedOutcome) {
         energy_after: Some(outcome.coarse_energy),
         steps: outcome.coarse_steps,
         converged: outcome.coarse_converged,
-        elapsed_ms: 0,
     });
 }
 
 /// `FinalOptimize` stage: second-stage MMFF94 cleanup minimization, skipped
-/// (with a warning) when the molecule cannot be MMFF-typed.
+/// (with a warning) when MMFF94 has no types or terms for the molecule.
+///
+/// # Errors
+///
+/// Every other failure of the cleanup (a malformed graph, a force field that
+/// does not compile): a defect, never a skipped stage.
 fn run_mmff_cleanup_stage(
     work: &Atomistic,
     coords3d: &mut [f64],
-    opts: &ConformerOptions,
     report: &mut ConformerReport,
-) -> Option<f64> {
-    if !opts.mmff_cleanup_internal() {
-        return None;
-    }
-    match mmff_cleanup(work, coords3d) {
-        Ok((e, steps, conv)) => {
-            report.stages.push(ConformerStageReport {
-                stage: StageKind::FinalOptimize,
-                energy_before: None,
-                energy_after: Some(e),
-                steps,
-                converged: conv,
-                elapsed_ms: 0,
-            });
-            Some(e)
-        }
-        Err(msg) => {
+) -> Result<Option<f64>, MolRsError> {
+    let (energy, steps, converged) = match mmff_cleanup(work, coords3d)? {
+        Cleanup::Minimized {
+            energy,
+            steps,
+            converged,
+        } => (Some(energy), steps, converged),
+        Cleanup::NotCovered(reason) => {
             report
                 .warnings
-                .push(format!("MMFF94 cleanup skipped: {msg}"));
-            report.stages.push(ConformerStageReport {
-                stage: StageKind::FinalOptimize,
-                energy_before: None,
-                energy_after: None,
-                steps: 0,
-                converged: false,
-                elapsed_ms: 0,
-            });
-            None
+                .push(format!("MMFF94 cleanup skipped: {reason}"));
+            (None, 0, false)
         }
-    }
+    };
+    report.stages.push(ConformerStageReport {
+        stage: StageKind::FinalOptimize,
+        energy_before: None,
+        energy_after: energy,
+        steps,
+        converged,
+    });
+    Ok(energy)
 }
 
 /// `StereoCheck` stage: warn for every chiral center whose signed volume
@@ -323,7 +315,6 @@ fn run_stereo_check(constraints: &DgConstraints, coords3d: &[f64], report: &mut 
         energy_after: None,
         steps: stereo_steps,
         converged: true,
-        elapsed_ms: 0,
     });
 }
 
@@ -430,38 +421,59 @@ fn have_opposite_sign(a: f64, b: f64) -> bool {
     a.is_sign_negative() ^ b.is_sign_negative()
 }
 
-/// MMFF94 second-stage cleanup minimization. Returns `(energy, steps,
-/// converged)`. Errors (as a message) if the molecule has no MMFF typing.
+/// What the MMFF94 cleanup did.
+enum Cleanup {
+    /// Minimized to `energy` (kcal/mol) in `steps` steps.
+    Minimized {
+        energy: f64,
+        steps: usize,
+        converged: bool,
+    },
+    /// MMFF94 has no atom types or terms for the molecule.
+    NotCovered(TypingError),
+}
+
+/// MMFF94 second-stage cleanup minimization.
 ///
 /// Runs the standard route — typify → `Frame` → `PotentialCompiler::compile` — the
 /// same one every other force field in molrs goes through, so the seven MMFF
 /// terms come from `ff::potential::*::mmff` and nowhere else.
-fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bool), String> {
+///
+/// # Errors
+///
+/// A typing failure other than MMFF94 not covering the molecule, or a frame /
+/// compile failure: these are defects to report, not a stage to skip.
+fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<Cleanup, MolRsError> {
     // Write current coords so MMFF setup that consults geometry sees them.
     let mut staged = mol.clone();
-    apply_coords(&mut staged, coords3d).map_err(|e| e.to_string())?;
+    apply_coords(&mut staged, coords3d)?;
 
     // A fresh typing per call: its output holds exactly this molecule's types.
     // `Mmff94Typifier::new` shares the process-wide memoised MMFF94 library, so
     // this costs no parameter assembly.
     let mut typing = Typing::new(Mmff94Typifier::new());
-    let mut frame = typing
-        .typify(&staged)?
-        .to_frame()
-        .map_err(|e| e.to_string())?;
+    let typed = match typing.typify(&staged) {
+        Ok(typed) => typed,
+        Err(e @ (TypingError::MissingAtomType { .. } | TypingError::MissingTerms { .. })) => {
+            return Ok(Cleanup::NotCovered(e));
+        }
+        Err(e) => return Err(MolRsError::validation(format!("MMFF94 cleanup: {e}"))),
+    };
+    let mut frame = typed.to_frame()?;
     // The neighbour list is the consumer's to build — and here the consumer is the
     // minimizer. Bonded terms and the 1-2/1-3 exclusions are topological, so this
     // list stays valid across the relaxation. Which close neighbours belong in
     // it is MMFF's call, so the list is built from MMFF's own weights rather
     // than from an assumption about them.
     let ff = typing.forcefield();
-    frame.insert(
-        "pairs",
-        intramolecular_pairs(&frame, ff.special_bonds(), None)?,
-    );
+    let pairs = ff
+        .required_special_bonds()
+        .and_then(|sb| intramolecular_pairs(&frame, sb, None))
+        .map_err(|e| MolRsError::validation(format!("MMFF94 cleanup: {e}")))?;
+    frame.insert("pairs", pairs);
     let potentials = PotentialCompiler::new(ff)
         .compile(&frame)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| MolRsError::validation(format!("MMFF94 cleanup: {e}")))?;
 
     // RDKit's MMFFOptimizeMolecule runs a full BFGS minimization to a
     // gradient-norm tolerance. Mirror that with L-BFGS to an RMS-gradient
@@ -473,7 +485,11 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
         potentials.evaluate(p, &mut acc);
         (acc.energy(), acc.into_forces())
     });
-    Ok((report.final_energy, report.n_steps, report.converged))
+    Ok(Cleanup::Minimized {
+        energy: report.final_energy,
+        steps: report.n_steps,
+        converged: report.converged,
+    })
 }
 
 /// Place a single-atom molecule at the origin.

@@ -8,8 +8,11 @@ their force fields merge.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
+
+import numpy as np
+import numpy.typing as npt
 
 from molpy.core import Angle, Atomistic, Bond, Dihedral, Improper
 from molpy.core.constants import AMBER_SCEE, AMBER_SCNB
@@ -19,6 +22,28 @@ from molpy.io.amber import AmberPrmtopForcefieldReader
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from molpy._core import Annotation, AssignmentParamValue
+
+    #: ``(style, name, endpoints, params)``: a term's type annotation.
+    type TermAnnotation = tuple[str, str, list[str], dict[str, AssignmentParamValue]]
+
+
+def scalar_params(params: Mapping[str, object]) -> dict[str, AssignmentParamValue]:
+    """``params`` as the scalars a :class:`TypeAssignment` carries.
+
+    Raises:
+        ValueError: A param that is no number or string (an array).
+    """
+    out: dict[str, AssignmentParamValue] = {}
+    for key, value in params.items():
+        if not isinstance(value, (int, float, str)):
+            raise ValueError(
+                f"param {key!r} is {type(value).__name__}; a TypeAssignment "
+                "carries numbers and strings only"
+            )
+        out[key] = value
+    return out
 
 
 class Prmtop:
@@ -31,7 +56,9 @@ class Prmtop:
     def __init__(self, prmtop: Path) -> None:
         self.forcefield, self.frame = AmberPrmtopForcefieldReader().read_system(prmtop)
 
-    def assignment(self, graph: Atomistic, charges: Sequence[float]) -> TypeAssignment:
+    def assignment(
+        self, graph: Atomistic, charges: Sequence[float] | npt.NDArray[np.float64]
+    ) -> TypeAssignment:
         """Regenerate ``graph``'s terms to the prmtop's set and annotate them.
 
         Args:
@@ -65,7 +92,7 @@ class Prmtop:
         for term in prmtop_terms[Improper]:
             graph.add_improper(*(graph_atoms[i] for i in term))
 
-        links: dict[type, list[dict]] = {}
+        links: dict[type | str, list[dict[str, Annotation]]] = {}
         for kind in (Bond, Angle, Dihedral, Improper):
             relations = list(
                 {
@@ -83,8 +110,8 @@ class Prmtop:
             ]
 
         (atom_style,) = self.forcefield.get_styles("atom")
-        mass = {t.name: t.params["mass"] for t in atom_style.get_types()}
-        nodes = [
+        mass = {t.name: scalar_params(t.params)["mass"] for t in atom_style.get_types()}
+        nodes: list[dict[str, Annotation]] = [
             {
                 "type": (atom_style.name, name, (), {"mass": mass[name]}),
                 "charge": float(charge),
@@ -92,14 +119,15 @@ class Prmtop:
             for name, charge in zip(types, charges, strict=True)
         ]
         styles = [
-            (s.category, s.name, s.params) for s in self.forcefield.get_styles(Style)
+            (s.category, s.name, scalar_params(s.params))
+            for s in self.forcefield.get_styles(Style)
         ]
         pairs = [
             (
                 style.name,
                 t.name,
                 [e.name for e in t.endpoints],
-                dict(t.params.items()),
+                scalar_params(t.params),
             )
             for style in self.forcefield.get_styles("pair")
             for t in style.get_types()
@@ -144,19 +172,19 @@ class Prmtop:
                 f"prmtop {kind.__name__.lower()} {key} is not in the graph"
             )
 
-    def _lookup(self, category: str) -> dict[tuple[str, ...], tuple]:
+    def _lookup(self, category: str) -> dict[tuple[str, ...], TermAnnotation]:
         """Endpoint atom types (either orientation) → the term's annotation."""
-        lookup: dict[tuple[str, ...], tuple] = {}
+        lookup: dict[tuple[str, ...], TermAnnotation] = {}
         for style in self.forcefield.get_styles(category):
             for t in style.get_types():
                 ends = [e.name for e in t.endpoints]
-                annotation = (style.name, t.name, ends, dict(t.params.items()))
+                annotation = (style.name, t.name, ends, scalar_params(t.params))
                 lookup[tuple(ends)] = annotation
                 lookup[tuple(reversed(ends))] = annotation
         return lookup
 
 
-class AmberTypifier(Typifier):
+class AmberTypifier(Typifier[Atomistic]):
     """The seed every AmberTools typifier shares: AMBER's declared settings.
 
     A typifier's output force field starts as its ``source_forcefield()``'s empty

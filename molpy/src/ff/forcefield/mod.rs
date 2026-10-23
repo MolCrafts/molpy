@@ -184,11 +184,11 @@ impl PyForceField {
         }
         let special_bonds = self
             .inner
-            .declared_special_bonds()
+            .special_bonds()
             .map(|sb| (sb.lj.to_vec(), sb.coul.to_vec()));
         (
             self.inner.name.clone(),
-            self.inner.declared_units().map(str::to_owned),
+            self.inner.units().map(str::to_owned),
             special_bonds,
             styles,
         )
@@ -224,8 +224,9 @@ impl PyForceField {
             // The arity travels with the style: a category no registry of
             // the unpickling process declares is still a relation of it.
             let style = inner
-                .def_style(
-                    molrs::ff::forcefield::Category::new(category).arity(arity),
+                .def_style_with_arity(
+                    &category,
+                    arity,
                     &style_name,
                     params_from_dict(Some(&params))?,
                 )
@@ -277,10 +278,41 @@ impl PyForceField {
     }
 
     /// The unit system the parameters are expressed in (a LAMMPS ``units``
-    /// name); ``"real"`` when none is declared.
+    /// name), or ``None`` when none is declared.
     #[getter]
-    fn units(&self) -> String {
-        self.inner.units().to_owned()
+    fn units(&self) -> Option<String> {
+        self.inner.units().map(str::to_owned)
+    }
+
+    /// The nonbonded treatment this force field's pair styles state, each
+    /// read by its declared role (molrs ``ForceField::nonbonded``).
+    ///
+    /// Parameters
+    /// ----------
+    /// length_unit
+    ///     The unit the cutoffs are returned in (a unit-registry name such as
+    ///     ``"nanometer"``), converted from the length unit of the declared
+    ///     ``units``; ``None`` keeps the force field's own unit.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     An unregistered pair style, a non-numeric ``cutoff``, or a cutoff
+    ///     that cannot be converted (undeclared or reduced ``units``).
+    #[pyo3(signature = (length_unit=None))]
+    fn nonbonded(&self, length_unit: Option<&str>) -> PyResult<PyNonbonded> {
+        let nb = self
+            .inner
+            .nonbonded(length_unit)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok(PyNonbonded {
+            coulomb: nb.coulomb.map(|range| match range {
+                molrs::ff::ir::CoulombRange::Cut => "cut",
+                molrs::ff::ir::CoulombRange::Long => "long",
+            }),
+            coulomb_cutoff: nb.coulomb_cutoff,
+            vdw_cutoff: nb.vdw_cutoff,
+        })
     }
 
     /// Merge ``other`` into this force field, in place, and return ``self``.
@@ -311,12 +343,12 @@ impl PyForceField {
         Ok(slf.clone())
     }
 
-    /// The special-bond triples ``(lj, coul)``, each ``[1-2, 1-3, 1-4]`` — what
-    /// :meth:`set_special_bonds` declared, or the default ``[0, 0, 1]``.
+    /// The special-bond triples ``(lj, coul)``, each ``[1-2, 1-3, 1-4]`` —
+    /// what :meth:`set_special_bonds` declared, or ``None`` when the force
+    /// field declares none (compiling a pair style then raises).
     #[getter]
-    fn special_bonds(&self) -> ([f64; 3], [f64; 3]) {
-        let sb = self.inner.special_bonds();
-        (sb.lj, sb.coul)
+    fn special_bonds(&self) -> Option<([f64; 3], [f64; 3])> {
+        self.inner.special_bonds().map(|sb| (sb.lj, sb.coul))
     }
 
     /// Declare both LJ and Coulomb special-bond triples (1-2, 1-3, 1-4).
@@ -503,9 +535,37 @@ impl PyForceField {
     }
 }
 
+/// The nonbonded treatment a force field's pair styles state
+/// (``ForceField.nonbonded``).
+///
+/// Attributes
+/// ----------
+/// coulomb : str | None
+///     ``"long"`` (Ewald / PME), ``"cut"`` (truncated), or ``None`` when the
+///     force field has no Coulomb style.
+/// coulomb_cutoff : float | None
+///     The Coulomb styles' largest ``cutoff``.
+/// vdw_cutoff : float | None
+///     The dispersion styles' largest ``cutoff``.
+#[pyclass(
+    module = "molpy.ff.forcefield",
+    name = "Nonbonded",
+    frozen,
+    skip_from_py_object
+)]
+pub struct PyNonbonded {
+    #[pyo3(get)]
+    coulomb: Option<&'static str>,
+    #[pyo3(get)]
+    coulomb_cutoff: Option<f64>,
+    #[pyo3(get)]
+    vdw_cutoff: Option<f64>,
+}
+
 /// Register `molpy.ff.forcefield`: the container and its handles.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyForceField>()?;
+    m.add_class::<PyNonbonded>()?;
     handles::register(m)?;
     Ok(())
 }

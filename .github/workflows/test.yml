@@ -7,7 +7,7 @@ name: test
 # (`test / context` decides):
 #
 #   fast  a feature-branch push to MolCrafts: core Rust tests, the Python
-#         suite on Linux and the docs on its wheel.
+#         suite on Linux, and the stubs and docs on its wheel.
 #   full  every push to a fork (proven before its pull request), dev, master
 #         on MolCrafts, pull requests and dispatches:
 #         + ffi/cxx/ext, the Python OS matrix, C API (Linux, Windows), WASM
@@ -104,9 +104,11 @@ jobs:
           junit: .ci-out/junit.xml
           coverage: .ci-out/coverage.json
 
-  # The manual as Cloudflare Pages builds it, --strict: any warning fails.
-  # Cloudflare Pages deploys it from MolCrafts itself (its Git integration), so
-  # no job here deploys. The API reference imports the tested wheel.
+  # The stubs held to the tested wheel (`types`: mypy + stubtest), then the
+  # manual as Cloudflare Pages builds it — every python block run, --strict:
+  # any warning fails. Cloudflare Pages deploys it from MolCrafts itself (its
+  # Git integration), so no job here deploys. The API reference imports the
+  # tested wheel.
   docs:
     name: test / docs
     needs: [context, python]
@@ -119,11 +121,11 @@ jobs:
         with:
           name: tested-wheel-linux
           path: .ci-out/wheel
-      - name: Docs on the tested wheel
+      - name: Stubs and docs on the tested wheel
         run: |
           MOLPY_TESTED_WHEEL=$(ls "$PWD"/.ci-out/wheel/molcrafts_molpy-*.whl)
           export MOLPY_TESTED_WHEEL
-          scripts/check.sh docs
+          scripts/check.sh types docs
 
   capi:
     name: test / capi${{ matrix.os == 'windows-latest' && ' (windows-latest)' || '' }}

@@ -6,8 +6,7 @@ use molrs::core::{Atomistic, NodeId};
 
 use crate::ff::forcefield::ForceField;
 
-use crate::ff::typifier::{BondedTerm, ParameterInterpolator};
-use crate::ff::typifier::{TypeAssignment, Typifier};
+use crate::ff::typifier::{TypeAssignment, Typifier, TypingError};
 
 mod assign;
 mod dependency;
@@ -20,6 +19,7 @@ pub use assign::{CandidateTables, NoMatch};
 pub use typing_metadata::{OplsTypeRow, OplsTypingMetadata};
 
 use assign::typify_bonded_with;
+use layered::LayeredTypingEngine;
 use typing::typify_atoms;
 
 /// OPLS-AA typifier — owns typing metadata and force-field parameters.
@@ -65,26 +65,23 @@ use typing::typify_atoms;
 ///
 /// # Bonded parameters
 ///
-/// OPLS bonded-parameter assignment happens in Rust (here), not in a
-/// post-typify Python pass over a molpy `ForceField`.
+/// Bonded terms are matched against the force field's class-keyed rows by
+/// specificity and overlay layer (`assign`).
 ///
 /// # Scope
 ///
 /// Only types carrying a SMARTS `def` participate; the united-atom types
 /// (`opls_001`–`opls_134`) carry none and are out of scope for auto-typing. Improper
 /// matching is out of scope. Uncovered bonded terms follow the `NoMatch`
-/// policy; a consumer that wants to fill them can attach a [`ParameterInterpolator`]
-/// via [`OplsAaTypifier::with_estimator`] — its own, or a
-/// [`Parmchk2Estimator`](crate::ff::typifier::Parmchk2Estimator) built over the
-/// same force field and typing metadata.
+/// policy: an error in strict mode, left unparametrized otherwise.
 pub struct OplsAaTypifier {
     meta: OplsTypingMetadata,
+    /// The SMARTS defs of `meta`, compiled and layered once.
+    engine: LayeredTypingEngine,
     ff: ForceField,
     tables: CandidateTables,
     /// No-match policy for bonded terms with no force-field candidate.
     no_match: NoMatch,
-    /// Optional missing-parameter interpolator for bonded terms.
-    estimator: Option<Box<dyn ParameterInterpolator<Term = BondedTerm> + Send + Sync>>,
 }
 
 impl OplsAaTypifier {
@@ -109,7 +106,8 @@ impl OplsAaTypifier {
     /// [`Mmff94Typifier::new`](crate::ff::typifier::mmff::Mmff94Typifier::new).
     ///
     /// Infallible: the parameters are compile-time constants, the same policy
-    /// as `Mmff94Typifier::new` and `UffTypifier::new`.
+    /// as `Mmff94Typifier::new` and `UffTypifier::new`;
+    /// `shipped_forcefield::tests::the_shipped_rules_build` proves they build.
     ///
     /// # Examples
     ///
@@ -179,24 +177,31 @@ impl OplsAaTypifier {
             shipped_forcefield::typing_meta(),
             shipped_forcefield::force_field(),
         )
+        .expect(
+            "the shipped OPLS-AA rules build — proved by \
+             ff::typifier::opls::shipped_forcefield::tests::the_shipped_rules_build",
+        )
     }
 
     /// Construct from already-parsed metadata and force field (strict bonded
-    /// matching). The bonded candidate tables are built once from `ff`.
+    /// matching). The SMARTS defs are compiled and layered, and the bonded
+    /// candidate tables built from `ff`, once, here.
     ///
-    /// `meta` is taken as valid ([`OplsTypingMetadata::validate`]); the XML
-    /// reader
-    /// [`OpenmmXmlReader::read_opls_typifier`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier)
-    /// refuses a table that is not.
-    pub fn new(meta: OplsTypingMetadata, ff: ForceField) -> Self {
+    /// # Errors
+    ///
+    /// [`TypingError::Malformed`] naming the type for a malformed SMARTS
+    /// `def`, naming both types for an override of a type absent from `meta`,
+    /// naming every member for an overrides cycle.
+    pub fn new(meta: OplsTypingMetadata, ff: ForceField) -> Result<Self, TypingError> {
+        let engine = LayeredTypingEngine::build(&meta).map_err(TypingError::malformed)?;
         let tables = CandidateTables::build(&ff, &meta);
-        Self {
+        Ok(Self {
             meta,
+            engine,
             ff,
             tables,
             no_match: NoMatch::Error,
-            estimator: None,
-        }
+        })
     }
 
     /// Set the bonded no-match policy (chaining). `strict=true` →
@@ -207,26 +212,6 @@ impl OplsAaTypifier {
         } else {
             NoMatch::Skip
         };
-        self
-    }
-
-    /// Attach a bonded-term parameter estimator (chaining, opt-in).
-    ///
-    /// Exact force-field table matches still win first. To keep strict mode's
-    /// contract stable, attached estimators are consulted only when this
-    /// typifier skips unmatched terms via [`with_strict(false)`](Self::with_strict).
-    ///
-    /// The bonded matcher calls
-    /// [`interpolate`](ParameterInterpolator::interpolate) for any bonded term
-    /// the force-field tables do not cover. It returns `Ok(Some(params))` —
-    /// interpolated params for the term, defined under
-    /// [`BondedTerm::type_name`] and stamped; `Ok(None)` — declined, the term
-    /// is skipped; or `Err(_)` — a hard failure, propagated.
-    pub fn with_estimator<E>(mut self, estimator: E) -> Self
-    where
-        E: ParameterInterpolator<Term = BondedTerm> + Send + Sync + 'static,
-    {
-        self.estimator = Some(Box::new(estimator));
         self
     }
 
@@ -242,17 +227,16 @@ impl Typifier for OplsAaTypifier {
     /// Node annotations: `type` (a `Type` under `atom/full` with the row's
     /// `mass` and `charge`, or a plain value when the library has no row) and
     /// `class`. Bonded annotations: `type`, the matched class-keyed name with
-    /// its library params, or an estimate named by
-    /// [`BondedTerm::type_name`](crate::ff::typifier::BondedTerm::type_name). Styles: every library style, in library
-    /// order. Pairs: the library's pair rows among the atom types used.
+    /// its library params. Styles: every library style, in library order. Pairs: the library's pair rows among the atom types used.
     ///
     /// # Errors
     ///
     /// Propagates atom-typing and bonded-matching errors. In strict mode
     /// (an unmatched bonded term is an error) also returns `Err` naming every atom no def typed,
     /// before any bonded term is matched.
-    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
-        let atoms = typify_atoms(graph, &self.meta, &self.ff)?;
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
+        let atoms = typify_atoms(graph, &self.engine, &self.meta, &self.ff)
+            .map_err(TypingError::malformed)?;
         if self.no_match == NoMatch::Error {
             let untyped: Vec<NodeId> = graph
                 .atoms()
@@ -260,21 +244,14 @@ impl Typifier for OplsAaTypifier {
                 .filter(|id| !atoms.types.contains_key(id))
                 .collect();
             if !untyped.is_empty() {
-                return Err(format!(
-                    "OPLS: no atom type for {}",
-                    assign::name_atoms(graph, &untyped)
-                ));
+                return Err(TypingError::MissingAtomType {
+                    table: "OPLS".to_owned(),
+                    detail: crate::ff::typifier::name_atoms(graph, &untyped),
+                });
             }
         }
-        let estimator = match self.no_match {
-            NoMatch::Error => None,
-            NoMatch::Skip => self
-                .estimator
-                .as_deref()
-                .map(|e| e as &dyn ParameterInterpolator<Term = BondedTerm>),
-        };
-        let mut m =
-            typify_bonded_with(graph, &atoms.types, &self.tables, self.no_match, estimator)?;
+        let mut m = typify_bonded_with(graph, &atoms.types, &self.tables, self.no_match)
+            .map_err(|detail| TypingError::MissingTerms { detail })?;
         let used: HashSet<&str> = atoms.types.values().map(String::as_str).collect();
         m.nodes = atoms.nodes;
         m.declare_styles_of(&self.ff);
@@ -292,13 +269,12 @@ impl Typifier for OplsAaTypifier {
 mod tests {
     use super::*;
     use crate::ff::ir::Params;
-    use crate::ff::typifier::{EstimationInputs, Parmchk2Estimator, Typing};
+    use crate::ff::typifier::Typing;
     use crate::props;
     use molrs::core::Element;
     use molrs::core::PropValue;
     use molrs::core::Props;
     use molrs::core::keys;
-    use molrs::core::{BondNumber, BondOrder};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// Methylsilane `H3C-SiH3`, hand-built: C is atom 0, Si is atom 1, the
@@ -355,7 +331,8 @@ mod tests {
     fn strict_typify_names_every_untyped_atom() {
         let err = Typing::new(OplsAaTypifier::oplsaa().with_strict(true))
             .typify(&methylsilane())
-            .expect_err("strict typing must refuse a partly typed molecule");
+            .expect_err("strict typing must refuse a partly typed molecule")
+            .to_string();
 
         for (i, el) in [(0, "C"), (1, "Si"), (5, "H"), (6, "H"), (7, "H")] {
             let label = atom_label(i, el);
@@ -455,7 +432,7 @@ mod tests {
                 Params::from_iter([("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)]),
             )
             .unwrap();
-        OplsAaTypifier::new(meta, ff).with_strict(true)
+        OplsAaTypifier::new(meta, ff).unwrap().with_strict(true)
     }
 
     /// Methanol `CH3-OH`, hand-built: C is atom 0, O is atom 1, the three methyl
@@ -541,39 +518,9 @@ mod tests {
         g
     }
 
-    /// The params the stub estimator fills every bond with: `k`, `r0` and the
-    /// four provenance keys of `estimate/provenance.rs`.
-    fn estimated_bond_params() -> Params {
-        let mut p = Params::from_iter([
-            ("k", 536.0),
-            ("r0", 1.529),
-            ("estimated", 1.0),
-            ("estimate_penalty", 0.0),
-        ]);
-        p.set("estimate_method", "analogy");
-        p.set("estimate_analog", "CT-CT");
-        p
-    }
-
-    /// Fills every bond with [`estimated_bond_params`]; declines every other
-    /// term.
-    struct StubBondEstimator;
-
-    impl crate::ff::typifier::ParameterInterpolator for StubBondEstimator {
-        type Term = BondedTerm;
-
-        fn interpolate(&self, term: &BondedTerm) -> Result<Option<Params>, String> {
-            Ok(match term {
-                BondedTerm::Bond(_) => Some(estimated_bond_params()),
-                _ => None,
-            })
-        }
-    }
-
     /// A two-type library (`opls_135` CT carbon, `opls_140` HC hydrogen) plus
     /// one extra type ethane never uses (`opls_154` OH oxygen) with its own
-    /// atom, pair and bond rows. The library has no `CT-CT` bond row, so the C-C
-    /// bond is filled by [`StubBondEstimator`] (lenient mode consults it).
+    /// atom, pair and bond rows.
     fn ethane_library_typifier() -> OplsAaTypifier {
         let mut meta = OplsTypingMetadata::new();
         let row = |class: &str, def: &str| OplsTypeRow {
@@ -639,6 +586,12 @@ mod tests {
             )
             .unwrap()
             .def_type(
+                "CT-CT",
+                &["CT", "CT"],
+                Params::from_iter([("k", 536.0), ("r0", 1.529)]),
+            )
+            .unwrap()
+            .def_type(
                 "CT-OH",
                 &["CT", "OH"],
                 Params::from_iter([("k", 640.0), ("r0", 1.41)]),
@@ -667,9 +620,7 @@ mod tests {
             )
             .unwrap();
 
-        OplsAaTypifier::new(meta, ff)
-            .with_strict(false)
-            .with_estimator(StubBondEstimator)
+        OplsAaTypifier::new(meta, ff).unwrap().with_strict(false)
     }
 
     /// Ethane typed through the base: the typed copy and the base.
@@ -761,189 +712,14 @@ mod tests {
         assert!(bonds.type_endpoints("CT-OH").is_none());
     }
 
-    /// The estimator-filled C-C bond is stamped `type` =
-    /// `BondedTerm::type_name()` of its endpoint atom types (the `TypeName`
-    /// join, `opls_135-opls_135`), and that name is defined in the output with
-    /// the estimator's params, provenance strings included.
-    #[test]
-    fn typing_names_and_defines_an_estimator_filled_bond() {
-        let (typed, typing) = typed_ethane();
-        let c0 = typed.atoms().next().expect("atom 0").0;
-        let c1 = typed.atoms().nth(1).expect("atom 1").0;
-        let (_, cc) = typed
-            .bonds()
-            .find(|(_, b)| b.nodes.contains(&c0) && b.nodes.contains(&c1))
-            .expect("the C-C bond");
-
-        let term = BondedTerm::Bond(["opls_135".to_owned(), "opls_135".to_owned()]);
-        let name = term.type_name().expect("a bond term has a type name");
-        assert_eq!(name.as_str(), "opls_135-opls_135");
-        assert_eq!(str_prop(&cc.props, "type").as_deref(), Some(name.as_str()));
-        assert_eq!(
-            str_prop(&cc.props, "estimate_method").as_deref(),
-            Some("analogy")
-        );
-
-        let defined = typing
-            .forcefield()
-            .get_style("bond", "harmonic")
-            .expect("bond/harmonic declared")
-            .defs()
-            .collect_type_params()
-            .into_iter()
-            .find(|(n, _)| n == name.as_str())
-            .map(|(_, p)| p)
-            .expect("the estimated name is defined");
-        assert_eq!(defined, estimated_bond_params());
-    }
-
-    /// A four-carbon library whose one dihedral row `CZ-CT-CT-CW` covers no
-    /// torsion of [`but_1_ene_skeleton`], with the default estimator attached
-    /// (lenient mode, so it is consulted).
-    ///
-    /// Types, by def: `opls_za` (class `CZ`) the terminal `=C`, `opls_tb`
-    /// (`CT`) the inner carbon on the double bond, `opls_tc` (`CT`) the inner
-    /// carbon between two single bonds, `opls_yd` (`CY`) the terminal `-C`.
-    /// Bonds and angles all have exact class rows, so the torsion is the only
-    /// estimated term.
-    fn one_torsion_estimating_typifier() -> OplsAaTypifier {
-        let mut meta = OplsTypingMetadata::new();
-        let row = |class: &str, def: &str| OplsTypeRow {
-            class: class.to_string(),
-            def: Some(def.to_string()),
-            overrides: Vec::new(),
-            priority: None,
-            layer: 0,
-        };
-        meta.insert("opls_za", row("CZ", "[C;X1]=C"));
-        meta.insert("opls_tb", row("CT", "[C;X2]=C"));
-        meta.insert("opls_tc", row("CT", "[C;X2](-C)-C"));
-        meta.insert("opls_yd", row("CY", "[C;X1]-C"));
-
-        let mut ff = ForceField::new("OPLS-AA");
-        let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
-        for name in ["opls_za", "opls_tb", "opls_tc", "opls_yd"] {
-            atoms
-                .def_type(
-                    name,
-                    &[],
-                    Params::from_iter([("mass", 12.011), ("charge", 0.0)]),
-                )
-                .unwrap();
-        }
-        let bonds = ff.def_style("bond", "harmonic", Params::new()).unwrap();
-        for (name, ends) in [
-            ("CZ-CT", ["CZ", "CT"]),
-            ("CT-CT", ["CT", "CT"]),
-            ("CT-CY", ["CT", "CY"]),
-        ] {
-            bonds
-                .def_type(name, &ends, Params::from_iter([("k", 600.0), ("r0", 1.5)]))
-                .unwrap();
-        }
-        let angles = ff.def_style("angle", "harmonic", Params::new()).unwrap();
-        for (name, ends) in [
-            ("CZ-CT-CT", ["CZ", "CT", "CT"]),
-            ("CT-CT-CY", ["CT", "CT", "CY"]),
-        ] {
-            angles
-                .def_type(
-                    name,
-                    &ends,
-                    Params::from_iter([("k", 70.0), ("theta0", 114.6)]),
-                )
-                .unwrap();
-        }
-        ff.def_style("dihedral", "opls", Params::new())
-            .unwrap()
-            .def_type(
-                "CZ-CT-CT-CW",
-                &["CZ", "CT", "CT", "CW"],
-                Params::from_iter([("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
-            )
-            .unwrap();
-
-        let inputs = meta
-            .iter()
-            .map(|(name, row)| (name.clone(), row.class.clone()))
-            .collect::<EstimationInputs>()
-            .with_forcefield_elements(&ff);
-        let estimator = Parmchk2Estimator::new(&ff, inputs);
-        OplsAaTypifier::new(meta, ff)
-            .with_strict(false)
-            .with_estimator(estimator)
-    }
-
-    /// The carbon skeleton `C=C-C-C` (no hydrogens), its atoms added in chain
-    /// order, or in reverse chain order when `reversed`. Dihedrals are
-    /// enumerated `i-j-k-l` with `j < k` in atom order, so the one torsion
-    /// comes out `za-tb-tc-yd` in the first and `yd-tc-tb-za` in the second.
-    fn but_1_ene_skeleton(reversed: bool) -> Atomistic {
-        let mut g = Atomistic::new();
-        let mut order: Vec<usize> = (0..4).collect();
-        if reversed {
-            order.reverse();
-        }
-        let mut ids = [None; 4];
-        for &k in &order {
-            let atom = props! {
-                keys::ATOMIC_NUMBER => Element::C,
-                keys::X => 1.4 * k as f64,
-                keys::Y => 0.0,
-                keys::Z => 0.0,
-            };
-            ids[k] = Some(g.add_atom(atom).unwrap());
-        }
-        let c = ids.map(|id| id.expect("every chain atom added"));
-        let double = g.add_bond(c[0], c[1], props! {}).unwrap();
-        g.set_bond_class(double, BondOrder::Double, BondNumber::Double)
-            .unwrap();
-        g.add_bond(c[1], c[2], props! {}).unwrap();
-        g.add_bond(c[2], c[3], props! {}).unwrap();
-        g
-    }
-
-    /// One torsion typed from both ends defines one type: the estimator must
-    /// give `za-tb-tc-yd` and `yd-tc-tb-za` the same params, because
-    /// `BondedTerm::type_name` gives them the same (canonical) name.
-    ///
-    /// Hand-derived: against `CZ-CT-CT-CW`, reading the row forward costs one
-    /// element-priced substitution (`CW` for `CY`), reading it backwards two;
-    /// both leave the inner `CT-CT` pair alone, so the two readings tie on the
-    /// inner score. The estimate — `estimate_penalty` included — may not
-    /// depend on which end the enumeration started from.
-    #[test]
-    fn typing_one_estimated_torsion_from_both_ends_defines_one_type() {
-        let mut typing = Typing::new(one_torsion_estimating_typifier());
-        let forward = typing
-            .typify(&but_1_ene_skeleton(false))
-            .expect("the chain-ordered skeleton types");
-        let backward = typing
-            .typify(&but_1_ene_skeleton(true))
-            .expect("the same torsion read from the other end is no TypeConflict");
-
-        let torsion_type = |g: &Atomistic| -> String {
-            let (_, d) = g.dihedrals().next().expect("one dihedral");
-            str_prop(&d.props, "type").expect("the torsion is typed")
-        };
-        assert_eq!(torsion_type(&forward), torsion_type(&backward));
-
-        let dihedrals = typing
-            .forcefield()
-            .get_style("dihedral", "opls")
-            .expect("dihedral/opls declared")
-            .defs()
-            .collect_type_params();
-        assert_eq!(dihedrals.len(), 1, "one torsion, one type: {dihedrals:?}");
-    }
-
     /// Exactly one heavy atom (the O) matches no def: strict typing is an `Err`
     /// naming that atom and no other.
     #[test]
     fn strict_typify_names_the_single_untyped_heavy_atom() {
         let err = Typing::new(c_h_only_typifier())
             .typify(&methanol())
-            .expect_err("strict typing must refuse the untyped oxygen");
+            .expect_err("strict typing must refuse the untyped oxygen")
+            .to_string();
 
         let oxygen = atom_label(1, "O");
         assert!(err.contains(&oxygen), "err names {oxygen}: {err}");

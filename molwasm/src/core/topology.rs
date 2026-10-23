@@ -115,7 +115,8 @@ impl Topology {
             .collect()
     }
 
-    /// All improper dihedral quartets as flat `Uint32Array` `[center,i,j,k, ...]`.
+    /// One improper quartet per atom with exactly three neighbours, as flat
+    /// `Uint32Array` `[center,i,j,k, ...]` (legs sorted).
     pub fn impropers(&self) -> Vec<u32> {
         self.inner
             .impropers()

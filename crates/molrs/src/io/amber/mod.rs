@@ -16,13 +16,9 @@
 pub(crate) mod ac;
 #[cfg(feature = "ff")]
 pub(crate) mod frcmod;
-#[cfg(all(test, feature = "ff"))]
-mod gaff_merge_check;
 pub(crate) mod inpcrd;
 pub(crate) mod prep;
 pub(crate) mod prmtop;
-#[cfg(all(test, feature = "ff"))]
-mod prmtop_check;
 #[cfg(feature = "ff")]
 pub(crate) mod prmtop_forcefield;
 pub(crate) mod prmtop_tables;

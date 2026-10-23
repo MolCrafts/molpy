@@ -59,6 +59,14 @@ Every reader enforces a viewer's request the same way:
 from pathlib import Path
 import molpy as mp
 
+# a PDB file to read: one embedded water
+water, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+    mp.io.smiles.read_smiles("O").to_atomistic()
+)
+water_frame = water.to_frame()
+mp.Element.fill_symbols(water_frame)  # PDB writes element symbols, not atomic numbers
+mp.io.write_pdb(Path("molecule.pdb"), water_frame)
+
 frame = mp.io.read_pdb(Path("molecule.pdb"))
 mp.io.write_pdb(Path("copy.pdb"), frame)
 

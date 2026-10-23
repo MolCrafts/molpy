@@ -175,9 +175,10 @@ defensible definition of "in contact" for [Cluster](cluster.md),
 
 `Rdf` histograms distances that a [`NeighborList`](neighborlist.md) has already
 found, so the two are always used together. The constructor fixes the
-measurement — how many bins, over which range $[r_\min, r_\max)$ — and
-`compute` takes the data: one pair source per frame. `Rdf` never sees the frame
-itself; the box it normalises by travels with the pair table, which recorded
+measurement — how many bins, over which range $[r_\min, r_\max)$. `Rdf` is a
+**stream**: `accumulator()` hands out an accumulator, each frame's pair source
+is pushed into it, and `finish()` reads the averaged $g(r)$. `Rdf` never sees
+the frame itself; the box it normalises by travels with the pair table, which recorded
 the box it was searched in. Build the frame first:
 
 ```python
@@ -204,7 +205,9 @@ from molpy.compute import Rdf
 nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
-result = Rdf(n_bins=160, r_max=8.0, r_min=0.0).compute(pairs=[nlist])
+accumulator = Rdf(n_bins=160, r_max=8.0, r_min=0.0).accumulator()
+accumulator.push(nlist)
+result = accumulator.finish()
 
 r, g = result.bin_centers, result.rdf
 peaks = r[g > 0.1]
@@ -216,25 +219,28 @@ $a/\sqrt{2} = 3.72$, $a = 5.26$, $a\sqrt{3/2} = 6.44$, and $a\sqrt{2} = 7.44$ Å
 The peaks land on them. A crystal gives sharp spikes at the lattice distances
 and never decays to 1 — exactly the third row of the table above.
 
-`pairs` is a **list**, one entry per frame, and `Rdf` averages over it, so a
-trajectory is the same call with a longer list. Each entry may be a
-materialised table or the built search itself; handing over a built
-`NeighborList` lets `Rdf` stream its pairs into the histogram without ever
-storing them, which matters once a frame holds millions of pairs. Because a
-search is rebuilt in place, give each frame its own `NeighborList` when you
-stream:
+Push one pair source per frame and `Rdf` averages over them, so a trajectory
+is the same loop with more pushes; the accumulator keeps only the running
+histogram, whatever the trajectory length. Each push may be a materialised
+table or the built search itself; handing over a built `NeighborList` lets
+`Rdf` stream its pairs into the histogram without ever storing them, which
+matters once a frame holds millions of pairs. A push folds the pairs at once,
+so one search can be rebuilt in place for the next frame:
 
 ```python
 frames = [frame, frame]                        # in practice, your trajectory
-searches = []
+search = mp.core.NeighborList(8.0)
+streamed = Rdf(n_bins=160, r_max=8.0, r_min=0.0).accumulator()
 for f in frames:
-    search = mp.core.NeighborList(8.0)
     search.build(f.coords, f.box)
-    searches.append(search)
-averaged = Rdf(n_bins=160, r_max=8.0, r_min=0.0).compute(pairs=searches)
+    streamed.push(search)
+averaged = streamed.finish()
 print(averaged.n_frames)                       # -> 2
 print(np.allclose(averaged.rdf, result.rdf))   # -> True
 ```
+
+`finish()` does not consume the accumulator: read it mid-run to watch the
+curve converge, then keep pushing.
 
 The result object carries `bin_centers`, `bin_edges`, `rdf`, the cumulative
 pair count `n_r`, and the bookkeeping (`n_frames`, `n_points`, `volume`) needed

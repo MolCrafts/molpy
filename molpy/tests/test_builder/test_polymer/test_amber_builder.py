@@ -368,7 +368,6 @@ class TestGropobOligomer:
         shutil.copy(data / "PEO.ac", monomer / "PEO.ac")
         shutil.copy(data / "PEO_initial.frcmod", monomer / "PEO.frcmod")
         frame = mp.io.read_ac(data / "PEO.ac")
-        del frame["atoms"]["xyz"]
         frame["atoms"]["atomic_number"] = np.array(
             [
                 {"c": 6, "h": 1, "o": 8}[str(t)[0].lower()]

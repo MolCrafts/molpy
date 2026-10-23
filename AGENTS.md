@@ -19,7 +19,7 @@ manual, gates); the Python binding is one of the bindings.
 | `molwasm/` | WebAssembly binding (wasm-bindgen) | npm `@molcrafts/molwasm` |
 | `molc/` | C API, header `molc.h`, symbols `molc_*` / `Molc*` / `MOLC_*` | — |
 | `molcxx/` | CXX bridge for Atomiverse C++ (`FrameView`, zero-copy) | — |
-| `docs/` + `zensical.toml` | the molpy manual (Zensical), `docs/bindings/` per binding | — |
+| `docs/` + `zensical.toml` | the molpy manual (Zensical). The first page is molpy; the manual then navigates to molrs. Other bindings are documented by their own tools | — |
 | `scripts/check.sh` | the one definition of every gate | — |
 
 There is no Python `molrs` package and no `molrs-python`. Python code imports
@@ -34,9 +34,11 @@ maturin reads `molpy/Cargo.toml`, and `molpy.version` re-exports
 without the operator confirming the target remote and branch.
 
 **ABI.** The minor line is the ABI contract. Capsule names
-(`molrs.FrameRef/<major.minor>`, …) are defined only in
-`crates/molrs-ffi/src/abi.rs`; a layout change inside a minor line fails the
-`ffi` gate.
+(`molrs.FrameRef/<major.minor>+<fingerprint>`, …) are defined only in
+`crates/molrs-ffi/src/abi.rs`; the fingerprint hashes the compiler and the
+handle layout, so builds that may disagree on a layout refuse each other's
+capsules. A layout change fails the `ffi` gate's snapshot test
+(`abi::tests::layout_matches_the_snapshot`): bump the minor line with it.
 
 ## Design preferences
 
@@ -93,7 +95,9 @@ you touch or depend on is prioritized or hard-stopped, never ignored:
 - What is public is what `__all__` lists; user-facing code and tests write
   `import molpy as mp` and `mp.<sub>.<Name>`.
 - External tools sit under `mp.tool` (e.g. `molpy.tool.ambertools`), never at
-  the package top level. GAFF typing goes through AmberTools only.
+  the package top level. GAFF typing is native (`AtdTypifier` +
+  `GaffTypifier`); AmberTools runs only what only it does (sqm for AM1-BCC,
+  the antechamber / tleap pipeline typifiers).
 - Engine export of a style comes from its registration (`lammps = …` on the
   style declaration), read by the core writers.
 
@@ -102,7 +106,11 @@ you touch or depend on is prioritized or hard-stopped, never ignored:
 Tests check correctness only: what code computes, writes, raises or refuses.
 Not tests: style, naming or module-location scans, API-shape or absence
 checks, source greps, doc snippets run as tests, end-to-end pipelines,
-numbers captured from another program, "molpy returns what molrs returns".
+"molpy returns what molrs returns", numbers captured from another program.
+molrs only writes engine inputs: checking them against LAMMPS, GROMACS,
+OpenMM or AmberTools is an out-of-source script that is never committed,
+with no regression or unit test, no pinned engine number and no fixture an
+engine produced for it. A test never stages, prints or rewrites files.
 
 - **No third-party scientific software at test time** (RDKit, AmberTools,
   OpenMM, LAMMPS, GROMACS, Packmol, freud) and **no test skipped** for a
@@ -145,9 +153,9 @@ Always use the `cargo mrs-*` aliases (`.cargo/config.toml`): a differently
 spelled feature list is a different fingerprint and recompiles the whole
 core (and `full` alone leaves out `zarr`/`filesystem`). Every binder (`crates/molrs-ffi`, `molpy`, `molwasm`, `molc`, `molcxx`)
 is its own workspace — address it with `--manifest-path <dir>/Cargo.toml`,
-never `-p`. All roots share `<repo>/target`. Linking is static by default;
-the shared-dylib form is a command-line opt-in documented in
-`docs/bindings/interop.md`.
+never `-p`. All roots share `<repo>/target`. Linking is static by default.
+`molc` is also a cdylib (`molc/Cargo.toml`); its header is cbindgen's
+`molc/include/molc.h`.
 
 Run Python from `molpy/` with `uv run --no-sync` (the project venv is
 `molpy/.venv`), and `pytest` directly, never `python -m pytest` — the flat
@@ -166,8 +174,12 @@ check uses `python -I`.
   `Topology` is native adjacency (no petgraph in the core).
 - `perceive` (rings, aromaticity, stereo, SMARTS) is always compiled, one
   layer above `core`, below `ff`/`io`/`conformer`.
-- Angles are radians internally; each reader converts degrees at its
-  boundary. Potentials take flat `[x0,y0,z0,…]` coordinates.
+- Angles that are data are degrees, as the engines write them: force-field
+  angle parameters (`theta0`, a torsion `phase`) in the IR and its tables, and
+  cell angles (`Cell::LengthsAngles`). A reader of a radian format (AMBER
+  prmtop) converts to degrees at its boundary; each kernel converts to radians
+  once. Angles that are arguments of geometry (`rotate`, a computed dihedral)
+  are radians. Potentials take flat `[x0,y0,z0,…]` coordinates.
 - Every force-field parameter table is committed Rust under
   `crates/molrs/src/ff/params/`; nothing parses parameter text at runtime.
 - A force field declares its electrostatic constants (`coulomb`,
@@ -179,8 +191,8 @@ check uses `python -I`.
 ## Documentation
 
 The manual is executable: every ```python block runs, top to bottom per page,
-against the current API. A block that cannot run in the docs environment
-starts with `# docs: skip — <reason>`. Tutorials and guides are textbook
+against the current API (`scripts/run_doc_blocks.py`, in the `docs` gate). A
+block that cannot run in the docs environment starts with `# docs: skip — <reason>`. Tutorials and guides are textbook
 prose (concept → motivation → mechanics), not bullet lists; no visionary
 claims. Public Python API has type hints and Google-style docstrings; Rust
 uses rustdoc with runnable examples. Figures come from real runs

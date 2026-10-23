@@ -20,7 +20,7 @@
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 
-use molrs::conformer::{Conformer, ConformerOptions, ConformerReport, ConformerSpeed, StageKind};
+use molrs::conformer::{Conformer, ConformerOptions, ConformerReport, StageKind};
 
 use crate::core::molgraph::PyAtomistic;
 use crate::error::molrs_error_to_pyerr;
@@ -50,7 +50,6 @@ fn report_to_py(report: ConformerReport) -> PyConformerReport {
             energy_after: s.energy_after,
             steps: s.steps,
             converged: s.converged,
-            elapsed_ms: s.elapsed_ms,
         })
         .collect();
     PyConformerReport {
@@ -76,8 +75,6 @@ fn report_to_py(report: ConformerReport) -> PyConformerReport {
 ///     Number of optimizer steps executed.
 /// converged : bool
 ///     Whether the stage converged.
-/// elapsed_ms : int
-///     Wall-clock time for this stage in milliseconds.
 #[pyclass(module = "molpy.conformer", name = "ConformerStageReport")]
 pub struct PyConformerStageReport {
     #[pyo3(get)]
@@ -90,8 +87,6 @@ pub struct PyConformerStageReport {
     pub steps: usize,
     #[pyo3(get)]
     pub converged: bool,
-    #[pyo3(get)]
-    pub elapsed_ms: u64,
 }
 
 #[pymethods]
@@ -111,7 +106,9 @@ impl PyConformerStageReport {
 /// Attributes
 /// ----------
 /// final_energy : float | None
-///     Total energy in kcal/mol after all stages, or ``None`` on failure.
+///     The MMFF94 energy in kcal/mol after the cleanup minimization, or
+///     ``None`` when MMFF94 does not cover the molecule and the cleanup was
+///     skipped (a warning says why).
 /// warnings : list[str]
 ///     Diagnostic warnings generated during the run.
 /// stages : list[ConformerStageReport]
@@ -150,7 +147,6 @@ impl PyConformerReport {
                 energy_after: s.energy_after,
                 steps: s.steps,
                 converged: s.converged,
-                elapsed_ms: s.elapsed_ms,
             })
             .collect()
     }
@@ -172,11 +168,11 @@ impl PyConformerReport {
 /// The class is subclassable so downstream wrappers (e.g. ``molpy.conformer``)
 /// can inherit it and refine the marshalling.
 ///
+/// The pipeline is fixed: ETKDG embedding, then an MMFF94 cleanup
+/// minimization.
+///
 /// Parameters
 /// ----------
-/// speed : str, optional
-///     Quality preset: ``"fast"`` (fewest iterations), ``"medium"`` (default),
-///     or ``"better"`` (most thorough search).
 /// add_hydrogens : bool, optional
 ///     If ``True`` (default), add implicit hydrogens before generation.
 /// seed : int | None, optional
@@ -184,7 +180,7 @@ impl PyConformerReport {
 ///
 /// Examples
 /// --------
-/// >>> gen = Conformer(speed="fast", add_hydrogens=True, seed=42)
+/// >>> gen = Conformer(add_hydrogens=True, seed=42)
 /// >>> mol_3d, report = gen.generate(mol)
 #[pyclass(
     module = "molpy.conformer",
@@ -203,40 +199,21 @@ impl PyConformer {
     ///
     /// Parameters
     /// ----------
-    /// speed : str
-    ///     ``"fast"``, ``"medium"`` (default), or ``"better"``.
     /// add_hydrogens : bool
     ///     Add implicit hydrogens before generation. Default ``True``.
     /// seed : int | None
     ///     RNG seed for reproducibility.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If ``speed`` is not one of the recognized presets.
     #[new]
-    #[pyo3(signature = (speed="medium", add_hydrogens=true, seed=None))]
-    fn new(speed: &str, add_hydrogens: bool, seed: Option<u64>) -> PyResult<Self> {
-        let sp = match speed {
-            "fast" => ConformerSpeed::Fast,
-            "medium" => ConformerSpeed::Medium,
-            "better" => ConformerSpeed::Better,
-            other => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unknown speed '{}', expected 'fast', 'medium', or 'better'",
-                    other
-                )));
-            }
-        };
+    #[pyo3(signature = (add_hydrogens=true, seed=None))]
+    fn new(add_hydrogens: bool, seed: Option<u64>) -> Self {
         let opts = ConformerOptions {
-            speed: sp,
             add_hydrogens,
             rng_seed: seed,
             ..ConformerOptions::default()
         };
-        Ok(Self {
+        Self {
             inner: Conformer::new(opts),
-        })
+        }
     }
 
     /// Generate 3D coordinates for a molecular graph.
@@ -268,7 +245,7 @@ impl PyConformer {
     /// Examples
     /// --------
     /// >>> mol = molpy.io.smiles.read_smiles("CCO").to_atomistic()
-    /// >>> mol_3d, report = Conformer(speed="fast", seed=42).generate(mol)
+    /// >>> mol_3d, report = Conformer(seed=42).generate(mol)
     /// >>> mol_3d.n_atoms   # includes added hydrogens
     /// 9
     ///
@@ -276,7 +253,7 @@ impl PyConformer {
     /// the caller relabels them, which is one call:
     ///
     /// >>> unit = molpy.io.smiles.read_smiles_fragment("[$]CO").to_template()
-    /// >>> unit_3d, _ = Conformer(speed="fast", seed=42).generate(unit)
+    /// >>> unit_3d, _ = Conformer(seed=42).generate(unit)
     /// >>> _ = unit_3d.inherit_frag_ids()
     fn generate(
         &self,
@@ -304,8 +281,8 @@ impl PyConformer {
     fn __repr__(&self) -> String {
         let opts = self.inner.options();
         format!(
-            "Conformer(speed={:?}, add_hydrogens={}, seed={:?})",
-            opts.speed, opts.add_hydrogens, opts.rng_seed
+            "Conformer(add_hydrogens={}, seed={:?})",
+            opts.add_hydrogens, opts.rng_seed
         )
     }
 }

@@ -147,7 +147,7 @@ class Engine(Tool, ABC):
 
     def run(
         self,
-        scripts: Script | str | Path | Sequence[Script | Path],
+        scripts: Script | Path | Sequence[Script | Path],
         *,
         workdir: str | Path | None = None,
         capture_output: bool = False,
@@ -155,9 +155,10 @@ class Engine(Tool, ABC):
     ) -> subprocess.CompletedProcess[str]:
         """Write *scripts* into the run directory and execute the engine.
 
-        Accepts a :class:`~molpy.engine.Script`, a raw string (named
-        ``input``), a :class:`~pathlib.Path` to a script file, or a list of
-        scripts and paths. The first script is the engine's input; the rest
+        Accepts a :class:`~molpy.engine.Script`, a :class:`~pathlib.Path` to a
+        script file, or a list of scripts and paths. A ``str`` is refused: it
+        could be script text or a file name, so the caller says which
+        (``Script.from_text(name, text)`` or ``pathlib.Path(name)``). The first script is the engine's input; the rest
         are written beside it. A script with a path is written under its file
         name, any other as ``<name><extension>``. Neither the scripts nor the
         engine are changed: every call names what it runs.
@@ -174,6 +175,7 @@ class Engine(Tool, ABC):
             :class:`subprocess.CompletedProcess` with execution results.
 
         Raises:
+            TypeError: If a script is a ``str``.
             ValueError: If *scripts* is an empty list.
             ToolError: The engine could not start, timed out, or (with
                 *check*) exited non-zero.
@@ -185,7 +187,7 @@ class Engine(Tool, ABC):
 
     def _write_scripts(
         self,
-        scripts: Script | str | Path | Sequence[Script | Path],
+        scripts: Script | Path | Sequence[Script | Path],
         workdir: str | Path | None,
     ) -> tuple[Path, Path]:
         """Write *scripts* into the run directory, as :meth:`run` does.
@@ -194,6 +196,7 @@ class Engine(Tool, ABC):
             The run directory and the input (the first script) written in it.
 
         Raises:
+            TypeError: If a script is a ``str``.
             ValueError: If *scripts* is an empty list.
         """
         normalised = _as_scripts(scripts)
@@ -216,17 +219,18 @@ class Engine(Tool, ABC):
         return run_dir, written[0]
 
 
-def _as_scripts(scripts: Script | str | Path | Sequence[Script | Path]) -> list[Script]:
+def _as_scripts(scripts: Script | Path | Sequence[Script | Path]) -> list[Script]:
     """*scripts* as a non-empty list of :class:`Script`."""
-    if isinstance(scripts, (Script, str, Path)):
-        scripts = [scripts]
+    items: list[Script | Path] = (
+        [scripts] if isinstance(scripts, (Script, Path)) else list(scripts)
+    )
+    if isinstance(scripts, str) or any(isinstance(item, str) for item in items):
+        raise TypeError(
+            "a script is a Script or a pathlib.Path, not a str (script text or a "
+            "file name?): pass Script.from_text(name, text) or pathlib.Path(name)"
+        )
     normalised = [
-        Script.from_text("input", item)
-        if isinstance(item, str)
-        else Script.from_path(item)
-        if isinstance(item, Path)
-        else item
-        for item in scripts
+        Script.from_path(item) if isinstance(item, Path) else item for item in items
     ]
     if not normalised:
         raise ValueError("At least one script is required.")

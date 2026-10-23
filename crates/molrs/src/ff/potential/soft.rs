@@ -138,9 +138,16 @@ impl SoftPotential {
         let n = coords.len() / 3;
         let view = ArrayView2::from_shape((n, 3), coords).expect("3·n coordinates");
         let cutoff = self.spec.rcut.max(self.spec.sigma) + SKIN;
+        // `rcut` and `sigma` are the spec's fixed positive constants, so the
+        // search radius is a positive length.
+        const RADIUS: &str = "the fixed rcut/sigma plus the skin is a valid cutoff";
         let table = match &self.simbox {
-            Some(b) => NeighborQuery::new(b, view, cutoff).query_self(),
-            None => NeighborQuery::unbounded(view, cutoff).query_self(),
+            Some(b) => NeighborQuery::new(b, view, cutoff)
+                .expect(RADIUS)
+                .query_self(),
+            None => NeighborQuery::unbounded(view, cutoff)
+                .expect(RADIUS)
+                .query_self(),
         };
         let (qi, qj) = (table.query_point_indices(), table.point_indices());
         (0..table.n_pairs())

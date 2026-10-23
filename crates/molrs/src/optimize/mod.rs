@@ -25,9 +25,9 @@ mod lbfgs_driver;
 #[cfg(feature = "ff")]
 pub use lbfgs_driver::Lbfgs;
 
-use crate::core::Frame;
 use crate::core::keys::FREE;
 use crate::core::schema::block_names::ATOMS;
+use crate::core::{BlockError, Frame, MolRsError};
 use crate::op::F;
 use ndarray::Array1;
 
@@ -107,30 +107,110 @@ impl Default for LbfgsSettings {
     }
 }
 
+/// Why a minimization could not run.
+#[derive(Debug)]
+pub enum OptimizeError {
+    /// A flat coordinate buffer is not `3·n_atoms` long.
+    CoordsLength {
+        /// The buffer's length.
+        len: usize,
+    },
+    /// A batch buffer is not `n_structs · n_atoms · 3` long, or names no
+    /// atoms per structure for a non-empty batch.
+    BatchShape {
+        /// The buffer's length.
+        len: usize,
+        /// Structures in the batch.
+        n_structs: usize,
+        /// Atoms per structure.
+        n_atoms: usize,
+    },
+    /// The free mask does not have one entry per atom.
+    FreeMask {
+        /// Entries in the mask.
+        len: usize,
+        /// Atoms it was given for.
+        n_atoms: usize,
+    },
+    /// The frame has no `atoms` block to read or write.
+    NoAtoms,
+    /// The frame's coordinates could not be read or written back.
+    Frame(MolRsError),
+    /// An optimizer outside molrs refused, in its own terms.
+    Implementor(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl std::fmt::Display for OptimizeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CoordsLength { len } => write!(
+                f,
+                "coords length {len} is not a multiple of 3 (expected 3·n_atoms)"
+            ),
+            Self::BatchShape {
+                len,
+                n_structs,
+                n_atoms,
+            } => write!(
+                f,
+                "coords length {len} is not n_structs ({n_structs}) · n_atoms ({n_atoms}) · 3 \
+                 with n_atoms > 0"
+            ),
+            Self::FreeMask { len, n_atoms } => {
+                write!(f, "free mask has {len} entries for {n_atoms} atoms")
+            }
+            Self::NoAtoms => write!(f, "the frame has no atoms block"),
+            Self::Frame(err) => write!(f, "frame coordinates: {err}"),
+            Self::Implementor(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for OptimizeError {}
+
+impl From<MolRsError> for OptimizeError {
+    fn from(err: MolRsError) -> Self {
+        Self::Frame(err)
+    }
+}
+
+impl From<BlockError> for OptimizeError {
+    fn from(err: BlockError) -> Self {
+        Self::Frame(err.into())
+    }
+}
+
 /// Geometry optimizer: minimize a [`Frame`] in place.
 ///
 /// Optional free mask: bool column `atoms.free` (missing ⇒ every atom free).
 /// Fixed atoms stay in the potential evaluation but are not optimizable DOFs.
 pub trait Optimizer: Send + Sync {
     /// Relax `frame` in place. Coordinates are `atoms.{x,y,z}`.
-    fn minimize(&mut self, frame: &mut Frame) -> Result<OptimizationReport, String>;
+    ///
+    /// # Errors
+    ///
+    /// The [`OptimizeError`] naming why the frame cannot be minimized; an
+    /// optimizer outside molrs reports its own failure as
+    /// [`OptimizeError::Implementor`].
+    fn minimize(&mut self, frame: &mut Frame) -> Result<OptimizationReport, OptimizeError>;
 }
 
-/// Ensure `atoms.free` exists with the given mask (helper for callers assembling Frames).
-pub fn set_free_mask(frame: &mut Frame, free: &[bool]) -> Result<(), String> {
-    let atoms = frame
-        .get_mut(ATOMS)
-        .ok_or_else(|| "Frame has no atoms block".to_string())?;
-    let n = atoms.n_rows().unwrap_or(0);
-    if free.len() != n {
-        return Err(format!(
-            "free mask length {} != atoms nrows {n}",
-            free.len()
-        ));
+/// Write `free` as the `atoms.free` mask a minimization reads.
+///
+/// # Errors
+///
+/// [`OptimizeError::NoAtoms`] for a frame without an `atoms` block and
+/// [`OptimizeError::FreeMask`] for a mask that is not one entry per atom.
+pub fn set_free_mask(frame: &mut Frame, free: &[bool]) -> Result<(), OptimizeError> {
+    let atoms = frame.get_mut(ATOMS).ok_or(OptimizeError::NoAtoms)?;
+    let n_atoms = atoms.n_rows().unwrap_or(0);
+    if free.len() != n_atoms {
+        return Err(OptimizeError::FreeMask {
+            len: free.len(),
+            n_atoms,
+        });
     }
-    atoms
-        .insert(FREE, Array1::from_vec(free.to_vec()).into_dyn(), None)
-        .map_err(|e| e.to_string())?;
+    atoms.insert(FREE, Array1::from_vec(free.to_vec()).into_dyn(), None)?;
     Ok(())
 }
 
@@ -144,11 +224,11 @@ mod tests {
     struct Center;
 
     impl Optimizer for Center {
-        fn minimize(&mut self, frame: &mut Frame) -> Result<OptimizationReport, String> {
-            let mut xyz = frame.coords().map_err(|e| e.to_string())?;
+        fn minimize(&mut self, frame: &mut Frame) -> Result<OptimizationReport, OptimizeError> {
+            let mut xyz = frame.coords()?;
             let centroid = xyz.mean_axis(ndarray::Axis(0)).unwrap_or_default();
             xyz -= &centroid;
-            frame.set_coords(xyz.view()).map_err(|e| e.to_string())?;
+            frame.set_coords(xyz.view())?;
             Ok(OptimizationReport {
                 n_steps: 1,
                 ..OptimizationReport::EMPTY

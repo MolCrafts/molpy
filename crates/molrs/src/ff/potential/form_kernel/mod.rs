@@ -7,8 +7,10 @@
 //! expression's) is built into one of these by
 //! [`PotentialCompiler`](crate::ff::compile::PotentialCompiler). They are
 //! the column fetch, type lookup, 1-4 scaling, type-pair table and
-//! periodic-copy bookkeeping a hand-written kernel (`pair/morse.rs`)
-//! repeats, so a third party writes only the energy:
+//! periodic-copy bookkeeping every kernel needs, written once, so a form —
+//! a third party's, an expression's, or any of molrs's built-ins (`bond`,
+//! `angle`, `dihedral`, `improper` and `pair` of [`crate::ff::potential`]) —
+//! states only its force law:
 //!
 //! * [`ScalarBonded`] — the rows of a bonded category's block, the chain rule
 //!   from `r`, `theta` or `phi` onto the atoms.
@@ -26,7 +28,7 @@ mod tests;
 
 pub use bonded::ScalarBonded;
 pub use compound::CompoundTerms;
-pub use form::{CompoundForm, ParamColumns, ScalarForm};
+pub use form::{CompoundForm, ParamColumns, ScalarForm, StyleRefusal, eval_by_term};
 pub use pair::ScalarPair;
 
 use std::collections::HashMap;
@@ -88,7 +90,18 @@ pub(crate) fn columns(
             let (m, gap) = contiguous(row, &p.name);
             let bare =
                 spec.unindexed_one_term && row.get(&p.name).and_then(|v| v.as_num()).is_some();
-            if gap || (bare && m > 0) {
+            if bare && m > 0 {
+                return Err(IrError::BadValue {
+                    style: spec.name.to_string(),
+                    type_: label.to_string(),
+                    param: p.name.to_string(),
+                    reason: format!(
+                        "is given beside `{0}1`: spell one term `{0}`, or every term `{0}<m>`",
+                        p.name
+                    ),
+                });
+            }
+            if gap {
                 return Err(IrError::MissingParam {
                     style: spec.name.to_string(),
                     type_: label.to_string(),
@@ -97,6 +110,33 @@ pub(crate) fn columns(
             }
             m_table = m_table.max(if bare { 1 } else { m });
         }
+    }
+    // A table-driven style's row states its style's parameters and no
+    // others: a number the form does not read (a `dihedral periodic` term
+    // table on `dihedral opls`, whose `k1 … k4` it shares) would price as
+    // something else, in silence. A per-instance style's rows are a
+    // typifier's records, which carry what it derived the instances from.
+    let table_driven = spec.source == ParamSource::TypeRows;
+    for (label, row) in rows.iter().filter(|_| table_driven) {
+        if let Some(key) = spec.undeclared_param(row) {
+            return Err(IrError::BadValue {
+                style: spec.name.to_string(),
+                type_: label.to_string(),
+                param: key.to_owned(),
+                reason: format!("is no `{} {}` parameter", spec.category, spec.name),
+            });
+        }
+    }
+    // A row of an indexed style states one term at least: none would price
+    // as no term, in silence.
+    if let Some(first) = params.iter().find(|p| p.indexed)
+        && let Some((label, _)) = rows.iter().find(|(_, row)| row_terms(spec, row) == 0)
+    {
+        return Err(IrError::MissingParam {
+            style: spec.name.to_string(),
+            type_: label.to_string(),
+            param: format!("{}1", first.name),
+        });
     }
     let mut out = Vec::new();
     for (c, p) in params.iter().enumerate() {
@@ -154,15 +194,49 @@ pub(crate) fn retain_form_inputs(
 
 /// `column`'s numeric value in `row`, by its own name or — term 1 of a style
 /// that accepts it — the bare name of its family.
+///
+/// A member of an indexed family past the terms `row` states reads 0: one
+/// table has one `M`, and a row of fewer terms holds its absent ones at zero
+/// (a zero-amplitude term, which every built-in family's form prices as no
+/// term at all).
 pub(crate) fn row_num(spec: &StyleSpec, col: &StyleParamColumn, row: &Params) -> Option<F> {
-    row.get(&col.name).and_then(|v| v.as_num()).or_else(|| {
-        (col.index == Some(1) && spec.unindexed_one_term)
-            .then(|| {
-                row.get(&spec.params[col.param].name)
-                    .and_then(|v| v.as_num())
-            })
-            .flatten()
-    })
+    row.get(&col.name)
+        .and_then(|v| v.as_num())
+        .or_else(|| {
+            (col.index == Some(1) && spec.unindexed_one_term)
+                .then(|| {
+                    row.get(&spec.params[col.param].name)
+                        .and_then(|v| v.as_num())
+                })
+                .flatten()
+        })
+        .or_else(|| (col.index? > row_terms(spec, row)).then_some(0.0))
+}
+
+/// How many terms `row` states of its style's indexed families: the longest
+/// contiguous family, a bare term-1 spelling counting one.
+fn row_terms(spec: &StyleSpec, row: &Params) -> usize {
+    spec.params
+        .iter()
+        .filter(|p| p.indexed)
+        .map(|p| {
+            let bare =
+                spec.unindexed_one_term && row.get(&p.name).and_then(|v| v.as_num()).is_some();
+            contiguous(row, &p.name).0.max(usize::from(bare))
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// The numbers of `block`'s column `name` as [`F`]: a float column, or an
+/// integer one (a flag a typifier bakes, MMFF's `linear`).
+pub(crate) fn numeric_column(block: &molrs::core::Block, name: &str) -> Option<Vec<F>> {
+    let col = block.get(name)?;
+    if let Some(c) = col.get::<f64>() {
+        return Some(c.iter().copied().collect());
+    }
+    col.get::<molrs::op::I>()
+        .map(|c| c.iter().map(|&v| F::from(v)).collect())
 }
 
 /// The per-term inputs of a kernel's terms, owned; [`ParamColumns`] borrows
@@ -173,6 +247,9 @@ pub(crate) struct TermParams {
     /// Stacked, leading axis the terms.
     pub arrays: Vec<(String, ArrayD<F>)>,
     pub texts: Vec<(String, Vec<String>)>,
+    /// The numeric style parameters, one value each (also broadcast in
+    /// `nums`).
+    pub style_nums: Vec<(String, F)>,
     pub style_texts: Vec<(String, String)>,
 }
 
@@ -193,6 +270,9 @@ impl TermParams {
         }
         for ((name, _), t) in self.texts.iter().zip(&texts) {
             cols.push_text(name, t);
+        }
+        for (name, v) in &self.style_nums {
+            cols.push_style_num(name, *v);
         }
         for (name, t) in &self.style_texts {
             cols.push_style_text(name, t);
@@ -218,6 +298,7 @@ impl TermParams {
                 .iter()
                 .map(|(n, c)| (n.clone(), picked.iter().map(|&t| c[t].clone()).collect()))
                 .collect(),
+            style_nums: self.style_nums.clone(),
             style_texts: self.style_texts.clone(),
         }
     }
@@ -237,6 +318,29 @@ impl TermParams {
         }
     }
 
+    /// `refusal` of `spec`'s style parameters as the error it is.
+    pub fn refused(spec: &StyleSpec, refusal: StyleRefusal) -> IrError {
+        IrError::BadValue {
+            style: spec.name.to_string(),
+            type_: String::new(),
+            param: refusal.param,
+            reason: refusal.reason,
+        }
+    }
+
+    /// The style parameters alone, as a form's
+    /// [`check_style`](ScalarForm::check_style) reads them.
+    pub fn style_cols<R>(&self, f: impl FnOnce(&ParamColumns<'_>) -> R) -> R {
+        let mut cols = ParamColumns::new();
+        for (name, v) in &self.style_nums {
+            cols.push_style_num(name, *v);
+        }
+        for (name, t) in &self.style_texts {
+            cols.push_style_text(name, t);
+        }
+        f(&cols)
+    }
+
     /// Add the style's declared numeric parameters as `n`-long columns, and
     /// its text ones, from `style` as [`StyleSpec::gather`] filled it.
     pub fn add_style(&mut self, spec: &StyleSpec, style: &Params, n: usize) -> Result<(), IrError> {
@@ -253,6 +357,7 @@ impl TermParams {
                         .and_then(|v| v.as_num())
                         .ok_or_else(missing)?;
                     self.nums.push((p.name.to_string(), vec![v; n]));
+                    self.style_nums.push((p.name.to_string(), v));
                 }
                 ParamKind::Text { .. } => {
                     let v = style
@@ -338,11 +443,13 @@ pub(crate) fn resolve_terms(
         let decl = &spec.params[col.param];
         match &decl.kind {
             ParamKind::Scalar => {
-                let own = block.get(&col.name).and_then(|c| c.get::<f64>());
+                let own = numeric_column(block, &col.name);
                 let valid = block.validity(&col.name);
                 let mut values = Vec::with_capacity(n);
                 for (t, &(label, row)) in rows.iter().enumerate() {
-                    let cell = own.and_then(|c| valid.is_none_or(|m| m[t]).then(|| c[t]));
+                    let cell = own
+                        .as_ref()
+                        .and_then(|c| valid.is_none_or(|m| m[t]).then(|| c[t]));
                     let v = cell
                         .or_else(|| row_num(spec, col, row.unwrap_or(&defaults)))
                         .ok_or_else(|| missing(label, &col.name))?;

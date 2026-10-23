@@ -9,10 +9,8 @@ from eo_kit import library, report
 
 
 def main() -> None:
-    sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|6[#PO]|4}").to_coarsegrain()
-    block = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(
-        sites, mp.Atomistic
-    )
+    sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|6[#PO]|4}").to_coarsegrain()
+    block = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
     report("EO6-b-PO4", block)
 
 

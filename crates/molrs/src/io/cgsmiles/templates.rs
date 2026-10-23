@@ -151,7 +151,7 @@ impl CgSmilesIr {
     /// ```
     /// use molrs::io::cgsmiles::CgSmilesIr;
     /// use molrs::perceive::add_hydrogens;
-    /// use molrs::core::Atomistic;
+    /// use molrs::core::{Atomistic, NeighborKinds};
     ///
     /// let ir = CgSmilesIr::parse("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")?;
     /// let mut templates = ir.templates()?;
@@ -173,7 +173,7 @@ impl CgSmilesIr {
     /// assert_eq!(rebuilt.n_ports(), 2);
     /// for id in rebuilt.port_ids() {
     ///     let port = rebuilt.get_port(id)?;
-    ///     assert_eq!(rebuilt.neighbor_bonds(port.handle).count(), 1);
+    ///     assert_eq!(rebuilt.neighbors(port.handle, NeighborKinds::BONDS).count(), 1);
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -411,6 +411,7 @@ mod tests {
     use crate::line_notation::parser::parse_fragment_smiles;
     use molrs::core::Atomistic;
     use molrs::core::Element;
+    use molrs::core::NeighborKinds;
     use molrs::core::NodeId;
     use molrs::core::PropValue;
     use molrs::core::keys;
@@ -488,7 +489,9 @@ mod tests {
     /// arity-2 relation too, which a generic adjacency would report as a
     /// second neighbour).
     fn bonded(frag: &Atomistic, atom: NodeId) -> Vec<NodeId> {
-        frag.neighbor_bonds(atom).map(|(other, _)| other).collect()
+        frag.neighbors(atom, NeighborKinds::BONDS)
+            .map(|(other, _)| other)
+            .collect()
     }
 
     /// The `(BondOrder, BondNumber)` of the bond joining a port's anchor to its

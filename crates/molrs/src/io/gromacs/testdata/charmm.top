@@ -1,5 +1,5 @@
 ; charmm (plus a [ nonbond_params ] row): ACE-ALA-ALA-NME from `gmx pdb2gmx -ff charmm27` (GROMACS 2025.3),
-; `grompp -pp`, trimmed to the types it uses (scripts/gromacs_engine_check.sh).
+; `grompp -pp`, trimmed to the types it uses.
 [ defaults ]
 1	2	yes	1.0	1.0
 

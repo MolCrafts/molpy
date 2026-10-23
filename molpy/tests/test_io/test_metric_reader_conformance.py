@@ -117,7 +117,7 @@ def write_mrec(tmp_path: Path) -> Path:
 
 
 def write_mrec_zip(tmp_path: Path) -> Path:
-    return Path(mp.io.mrec.pack_mrec_zip(str(write_mrec(tmp_path))))
+    return Path(mp.io.mrec.pack_mrec_zip(write_mrec(tmp_path)))
 
 
 def write_jsonl_mirror(tmp_path: Path, records: Iterable[dict[str, Any]]) -> Path:

@@ -148,19 +148,22 @@ fn build_bond_index(p: &DgFeatures) -> BondIndex {
 }
 
 /// Breadth-first topological distance matrix (number of bonds between atoms),
-/// as `f64` with [`f64::INFINITY`] for unreachable pairs.
+/// as `f64` with [`f64::INFINITY`] for unreachable pairs: one
+/// [`Topology::distances`](crate::core::Topology::distances) row per atom.
 fn topo_distances(p: &DgFeatures) -> Vec<Vec<f64>> {
-    crate::conformer::topological_distance::topological_distances(&p.adj)
-        .into_iter()
-        .map(|row| {
-            row.into_iter()
-                .map(|d| {
-                    if d == usize::MAX {
-                        f64::INFINITY
-                    } else {
-                        d as f64
-                    }
-                })
+    let edges: Vec<[usize; 2]> = p
+        .adj
+        .iter()
+        .enumerate()
+        .flat_map(|(i, nbrs)| nbrs.iter().filter(move |&&j| i < j).map(move |&j| [i, j]))
+        .collect();
+    let mut topo = crate::core::Topology::with_atoms(p.adj.len());
+    topo.add_bonds(&edges);
+    (0..p.adj.len())
+        .map(|source| {
+            topo.distances(source)
+                .into_iter()
+                .map(|d| if d < 0 { f64::INFINITY } else { d as f64 })
                 .collect()
         })
         .collect()

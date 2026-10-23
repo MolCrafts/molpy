@@ -492,13 +492,20 @@ impl CoarseGrain {
         self.graph.n_relations(self.bond)
     }
 
-    /// Iterate over `(neighbor_id, bond_id)` for a given bead — its CG bonds
-    /// only, never a port.
-    pub fn neighbor_bonds(&self, id: NodeId) -> impl Iterator<Item = (NodeId, RelationId)> + '_ {
-        self.graph
-            .neighbor_relations(id)
-            .filter(move |(kind, _, _)| *kind == self.bond)
-            .map(move |(_, rid, other)| (other, rid))
+    /// Arity-2 relations incident to `id`.
+    ///
+    /// [`NeighborKinds::BONDS`](crate::core::NeighborKinds::BONDS) yields
+    /// `(other_bead, bond_id)`.
+    /// [`NeighborKinds::with_ports`](crate::core::NeighborKinds::with_ports) and
+    /// [`NeighborKinds::with_terms`](crate::core::NeighborKinds::with_terms)
+    /// also yield ports and any other arity-2
+    /// kind, and each item is an [`Adjacent`](crate::core::Adjacent).
+    pub fn neighbors<'a, K: crate::core::adjacency::AdjacencyKind + 'a>(
+        &'a self,
+        id: NodeId,
+        which: crate::core::NeighborKinds<K>,
+    ) -> impl Iterator<Item = K::Item<'a>> + 'a {
+        self.graph.adjacent(id, self.bond, which)
     }
 
     // ---- ports ----
@@ -575,13 +582,17 @@ impl CoarseGrain {
     }
 
     /// Join port `a` to port `b` and return the new anchor–anchor CG bond;
-    /// see [`MolGraph::link`].
+    /// see [`MolGraph::link`]. The leaving groups' beads are deleted, and
+    /// their membership with them.
     ///
     /// # Errors
     ///
     /// The [`LinkError`] of the first refusal; the graph is unchanged then.
     pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
-        self.graph.link(a, b)
+        let bond = self.graph.link(a, b)?;
+        let live = self.graph.node_table();
+        self.members.retain(|bead, _| live.contains(*bead));
+        Ok(bond)
     }
 
     /// Propagate each [`keys::FRAG_ID`] to the unlabelled degree-1 beads
@@ -1076,6 +1087,7 @@ fn require_bead_type(bead: &Props, what: &str) -> Result<(), MolRsError> {
 mod tests {
     use super::*;
     use crate::core::keys;
+    use crate::core::{Adjacent, NeighborKinds};
     use crate::props;
 
     #[test]
@@ -1915,15 +1927,30 @@ mod tests {
     }
 
     #[test]
-    fn neighbor_bonds_are_cg_bonds_only() {
+    fn neighbors_are_cg_bonds_until_ports_are_requested() {
         let (mut cg, ids, bonds) = trimer();
         cg.add_port(ids[1], ids[2], PortKind::Left, "", BondNumber::Single)
             .unwrap();
-        let mut nb: Vec<_> = cg.neighbor_bonds(ids[1]).collect();
+        let mut nb: Vec<_> = cg.neighbors(ids[1], NeighborKinds::BONDS).collect();
         nb.sort();
         let mut want = vec![(ids[0], bonds[0]), (ids[2], bonds[1])];
         want.sort();
         assert_eq!(nb, want);
+        let wide: Vec<_> = cg
+            .neighbors(ids[1], NeighborKinds::BONDS.with_ports())
+            .collect();
+        assert_eq!(
+            wide.iter()
+                .filter(|item| matches!(item, Adjacent::Bond { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            wide.iter()
+                .filter(|item| matches!(item, Adjacent::Port { .. }))
+                .count(),
+            1
+        );
         assert_eq!(
             cg.graph().neighbors(ids[1]).count(),
             3,
@@ -1965,6 +1992,44 @@ mod tests {
             .unwrap();
         let [x, y, _] = cg.positions(&[ids[0]]).unwrap()[0];
         assert!((x + 1.0).abs() < 1e-12 && y.abs() < 1e-12);
+    }
+
+    /// A link deletes the leaving beads, and their membership goes with
+    /// them: no atom maps back to a dead bead afterwards.
+    #[test]
+    fn link_deletes_the_membership_of_the_leaving_beads() {
+        let mut cg = CoarseGrain::new();
+        let bead = |cg: &mut CoarseGrain, x: f64| {
+            cg.add_bead(
+                props! { keys::BEAD_TYPE => "B", keys::X => x, keys::Y => 0.0, keys::Z => 0.0 },
+            )
+            .unwrap()
+        };
+        let (a, cap_a, b, cap_b) = (
+            bead(&mut cg, 0.0),
+            bead(&mut cg, 1.0),
+            bead(&mut cg, 5.0),
+            bead(&mut cg, 4.0),
+        );
+        cg.add_bond(a, cap_a, props! {}).unwrap();
+        cg.add_bond(b, cap_b, props! {}).unwrap();
+        cg.set_bead_members(a, vec![1, 2]).unwrap();
+        cg.set_bead_members(cap_a, vec![7]).unwrap();
+        cg.set_bead_members(cap_b, vec![8]).unwrap();
+        let pa = cg
+            .add_port(a, cap_a, PortKind::Right, "x", BondNumber::Single)
+            .unwrap();
+        let pb = cg
+            .add_port(b, cap_b, PortKind::Left, "x", BondNumber::Single)
+            .unwrap();
+
+        cg.link(pa, pb).unwrap();
+
+        assert_eq!(cg.n_beads(), 2);
+        assert!(cg.beads_of_atom(7).is_empty());
+        assert!(cg.beads_of_atom(8).is_empty());
+        assert_eq!(cg.beads_of_atom(1), vec![a]);
+        assert_eq!(cg.bead_members(a), [1, 2]);
     }
 
     #[test]

@@ -411,15 +411,14 @@ impl PyPotentials {
 ///
 /// Returns a :class:`Block` with ``atomi`` / ``atomj`` / ``is_14`` columns — the
 /// exact list :meth:`PotentialCompiler.compile` consumes for the pair (van der
-/// Waals + Coulomb) kernels. 1-4 pairs (from ``dihedrals``) are flagged so the
+/// Waals + Coulomb) kernels. Pairs three bonds apart are flagged 1-4 so the
 /// kernels apply the force field's 1-4 scaling.
 ///
 /// Which 1-2 / 1-3 neighbours belong in the list is the **force field's**
-/// decision, so pass it: LAMMPS ``special_bonds fene`` (``[0, 1, 1]``) keeps
-/// 1-3 pairs at full strength, and a bead-spring chain without them has
-/// nothing holding it open. Omitting ``forcefield`` excludes both classes —
-/// what every Amber-family force field wants, and what this function always
-/// did before it could be told otherwise.
+/// decision, read from its declared ``special_bonds``: LAMMPS
+/// ``special_bonds fene`` (``[0, 1, 1]``) keeps 1-3 pairs at full strength, and
+/// a bead-spring chain without them has nothing holding it open. A force
+/// field that declares none raises ``ValueError``.
 ///
 /// Insert the result as the frame's ``"pairs"`` block before
 /// :meth:`PotentialCompiler.compile` when you need the non-bonded terms — e.g. a
@@ -430,11 +429,11 @@ impl PyPotentials {
 /// Parameters
 /// ----------
 /// frame : Frame
-///     A typed frame with ``atoms`` and the topology blocks
-///     (``bonds`` / ``angles`` / ``dihedrals``) used for exclusions.
-/// forcefield : ForceField, optional
-///     The force field whose ``special_bonds`` decide the 1-2 / 1-3 rows.
-///     Defaults to excluding both.
+///     A typed frame with ``atoms`` and ``bonds``; a pair's 1-2 / 1-3 / 1-4
+///     class is its bond distance.
+/// forcefield : ForceField
+///     The force field whose declared ``special_bonds`` decide the 1-2 / 1-3
+///     rows.
 /// neighbors : Neighbors, optional
 ///     A cutoff-bounded neighbour table to take the candidate pairs from
 ///     (each unordered pair once, as ``(lo, hi)``, in the order the table
@@ -448,25 +447,22 @@ impl PyPotentials {
 /// Raises
 /// ------
 /// ValueError
-///     The force field scales 1-2 or 1-3 neighbours by a fraction, or scales
+///     The force field declares no ``special_bonds``; or it scales 1-2 or
+///     1-3 neighbours by a fraction, or scales
 ///     them differently for van der Waals and Coulomb. A list of rows cannot
 ///     say either; use :meth:`PotentialCompiler.compile_typed`, which carries a
 ///     per-pair weight.
 #[pyfunction]
-#[pyo3(name = "intramolecular_pairs", signature = (frame, forcefield = None, neighbors = None))]
+#[pyo3(name = "intramolecular_pairs", signature = (frame, forcefield, neighbors = None))]
 pub fn intramolecular_pairs_py(
     frame: &PyFrame,
-    forcefield: Option<&PyForceField>,
+    forcefield: &PyForceField,
     neighbors: Option<&PyNeighbors>,
 ) -> PyResult<PyBlock> {
-    let owned;
-    let special = match forcefield {
-        Some(ff) => ff.inner.special_bonds(),
-        None => {
-            owned = molrs::ff::ir::SpecialBonds::default();
-            &owned
-        }
-    };
+    let special = forcefield
+        .inner
+        .required_special_bonds()
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     let block = frame
         .with_frame(|core| {
             molrs::ff::potential::intramolecular_pairs(core, special, neighbors.map(|n| &n.inner))

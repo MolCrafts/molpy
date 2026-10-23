@@ -360,27 +360,6 @@ impl Column {
         }
     }
 
-    /// Format one row as EXTXYZ property tokens.
-    pub fn xyz_tokens(&self, row: usize) -> Vec<String> {
-        use ndarray::Axis;
-        match self {
-            Column::Bool(h) => h
-                .array()
-                .index_axis(Axis(0), row)
-                .iter()
-                .map(|v| if *v { "T" } else { "F" }.to_string())
-                .collect(),
-            Column::String(h) => h.array().index_axis(Axis(0), row).iter().cloned().collect(),
-            _ => map_column!(self, h => {
-                h.array()
-                    .index_axis(Axis(0), row)
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect()
-            }),
-        }
-    }
-
     /// The array, when this column holds `T` elements; `None` for any other
     /// dtype.
     ///

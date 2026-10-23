@@ -24,9 +24,9 @@
 //!
 //! | Rust | C type     | Column dtype                 |
 //! |------|------------|------------------------------|
-//! | `F`  | `F` (`double`) | `MOLC_D_TYPE_FLOAT` (f64) |
-//! | `I`  | `int32_t`  | `MOLC_D_TYPE_INT` (i32)     |
-//! | `Idx`| `uint64_t` | `MOLC_D_TYPE_UINT` (u64)    |
+//! | `F`  | `F` (`double`) | `MOLC_D_TYPE_F64` (f64) |
+//! | `I`  | `int32_t`  | `MOLC_D_TYPE_I32` (i32)     |
+//! | `Idx`| `uint64_t` | `MOLC_D_TYPE_U64` (u64)    |
 //!
 //! Each `MolcDType` constant is `MOLC_D_TYPE_` + the upper-cased core
 //! dtype name (`DType::name()`: `float`, `int`, `uint`, `i64`, `u8`, …).
@@ -138,15 +138,17 @@ pub(crate) use null_check;
 /// registry and cannot violate memory safety.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molc_init() {
-    // Force lazy initialization of the handle registry.
-    drop(lock_registry());
+    // Force lazy initialization of the handle registry. A panic must not
+    // unwind into C; there is nothing to report from a void entry point.
+    let _ = std::panic::catch_unwind(|| drop(lock_registry()));
 }
 
-/// Report the `molcrafts-molrs` core version compiled into this library.
+/// Report this library's version — the project version every molrs crate
+/// and binding carries (`[workspace.package].version`), so it names the
+/// molrs core release too.
 ///
 /// Returns a pointer to a static null-terminated UTF-8 string, e.g.
-/// `"0.17.0"`. Informational — this identifies the exact molrs release for
-/// diagnostics.
+/// `"0.17.0"`. Informational, for diagnostics.
 ///
 /// # C signature
 ///
@@ -184,8 +186,8 @@ pub unsafe extern "C" fn molc_version() -> *const c_char {
 /// `MolcStatus::Invalid*Handle`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molc_shutdown() {
-    let mut registry = lock_registry();
-    registry.clear();
+    // A panic must not unwind into C (it would abort the host process).
+    let _ = std::panic::catch_unwind(|| lock_registry().clear());
 }
 
 /// Retrieve the last error message for the calling thread.
@@ -287,11 +289,14 @@ pub unsafe extern "C" fn molc_intern_key(key: *const c_char, out_key_id: *mut u3
 /// The caller must not write through or free the returned pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molc_key_name(key_id: u32) -> *const c_char {
-    let registry = lock_registry();
-    match registry.interned_keys.get(key_id as usize) {
-        Some(cstr) => cstr.as_ptr(),
-        None => std::ptr::null(),
-    }
+    std::panic::catch_unwind(|| {
+        let registry = lock_registry();
+        match registry.interned_keys.get(key_id as usize) {
+            Some(cstr) => cstr.as_ptr(),
+            None => std::ptr::null(),
+        }
+    })
+    .unwrap_or(std::ptr::null())
 }
 
 /// Free a string that was allocated by the C API.

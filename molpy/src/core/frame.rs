@@ -1159,14 +1159,15 @@ impl PyFrame {
     /// ``frame_clone_from_addr`` does exactly that double-resolve.
     ///
     /// The capsule name is ``molrs_ffi::abi::frameref_capsule_name()`` —
-    /// ``"molrs.FrameRef/<major.minor>"``. The name carries the ABI line so a
-    /// consumer built on a different molrs minor fails the name check cleanly
-    /// instead of dereferencing a possibly drifted layout.
+    /// ``"molrs.FrameRef/<major.minor>+<fingerprint>"``. The name carries the
+    /// ABI line and the build fingerprint (compiler and handle layout), so a
+    /// consumer whose build may lay the handle out differently fails the
+    /// name check cleanly instead of dereferencing a drifted layout.
     ///
     /// Returns
     /// -------
     /// capsule
-    ///     A ``PyCapsule`` named ``"molrs.FrameRef/<major.minor>"`` whose
+    ///     A ``PyCapsule`` named ``"molrs.FrameRef/<major.minor>+<fingerprint>"`` whose
     ///     pointer is ``*mut *mut`` :class:`molrs_ffi.FrameRef` (a cloned
     ///     handle).
     fn _ffi_frameref_capsule<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyCapsule>> {
@@ -1435,9 +1436,9 @@ pub(crate) fn meta_document_arg(
     }
 }
 
-/// A JSON object as a plain `dict`: nested objects are dicts, arrays lists.
-/// Used by `*.mrec`, which needs `fs`.
-#[cfg(feature = "fs")]
+/// A JSON object as a plain `dict`: nested objects are dicts, arrays lists —
+/// what a reader serializing a Rust record through `serde_json` (`*.mrec`, a
+/// LAMMPS log) hands Python.
 pub(crate) fn json_map_to_plain_dict<'py>(
     py: Python<'py>,
     map: &serde_json::Map<String, JsonValue>,

@@ -16,10 +16,10 @@
 //! # Typical workflow (JavaScript)
 //!
 //! ```js
-//! import { SmilesIr, Conformer } from "@molcrafts/molrs";
+//! import { SmilesIr, Conformer } from "@molcrafts/molwasm";
 //!
 //! const frame = SmilesIr.parse("c1ccccc1").toFrame(); // benzene, 2D graph (no coords)
-//! const mol3d = new Conformer("fast").generate(frame); // embed 3D coords
+//! const mol3d = new Conformer().generate(frame); // embed 3D coords
 //! SmilesIr.fromFrame(frame).toString();                // "c1ccccc1"
 //! ```
 //!

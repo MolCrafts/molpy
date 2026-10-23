@@ -1,13 +1,12 @@
 //! The registry's protocol: what it accepts, what it refuses and why, and
 //! that the built-ins are registered through it.
 
-use crate::ff::forcefield::Category;
 use crate::ff::potential::fixtures::OneShot;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::ff::compile::PotentialCompiler;
-use crate::ff::forcefield::{DefError, ForceField, StyleDefs};
+use crate::ff::forcefield::{DefError, ForceField};
 use crate::ff::ir::Params;
 use crate::ff::ir::{
     Arity, CategorySpec, ConformanceSample, Coordinate, EndpointOrder, IrError, ParamCombination,
@@ -15,7 +14,6 @@ use crate::ff::ir::{
     builtin_styles,
 };
 use crate::ff::potential::CompileError;
-use crate::ff::potential::bond::bond_harmonic_constructor;
 use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
 use crate::ff::style_registry::BuiltinKernels;
 use crate::ff::style_registry::{
@@ -229,7 +227,9 @@ fn a_builtin_is_sealed_and_an_identical_restatement_is_a_no_op() {
     let err = r
         .register_style(
             StyleSpec::new("bond", "harmonic"),
-            Some(Kernel::constructor(bond_harmonic_constructor)),
+            Some(Kernel::Scalar(Arc::new(
+                crate::ff::potential::bond::Harmonic,
+            ))),
         )
         .unwrap_err();
     assert!(matches!(err, IrError::Sealed { .. }), "{err}");
@@ -241,7 +241,9 @@ fn a_builtin_is_sealed_and_an_identical_restatement_is_a_no_op() {
     assert!(matches!(
         register_style(
             StyleSpec::new("bond", "harmonic"),
-            Some(Kernel::constructor(bond_harmonic_constructor))
+            Some(Kernel::Scalar(Arc::new(
+                crate::ff::potential::bond::Harmonic
+            )))
         ),
         Err(IrError::Sealed { .. })
     ));
@@ -355,7 +357,12 @@ fn nonconforming_styles_are_refused_by_name() {
         let spec = StyleSpec::new("bond", "x")
             .params(vec![ParamSpec::new(reserved, ParamDimension::NONE)]);
         assert_eq!(
-            r.register_style(spec, Some(Kernel::constructor(bond_harmonic_constructor))),
+            r.register_style(
+                spec,
+                Some(Kernel::Scalar(Arc::new(
+                    crate::ff::potential::bond::Harmonic
+                )))
+            ),
             Err(IrError::ReservedParam {
                 style: "x".into(),
                 param: reserved.into()
@@ -371,7 +378,12 @@ fn nonconforming_styles_are_refused_by_name() {
         ]);
         assert!(
             matches!(
-                r.register_style(spec, Some(Kernel::constructor(bond_harmonic_constructor))),
+                r.register_style(
+                    spec,
+                    Some(Kernel::Scalar(Arc::new(
+                        crate::ff::potential::bond::Harmonic
+                    )))
+                ),
                 Err(IrError::ReservedParam { .. })
             ),
             "{reserved}"
@@ -381,13 +393,20 @@ fn nonconforming_styles_are_refused_by_name() {
     for function in ["exp", "delta", "select"] {
         let spec = StyleSpec::new("bond", function)
             .params(vec![ParamSpec::new(function, ParamDimension::NONE)]);
-        r.register_style(spec, Some(Kernel::constructor(bond_harmonic_constructor)))
-            .unwrap();
+        r.register_style(
+            spec,
+            Some(Kernel::Scalar(Arc::new(
+                crate::ff::potential::bond::Harmonic,
+            ))),
+        )
+        .unwrap();
     }
     assert!(matches!(
         r.register_style(
             StyleSpec::new("bond", "x").params(vec![ParamSpec::new("2k", ParamDimension::NONE)]),
-            Some(Kernel::constructor(bond_harmonic_constructor))
+            Some(Kernel::Scalar(Arc::new(
+                crate::ff::potential::bond::Harmonic
+            )))
         ),
         Err(IrError::BadName { .. })
     ));
@@ -396,7 +415,12 @@ fn nonconforming_styles_are_refused_by_name() {
         .params(vec![ParamSpec::new("k", ParamDimension::ENERGY)])
         .style_params(vec![ParamSpec::new("k", ParamDimension::ENERGY)]);
     assert!(matches!(
-        r.register_style(twice, Some(Kernel::constructor(bond_harmonic_constructor))),
+        r.register_style(
+            twice,
+            Some(Kernel::Scalar(Arc::new(
+                crate::ff::potential::bond::Harmonic
+            )))
+        ),
         Err(IrError::DuplicateParam { .. })
     ));
 
@@ -405,7 +429,9 @@ fn nonconforming_styles_are_refused_by_name() {
     assert!(matches!(
         r.register_style(
             per_degree,
-            Some(Kernel::constructor(bond_harmonic_constructor))
+            Some(Kernel::Scalar(Arc::new(
+                crate::ff::potential::bond::Harmonic
+            )))
         ),
         Err(IrError::Dimension { .. })
     ));
@@ -438,9 +464,16 @@ fn nonconforming_styles_are_refused_by_name() {
     ));
 
     // A neighbour-driven form on a bonded category.
+    fn builds_nothing(
+        _: &Params,
+        _: &[(&str, &Params)],
+        _: &Frame,
+    ) -> Result<crate::ff::potential::ForceTerm, CompileError> {
+        Err("a constructor no compile reaches".into())
+    }
     let typed = Kernel::Constructor {
-        compiled: bond_harmonic_constructor,
-        typed: Some((bond_harmonic_constructor, SpecialClass::Vdw)),
+        compiled: builds_nothing,
+        typed: Some((builds_nothing, SpecialClass::Vdw)),
         rows: RowSource::CategoryBlock,
     };
     assert!(matches!(
@@ -453,7 +486,12 @@ fn nonconforming_styles_are_refused_by_name() {
         ParamSpec::new("k", ParamDimension::ENERGY).mix(ParamCombination::Geometric),
     ]);
     assert!(matches!(
-        r.register_style(mixing, Some(Kernel::constructor(bond_harmonic_constructor))),
+        r.register_style(
+            mixing,
+            Some(Kernel::Scalar(Arc::new(
+                crate::ff::potential::bond::Harmonic
+            )))
+        ),
         Err(IrError::Malformed { .. })
     ));
 
@@ -504,6 +542,7 @@ fn a_form_is_checked_on_its_samples_at_registration() {
 /// `bond <name>` over it.
 fn one_bond(name: &str) -> (ForceField, Frame) {
     let mut ff = ForceField::new("t");
+    ff.set_units("real");
     ff.def_style("bond", name, Params::new())
         .unwrap()
         .def_type(
@@ -811,6 +850,7 @@ fn an_unregistered_style_with_an_expression_is_priced_by_it() {
     let mut style = Params::new();
     style.set("expression", "-0.5*k*r0^2*log(1-(r/r0)^2)");
     let mut ff = ForceField::new("t");
+    ff.set_units("real");
     ff.def_style("bond", "fene/unregistered", style)
         .unwrap()
         .def_type(
@@ -859,6 +899,8 @@ fn a_pair_expression_binds_self_rows_and_must_be_symmetric() {
 
     // Two types: the self rows of each atom, not a mixed value.
     let mut ff = ForceField::new("t");
+    ff.set_units("real");
+    ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
     ff.def_style("pair", "lb", Params::from_iter([("cutoff", 10.0)]))
         .unwrap()
         .def_type(
@@ -1016,6 +1058,7 @@ fn two_terms(category: &str) -> Frame {
 /// The reference: LAMMPS `angle charmm` with K = 0, a pure 1-3 spring.
 fn charmm_reference() -> (F, Vec<F>) {
     let mut ff = ForceField::new("ref");
+    ff.set_units("real");
     let style = ff.def_style("angle", "charmm", Params::new()).unwrap();
     for (name, k_ub, r_ub) in UB_TYPES {
         style
@@ -1045,6 +1088,7 @@ fn ub_ff(
     params: Params,
     def: impl FnOnce(&mut ForceField, Params) -> Result<&mut crate::ff::forcefield::Style, DefError>,
 ) -> ForceField {
+    ff.set_units("real");
     let s = def(&mut ff, params).unwrap();
     assert_eq!(s.category(), "urey_bradley");
     assert_eq!(s.name(), style);
@@ -1092,10 +1136,8 @@ fn a_custom_category_prices_its_block_like_angle_charmm_without_k() {
         let ff = ub_ff(seed, style, Params::new(), |ff, p| {
             ff.def_style("urey_bradley", style, p)
         });
-        let StyleDefs::Relation { arity, types, .. } = ff.styles()[0].defs() else {
-            panic!("a custom category is a relation");
-        };
-        assert_eq!((*arity, types.len()), (3, 2));
+        let defs = ff.styles()[0].defs();
+        assert_eq!((defs.arity(), defs.types().len()), (3, 2));
         let compiler = PotentialCompiler::new(&ff);
         let pots = compiler.compile(&frame).unwrap();
         assert_eq!(pots.members().len(), 1, "{style}");
@@ -1123,6 +1165,7 @@ fn a_custom_category_prices_its_block_like_angle_charmm_without_k() {
 fn a_custom_category_checks_its_arity_and_needs_its_registration() {
     let r = ub_registry();
     let mut ff = ForceField::new("t").with_registry(Arc::new(r));
+    ff.set_units("real");
     let style = ff
         .def_style("urey_bradley", "harmonic", Params::new())
         .unwrap();
@@ -1134,6 +1177,7 @@ fn a_custom_category_checks_its_arity_and_needs_its_registration() {
     assert!(err.to_string().contains("expected 3 endpoints"), "{err}");
 
     let mut fresh = ForceField::new("t").with_registry(Arc::new(Registry::builtin()));
+    fresh.set_units("real");
     assert!(matches!(
         fresh.def_style("urey_bradley", "harmonic", Params::new()),
         Err(DefError::UnknownCategory(c)) if c == "urey_bradley"
@@ -1146,7 +1190,7 @@ fn a_custom_category_checks_its_arity_and_needs_its_registration() {
         .def_type("y", &["A", "B", "C"], Params::new())
         .unwrap();
     assert!(matches!(
-        ff.def_style(Category::new("urey_bradley").arity(2), "two", Params::new()),
+        ff.def_style_with_arity("urey_bradley", 2, "two", Params::new()),
         Err(DefError::CategoryArity {
             expected: 3,
             got: 2,
@@ -1197,7 +1241,7 @@ fn a_custom_category_round_trips_through_its_section() {
 #[test]
 fn an_unregistered_category_round_trips_and_is_priced_only_by_an_expression() {
     let bare = ub_ff(ForceField::new("ub"), "spring", Params::new(), |ff, p| {
-        ff.def_style(Category::new("urey_bradley").arity(3), "spring", p)
+        ff.def_style_with_arity("urey_bradley", 3, "spring", p)
     });
     let back = ForceFieldSection::from_forcefield(&bare)
         .unwrap()
@@ -1228,7 +1272,7 @@ fn an_unregistered_category_round_trips_and_is_priced_only_by_an_expression() {
     let mut style = Params::new();
     style.set("expression", UB_EXPRESSION);
     let priced = ub_ff(ForceField::new("ub"), "spring", style, |ff, p| {
-        ff.def_style(Category::new("urey_bradley").arity(3), "spring", p)
+        ff.def_style_with_arity("urey_bradley", 3, "spring", p)
     });
     let section = ForceFieldSection::from_forcefield(&priced).unwrap();
     assert_eq!(
@@ -1336,6 +1380,7 @@ fn persist_registry() -> Registry {
 fn persist_cases(r: &Registry) -> Vec<(&'static str, ForceField, Frame)> {
     let registry = Arc::new(r.clone());
     let mut fene = ForceField::new("fene").with_registry(registry.clone());
+    fene.set_units("real");
     fene.def_style("bond", "fene", Params::new())
         .unwrap()
         .def_type(
@@ -1345,6 +1390,7 @@ fn persist_cases(r: &Registry) -> Vec<(&'static str, ForceField, Frame)> {
         )
         .unwrap();
     let mut table = ForceField::new("table").with_registry(registry.clone());
+    table.set_units("real");
     let mut row = Params::new();
     row.set("table", torsion_table());
     table
@@ -1353,11 +1399,7 @@ fn persist_cases(r: &Registry) -> Vec<(&'static str, ForceField, Frame)> {
         .def_type("t", &["A", "A", "A", "A"], row)
         .unwrap();
     table
-        .def_style(
-            Category::new("bespoke").arity(2),
-            "x",
-            Params::from_iter([("w", 0.5)]),
-        )
+        .def_style_with_arity("bespoke", 2, "x", Params::from_iter([("w", 0.5)]))
         .unwrap()
         .def_type("q", &["A", "B"], Params::from_iter([("k", 1.5)]))
         .unwrap();
@@ -1430,6 +1472,7 @@ fn a_section_writes_a_custom_styles_registry_expression() {
 
     // A built-in writes none, though the registry knows its expression.
     let mut harmonic = ForceField::new("h");
+    harmonic.set_units("real");
     harmonic
         .def_style("bond", "harmonic", Params::new())
         .unwrap();
@@ -1441,6 +1484,7 @@ fn a_section_writes_a_custom_styles_registry_expression() {
     let mut params = Params::new();
     params.set("expression", own);
     let mut ff = ForceField::new("own").with_registry(Arc::new(r.clone()));
+    ff.set_units("real");
     ff.def_style("bond", "fene", params).unwrap();
     let section = ForceFieldSection::from_forcefield(&ff).unwrap();
     assert_eq!(
@@ -1630,7 +1674,7 @@ fn fresh_process_reads_custom_styles() {
         ),
         (2, Some(0.5))
     );
-    assert_eq!(table.get_relationtypes("bespoke")[0].endpoints.len(), 2);
+    assert_eq!(table.get_types("bespoke")[0].endpoints.len(), 2);
 }
 
 /// The array form against a hand interpolation, and the same energy after

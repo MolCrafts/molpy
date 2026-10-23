@@ -1,5 +1,6 @@
 //! The half-space behind a plane.
 
+use super::RegionError;
 use super::primitives::Region;
 use crate::op::{F, Fnx3};
 use ndarray::Array2;
@@ -22,16 +23,24 @@ impl HalfSpace {
     ///
     /// # Errors
     ///
-    /// Returns `Err` if `normal` is zero or not finite.
-    pub fn new(normal: [F; 3], point: [F; 3]) -> Result<Self, String> {
+    /// [`RegionError`] when `normal` is zero or not finite, or `point` is
+    /// not finite.
+    pub fn new(normal: [F; 3], point: [F; 3]) -> Result<Self, RegionError> {
+        const SHAPE: &str = "HalfSpace";
         let len = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
         if !(len > 0.0 && len.is_finite()) {
-            return Err("HalfSpace: normal must be a finite non-zero vector".to_string());
+            return Err(RegionError::NoDirection {
+                shape: SHAPE,
+                param: "normal",
+            });
         }
         let n = [normal[0] / len, normal[1] / len, normal[2] / len];
         let offset = n[0] * point[0] + n[1] * point[1] + n[2] * point[2];
         if !offset.is_finite() {
-            return Err("HalfSpace: point must be finite".to_string());
+            return Err(RegionError::NonFinite {
+                shape: SHAPE,
+                param: "point",
+            });
         }
         Ok(Self { normal: n, offset })
     }

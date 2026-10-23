@@ -24,20 +24,20 @@ use molrs::op::F;
 /// rule over the flat coordinate array: along the bond for
 /// `r`, `accumulate_angle_forces` for `theta`, `accumulate_dihedral_forces`
 /// for `phi`.
-pub struct ScalarBonded {
-    form: Arc<dyn ScalarForm>,
+pub struct ScalarBonded<Fm: ?Sized = dyn ScalarForm> {
+    form: Arc<Fm>,
     coordinate: Coordinate,
     /// One column per position of a term: `atoms[a][t]`.
     atoms: Vec<Vec<usize>>,
     params: TermParams,
 }
 
-impl ScalarBonded {
+impl<Fm: ScalarForm + ?Sized> ScalarBonded<Fm> {
     /// The kernel of `spec` over `category`'s block in `frame`, its terms'
     /// parameters resolved from `style` and `tp` (see
     /// [`generic`](crate::ff::potential::form_kernel)'s resolution order).
     pub fn build(
-        form: Arc<dyn ScalarForm>,
+        form: Arc<Fm>,
         category: &CategorySpec,
         spec: &StyleSpec,
         style: &Params,
@@ -61,6 +61,9 @@ impl ScalarBonded {
             frame,
         )?;
         params.require(spec, &form.inputs())?;
+        params
+            .style_cols(|p| form.check_style(p))
+            .map_err(|r| TermParams::refused(spec, r))?;
         Ok(Self {
             form,
             coordinate,
@@ -160,14 +163,14 @@ impl ScalarBonded {
     }
 }
 
-impl Potential for ScalarBonded {
+impl<Fm: ScalarForm + ?Sized> Potential for ScalarBonded<Fm> {
     fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
         let energy = self.fold(coords, acc.forces_without_virial(), |t, p| self.atoms[p][t]);
         acc.add_energy(energy);
     }
 }
 
-impl IndexedTerms for ScalarBonded {
+impl<Fm: ScalarForm + ?Sized> IndexedTerms for ScalarBonded<Fm> {
     fn terms(&self) -> Array2<u32> {
         let cols: Vec<&[usize]> = self.atoms.iter().map(Vec::as_slice).collect();
         term_table(&cols)

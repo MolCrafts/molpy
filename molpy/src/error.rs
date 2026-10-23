@@ -124,14 +124,28 @@ pub(crate) fn ffi_error_to_pyerr(err: FfiError) -> PyErr {
     }
 }
 
-/// Convert a [`std::io::Error`] to a Python `IOError`.
+/// Convert a [`std::io::Error`] to Python by its kind — the one I/O error
+/// mapper: malformed or refused data is `ValueError`, a missing file
+/// `FileNotFoundError`, any other OS failure `OSError`.
 pub fn io_error_to_pyerr(e: std::io::Error) -> PyErr {
-    PyIOError::new_err(e.to_string())
+    use std::io::ErrorKind;
+    match e.kind() {
+        ErrorKind::InvalidData | ErrorKind::InvalidInput | ErrorKind::Unsupported => {
+            PyValueError::new_err(e.to_string())
+        }
+        ErrorKind::NotFound => pyo3::exceptions::PyFileNotFoundError::new_err(e.to_string()),
+        _ => PyIOError::new_err(e.to_string()),
+    }
 }
 
-/// Convert a [`molrs::core::MolRsError`] to a Python `ValueError`.
+/// Convert a [`molrs::core::MolRsError`] to Python: an I/O failure as
+/// [`io_error_to_pyerr`] maps it (a missing file is `FileNotFoundError`
+/// whichever door reads it), everything else `ValueError`.
 pub fn molrs_error_to_pyerr(e: molrs::core::MolRsError) -> PyErr {
-    PyValueError::new_err(e.to_string())
+    match e {
+        molrs::core::MolRsError::Io(io) => io_error_to_pyerr(io),
+        other => PyValueError::new_err(other.to_string()),
+    }
 }
 
 /// Convert a [`molrs::io::smiles::SmilesError`] to a Python

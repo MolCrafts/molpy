@@ -132,8 +132,9 @@ impl PyTopology {
         index_rows(py, self.inner.dihedrals())
     }
 
-    /// Every improper ``[center, i, j, k]``: each sorted 3-combination of the
-    /// neighbours of every atom of degree >= 3, ``(n, 4)`` ``uint64``.
+    /// One improper ``[center, i, j, k]`` per atom with exactly three
+    /// neighbours, the legs sorted, ``(n, 4)`` ``uint64``; a four-neighbour
+    /// (sp3) centre carries none.
     fn impropers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<u64>> {
         index_rows(py, self.inner.impropers())
     }

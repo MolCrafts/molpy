@@ -3,10 +3,10 @@
 //! the stream's ([`molrs::stream::Publisher`] puts it on the wire); reading
 //! or writing a frame in it is `molpy.io`'s, as for every other format.
 
+use crate::error::io_error_to_pyerr;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use super::data_error;
 use crate::core::frame::PyFrame;
 use crate::stream::frame_encoding;
 
@@ -31,7 +31,8 @@ use crate::stream::frame_encoding;
 ///     decode.
 #[pyfunction]
 pub fn read_wire_frame(data: &[u8], encoding: &str) -> PyResult<PyFrame> {
-    let frame = molrs::io::read_wire_frame(data, frame_encoding(encoding)?).map_err(data_error)?;
+    let frame =
+        molrs::io::read_wire_frame(data, frame_encoding(encoding)?).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
 
@@ -62,7 +63,7 @@ pub fn write_wire_frame<'py>(
     let encoding = frame_encoding(encoding)?;
     let bytes = frame
         .with_frame(|f| molrs::io::write_wire_frame(f, encoding))?
-        .map_err(data_error)?;
+        .map_err(io_error_to_pyerr)?;
     Ok(PyBytes::new(py, &bytes))
 }
 

@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::core::NeighborKinds;
 use crate::io::smiles::{AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use crate::line_notation::ast::*;
@@ -153,7 +154,7 @@ fn connected_components(mol: &Atomistic, include_h: bool) -> Vec<Vec<NodeId>> {
         q.push_back(id);
         while let Some(cur) = q.pop_front() {
             comp.push(cur);
-            for (nb, _) in mol.neighbor_bonds(cur) {
+            for (nb, _) in mol.neighbors(cur, NeighborKinds::BONDS) {
                 if !include_h && is_hydrogen(mol, nb) {
                     continue;
                 }
@@ -236,7 +237,7 @@ fn build_tree(
 
     while let Some(cur) = stack.pop() {
         let mut nbs: Vec<NodeId> = mol
-            .neighbor_bonds(cur)
+            .neighbors(cur, NeighborKinds::BONDS)
             .map(|(nb, _)| nb)
             .filter(|nb| comp.contains(nb))
             .filter(|nb| include_h || !is_hydrogen(mol, *nb))
@@ -269,7 +270,7 @@ fn build_tree(
         if !include_h && is_hydrogen(mol, a) {
             continue;
         }
-        for (b, bid) in mol.neighbor_bonds(a) {
+        for (b, bid) in mol.neighbors(a, NeighborKinds::BONDS) {
             if !comp.contains(&b) {
                 continue;
             }
@@ -340,7 +341,7 @@ fn bond_kind_for(
 }
 
 fn find_bond(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<molrs::core::RelationId> {
-    mol.neighbor_bonds(a)
+    mol.neighbors(a, NeighborKinds::BONDS)
         .find(|(nb, _)| *nb == b)
         .map(|(_, bid)| bid)
 }

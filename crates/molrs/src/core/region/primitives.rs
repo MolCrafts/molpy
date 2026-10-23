@@ -1,6 +1,7 @@
 //! Geometric regions: the [`Region`] trait, the primitive shapes and their Boolean composition.
 
-use crate::core::Cell;
+use super::RegionError;
+use crate::core::{BoxError, Cell};
 use crate::op::to_mat3;
 use crate::op::{F, F3, Fnx3};
 use crate::op::{det3, inv3};
@@ -284,29 +285,25 @@ impl Parallelepiped {
     ///
     /// # Errors
     ///
-    /// Returns `Err` for [`Cell::Undefined`] (no geometric cell), a cell the
-    /// [`Cell`] form refuses (a non-positive length, an impossible angle),
-    /// and an `H` that is singular (zero volume) or not finite.
-    pub fn new(cell: Cell, origin: F3) -> Result<Self, String> {
+    /// [`RegionError::UndefinedCell`] for [`Cell::Undefined`] (no geometric
+    /// cell), and [`RegionError::Cell`] for a cell the [`Cell`] form refuses
+    /// (a non-positive length, an impossible angle) or an `H` that is
+    /// singular (zero volume) or not finite.
+    pub fn new(cell: Cell, origin: F3) -> Result<Self, RegionError> {
         let h = cell
             .resolve()
-            .map_err(|e| format!("Parallelepiped: {e}"))?
-            .ok_or_else(|| {
-                "Parallelepiped: Cell::Undefined has no edges; give the cell matrix or \
-                 its lengths"
-                    .to_string()
-            })?;
-        let inv: Fnx3 =
-            ndarray::arr2(&inv3(&to_mat3(h.view())).ok_or_else(|| {
-                "Parallelepiped: singular edge matrix H (zero volume)".to_string()
-            })?);
+            .map_err(RegionError::Cell)?
+            .ok_or(RegionError::UndefinedCell)?;
+        let inv: Fnx3 = ndarray::arr2(
+            &inv3(&to_mat3(h.view())).ok_or(RegionError::Cell(BoxError::SingularCell))?,
+        );
         let mut spacing = [0.0; 3];
         let mut normal = [[0.0; 3]; 3];
         for k in 0..3 {
             let row = [inv[[k, 0]], inv[[k, 1]], inv[[k, 2]]];
             let norm = (row[0] * row[0] + row[1] * row[1] + row[2] * row[2]).sqrt();
             if !(norm > 0.0 && norm.is_finite()) {
-                return Err("Parallelepiped: edge matrix H is not finite".to_string());
+                return Err(RegionError::Cell(BoxError::SingularCell));
             }
             spacing[k] = 1.0 / norm;
             normal[k] = [row[0] / norm, row[1] / norm, row[2] / norm];

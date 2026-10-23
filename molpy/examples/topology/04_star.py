@@ -10,10 +10,10 @@ from eo_kit import library, report
 
 def main() -> None:
     arm = "[#EO][#EO][#EO]"
-    sites = mp.io.cgsmiles.CgSmilesIr(f"{{[#X3]({arm})({arm}){arm}}}").to_coarsegrain()
-    star = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(
-        sites, mp.Atomistic
-    )
+    sites = mp.io.cgsmiles.read_cgsmiles(
+        f"{{[#X3]({arm})({arm}){arm}}}"
+    ).to_coarsegrain()
+    star = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
     report("star-3x3", star)
 
 

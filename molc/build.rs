@@ -9,7 +9,8 @@ fn main() {
 
     let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let header_path = format!("{crate_dir}/include/molc.h");
-    let config = cbindgen::Config::from_file("cbindgen.toml").unwrap_or_default();
+    let config = cbindgen::Config::from_file(format!("{crate_dir}/cbindgen.toml"))
+        .unwrap_or_else(|e| panic!("molc/cbindgen.toml: {e}"));
 
     match cbindgen::Builder::new()
         .with_crate(&crate_dir)

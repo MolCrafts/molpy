@@ -11,7 +11,7 @@ pub(crate) fn self_neighbors(
     simbox: &molrs::core::SimBox,
     cutoff: F,
 ) -> Neighbors {
-    let mut nl = NeighborList::new(cutoff);
+    let mut nl = NeighborList::new(cutoff).unwrap();
     nl.build(points, simbox);
     nl.neighbors(NeighborColumns::FULL)
 }

@@ -44,7 +44,7 @@ than a rule that silently never matches.
 The other tables under `ff/params/` are not this script's: `oplsaa.rs` is
 generated from GROMACS's `oplsaa.ff` by `cargo mrs-gen-opls`
 (`crates/molrs/examples/gen_opls_params.rs`); `oplsaa_typing.rs`, `mmff.rs`, `uff.rs`,
-`clpol.rs`, `amber.rs` and `mod.rs` are hand-maintained source.
+`clpol.rs` and `mod.rs` are hand-maintained source.
 
 Run it where AmberTools, `rustfmt` (which formats the output as `cargo fmt`
 does) and molrs (its periodic table names the elements) are installed:

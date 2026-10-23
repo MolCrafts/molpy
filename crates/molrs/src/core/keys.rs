@@ -63,8 +63,11 @@ meta_keys! {
     /// "Units on a frame"); [`units_preset`] reads its preset. Absent means
     /// the file or caller stated none.
     ///
-    /// The LAMMPS molecule-JSON reader writes it and its writer emits it back
-    /// (`io::lammps::molecule`); molrs converts no frame between presets.
+    /// It records a unit style; it never changes what a frame's numbers
+    /// mean. A frame's lengths are Å, its masses g/mol and its charges e,
+    /// whatever this key says, so a reader whose file states another style
+    /// converts at its boundary or refuses: the LAMMPS molecule-JSON reader
+    /// and writer (`io::lammps::molecule`) accept only `real` and `metal`.
     pub const UNITS: &str = "units";
     /// Frame meta key: the crystal's symmetry operators, a JSON array of the
     /// file's operator triplets (`["x,y,z", "-x,y+1/2,-z+1/2", …]`), verbatim
@@ -117,9 +120,6 @@ named_keys! {
     /// Deliberately not [`TYPE`]: that key is the caller's, the force-field
     /// type name.
     pub const BCC_BOND_TYPE: &str = "bcc_bond_type";
-    /// Atom column pairing pre- and post-reaction LAMMPS `fix bond/react`
-    /// template atoms.
-    pub const REACT_ID: &str = "react_id";
     /// Node field marking an atom as a virtual site and naming its kind.
     pub const VSITE: &str = "vsite";
     /// The field under which a coarse-grained bead answers with its member

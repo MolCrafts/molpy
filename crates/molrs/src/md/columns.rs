@@ -185,6 +185,9 @@ pub(crate) fn write_images(frame: &mut Frame, images: &Array2<I>) -> Result<(), 
     Ok(())
 }
 
+/// `meta` key of the step's virial `Σ f ⊗ r`, `[xx, yy, zz, xy, xz, yz]`.
+pub(crate) const VIRIAL: &str = "virial";
+
 pub(crate) fn meta_f64(frame: &Frame, key: &str) -> F {
     frame.meta.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0)
 }

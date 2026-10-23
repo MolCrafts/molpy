@@ -1,6 +1,6 @@
 //! Rotatable bond detection and downstream atom BFS.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use crate::core::Atomistic;
 use crate::core::BondOrder;
@@ -52,18 +52,6 @@ pub struct RotatableBond {
     pub downstream: Vec<usize>,
 }
 
-/// Build the [`Topology`] snapshot for `graph`, indexing atoms by the order of
-/// [`Atomistic::atoms`]; a bond listed twice in `graph` is one edge.
-fn build_topology(graph: &Atomistic, id_to_idx: &HashMap<NodeId, usize>) -> Topology {
-    let edges: Vec<[usize; 2]> = graph
-        .bonds()
-        .map(|(_, b)| [id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]])
-        .collect();
-    let mut topo = Topology::with_atoms(id_to_idx.len());
-    topo.add_bonds(&edges);
-    topo
-}
-
 /// Shared detection core. Returns the positional `(j, k)` index pair of every
 /// rotatable bond together with the `Topology` they were derived from (reused by
 /// the caller for downstream BFS) and the reverse `idx -> NodeId` table.
@@ -76,12 +64,11 @@ fn scan_rotatable(
     graph: &Atomistic,
     unknown: UnknownBondPolicy,
 ) -> (Vec<NodeId>, Topology, Vec<(usize, usize)>) {
-    let ids: Vec<NodeId> = graph.atoms().map(|(id, _)| id).collect();
-    let id_to_idx: HashMap<NodeId, usize> =
-        ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    let ids: Vec<NodeId> = graph.atom_ids().collect();
+    let rows = graph.atom_table();
 
     let bonds: Vec<_> = graph.bonds().collect();
-    let topo = build_topology(graph, &id_to_idx);
+    let topo = graph.topology();
     // Ring membership by endpoint pair, so a bond listed twice in `graph`
     // (one topology edge) reads the same answer as its twin.
     let ring_pairs: HashSet<(usize, usize)> = topo
@@ -102,8 +89,12 @@ fn scan_rotatable(
                 return None;
             }
 
-            let j = id_to_idx[&bond.nodes[0]];
-            let k = id_to_idx[&bond.nodes[1]];
+            let j = rows
+                .row(bond.nodes[0])
+                .expect("a bond's endpoints are live atoms");
+            let k = rows
+                .row(bond.nodes[1])
+                .expect("a bond's endpoints are live atoms");
 
             // Non-terminal: both endpoints must have degree > 1.
             if topo.degree(j) <= 1 || topo.degree(k) <= 1 {
@@ -149,15 +140,24 @@ fn downstream_indices(topo: &Topology, j: usize, k: usize) -> Vec<usize> {
 /// BFS to find all atoms downstream of bond (j, k) on the k-side.
 ///
 /// Starting from `k`, traverses all connected atoms without crossing back
-/// through `j`. Returns positional indices (not `NodeId`s).
+/// through `j`. Returns atom rows (the order of [`Atomistic::atom_ids`]),
+/// not `NodeId`s.
+///
+/// # Errors
+///
+/// [`MolRsError::NotFound`](crate::core::MolRsError) when `j` or `k` is not
+/// a live atom of `graph`.
 pub fn downstream_atoms(
     j: NodeId,
     k: NodeId,
     graph: &Atomistic,
-    id_to_idx: &HashMap<NodeId, usize>,
-) -> Vec<usize> {
-    let topo = build_topology(graph, id_to_idx);
-    downstream_indices(&topo, id_to_idx[&j], id_to_idx[&k])
+) -> Result<Vec<usize>, crate::core::MolRsError> {
+    let rows = graph.atom_table();
+    let row = |atom: NodeId| {
+        rows.row(atom)
+            .ok_or_else(|| crate::core::MolRsError::not_found("atom", format!("{atom:?}")))
+    };
+    Ok(downstream_indices(&graph.topology(), row(j)?, row(k)?))
 }
 
 /// Detect the rotatable bonds of a molecular graph, each with the atoms that
@@ -166,7 +166,7 @@ pub fn downstream_atoms(
 /// A bond is rotatable when its class is single, both endpoints have
 /// degree > 1, and it lies on no ring; `unknown` decides a bond with no class
 /// written. Each [`RotatableBond`] names its axis and its downstream atoms by
-/// positional index (the order of [`Atomistic::atoms`]).
+/// atom row (the order of [`Atomistic::atom_ids`]).
 ///
 /// Connectivity, degree, ring membership and traversal all come from the
 /// canonical [`Topology`] snapshot built from the graph's bonds, so ring
@@ -225,14 +225,6 @@ pub fn assign_rotatable_bonds(
 mod tests {
     /// Build a positional index map from `NodeId` to 0-based index, following the
     /// iteration order of [`Atomistic::atoms`].
-    fn atom_id_to_index(graph: &Atomistic) -> HashMap<NodeId, usize> {
-        graph
-            .atoms()
-            .enumerate()
-            .map(|(idx, (id, _))| (id, idx))
-            .collect()
-    }
-
     use super::*;
     use crate::core::BondNumber;
     use crate::core::{Element, Props, keys};
@@ -305,10 +297,9 @@ mod tests {
     #[test]
     fn test_downstream_atoms_chain() {
         let g = chain(5);
-        let id_to_idx = atom_id_to_index(&g);
-        let ids: Vec<NodeId> = g.atoms().map(|(id, _)| id).collect();
+        let ids: Vec<NodeId> = g.atom_ids().collect();
 
-        let ds = downstream_atoms(ids[1], ids[2], &g, &id_to_idx);
+        let ds = downstream_atoms(ids[1], ids[2], &g).unwrap();
         assert_eq!(ds.len(), 3);
         assert!(ds.contains(&2));
         assert!(ds.contains(&3));

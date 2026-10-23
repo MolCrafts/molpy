@@ -6,7 +6,7 @@ site_name = "MolPy"
 site_url = "https://docs.molcrafts.org/molpy/"
 repo_url = "https://github.com/MolCrafts/molrs"
 repo_name = "MolCrafts/molpy"
-site_description = "A Python toolkit for building, editing, and parameterizing complex molecular systems."
+site_description = "molpy: one project, a Rust core (molrs), and a binding for each language."
 copyright = "Copyright &copy; 2024 - 2026 MolCrafts Team"
 docs_dir = "docs"
 site_dir = "site"
@@ -20,7 +20,8 @@ site_dir = "site"
 # scripts/render_notebooks.py (Zensical does not run notebooks at build time);
 # the nav points at the generated *.md pages below.
 nav = [
-  { "Home" = "index.md" },
+  { "molpy" = "index.md" },
+  { "molrs" = "molrs/index.md" },
 
   { "Tutorials" = [
     "tutorials/index.md",
@@ -132,12 +133,6 @@ nav = [
     ] },
   ] },
 
-
-  { "Bindings" = [
-    { "Rust" = "bindings/rust.md" },
-    { "WebAssembly" = "bindings/wasm.md" },
-    { "C, C++ and Interop" = "bindings/interop.md" },
-  ] },
 
   { "API Reference" = [
     "api/index.md",

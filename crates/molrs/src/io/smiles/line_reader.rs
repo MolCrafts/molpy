@@ -65,7 +65,8 @@ impl<R: BufRead> FrameReader for SmilesReader<R> {
                 let frame = parse_atomistic(&s)?.to_frame().map_err(|e| {
                     std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
                 })?;
-                crate::io::reader::check_read_frame(Some(frame))
+                crate::io::reader::check_read_frame(&frame)?;
+                Ok(Some(frame))
             }
             None => Ok(None),
         }

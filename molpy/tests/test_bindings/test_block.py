@@ -58,7 +58,7 @@ class TestBlockConstruction:
         # `id` is declared uint by the Frame schema; numpy's default int64 for
         # [1, 2] is width, not meaning, so the constructor stores uint.
         b = Block({"id": np.array([1, 2], dtype=np.int64)})
-        assert b.dtype("id") == "uint"
+        assert b.dtype("id") == "u64"
         np.testing.assert_array_equal(b["id"], [1, 2])
 
     def test_a_length_mismatch_reports_the_real_cause(self):
@@ -107,14 +107,14 @@ class TestBlockInsert:
     def test_int32_accepted(self):
         b = Block()
         b.insert("count", np.array([1, 2], dtype=np.int32))
-        assert b.dtype("count") == "int"
+        assert b.dtype("count") == "i32"
 
     def test_insert_promotes_a_narrow_float(self):
         # There is one float column: `F` (f64). A float32 array widens on
         # the way in.
         b = Block()
         b.insert("x", np.array([1.0, 2.0], dtype=np.float32))
-        assert b.dtype("x") == "float"
+        assert b.dtype("x") == "f64"
         assert b["x"].dtype == np.float64
 
     def test_overwrite_key(self):
@@ -189,7 +189,7 @@ class TestBlockKeys:
         assert "atomic_number" in b
         np.testing.assert_array_equal(b[z], [1, 8])
         np.testing.assert_array_equal(b[z], [1, 8])
-        assert b.dtype(z) == "uint"
+        assert b.dtype(z) == "u64"
         del b[z]
         assert z not in b
 
@@ -208,8 +208,8 @@ class TestBlockKeys:
         b = Block()
         b.insert("x", np.array([1.0], dtype=np.float64))
         b.insert("id", np.array([1], dtype=np.uint32))
-        assert b.dtype("x") == "float"
-        assert b.dtype("id") == "uint"
+        assert b.dtype("x") == "f64"
+        assert b.dtype("id") == "u64"
 
     def test_dtype_missing_raises_key_error(self):
         with pytest.raises(KeyError):
@@ -219,8 +219,8 @@ class TestBlockKeys:
         b = Block()
         b.insert("x", np.array([1.0], dtype=np.float64))
         b.insert("id", np.array([1], dtype=np.uint32))
-        assert b.dtype("x") == "float"
-        assert b.dtype("id") != "float"
+        assert b.dtype("x") == "f64"
+        assert b.dtype("id") != "f64"
         assert "missing" not in b
 
     def test_repr(self):
@@ -239,15 +239,15 @@ class TestBlockSubscriptAssignment:
     def test_setitem_accepts_a_python_list(self):
         b = Block()
         b["x"] = [1.0, 2.0]
-        assert b.dtype("x") == "float"
+        assert b.dtype("x") == "f64"
         np.testing.assert_array_equal(b["x"], [1.0, 2.0])
 
     def test_setitem_adopts_the_schema_dtype(self):
         b = Block()
         b["id"] = np.array([1, 2], dtype=np.int64)
-        assert b.dtype("id") == "uint"
+        assert b.dtype("id") == "u64"
         b["x"] = np.array([1.5, 2.5], dtype=np.float32)
-        assert b.dtype("x") == "float"
+        assert b.dtype("x") == "f64"
 
     def test_setitem_refuses_values_the_schema_dtype_cannot_hold(self):
         b = Block()
@@ -524,7 +524,7 @@ class TestBlockRename:
         b.insert("serial", np.array([1, 2], dtype=np.int64))
         b.rename("serial", mp.core.keys.ID)
         assert "serial" not in b
-        assert b.dtype("id") == "uint"
+        assert b.dtype("id") == "u64"
         np.testing.assert_array_equal(b["id"], [1, 2])
 
     def test_rename_keeps_the_column_in_place_across_adoption(self):

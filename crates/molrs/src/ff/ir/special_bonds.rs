@@ -3,6 +3,13 @@
 
 use molrs::core::BondDistanceWeights;
 
+/// The style param under which a compile hands a pair kernel the field's
+/// van-der-Waals 1-4 weight ([`SpecialBonds::lj_14`]); a projection, never a
+/// style's own parameter.
+pub const LJ_14_SCALE: &str = "lj14scale";
+/// The style param carrying the Coulomb 1-4 weight ([`SpecialBonds::coul_14`]).
+pub const COULOMB_14_SCALE: &str = "coulomb14scale";
+
 /// Per-nonbonded-kind 1-2 / 1-3 / 1-4 interaction scale weights — LAMMPS
 /// `special_bonds` semantics, owned by the [`ForceField`](crate::ff::forcefield::ForceField).
 ///
@@ -38,15 +45,15 @@ pub struct SpecialBonds {
     pub coul: [f64; 3],
 }
 
-impl Default for SpecialBonds {
-    /// Exclude 1-2 and 1-3 neighbours; leave 1-4 unscaled. Force-field readers
-    /// override the 1-4 weights (Amber: lj `0.5`, coul `0.8333`).
-    fn default() -> Self {
-        DEFAULT_SPECIAL_BONDS
-    }
-}
-
 impl SpecialBonds {
+    /// Exclude 1-2 and 1-3 neighbours and leave 1-4 unscaled — named, not a
+    /// default: a force field states its own weights, and one that states
+    /// none has none ([`ForceField::special_bonds`](crate::ff::forcefield::ForceField::special_bonds)).
+    pub const EXCLUDE_12_13: SpecialBonds = SpecialBonds {
+        lj: [0.0, 0.0, 1.0],
+        coul: [0.0, 0.0, 1.0],
+    };
+
     /// The LJ 1-4 scale weight (the `[2]` entry of [`Self::lj`]).
     pub fn lj_14(&self) -> f64 {
         self.lj[2]
@@ -129,9 +136,3 @@ impl SpecialBonds {
             .expect("a four-entry weight table is always well formed")
     }
 }
-
-/// The weights of a force field that declares none ([`SpecialBonds::default`]).
-pub(crate) const DEFAULT_SPECIAL_BONDS: SpecialBonds = SpecialBonds {
-    lj: [0.0, 0.0, 1.0],
-    coul: [0.0, 0.0, 1.0],
-};

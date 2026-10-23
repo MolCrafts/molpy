@@ -77,7 +77,11 @@ pub struct Presence {
 /// let reference = array![[0.0, 0.0, 0.0]];
 /// let tables: Vec<_> = [0.5, 1.5, 0.5]
 ///     .iter()
-///     .map(|&x| NeighborQuery::new(&simbox, reference.view(), 2.0).query(array![[x, 0.0, 0.0]].view()))
+///     .map(|&x| {
+///         NeighborQuery::new(&simbox, reference.view(), 2.0)
+///             .unwrap()
+///             .query(array![[x, 0.0, 0.0]].view())
+///     })
 ///     .collect();
 /// let frames: Vec<&(dyn PairSource + Sync)> = tables.iter().map(|t| t as _).collect();
 ///
@@ -318,7 +322,9 @@ mod tests {
             .iter()
             .zip(species_j)
             .map(|(pi, pj)| {
-                NeighborQuery::new(simbox, rows(pi).view(), cutoff).query(rows(pj).view())
+                NeighborQuery::new(simbox, rows(pi).view(), cutoff)
+                    .unwrap()
+                    .query(rows(pj).view())
             })
             .collect()
     }

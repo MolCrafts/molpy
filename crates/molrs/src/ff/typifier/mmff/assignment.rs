@@ -49,10 +49,9 @@ use super::properties::{MmffMolProperties, MmffVariant};
 use super::resolve as eparams;
 use crate::ff::forcefield::ForceField;
 use crate::ff::ir::Params;
-use crate::ff::typifier::{Annotation, TypeAssignment};
+use crate::ff::params::mmff::mmff_prop;
+use crate::ff::typifier::{Annotation, TypeAssignment, TypingError};
 use crate::perceive::mmff_aromaticity::MmffTopology;
-
-use super::atom_properties::MmffAtomProperties;
 
 /// Positional annotations of one kind of graph element.
 type Annotations = Vec<Vec<(String, Annotation)>>;
@@ -63,7 +62,7 @@ type Annotations = Vec<Vec<(String, Annotation)>>;
 ///
 /// Assembled once. `MmffTopology::build` + `set_mmff_aromaticity` is the expensive part
 /// of MMFF typing and every step needs the result, so it is not re-derived.
-struct MmffTypedMolecule<'a> {
+struct MmffTypedMolecule {
     /// Molecule atom-iteration order — the index space `props` / `types` use.
     atom_ids: Vec<NodeId>,
     idx_of: HashMap<NodeId, usize>,
@@ -73,12 +72,10 @@ struct MmffTypedMolecule<'a> {
     topo: MmffTopology,
     /// Numeric MMFF atom types, indexed as `atom_ids`.
     types: Vec<u8>,
-    /// Typing metadata (atom-type properties), for the linear-centre flag.
-    params: &'a MmffAtomProperties,
     variant: MmffVariant,
 }
 
-impl MmffTypedMolecule<'_> {
+impl MmffTypedMolecule {
     /// MMFF numeric type of an atom, by id.
     fn type_of(&self, aid: NodeId) -> u32 {
         self.props.atom_type(self.idx_of[&aid]) as u32
@@ -143,24 +140,26 @@ fn typed(
 /// are not.
 pub(crate) fn annotate_mmff(
     graph: &mut Atomistic,
-    params: &MmffAtomProperties,
     library: &ForceField,
     variant: MmffVariant,
-) -> Result<TypeAssignment, String> {
-    let typed_mol = type_molecule(graph, params, variant)?;
+) -> Result<TypeAssignment, TypingError> {
+    let typed_mol = type_molecule(graph, variant)?;
     let mut m = TypeAssignment {
         nodes: annotate_atoms(&typed_mol),
         ..TypeAssignment::default()
     };
-    *m.link_mut(BONDS) = annotate_bonds(graph, &typed_mol);
+    *m.link_mut(BONDS) = annotate_bonds(graph, &typed_mol)?;
 
     // Enumerate angles + dihedrals on the graph (impropers are MMFF-specific and
     // are enumerated by `annotate_impropers` below).
-    crate::ff::typifier::topology::typify_bonded_topology(graph)?;
+    graph
+        .generate_topology(true, true, false, true)
+        .map_err(TypingError::malformed)?;
 
-    *m.link_mut(ANGLES) = annotate_angles(graph, &typed_mol);
+    *m.link_mut(ANGLES) = annotate_angles(graph, &typed_mol)?;
     *m.link_mut(DIHEDRALS) = annotate_dihedrals(graph, &typed_mol);
-    *m.link_mut(IMPROPERS) = annotate_impropers(graph, &typed_mol)?;
+    *m.link_mut(IMPROPERS) =
+        annotate_impropers(graph, &typed_mol).map_err(TypingError::malformed)?;
 
     m.declare_styles_of(library);
     let used: Vec<String> = typed_mol.types.iter().map(u8::to_string).collect();
@@ -170,28 +169,27 @@ pub(crate) fn annotate_mmff(
 }
 
 /// The shared front-end: atom types, partial charges, MMFF topology.
-fn type_molecule<'a>(
-    mol: &Atomistic,
-    params: &'a MmffAtomProperties,
-    variant: MmffVariant,
-) -> Result<MmffTypedMolecule<'a>, String> {
+fn type_molecule(mol: &Atomistic, variant: MmffVariant) -> Result<MmffTypedMolecule, TypingError> {
+    // The MMFF topology drives every per-instance parameter and type-code lookup
+    // below. Aromaticity is *perceived* here — which is precisely the fact the
+    // deleted classifier never saw, because it was handed raw bond orders
+    // instead. Built and aromatized once; the atom types and charges are read
+    // off the same topology.
+    let base =
+        MmffTopology::build(mol).map_err(|s| TypingError::malformed(format!("MMFF: {s}")))?;
+    let topo = crate::perceive::mmff_aromaticity::set_mmff_aromaticity(&base);
     // The RDKit-validated front-end for atom types + MMFF partial charges. Its
     // per-atom index is the molecule's atom iteration order — the same order as
     // `atom_ids`.
-    let props = MmffMolProperties::compute(mol).map_err(|e| e.to_string())?;
+    let props = MmffMolProperties::compute(&topo)?;
 
-    let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+    let atom_ids: Vec<NodeId> = mol.atom_ids().collect();
+    // A snapshot's own index (it outlives no edit of `mol`).
     let idx_of: HashMap<NodeId, usize> = atom_ids
         .iter()
         .enumerate()
         .map(|(i, &id)| (id, i))
         .collect();
-
-    // The MMFF topology drives every per-instance parameter and type-code lookup
-    // below. Aromaticity is *perceived* here — which is precisely the fact the
-    // deleted classifier never saw, because it was handed raw bond orders instead.
-    let base = MmffTopology::build(mol).map_err(|s| format!("MMFF MmffTopology: {s}"))?;
-    let topo = crate::perceive::mmff_aromaticity::set_mmff_aromaticity(&base);
     let types: Vec<u8> = (0..atom_ids.len()).map(|i| props.atom_type(i)).collect();
 
     Ok(MmffTypedMolecule {
@@ -200,7 +198,6 @@ fn type_molecule<'a>(
         props,
         topo,
         types,
-        params,
         variant,
     })
 }
@@ -228,8 +225,18 @@ fn annotate_atoms(typed_mol: &MmffTypedMolecule) -> Annotations {
 // --- 2. Bonds ------------------------------------------------------------
 
 /// MMFF bond type + the per-bond `kb` / `r0` (table → equivalence → empirical).
-fn annotate_bonds(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotations {
-    graph
+///
+/// # Errors
+///
+/// Every bond the resolver has no parameters for (an element with no
+/// covalent radius or Herschbach–Laurie row), named together: a bond is never
+/// priced at `kb = r0 = 0`.
+fn annotate_bonds(
+    graph: &Atomistic,
+    typed_mol: &MmffTypedMolecule,
+) -> Result<Annotations, TypingError> {
+    let mut missing: Vec<String> = Vec::new();
+    let annotations = graph
         .bonds()
         .map(|(_, bond)| {
             let (a, b) = (bond.nodes[0], bond.nodes[1]);
@@ -238,9 +245,13 @@ fn annotate_bonds(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotatio
             let (lo, hi) = if t1 <= t2 { (t1, t2) } else { (t2, t1) };
             let bt = eparams::bond_type(&typed_mol.topo, &typed_mol.types, ia, ib);
 
-            let (kb, r0) = eparams::bond_params(&typed_mol.topo, &typed_mol.types, ia, ib)
-                .map(|bp| (bp.kb, bp.r0))
-                .unwrap_or((0.0, 0.0));
+            let (kb, r0) = match eparams::bond_params(&typed_mol.topo, &typed_mol.types, ia, ib) {
+                Some(bp) => (bp.kb, bp.r0),
+                None => {
+                    missing.push(format!("bond {ia}-{ib} (types {t1}-{t2})"));
+                    (f64::NAN, f64::NAN)
+                }
+            };
             vec![typed(
                 "type",
                 "mmff_bond",
@@ -249,15 +260,44 @@ fn annotate_bonds(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotatio
                 Params::from_iter([("kb", kb), ("r0", r0)]),
             )]
         })
-        .collect()
+        .collect();
+    unresolved("bond", &missing)?;
+    Ok(annotations)
+}
+
+/// The error naming every `what` term MMFF could not parameterise, when any.
+fn unresolved(what: &str, missing: &[String]) -> Result<(), TypingError> {
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(TypingError::MissingTerms {
+        detail: format!(
+            "MMFF94 has no {what} parameters for {}: {}",
+            if missing.len() == 1 {
+                "one term"
+            } else {
+                "these terms"
+            },
+            missing.join(", ")
+        ),
+    })
 }
 
 // --- 3. Angles (+ stretch-bend) ------------------------------------------
 
 /// MMFF angle type + `ka` / `theta0` / the stretch-bend constants and their two
 /// reference bond lengths, plus the linear-centre flag.
-fn annotate_angles(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotations {
-    graph
+///
+/// # Errors
+///
+/// Every angle the resolver has no bend parameters, or no reference bond
+/// lengths, for — named together, never priced at zero.
+fn annotate_angles(
+    graph: &Atomistic,
+    typed_mol: &MmffTypedMolecule,
+) -> Result<Annotations, TypingError> {
+    let mut missing: Vec<String> = Vec::new();
+    let annotations = graph
         .angles()
         .map(|(_, angle)| {
             let (a, b, c) = (angle.nodes[0], angle.nodes[1], angle.nodes[2]);
@@ -290,17 +330,18 @@ fn annotate_angles(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotati
             // kernels (`mmff_angle`, `mmff_stbn`) read this one column. Baked as 0/1
             // rather than a bool because `Atomistic::to_frame` carries only f64 / i32 /
             // string columns into the Frame; a bool would be silently dropped.
-            let linear = typed_mol
-                .params
-                .get(tb as u8)
-                .map(|p| p.linh != 0)
-                .unwrap_or(false);
+            let linear = mmff_prop(tb as u8).is_some_and(|p| p.linh != 0);
 
             // `theta0` in degrees, as MMFF's tables and every molrs angle parameter
             // are; the angle / stretch-bend kernels convert it once.
-            let (ka, theta0) = eparams::angle_params(&typed_mol.topo, &typed_mol.types, ia, ib, ic)
-                .map(|p| (p.ka, p.theta0))
-                .unwrap_or((0.0, 0.0));
+            let (ka, theta0) =
+                match eparams::angle_params(&typed_mol.topo, &typed_mol.types, ia, ib, ic) {
+                    Some(p) => (p.ka, p.theta0),
+                    None => {
+                        missing.push(format!("angle {ia}-{ib}-{ic} (types {ta}-{tb}-{tc})"));
+                        (f64::NAN, f64::NAN)
+                    }
+                };
 
             // Stretch-bend force constants — `stretch_bend_params` carries the `dfsb`
             // period-row default fallback that a table-keyed path lacks (the benzene
@@ -310,12 +351,12 @@ fn annotate_angles(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotati
                 eparams::stretch_bend_params(&typed_mol.topo, &typed_mol.types, ia, ib, ic)
                     .map(|(s, _, _, _)| (s.kba_ijk, s.kba_kji))
                     .unwrap_or((0.0, 0.0));
-            let r0_ij = eparams::bond_params(&typed_mol.topo, &typed_mol.types, ia, ib)
-                .map(|b| b.r0)
-                .unwrap_or(0.0);
-            let r0_kj = eparams::bond_params(&typed_mol.topo, &typed_mol.types, ic, ib)
-                .map(|b| b.r0)
-                .unwrap_or(0.0);
+            // A missing bond length was already named by `annotate_bonds`.
+            let r0 = |i, j| {
+                eparams::bond_params(&typed_mol.topo, &typed_mol.types, i, j)
+                    .map_or(f64::NAN, |b| b.r0)
+            };
+            let (r0_ij, r0_kj) = (r0(ia, ib), r0(ic, ib));
 
             vec![
                 typed(
@@ -343,7 +384,9 @@ fn annotate_angles(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotati
                 ),
             ]
         })
-        .collect()
+        .collect();
+    unresolved("angle", &missing)?;
+    Ok(annotations)
 }
 
 // --- 4. Dihedrals --------------------------------------------------------

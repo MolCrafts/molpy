@@ -1,252 +1,76 @@
-//! Periodic / Fourier proper dihedral (AMBER / GAFF).
+//! Periodic / Fourier proper dihedral (AMBER / GAFF; LAMMPS
+//! `dihedral_style fourier`).
 
-use crate::ff::ir::IrError;
-use crate::ff::potential::param_reads;
-use molrs::core::schema::block_names::DIHEDRALS;
-use std::collections::HashMap;
-
-use ndarray::{Array2, ArrayView2};
-
-use crate::ff::ir::Params;
-use crate::ff::potential::flat_coords::{
-    accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
-};
-use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
-use molrs::core::Frame;
+use crate::ff::potential::form_kernel::{ParamColumns, ScalarForm};
 use molrs::op::F;
 
-/// One cosine term `k·[1 + cos(n·φ − γ)]` with the phase `γ` in radians.
-#[derive(Clone, Copy)]
-struct Term {
-    k: F,
-    n: F,
-    d: F,
-}
-
-/// Periodic / Fourier proper dihedral with pre-resolved flat arrays.
-///
 /// Periodic / Fourier proper dihedral (AMBER / GAFF):
 ///
 /// E(φ) = Σ_m k_m · [1 + cos(n_m·φ − γ_m)]
 ///
-/// AMBER-family torsions are a sum of cosine terms per quadruple. The parameter
-/// encoding is **per-term indexed keys** `k{m}`, `periodicity{m}`, `phase{m}`
-/// (1-indexed, the phase in **degrees**, as LAMMPS `dihedral_style fourier`
-/// writes it — the kernel converts it to radians once),
-/// scanned upward from `m = 1` until a term is absent. A single unindexed
-/// `k`/`periodicity`/`phase` triple is accepted as the one-term case (the common
-/// GAFF default), keeping the form identical to one CHARMM term. This is the
-/// canonical encoding the molpy → molrs ForceField bridge emits.
-pub struct DihedralPeriodic {
-    atom_i: Vec<usize>,
-    atom_j: Vec<usize>,
-    atom_k: Vec<usize>,
-    atom_l: Vec<usize>,
-    /// Cosine terms per dihedral instance.
-    terms: Vec<Vec<Term>>,
-}
+/// AMBER-family torsions are a sum of cosine terms per quadruple, the
+/// indexed family `k{m}`, `periodicity{m}`, `phase{m}` (1-indexed, the phase
+/// in **degrees**, as LAMMPS `dihedral_style fourier` writes it). A single
+/// unindexed `k`/`periodicity`/`phase` triple is accepted as the one-term
+/// case (the common GAFF default), keeping the form identical to one CHARMM
+/// term. Types of fewer terms than the table's longest hold their absent
+/// terms at `k = 0`, which price nothing.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Periodic;
 
-impl DihedralPeriodic {
-    /// The physics, once. Which atoms a term names is the only thing
-    /// that differs between the two entry points, so it is the only thing
-    /// passed in — a second copy of the loop would be a second place for
-    /// the force expression to drift.
-    fn fold(
-        &self,
-        coords: &[F],
-        out: &mut [F],
-        n_terms: usize,
-        atoms: impl Fn(usize) -> (usize, usize, usize, usize),
-    ) -> F {
-        let _n = validate_coords(coords);
-        let mut energy: F = 0.0;
-        let forces = out;
-
-        for idx in 0..n_terms {
-            let (i, j, k, l) = atoms(idx);
-            let phi = compute_dihedral(coords, i, j, k, l);
-            let mut de_dphi: F = 0.0;
-            for t in &self.terms[idx] {
-                let arg = t.n * phi - t.d;
-                energy += t.k * (1.0 + arg.cos());
-                de_dphi += -t.k * t.n * arg.sin();
+impl ScalarForm for Periodic {
+    fn eval(&self, phi: &[F], p: &ParamColumns<'_>, e: &mut [F], de: &mut [F]) {
+        let terms: Vec<[&[F]; 3]> = (1..)
+            .map_while(|m| {
+                Some([
+                    p.get(&format!("k{m}"))?,
+                    p.input(&format!("periodicity{m}")),
+                    p.input(&format!("phase{m}")),
+                ])
+            })
+            .collect();
+        for t in 0..phi.len() {
+            let (mut energy, mut de_dphi): (F, F) = (0.0, 0.0);
+            for [k, n, d] in &terms {
+                let arg = n[t] * phi[t] - d[t].to_radians();
+                energy += k[t] * (1.0 + arg.cos());
+                de_dphi += -k[t] * n[t] * arg.sin();
             }
-            accumulate_dihedral_forces(coords, i, j, k, l, de_dphi, forces);
+            e[t] = energy;
+            de[t] = de_dphi;
         }
-        energy
     }
-}
-
-impl Potential for DihedralPeriodic {
-    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
-        let energy = self.fold(
-            coords,
-            acc.forces_without_virial(),
-            self.atom_i.len(),
-            |t| {
-                (
-                    self.atom_i[t],
-                    self.atom_j[t],
-                    self.atom_k[t],
-                    self.atom_l[t],
-                )
-            },
-        );
-        acc.add_energy(energy);
-    }
-}
-
-impl IndexedTerms for DihedralPeriodic {
-    fn terms(&self) -> Array2<u32> {
-        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
-    }
-    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
-        debug_assert_eq!(
-            terms.nrows(),
-            self.atom_i.len(),
-            "the row set is the force field's; only the atoms a row names may be rebound"
-        );
-        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
-            (
-                terms[[t, 0]] as usize,
-                terms[[t, 1]] as usize,
-                terms[[t, 2]] as usize,
-                terms[[t, 3]] as usize,
-            )
-        });
-        acc.add_energy(energy);
-    }
-}
-
-/// Collect the cosine terms from a per-type [`Params`] using the indexed
-/// `k{m}`/`periodicity{m}`/`phase{m}` encoding (contiguous from 1), or the
-/// single-term `k`/`periodicity`/`phase` spelling.
-fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, IrError> {
-    let num = |key: &str| param_reads::type_num("periodic", label, p, key);
-    let term = |m: &str| -> Result<Term, IrError> {
-        Ok(Term {
-            k: num(&format!("k{m}"))?,
-            n: num(&format!("periodicity{m}"))?,
-            d: num(&format!("phase{m}"))?.to_radians(), // degrees → radians
-        })
-    };
-    let m = (1..)
-        .take_while(|m| p.get(&format!("k{m}")).and_then(|v| v.as_num()).is_some())
-        .count();
-    let beyond = p
-        .iter()
-        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
-        .any(|(key, _)| {
-            key.strip_prefix('k')
-                .and_then(|i| i.parse::<usize>().ok())
-                .is_some_and(|i| i > m)
-        });
-    if beyond {
-        return Err(param_reads::missing(
-            "periodic",
-            label,
-            &format!("k{}", m + 1),
-        ));
-    }
-    match (m, p.get("k").and_then(|v| v.as_num()).is_some()) {
-        (0, true) => Ok(vec![term("")?]),
-        (0, false) => Err(param_reads::missing("periodic", label, "k1")),
-        (_, true) => Err(param_reads::bad(
-            "periodic",
-            label,
-            "k",
-            "is given beside `k1`: spell one term `k`, or every term `k<m>`",
-        )),
-        (m, false) => (1..=m).map(|i| term(&i.to_string())).collect(),
-    }
-}
-
-/// Construct a [`DihedralPeriodic`] from per-type params and a Frame's
-/// `"dihedrals"` block (`atomi/atomj/atomk/atoml/type`).
-pub fn dihedral_periodic_constructor(
-    _sp: &Params,
-    tp: &[(&str, &Params)],
-    frame: &Frame,
-) -> Result<ForceTerm, crate::ff::potential::CompileError> {
-    let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
-    let block = frame
-        .get(DIHEDRALS)
-        .ok_or("dihedral_periodic: missing \"dihedrals\" block")?;
-    let ic = block
-        .get("atomi")
-        .and_then(|c| c.get::<u64>())
-        .ok_or("missing atomi")?;
-    let jc = block
-        .get("atomj")
-        .and_then(|c| c.get::<u64>())
-        .ok_or("missing atomj")?;
-    let kc = block
-        .get("atomk")
-        .and_then(|c| c.get::<u64>())
-        .ok_or("missing atomk")?;
-    let lc = block
-        .get("atoml")
-        .and_then(|c| c.get::<u64>())
-        .ok_or("missing atoml")?;
-    let tc = block
-        .get("type")
-        .and_then(|c| c.get::<String>())
-        .ok_or("missing type")?;
-
-    let n = ic.len();
-    let (mut ai, mut aj, mut ak, mut al, mut terms) = (
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-    );
-
-    for idx in 0..n {
-        let p = type_map
-            .get(tc[idx].as_str())
-            .ok_or_else(|| format!("dihedral_periodic: unknown type '{}'", tc[idx]))?;
-        ai.push(ic[idx] as usize);
-        aj.push(jc[idx] as usize);
-        ak.push(kc[idx] as usize);
-        al.push(lc[idx] as usize);
-        terms.push(collect_terms(p, tc[idx].as_str())?);
-    }
-    Ok(ForceTerm::indexed(DihedralPeriodic {
-        atom_i: ai,
-        atom_j: aj,
-        atom_k: ak,
-        atom_l: al,
-        terms,
-    }))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ff::compile::ExplicitTerms;
+    use crate::ff::ir::Params;
+    use crate::ff::potential::Potentials;
     use crate::ff::potential::fixtures::OneShot;
+    use molrs::op::F;
 
     fn quad(phi: F) -> Vec<F> {
         let (s, c) = phi.sin_cos();
         vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, c, s]
     }
 
-    fn single(terms: Vec<Term>) -> DihedralPeriodic {
-        DihedralPeriodic {
-            atom_i: vec![0],
-            atom_j: vec![1],
-            atom_k: vec![2],
-            atom_l: vec![3],
-            terms: vec![terms],
+    fn single(terms: Vec<(F, F, F)>) -> Potentials {
+        let mut row = Params::new();
+        for (m, (k, n, d)) in terms.into_iter().enumerate() {
+            row.set(&format!("k{}", m + 1), k);
+            row.set(&format!("periodicity{}", m + 1), n);
+            row.set(&format!("phase{}", m + 1), d);
         }
+        ExplicitTerms::new("dihedral", "periodic")
+            .term(&[0, 1, 2, 3], row)
+            .compile()
+            .unwrap()
     }
 
-    fn term(k: F, n: F, d_deg: F) -> Term {
-        Term {
-            k,
-            n,
-            d: d_deg.to_radians(),
-        }
+    /// `(k, n, phase in degrees)`.
+    fn term(k: F, n: F, d_deg: F) -> (F, F, F) {
+        (k, n, d_deg)
     }
 
     #[test]
@@ -266,8 +90,10 @@ mod tests {
         assert!((e - 2.0).abs() < 1e-9, "got {e}");
     }
 
+    /// The indexed `k<m>`/`periodicity<m>`/`phase<m>` terms, or one term
+    /// spelled bare; both spellings at once is refused, and so is a gap.
     #[test]
-    fn collect_terms_indexed_and_single() {
+    fn indexed_and_single_spellings() {
         let mut p = Params::new();
         p.set("k1", 1.0);
         p.set("periodicity1", 1.0);
@@ -275,16 +101,111 @@ mod tests {
         p.set("k2", 0.5);
         p.set("periodicity2", 2.0);
         p.set("phase2", 180.0);
-        let t = collect_terms(&p, "x").unwrap();
-        assert_eq!(t.len(), 2);
+        let indexed = ExplicitTerms::new("dihedral", "periodic")
+            .term(&[0, 1, 2, 3], p.clone())
+            .compile()
+            .unwrap();
+        // K1[1+1] + K2[1+cos(180°)] = 2.0 + 0.5*0 = 2.0
+        assert!((indexed.energy_at(&quad(0.0)) - 2.0).abs() < 1e-9);
 
         let mut q = Params::new();
         q.set("k", 2.0);
         q.set("periodicity", 3.0);
         q.set("phase", 0.0);
-        let t2 = collect_terms(&q, "y").unwrap();
-        assert_eq!(t2.len(), 1);
-        assert_eq!(t2[0].n, 3.0);
+        let bare = ExplicitTerms::new("dihedral", "periodic")
+            .term(&[0, 1, 2, 3], q.clone())
+            .compile()
+            .unwrap();
+        let phi = 0.3;
+        let want = 2.0 * (1.0 + (3.0 * phi as F).cos());
+        assert!((bare.energy_at(&quad(phi)) - want).abs() < 1e-12);
+
+        let refusal = |row: Params| {
+            ExplicitTerms::new("dihedral", "periodic")
+                .term(&[0, 1, 2, 3], row)
+                .compile()
+                .map(|_| ())
+                .unwrap_err()
+        };
+        let mut both = p.clone();
+        both.set("k", 2.0);
+        let err = refusal(both);
+        assert!(
+            matches!(err.ir(), Some(crate::ff::ir::IrError::BadValue { param, .. }) if param == "k"),
+            "{err}"
+        );
+        let mut gap = Params::new();
+        gap.set("k1", 1.0);
+        gap.set("periodicity1", 1.0);
+        gap.set("k3", 1.0);
+        gap.set("periodicity3", 1.0);
+        let err = refusal(gap);
+        assert!(
+            matches!(err.ir(), Some(crate::ff::ir::IrError::MissingParam { param, .. }) if param == "k2"),
+            "{err}"
+        );
+    }
+
+    /// Types of different term counts share one table: a type's absent terms
+    /// price nothing.
+    #[test]
+    fn types_of_different_term_counts_price_their_own_terms() {
+        let mut ff = crate::ff::forcefield::ForceField::new("t");
+        let style = ff.def_style("dihedral", "periodic", Params::new()).unwrap();
+        style
+            .def_type(
+                "one",
+                &["a", "b", "c", "d"],
+                Params::from_iter([("k1", 1.3), ("periodicity1", 1.0), ("phase1", 0.0)]),
+            )
+            .unwrap()
+            .def_type(
+                "three",
+                &["a", "b", "c", "e"],
+                Params::from_iter([
+                    ("k1", 0.4),
+                    ("periodicity1", 1.0),
+                    ("k2", -0.7),
+                    ("periodicity2", 2.0),
+                    ("phase2", 180.0),
+                    ("k3", 0.2),
+                    ("periodicity3", 3.0),
+                ]),
+            )
+            .unwrap();
+        let mut block = molrs::core::Block::new();
+        for (key, col) in [
+            ("atomi", [0, 0]),
+            ("atomj", [1, 1]),
+            ("atomk", [2, 2]),
+            ("atoml", [3, 3]),
+        ] {
+            block
+                .insert(
+                    key,
+                    ndarray::Array1::from_vec(col.map(|a| a as molrs::op::Idx).to_vec()).into_dyn(),
+                    None,
+                )
+                .unwrap();
+        }
+        block
+            .insert(
+                "type",
+                ndarray::Array1::from_vec(vec!["one".to_owned(), "three".to_owned()]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let mut frame = molrs::core::Frame::new();
+        frame.insert("dihedrals", block);
+        let pots = crate::ff::compile::PotentialCompiler::new(&ff)
+            .compile(&frame)
+            .unwrap();
+        let phi: F = 0.7;
+        let want = 1.3 * (1.0 + phi.cos()) + 0.4 * (1.0 + phi.cos())
+            - 0.7 * (1.0 + (2.0 * phi - std::f64::consts::PI).cos())
+            + 0.2 * (1.0 + (3.0 * phi).cos());
+        let got = pots.energy_at(&quad(phi));
+        assert!((got - want).abs() < 1e-12, "{got} vs {want}");
     }
 
     #[test]

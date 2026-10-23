@@ -19,7 +19,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use molrs::conformer::{Conformer as RsConformer, ConformerOptions, ConformerSpeed};
+use molrs::conformer::{Conformer as RsConformer, ConformerOptions};
 use molrs::core::Atomistic;
 
 use crate::core::frame::Frame;
@@ -34,7 +34,7 @@ use crate::core::frame::Frame;
 ///
 /// ```js
 /// const ir = SmilesIr.parse("c1ccccc1"); // benzene
-/// const frame3d = new Conformer("fast", true, 42).generate(ir.toFrame());
+/// const frame3d = new Conformer(true, 42).generate(ir.toFrame());
 ///
 /// const atoms = frame3d.get("atoms");
 /// const x = atoms.view("x"); // zero-copy Float64Array of the 3D x-coords
@@ -46,27 +46,23 @@ pub struct Conformer {
 
 #[wasm_bindgen]
 impl Conformer {
-    /// * `speed` - Quality/speed preset:
-    ///   - `"fast"` -- minimal refinement, suitable for visualization
-    ///   - `"medium"` (default) -- balanced quality/speed
-    ///   - `"better"` -- thorough conformer search, best geometry
+    /// The pipeline is fixed: ETKDG embedding, then an MMFF94 cleanup
+    /// minimization.
+    ///
     /// * `addHydrogens` - Add implicit hydrogens before embedding (default
     ///   `true`).
     /// * `seed` - Optional RNG seed (`u32`) for reproducibility. If
     ///   omitted, a random seed is used.
-    ///
-    /// # Errors
-    ///
-    /// Throws on an unknown `speed`.
     #[wasm_bindgen(constructor)]
-    pub fn new(
-        speed: Option<String>,
-        add_hydrogens: Option<bool>,
-        seed: Option<u32>,
-    ) -> Result<Conformer, JsValue> {
-        Ok(Conformer {
-            inner: RsConformer::new(parse_opts(speed.as_deref(), add_hydrogens, seed)?),
-        })
+    pub fn new(add_hydrogens: Option<bool>, seed: Option<u32>) -> Conformer {
+        let defaults = ConformerOptions::default();
+        Conformer {
+            inner: RsConformer::new(ConformerOptions {
+                add_hydrogens: add_hydrogens.unwrap_or(defaults.add_hydrogens),
+                rng_seed: seed.map(u64::from),
+                ..defaults
+            }),
+        }
     }
 
     /// Generate 3D coordinates for a molecular [`Frame`].
@@ -108,28 +104,4 @@ impl Conformer {
                 .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
         )
     }
-}
-
-fn parse_opts(
-    speed: Option<&str>,
-    add_hydrogens: Option<bool>,
-    seed: Option<u32>,
-) -> Result<ConformerOptions, JsValue> {
-    let defaults = ConformerOptions::default();
-    let sp = match speed.unwrap_or("medium") {
-        "fast" => ConformerSpeed::Fast,
-        "medium" => ConformerSpeed::Medium,
-        "better" => ConformerSpeed::Better,
-        other => {
-            return Err(JsValue::from_str(&format!(
-                "unknown speed '{other}', expected 'fast', 'medium', or 'better'"
-            )));
-        }
-    };
-    Ok(ConformerOptions {
-        speed: sp,
-        add_hydrogens: add_hydrogens.unwrap_or(defaults.add_hydrogens),
-        rng_seed: seed.map(u64::from),
-        ..defaults
-    })
 }

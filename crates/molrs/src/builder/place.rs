@@ -26,7 +26,7 @@ pub struct ParentJoin {
 pub struct PlaceSite {
     /// The site's position (Å), when the site graph carries one.
     pub position: Option<Vec3>,
-    /// The orienter's turn of the template, about its centre of mass
+    /// The orienter's turn of the template, about its centroid
     /// (`Rigid::IDENTITY` without an orienter).
     pub turn: Rigid,
     /// The bond to the parent site, placed before this one; `None` for the
@@ -66,9 +66,9 @@ pub trait Placer<G: Graph>: Send + Sync {
     fn place(&self, template: &G, site: &PlaceSite) -> Result<Rigid, PlaceError>;
 }
 
-/// Puts each copy's centre of mass on its site.
+/// Puts each copy's centroid on its site.
 ///
-/// With the template's centre of mass `R_c` (the mass-weighted mean of its
+/// With the template's centroid `R_c` (the mass-weighted mean of its
 /// node positions, as [`Atomistic::center`](crate::core::Atomistic::center) computes it, Å), the
 /// orienter's turn `T` (which fixes `R_c`) and the site position `p` (Å),
 /// the pose is `x ↦ T x + (p − R_c)`: turned, then moved so its centre of
@@ -86,7 +86,7 @@ pub trait Placer<G: Graph>: Send + Sync {
 /// use molrs::props;
 /// use molrs::core::Element;
 ///
-/// // Two carbons 1.5 Å apart: the centre of mass is (0.75, 0, 0).
+/// // Two carbons 1.5 Å apart: the centroid is (0.75, 0, 0).
 /// let mut template = Atomistic::new();
 /// for x in [0.0, 1.5] {
 ///     let c = template.add_atom(props! {
@@ -119,7 +119,7 @@ impl<G: Graph> Placer<G> for SitePlacer {
     ///
     /// [`PlaceError::NoPosition`] without a site position;
     /// [`PlaceError::NonFinitePoint`] for a NaN or infinite position;
-    /// [`PlaceError::Template`] when the template has no centre of mass.
+    /// [`PlaceError::Template`] when the template has no centroid.
     fn place(&self, template: &G, site: &PlaceSite) -> Result<Rigid, PlaceError> {
         let template = template.graph();
         let p = site.position.ok_or(PlaceError::NoPosition)?;
@@ -127,7 +127,7 @@ impl<G: Graph> Placer<G> for SitePlacer {
             return Err(PlaceError::NonFinitePoint);
         }
         let center = template
-            .center(&template.node_ids().collect::<Vec<_>>())
+            .centroid(&template.node_ids().collect::<Vec<_>>())
             .map_err(PlaceError::Template)?;
         let shift = Rigid {
             rotation: Rigid::IDENTITY.rotation,
@@ -140,7 +140,7 @@ impl<G: Graph> Placer<G> for SitePlacer {
 /// Grows each molecule copy by copy from its first site.
 ///
 /// The first copy of a molecule keeps its (turned) template pose, moved so
-/// its centre of mass lands on the site position when the site graph has
+/// its centroid lands on the site position when the site graph has
 /// one. Every later copy joins its parent through the port on their bond:
 /// the copy is rotated, about its anchor `a`, by the smallest rotation taking
 /// its anchor→handle direction `h − a` onto the parent's handle→anchor
@@ -208,7 +208,7 @@ impl<G: Graph> Placer<G> for GrowthPlacer {
     ///
     /// [`PlaceError::NonFinitePoint`] for a NaN or infinite position;
     /// [`PlaceError::Template`] when a first site with a position has a
-    /// template without a centre of mass; [`PlaceError::Port`] when the
+    /// template without a centroid; [`PlaceError::Port`] when the
     /// parent bond's port does not read back, has an atom without
     /// coordinates, or its anchor and handle coincide.
     fn place(&self, template: &G, site: &PlaceSite) -> Result<Rigid, PlaceError> {
@@ -266,7 +266,7 @@ impl<G: Graph> Placer<G> for GrowthPlacer {
 /// Why a [`Placer`] could not place a template.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlaceError {
-    /// The template has no centre of mass.
+    /// The template has no centroid.
     Template(CenterError),
     /// The site has no position and the placer needs one.
     NoPosition,
@@ -279,7 +279,7 @@ pub enum PlaceError {
 impl fmt::Display for PlaceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Template(e) => write!(f, "the template has no centre of mass: {e}"),
+            Self::Template(e) => write!(f, "the template has no centroid: {e}"),
             Self::NoPosition => write!(f, "the site has no position"),
             Self::NonFinitePoint => write!(f, "the site position is not finite"),
             Self::Port(why) => write!(f, "the joining port is unusable: {why}"),
@@ -301,7 +301,6 @@ mod tests {
     use super::{GrowthPlacer, ParentJoin, PlaceError, PlaceSite, Placer, SitePlacer};
     use crate::core::Atomistic;
     use crate::core::BondNumber;
-    use crate::core::CenterError;
     use crate::core::Element;
     use crate::core::PortKind;
     use crate::core::RelationId;
@@ -314,14 +313,14 @@ mod tests {
     /// Monomer M: C0 (0,0,0), C1 (1.5,0,0), H0 (−1,0,0), H1 (2.5,0,0); masses
     /// 12, 12, 1, 1 (or none). Centre of mass x = 19.5 / 26 = 0.75. Ports
     /// (C0, H0, `<`) and (C1, H1, `>`).
-    fn monomer(with_mass: bool) -> (Atomistic, RelationId, RelationId) {
+    fn monomer() -> (Atomistic, RelationId, RelationId) {
         let mut m = Atomistic::new();
         let mut ids = Vec::new();
-        for (element, x, mass) in [
-            (Element::C, 0.0, 12.0),
-            (Element::C, 1.5, 12.0),
-            (Element::H, -1.0, 1.0),
-            (Element::H, 2.5, 1.0),
+        for (element, x) in [
+            (Element::C, 0.0),
+            (Element::C, 1.5),
+            (Element::H, -1.0),
+            (Element::H, 2.5),
         ] {
             let id = m
                 .add_atom(props! {
@@ -331,9 +330,6 @@ mod tests {
                     keys::Z => 0.0,
                 })
                 .unwrap();
-            if with_mass {
-                m.set_atom(id, keys::MASS, mass).expect("stamp mass");
-            }
             ids.push(id);
         }
         for (a, b) in [(0, 1), (0, 2), (1, 3)] {
@@ -364,7 +360,7 @@ mod tests {
 
     #[test]
     fn site_placer_moves_the_centre_of_mass_onto_the_site() {
-        let (m, _, _) = monomer(true);
+        let (m, _, _) = monomer();
         let pose = SitePlacer::new()
             .place(&m, &site(Some([10.0, 0.0, 0.0]), None))
             .expect("placeable");
@@ -374,7 +370,7 @@ mod tests {
 
     #[test]
     fn site_placer_keeps_the_orienter_turn() {
-        let (m, _, _) = monomer(true);
+        let (m, _, _) = monomer();
         let rz = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
         let turned = PlaceSite {
             position: Some([0.0; 3]),
@@ -388,19 +384,11 @@ mod tests {
     }
 
     #[test]
-    fn site_placer_refuses_a_site_without_a_position_or_a_massless_template() {
-        let (m, _, _) = monomer(true);
+    fn site_placer_refuses_a_site_without_a_finite_position() {
+        let (m, _, _) = monomer();
         assert_eq!(
             SitePlacer::new().place(&m, &site(None, None)),
             Err(PlaceError::NoPosition)
-        );
-        let (bare, _, _) = monomer(false);
-        let err = SitePlacer::new()
-            .place(&bare, &site(Some([0.0; 3]), None))
-            .expect_err("a massless template has no centre");
-        assert!(
-            matches!(err, PlaceError::Template(CenterError::BadMass { .. })),
-            "{err:?}"
         );
         assert_eq!(
             SitePlacer::new().place(&m, &site(Some([f64::NAN, 0.0, 0.0]), None)),
@@ -410,7 +398,7 @@ mod tests {
 
     #[test]
     fn growth_placer_keeps_the_first_copy_where_the_template_is() {
-        let (m, _, _) = monomer(false);
+        let (m, _, _) = monomer();
         let pose = GrowthPlacer::new()
             .place(&m, &site(None, None))
             .expect("first copy");
@@ -419,7 +407,7 @@ mod tests {
 
     #[test]
     fn growth_placer_puts_the_anchor_on_the_parent_handle_pointing_back() {
-        let (m, left, _) = monomer(false);
+        let (m, left, _) = monomer();
         // Parent's `>` anchor at (0,0,5), its handle at (0,0,6): the child's
         // `<` anchor C0 lands on (0,0,6) and its handle H0 on the line back,
         // at (0,0,5).
@@ -437,7 +425,7 @@ mod tests {
 
     #[test]
     fn growth_placer_refuses_a_join_whose_parent_anchor_and_handle_coincide() {
-        let (m, left, _) = monomer(false);
+        let (m, left, _) = monomer();
         let join = ParentJoin {
             port: left,
             anchor: [1.0; 3],

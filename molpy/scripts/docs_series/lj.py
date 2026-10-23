@@ -10,9 +10,11 @@ reader can check the numbers the docs quote:
 
 Units are LAMMPS *real*: length A, energy kcal/mol, mass g/mol, time fs.
 
-The dynamics is MolPy's own: ``mp.md.VelocityVerlet`` integrates the cut,
-shifted Lennard-Jones pair kernel ``PairLjCut`` over a Verlet-skin neighbour
-list, and ``KineticEnergy`` reports the kinetic energy and temperature.
+The dynamics is MolPy's own: the ``mp.md.MD`` phase driver steps a frame with
+``mp.md.VelocityVerlet`` over the cut, shifted Lennard-Jones pair kernel
+``PairLjCut`` and the neighbour list (``mp.core.NeighborList``, with a Verlet
+skin), and
+``KineticEnergy`` reports the kinetic energy and temperature.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import numpy as np
 
 import molpy as mp
 from molpy.compute import KineticEnergy, Unwrap
-from molpy.core import NeighborList, UnitRegistry, VerletSkin, constants
+from molpy.core import UnitRegistry, constants
 from molpy.ff.potential import PairLjCut
 
 _UNITS = UnitRegistry()
@@ -103,6 +105,11 @@ SKIN = 1.0
 RESCALE_EVERY = 20
 
 
+#: Degrees of freedom NVE velocity Verlet removes: the conserved total momentum
+#: (``molrs::md::VelocityVerlet::removed_dof``).
+NVE_REMOVED_DOF = 3
+
+
 class LennardJonesMd:
     """Velocity-Verlet MD of a cubic Lennard-Jones fluid on ``mp.md``.
 
@@ -133,18 +140,24 @@ class LennardJonesMd:
 
         lj = self.potential
         xyz = self._fcc_lattice(n_atoms, self.box_length)
-        skin = VerletSkin(
-            NeighborList(lj.cutoff + SKIN), lj.cutoff, xyz, self.box, skin=SKIN
-        )
-        self._integrator = mp.md.VelocityVerlet(
-            timestep,
-            potential=PairLjCut(lj.epsilon, lj.sigma, lj.cutoff),
-            neighbors=skin,
-            mass=self._masses / ACCEL,
-            box=self.box,
-        )
-        self._dof = 3 * n_atoms - self._integrator.removed_dof
-        self.state = self._integrator.initial(xyz, np.zeros_like(xyz))
+        zeros = np.zeros(n_atoms)
+        self.frame = mp.Frame()
+        # The frame's mass is the integrator's: molar mass over ACCEL.
+        self.frame["atoms"] = {
+            "x": xyz[:, 0].copy(),
+            "y": xyz[:, 1].copy(),
+            "z": xyz[:, 2].copy(),
+            "vx": zeros.copy(),
+            "vy": zeros.copy(),
+            "vz": zeros.copy(),
+            "mass": self._masses / ACCEL,
+        }
+        self.frame.box = self.box
+        self._md = mp.md.MD()
+        self._md.set_integrator(mp.md.VelocityVerlet(timestep))
+        self._md.set_neighbor(mp.core.NeighborList(lj.cutoff + SKIN), skin=SKIN)
+        self._md.set_evaluator(PairLjCut(lj.epsilon, lj.sigma, lj.cutoff))
+        self._dof = 3 * n_atoms - NVE_REMOVED_DOF
 
     @staticmethod
     def _fcc_lattice(n_atoms: int, box_length: float) -> np.ndarray:
@@ -167,25 +180,44 @@ class LennardJonesMd:
         ]
         return np.ascontiguousarray(np.array(sites)[:n_atoms])
 
+    @property
+    def positions(self) -> np.ndarray:
+        """(n_atoms, 3) positions, folded into the box, A."""
+        return np.asarray(self.frame["atoms"]["x", "y", "z"])
+
+    @property
+    def velocities(self) -> np.ndarray:
+        """(n_atoms, 3) velocities, A/fs."""
+        return np.asarray(self.frame["atoms"]["vx", "vy", "vz"])
+
+    @velocities.setter
+    def velocities(self, value: np.ndarray) -> None:
+        self.frame["atoms"]["vx", "vy", "vz"] = np.ascontiguousarray(value)
+
+    def _advance(self, steps: int) -> None:
+        """Step the frame ``steps`` times; its potential energy is meta."""
+        self._md.run(self.frame, steps)
+
     def _kinetic_energy(self, velocities: np.ndarray):
         return self._kinetic.compute(masses=self._masses, velocities=velocities)
 
     def _instant_temperature(self) -> float:
-        return self._kinetic_energy(self.state.vel).temperature(self._dof)
+        return self._kinetic_energy(self.velocities).temperature(self._dof)
 
     def _total_energy(self) -> float:
-        return self.state.energy + self._kinetic_energy(self.state.vel).energy
+        energy = float(self.frame.meta["energy"])
+        return energy + self._kinetic_energy(self.velocities).energy
 
     def _rescale(self, temperature: float) -> None:
         current = self._instant_temperature()
         if current > 0.0:
-            self.state.vel = self.state.vel * np.sqrt(temperature / current)
+            self.velocities = self.velocities * np.sqrt(temperature / current)
 
     def thermalize(self, temperature: float) -> None:
         """Draw Maxwell-Boltzmann velocities and remove net momentum."""
         sigma_v = np.sqrt(KB * temperature / self.potential.mass * ACCEL)
         velocities = self._rng.normal(0.0, sigma_v, size=(self.n_atoms, 3))
-        self.state.vel = velocities - velocities.mean(axis=0)
+        self.velocities = velocities - velocities.mean(axis=0)
         self._rescale(temperature)
 
     def equilibrate(self, temperature: float, steps: int) -> None:
@@ -197,7 +229,7 @@ class LennardJonesMd:
         done = 0
         while done < steps:
             chunk = min(RESCALE_EVERY, steps - done)
-            self.state = self._integrator.advance_n(self.state, chunk)
+            self._advance(chunk)
             self._rescale(temperature)
             done += chunk
 
@@ -214,10 +246,10 @@ class LennardJonesMd:
         temperatures: list[float] = []
 
         for step in range(steps):
-            self.state = self._integrator.advance(self.state)
+            self._advance(1)
             if step % stride == 0:
-                wrapped.append(self.state.pos)
-                velocities.append(self.state.vel)
+                wrapped.append(self.positions.copy())
+                velocities.append(self.velocities.copy())
                 temperatures.append(self._instant_temperature())
 
         drift = abs(self._total_energy() - reference_energy) / abs(reference_energy)

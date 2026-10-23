@@ -93,7 +93,10 @@ pub fn chiral_volume(mol: &Atomistic, center: NodeId, neighbor_order: &[NodeId; 
 pub fn perceive_chiral_centers(mol: &Atomistic) -> Vec<NodeId> {
     let mut centers = Vec::new();
     for (id, _atom) in mol.atoms() {
-        let nbrs: Vec<NodeId> = mol.neighbor_bonds(id).map(|(nb, _)| nb).collect();
+        let nbrs: Vec<NodeId> = mol
+            .neighbors(id, NeighborKinds::BONDS)
+            .map(|(nb, _)| nb)
+            .collect();
         if nbrs.len() == 4 {
             // Check all four are distinct
             let mut unique = nbrs.clone();
@@ -115,7 +118,7 @@ pub fn perceive_chiral_centers(mol: &Atomistic) -> Vec<NodeId> {
 /// coordinates.
 ///
 /// The sign of the chiral volume is computed using the neighbours in the
-/// order they are returned by `mol.neighbor_bonds()`.  This gives a
+/// order they are returned by `mol.neighbors(atom, NeighborKinds::BONDS)`. This gives a
 /// *geometry-based* label (not CIP-ranked), but is stable for a given
 /// molecule and useful for detecting whether two conformers have the same
 /// chirality.
@@ -125,7 +128,10 @@ pub fn perceive_chiral_centers(mol: &Atomistic) -> Vec<NodeId> {
 pub fn perceive_tetrahedral_stereo(mol: &Atomistic) -> HashMap<NodeId, TetrahedralStereo> {
     let mut result = HashMap::new();
     for center in perceive_chiral_centers(mol) {
-        let nbrs: Vec<NodeId> = mol.neighbor_bonds(center).map(|(nb, _)| nb).collect();
+        let nbrs: Vec<NodeId> = mol
+            .neighbors(center, NeighborKinds::BONDS)
+            .map(|(nb, _)| nb)
+            .collect();
         if nbrs.len() < 4 {
             result.insert(center, TetrahedralStereo::Unspecified);
             continue;
@@ -172,12 +178,12 @@ pub fn perceive_bond_stereo(mol: &Atomistic) -> HashMap<RelationId, BondStereo> 
 
         // Substituents on A (excluding B) and on B (excluding A)
         let subs_a: Vec<NodeId> = mol
-            .neighbor_bonds(a)
+            .neighbors(a, NeighborKinds::BONDS)
             .map(|(nb, _)| nb)
             .filter(|&x| x != b)
             .collect();
         let subs_b: Vec<NodeId> = mol
-            .neighbor_bonds(b)
+            .neighbors(b, NeighborKinds::BONDS)
             .map(|(nb, _)| nb)
             .filter(|&x| x != a)
             .collect();
@@ -269,6 +275,7 @@ pub fn perceive_bond_stereo(mol: &Atomistic) -> HashMap<RelationId, BondStereo> 
 // Tests
 // ---------------------------------------------------------------------------
 
+use crate::core::NeighborKinds;
 /// Atom / bond prop written by [`assign_stereo`]: the perceived descriptor.
 use crate::core::keys::STEREO;
 

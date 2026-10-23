@@ -1,17 +1,15 @@
-//! A built-in kernel constructor's reads of its parameters, refused typed.
+//! Reads of a style's parameters outside a form, refused typed: the form
+//! kernels' `cutoff`s and 1-4 weight, the constructors no form carries
+//! (PME), and the Lennard-Jones rows of the 1-4 exceptions.
 //!
-//! Every built-in constructor reads its numbers through these, so a
-//! parameter it needs and does not find is [`IrError::MissingParam`] naming
-//! the style, the type and the parameter — the refusal a form kernel or
-//! an expression makes of the same row — and never a message. The values
+//! A parameter one needs and does not find is [`IrError::MissingParam`]
+//! naming the style, the type and the parameter — the refusal a form kernel
+//! or an expression makes of the same row — and never a message. The values
 //! arrive gathered ([`StyleSpec::gather`](crate::ff::ir::StyleSpec::gather)):
 //! a declared default is already in place, so none is stated here.
 
-use ndarray::ArrayD;
-
 use crate::ff::ir::IrError;
 use crate::ff::ir::Params;
-use molrs::core::Block;
 use molrs::op::F;
 
 /// `style` lacks `param`: in the type row `type_`, or (`type_` empty) among
@@ -60,43 +58,6 @@ pub(crate) fn style_text<'p>(
         .get(key)
         .and_then(|v| v.as_text())
         .ok_or_else(|| missing(style, "", key))
-}
-
-/// The per-instance column `key` of `block`: the number a typifier baked
-/// onto every term of a [`PerInstance`](crate::ff::ir::ParamSource::PerInstance)
-/// style.
-pub(crate) fn instance_col<'b>(
-    style: &str,
-    block: &'b Block,
-    key: &str,
-) -> Result<&'b ArrayD<F>, IrError> {
-    block
-        .get(key)
-        .and_then(|c| c.get::<f64>())
-        .ok_or_else(|| missing(style, "", key))
-}
-
-/// The row of the atom-type pair `{a, b}` of a pair style whose parameters
-/// do not mix (LAMMPS `buck`, `morse`): its self row, or its cross row —
-/// none is [`IrError::NoMixing`] naming `param`, the style's first.
-pub(crate) fn unmixed_row<'p>(
-    style: &str,
-    param: &str,
-    rows: &std::collections::HashMap<&str, &'p Params>,
-    a: &str,
-    b: &str,
-) -> Result<&'p Params, crate::ff::potential::CompileError> {
-    let key = crate::ff::ir::pair_key(a, b)?;
-    match rows.get(key.as_str()) {
-        Some(row) => Ok(row),
-        None if a == b => Err(format!("{style}: unknown atom type '{a}'").into()),
-        None => Err(IrError::NoMixing {
-            style: style.to_owned(),
-            param: param.to_owned(),
-            pair: format!("{{{a}, {b}}}"),
-        }
-        .into()),
-    }
 }
 
 /// The `cutoff` of a pair style, as LAMMPS truncates every pair style:
@@ -175,8 +136,8 @@ mod tests {
         }
     }
 
-    /// Every built-in constructor refuses a parameter it needs as
-    /// `MissingParam` naming the style and the parameter, not a message.
+    /// Every built-in kernel refuses a parameter it needs as `MissingParam`
+    /// naming the style and the parameter, not a message.
     #[test]
     fn a_built_in_kernel_refuses_a_missing_parameter_typed() {
         let p = |pairs: &[(&str, f64)]| pairs.iter().copied().collect::<Params>();

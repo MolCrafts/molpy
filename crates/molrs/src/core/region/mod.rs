@@ -2,6 +2,7 @@
 
 mod cylinder;
 mod ellipsoid;
+mod error;
 mod half_space;
 mod polyhedron;
 mod primitives;
@@ -9,6 +10,7 @@ mod sphere_union;
 
 pub use cylinder::Cylinder;
 pub use ellipsoid::Ellipsoid;
+pub use error::RegionError;
 pub use half_space::HalfSpace;
 pub use polyhedron::{Polyhedron, PolyhedronError};
 pub use primitives::{AndRegion, Cuboid, NotRegion, OrRegion, Parallelepiped, Region, Sphere};

@@ -1,13 +1,12 @@
 ---
 title: MolPy
-description: A Python toolkit for building, editing, and parameterizing complex molecular systems.
+description: molpy is the project. The core is molrs, and each language binds it.
 hide:
-  - navigation
   - toc
 hero:
   kicker: MolPy Manual
   title: MolPy
-  description: Build, edit, and parameterize complex molecular systems in Python.
+  description: One project. The core is molrs, and Python, WebAssembly, C and C++ bind it.
   install:
     label: Install
     command: pip install molcrafts-molpy
@@ -22,8 +21,8 @@ hero:
       href: https://github.com/MolCrafts/molrs/tree/dev/molpy
       alt: GitHub stars
   actions:
-    - label: Get started
-      href: tutorials/
+    - label: molrs
+      href: molrs/
       style: primary
     - label: Browse examples
       href: getting-started/examples/
@@ -63,7 +62,7 @@ ff = typifier.forcefield()
 
 # minimize
 potentials = mp.ff.compile.PotentialCompiler(ff).compile(frame)
-frame, report = mp.optimize.Lbfgs(potentials, fmax=0.05).minimize(frame)
+report = mp.optimize.Lbfgs(potentials, fmax=0.05).minimize(frame)  # in place
 ```
 
 </section>
@@ -91,7 +90,7 @@ assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
 
 def build(cgsmiles):
     sites = mp.io.cgsmiles.read_cgsmiles(cgsmiles).to_coarsegrain()
-    return assembler.assemble(sites, mp.Atomistic)
+    return assembler.assemble(sites)
 
 # shape from CGsmiles
 chain = build("{[#EO]|10}")
@@ -183,7 +182,9 @@ nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 
 # g(r)
-rdf = Rdf(n_bins=50, r_max=8.0, r_min=0.0).compute(pairs=[nl.neighbors()])
+acc = Rdf(n_bins=50, r_max=8.0, r_min=0.0).accumulator()
+acc.push(nl.neighbors())  # one pair table per frame
+rdf = acc.finish()
 ```
 
 </section>
@@ -248,6 +249,10 @@ H  -0.2555  -3.5916  -0.7337</template>
 </div>
 
 <dl class="molcrafts-link-list">
+<div>
+<dt><a href="molrs/">molrs</a></dt>
+<dd>The core. The manual continues here.</dd>
+</div>
 <div>
 <dt><a href="getting-started/quickstart/">Quickstart</a></dt>
 <dd>SMILES to LAMMPS input, end to end.</dd>

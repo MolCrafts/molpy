@@ -115,20 +115,26 @@ impl LammpsCodec for FourierCodec {
         {
             terms.push(energy(units, k));
             terms.push(whole(spec, "periodicity", need("periodicity")?)?);
-            terms.push(Token::Real(
-                p.get("phase").and_then(|v| v.as_num()).unwrap_or(0.0),
-            ));
+            // An unstated phase is the spec's declared default.
+            let phase = p
+                .get("phase")
+                .or_else(|| spec.param("phase").and_then(|d| d.default.as_ref()))
+                .and_then(|v| v.as_num())
+                .ok_or_else(|| format!("{}: missing parameter `phase`", what(spec)))?;
+            terms.push(Token::Real(phase));
         }
         let mut i = 1usize;
         while let Some(k) = p.get(&format!("k{i}")).and_then(|v| v.as_num()) {
             let n = format!("periodicity{i}");
             terms.push(energy(units, k));
             terms.push(whole(spec, &n, need(&n)?)?);
-            terms.push(Token::Real(
-                p.get(&format!("phase{i}"))
-                    .and_then(|v| v.as_num())
-                    .unwrap_or(0.0),
-            ));
+            // An unstated phase is the spec's declared default, as for `k`.
+            let phase = p
+                .get(&format!("phase{i}"))
+                .or_else(|| spec.param("phase").and_then(|d| d.default.as_ref()))
+                .and_then(|v| v.as_num())
+                .ok_or_else(|| format!("{}: missing parameter `phase{i}`", what(spec)))?;
+            terms.push(Token::Real(phase));
             known.extend([format!("k{i}"), n, format!("phase{i}")]);
             i += 1;
         }
@@ -585,10 +591,10 @@ impl LammpsCodec for LjCutCodec {
     }
 
     fn check_style(&self, spec: &StyleSpec, style: &Params) -> Result<(), String> {
-        let (n, m) = (
-            style.get("n").and_then(|v| v.as_num()).unwrap_or(12.0),
-            style.get("m").and_then(|v| v.as_num()).unwrap_or(6.0),
-        );
+        // The exponents as priced: stated, else the spec's declared default.
+        let priced = spec.priced_style_params(style).map_err(|e| e.to_string())?;
+        let num = |k: &str| priced.get(k).and_then(|v| v.as_num());
+        let (n, m) = (num("n").unwrap_or(f64::NAN), num("m").unwrap_or(f64::NAN));
         if (n, m) != (12.0, 6.0) {
             return Err(format!(
                 "pair lj/cut with n = {n}, m = {m}: LAMMPS's lj/cut is 12-6 (its Mie form, \
@@ -633,18 +639,13 @@ impl LammpsCodec for LjCharmmCodec {
                 .ok_or_else(|| format!("{}: missing parameter `{key}`", what(spec)))
         };
         let (eps, sigma) = (need("epsilon")?, need("sigma")?);
+        let (eps14, sigma14) = crate::ff::ir::lj_charmm_one_four(p, eps, sigma);
         Ok(LammpsCoeffs {
             values: vec![
                 energy(units, eps),
                 Token::Real(units.apply(sigma, ParamDimension::LENGTH)),
-                energy(
-                    units,
-                    p.get("epsilon14").and_then(|v| v.as_num()).unwrap_or(eps),
-                ),
-                Token::Real(units.apply(
-                    p.get("sigma14").and_then(|v| v.as_num()).unwrap_or(sigma),
-                    ParamDimension::LENGTH,
-                )),
+                energy(units, eps14),
+                Token::Real(units.apply(sigma14, ParamDimension::LENGTH)),
             ],
             extra: Vec::new(),
         })

@@ -14,6 +14,7 @@
 use crate::core::Atomistic;
 use crate::core::BondOrder;
 use crate::core::Element;
+use crate::core::NeighborKinds;
 use crate::core::NodeId;
 use crate::core::Props;
 use crate::core::keys;
@@ -61,9 +62,8 @@ pub(crate) fn default_valence(atno: u8) -> i32 {
 /// # Bond-order convention
 ///
 /// Localized bond counts are read from the bond's `bond_number`, and
-/// aromaticity from its `bond_type` — the two are separate questions.
-/// If the property is absent the bond is assumed to be a single bond (1.0).
-/// Aromatic bonds should be stored as 1.5.
+/// aromaticity from its `bond_type` — the two are separate questions; an
+/// aromatic bond counts by its Kekulé `bond_number` like any other.
 ///
 /// # Formal-charge correction
 ///
@@ -133,13 +133,32 @@ pub fn n_implicit_hydrogens(mol: &Atomistic, atom_id: NodeId) -> Option<u32> {
     }
 }
 
+/// Every hydrogen `atom_id` carries: its bonded hydrogen atoms plus the
+/// [`n_implicit_hydrogens`] the graph does not draw (none for an atom the
+/// valence model cannot fill, such as the wildcard).
+///
+/// The one total-hydrogen fact every perception reads — the SMARTS `H<n>`
+/// primitive, the environment SMARTS a typifier writes, the snapshots of
+/// aromaticity and hybridization — so an explicit-H graph and the same
+/// molecule read from SMILES (hydrogens implicit) give the same answer.
+pub fn n_hydrogens(mol: &Atomistic, atom_id: NodeId) -> u32 {
+    let explicit = mol
+        .neighbors(atom_id, NeighborKinds::BONDS)
+        .filter(|(nb, _)| {
+            mol.get_atom(*nb).ok().and_then(|atom| atom.atomic_number()) == Some(Element::H.z())
+        })
+        .count() as u32;
+    explicit + n_implicit_hydrogens(mol, atom_id).unwrap_or(0)
+}
+
 /// Explicit valence of `atom_id` — the demand its existing bonds already place
 /// on `lowest_valence`, the smallest valence its (charge-adjusted) element has.
 ///
 /// # Aromatic bonds
 ///
-/// An aromatic bond is stored with order `1.5`, but that number is a *bond*
-/// property and summing it does not give an atom's valence: in every Kekulé
+/// An aromatic bond (`bond_type` aromatic) has order 1.5 in the delocalized
+/// picture, but that number is a *bond* property and summing it does not give
+/// an atom's valence: in every Kekulé
 /// structure an aromatic atom has one σ bond per aromatic neighbour, plus at
 /// most one π bond. Summing 1.5 per bond bills a ring atom with two aromatic
 /// neighbours for two half-π bonds it does not both have, and bills a
@@ -169,9 +188,9 @@ fn valence_demand(mol: &Atomistic, atom_id: NodeId, lowest_valence: u8) -> f64 {
     // The two facts are read from their own places: how many bonds this is
     // (the localized number) and whether it is delocalized (the class).
     let bonds: Vec<(BondOrder, f64)> = mol
-        .neighbor_bonds(atom_id)
+        .neighbors(atom_id, NeighborKinds::BONDS)
         .map(|(_, bid)| {
-            const LIVE: &str = "neighbor_bonds yields live bonds";
+            const LIVE: &str = "neighbors yields live bonds";
             let number = mol.bond_number(bid).expect(LIVE).count().max(1) as f64;
             (mol.bond_type(bid).expect(LIVE), number)
         })

@@ -1,15 +1,14 @@
 //! [`MD`] walks [`Phase::ALL`] once per step and launches the components
 //! bound to each phase in ascending order.
 
-use molrs::core::Frame;
+use molrs::core::{Frame, NeighborList};
 use molrs::op::F;
 
-use super::component::{Component, Flags, Integrator, Kind, TimestepProvider};
+use super::component::{Component, Flags, Integrator, Kind, Thermostat};
 use super::error::MdError;
 use super::evaluator::FfEvaluator;
-use super::fix_langevin::FixLangevin;
 use super::infra::{KineticEnergy, ZeroForces};
-use super::neighbor_list::NeighborList;
+use super::neighbor_list::Neighbor;
 use super::phase::Phase;
 use super::scratch::Scratch;
 
@@ -46,11 +45,9 @@ impl MD {
             built: false,
         };
         md.install(ZeroForces, ZeroForces.default_bindings(), Flags::default());
-        md.install(
-            KineticEnergy,
-            KineticEnergy.default_bindings(),
-            Flags::default(),
-        );
+        let kinetic = KineticEnergy::default();
+        let bindings = kinetic.default_bindings();
+        md.install(kinetic, bindings, Flags::default());
         md
     }
 
@@ -89,7 +86,10 @@ impl MD {
 
     /// Append a thermostat. Its `dt` must equal the integrator's `dt`; that
     /// check runs at [`build`](Self::build), so the integrator may be set after.
-    pub fn set_thermostat(&mut self, thermostat: FixLangevin) -> Result<(), MdError> {
+    pub fn set_thermostat<T: Thermostat + 'static>(
+        &mut self,
+        thermostat: T,
+    ) -> Result<(), MdError> {
         let dt = require_positive_dt(thermostat.dt())?;
         let bindings = thermostat.default_bindings();
         self.install(
@@ -104,8 +104,19 @@ impl MD {
         Ok(())
     }
 
-    /// Replace any neighbour list already bound through this setter.
-    pub fn set_neighbor(&mut self, neighbor: NeighborList) -> Result<(), MdError> {
+    /// Mount `list` as the run's neighbour list, replacing any before it.
+    ///
+    /// The list searches at its own cutoff and knows nothing else; the frame
+    /// box supplies the periodicity. Pairs within `cutoff − skin` reach the
+    /// pair kernels, and the list is searched again only once an atom has
+    /// moved half the `skin` (`0` searches every step).
+    ///
+    /// # Errors
+    ///
+    /// [`MdError::Invalid`] for a `skin` that is negative, not finite, or not
+    /// below the list's cutoff.
+    pub fn set_neighbor(&mut self, list: NeighborList, skin: F) -> Result<(), MdError> {
+        let neighbor = Neighbor::new(list, skin)?;
         self.remove_kind(Kind::Neighbor);
         let bindings = neighbor.default_bindings();
         self.install(

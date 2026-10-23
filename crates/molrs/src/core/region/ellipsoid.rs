@@ -1,5 +1,6 @@
 //! An axis-aligned ellipsoid.
 
+use super::RegionError;
 use super::primitives::Region;
 use crate::op::{F, Fnx3};
 use ndarray::Array2;
@@ -23,16 +24,22 @@ impl Ellipsoid {
     ///
     /// # Errors
     ///
-    /// Returns `Err` if any semi-axis is not positive or any value is not
+    /// [`RegionError`] when a semi-axis is not positive or the centre is not
     /// finite.
-    pub fn new(center: [F; 3], semi_axes: [F; 3]) -> Result<Self, String> {
-        if semi_axes.iter().any(|a| !(*a > 0.0 && a.is_finite())) {
-            return Err(format!(
-                "Ellipsoid: semi-axes must be > 0, got {semi_axes:?}"
-            ));
+    pub fn new(center: [F; 3], semi_axes: [F; 3]) -> Result<Self, RegionError> {
+        const SHAPE: &str = "Ellipsoid";
+        if let Some(&value) = semi_axes.iter().find(|a| !(**a > 0.0 && a.is_finite())) {
+            return Err(RegionError::NonPositive {
+                shape: SHAPE,
+                param: "semi-axis",
+                value,
+            });
         }
         if center.iter().any(|c| !c.is_finite()) {
-            return Err("Ellipsoid: center must be finite".to_string());
+            return Err(RegionError::NonFinite {
+                shape: SHAPE,
+                param: "center",
+            });
         }
         Ok(Self { center, semi_axes })
     }

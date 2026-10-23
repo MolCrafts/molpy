@@ -127,8 +127,10 @@ the [Msd](msd.md) of a one-item trajectory, number for number:
 ```python
 from molpy.compute import Msd
 
-as_msd = Msd(max_lag=100).compute(positions=p_cation[:, None, :], dt=10.0)
-print(np.allclose(as_msd.values, l_same.values))           # -> True
+accumulator = Msd(max_lag=100).accumulator()
+for p in p_cation:                                         # one (1, 3) item per frame
+    accumulator.push(p[None, :], dt=10.0)
+print(np.allclose(accumulator.finish().values, l_same.values))   # -> True
 ```
 
 As always the compute returns the raw $L_{\alpha\beta}(\tau)$ curve; the slope

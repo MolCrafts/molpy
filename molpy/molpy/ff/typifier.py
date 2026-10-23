@@ -13,8 +13,8 @@ writer. A subclass must not define ``typify``.
 The built-in typifiers accept and return ``Atomistic``. :class:`ElementTypifier`
 labels by element symbol alone and defines no force field.
 
-:func:`assign_cmaps` builds a typed frame's ``cmaps`` block from its
-dihedrals, against a force field's CMAP types.
+:func:`assign_cmaps` adds a typed molecule's CMAP crossterms (``cmaps``
+terms) from its dihedrals, against a force field's CMAP types.
 
 GAFF / GAFF2 is typed natively: :class:`AtdTypifier` (antechamber's atom
 types) then :class:`GaffTypifier` (the bonded terms), each taking the

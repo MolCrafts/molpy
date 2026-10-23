@@ -391,6 +391,8 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
     frame.insert("atoms", atoms);
     frame.insert("grid", grid_block);
 
+    // Every door reads through here, so every door checks here.
+    crate::io::reader::check_read_frame(&frame)?;
     Ok(frame)
 }
 
@@ -402,9 +404,8 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
 /// [`InvalidData`](std::io::ErrorKind::InvalidData) for a frame a cube cannot
 /// hold (no `grid` block, no `atoms` block, no box), its message naming why.
 pub fn write_cube<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> std::io::Result<()> {
-    let mut writer = sink.into().writer()?;
-    write_frame_to(&mut writer, frame).map_err(into_io)?;
-    writer.flush()
+    sink.into()
+        .put_with(|writer| write_frame_to(writer, frame).map_err(into_io))
 }
 
 /// Random access over a file of Gaussian cubes back to back.
@@ -488,6 +489,8 @@ impl<R: BufRead + Seek> TrajectoryReader for CubeReader<R> {
 /// `set_shape([nx, ny, nz])` and one f64 column per scalar field),
 /// `frame.get("atoms")` for geometry, and `frame.simbox` for the cell.
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsError> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     let grid_block = frame
         .get("grid")
         .ok_or_else(|| MolRsError::validation("frame has no 'grid' block"))?;
@@ -510,15 +513,25 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
     let (nx, ny, nz) = (grid_shape[0], grid_shape[1], grid_shape[2]);
 
     // Determine MO mode from metadata
-    let mo_indices: Option<Vec<usize>> = frame
-        .meta
-        .get("cube_mo_indices")
-        .and_then(|value| value.as_str())
-        .map(|s| {
-            s.split(',')
-                .filter_map(|t| t.trim().parse::<usize>().ok())
-                .collect()
-        });
+    let mo_indices: Option<Vec<usize>> = match frame.meta.get("cube_mo_indices") {
+        None => None,
+        Some(value) => {
+            let list = value
+                .as_str()
+                .ok_or_else(|| MolRsError::validation("meta 'cube_mo_indices' must be a string"))?;
+            Some(
+                list.split(',')
+                    .map(|t| {
+                        t.trim().parse::<usize>().map_err(|_| {
+                            MolRsError::validation(format!(
+                                "meta 'cube_mo_indices' entry {t:?} is not an orbital number"
+                            ))
+                        })
+                    })
+                    .collect::<Result<_, _>>()?,
+            )
+        }
+    };
     let has_mo = mo_indices.is_some();
 
     // Determine unit sign convention. Stored cell/atom coordinates are in
@@ -649,17 +662,29 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
         let columns: Vec<Vec<F>> = indices
             .iter()
             .map(|idx| {
-                grid_block
-                    .get(&format!("mo_{}", idx))
+                let key = format!("mo_{idx}");
+                let values: Vec<F> = grid_block
+                    .get(&key)
                     .and_then(|c| c.get::<f64>())
-                    .map(|a| a.iter().copied().collect::<Vec<_>>())
-                    .unwrap_or_default()
+                    .ok_or_else(|| {
+                        MolRsError::validation(format!("cube grid has no f64 column '{key}'"))
+                    })?
+                    .iter()
+                    .copied()
+                    .collect();
+                if values.len() != n_voxels {
+                    return Err(MolRsError::validation(format!(
+                        "cube grid column '{key}' holds {} values for {n_voxels} voxels",
+                        values.len()
+                    )));
+                }
+                Ok(values)
             })
-            .collect();
+            .collect::<Result<_, MolRsError>>()?;
         let mut col = 0;
         for i in 0..n_voxels {
             for (k, arr) in columns.iter().enumerate() {
-                let val = arr.get(i).copied().unwrap_or(0.0);
+                let val = arr[i];
                 write!(writer, "{:13.5E}", val).map_err(MolRsError::Io)?;
                 col += 1;
                 if col % 6 == 0 || (i == n_voxels - 1 && k == n_vals - 1) {
@@ -758,5 +783,34 @@ mod tests {
     #[test]
     fn parse_f64_invalid() {
         assert!(super::parse_f64("abc", 1).is_err());
+    }
+
+    /// One carbon in a 2×2×2 density grid (Bohr).
+    const DENSITY: &str = "title\ncomment\n\
+    1    0.000000    0.000000    0.000000\n\
+    2    1.000000    0.000000    0.000000\n\
+    2    0.000000    1.000000    0.000000\n\
+    2    0.000000    0.000000    1.000000\n\
+    6    0.000000    0.000000    0.000000    0.000000\n\
+ 1.0 2.0 3.0 4.0 5.0 6.0\n 7.0 8.0\n";
+
+    /// The orbitals a cube writes are the ones its meta names, each with its
+    /// own column: an unreadable list or a missing column is refused, never
+    /// skipped or written as zeros.
+    #[test]
+    fn orbital_meta_and_columns_are_required_as_named() {
+        let frame = super::read_cube(DENSITY.as_bytes()).unwrap();
+        let mut buffer = Vec::new();
+        super::write_cube(&mut buffer, &frame).unwrap();
+
+        let mut listed = frame.clone();
+        listed.meta.insert("cube_mo_indices", "1,x");
+        let err = super::write_cube(&mut Vec::new(), &listed).unwrap_err();
+        assert!(err.to_string().contains("\"x\""), "{err}");
+
+        let mut missing = frame;
+        missing.meta.insert("cube_mo_indices", "1");
+        let err = super::write_cube(&mut Vec::new(), &missing).unwrap_err();
+        assert!(err.to_string().contains("mo_1"), "{err}");
     }
 }

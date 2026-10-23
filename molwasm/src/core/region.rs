@@ -13,7 +13,7 @@
 //! # Example (JavaScript)
 //!
 //! ```js
-//! import { Sphere } from "@molcrafts/molrs";
+//! import { Sphere } from "@molcrafts/molwasm";
 //!
 //! const ball  = Sphere.create([0, 0, 0], 3.0);
 //! const shell = ball.and(Sphere.create([0, 0, 0], 2.0).not());
@@ -203,7 +203,7 @@ impl Parallelepiped {
             .map(|r| Parallelepiped {
                 inner: RegionRef::new(Arc::new(r)),
             })
-            .map_err(|e| JsValue::from_str(&e))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 
@@ -224,7 +224,7 @@ impl HalfSpace {
             .map(|r| HalfSpace {
                 inner: RegionRef::new(Arc::new(r)),
             })
-            .map_err(|e| JsValue::from_str(&e))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 
@@ -245,7 +245,7 @@ impl Cylinder {
             .map(|r| Cylinder {
                 inner: RegionRef::new(Arc::new(r)),
             })
-            .map_err(|e| JsValue::from_str(&e))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 
@@ -267,7 +267,7 @@ impl Ellipsoid {
             .map(|r| Ellipsoid {
                 inner: RegionRef::new(Arc::new(r)),
             })
-            .map_err(|e| JsValue::from_str(&e))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 

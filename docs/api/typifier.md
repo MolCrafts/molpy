@@ -91,8 +91,8 @@ frame = typed_mol.to_frame()
 ## Writing a typifier
 
 Implement `assign` and stop. It returns a `TypeAssignment`: one annotation mapping per
-node, positional against `graph.atoms`, and per link class one mapping per row,
-positional against `graph.links.exact_bucket(cls)`. A type annotation is
+node, positional against `graph.atoms`, and per relation class one mapping per
+row, positional against that relation's rows (`graph.bonds`, `graph.angles`, …). A type annotation is
 `(style, name, endpoints, params)`: it stamps `name` and every param, and
 defines the type `name` on `endpoints` (atom-type names, empty for an atom
 type). The name is never parsed — the endpoints are required. `styles` declares
@@ -102,7 +102,7 @@ each style used; `pairs` adds `(style, name, endpoints, params)` pair rows.
 class Tip3pTypifier(mp.ff.typifier.Typifier):
     """TIP3P water: OW / HW atoms and one OW-HW bond type."""
 
-    SITES = {"O": ("OW", 15.999, -0.834), "H": ("HW", 1.008, 0.417)}
+    SITES = {8: ("OW", 15.999, -0.834), 1: ("HW", 1.008, 0.417)}  # by atomic number
 
     def source_forcefield(self):
         return mp.ff.forcefield.ForceField("tip3p", units="real")  # the output declares real units
@@ -110,11 +110,11 @@ class Tip3pTypifier(mp.ff.typifier.Typifier):
     def assign(self, graph):
         nodes = []
         for atom in graph.atoms:
-            name, mass, charge = self.SITES[atom["element"]]
+            name, mass, charge = self.SITES[atom["atomic_number"]]
             nodes.append({"type": ("full", name, (), {"mass": mass}), "charge": charge})
         bonds = [
             {"type": ("harmonic", "OW-HW", ["OW", "HW"], {"k": 450.0, "r0": 0.9572})}
-            for _ in graph.links.exact_bucket(mp.Bond)
+            for _ in graph.bonds
         ]
         return mp.ff.typifier.TypeAssignment(
             nodes,

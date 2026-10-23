@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use molrs::core::{Atomistic, NodeId};
+use molrs::core::Atomistic;
 
 use crate::ff::params::{BccAlias, BccCorrectionRow};
 use crate::ff::typifier::atd::antechamber_bond_type;
@@ -416,16 +416,11 @@ fn bcc_increments(
     mol: &Atomistic,
     types: &[&str],
 ) -> Result<Vec<f64>, BccIncrementError> {
-    let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
-    let index: HashMap<NodeId, usize> = atom_ids
-        .iter()
-        .enumerate()
-        .map(|(i, aid)| (*aid, i))
-        .collect();
+    let rows = mol.atom_table();
 
-    let mut delta = vec![0.0; atom_ids.len()];
+    let mut delta = vec![0.0; mol.n_atoms()];
     for (bid, bond) in mol.bonds() {
-        let (Some(&i), Some(&j)) = (index.get(&bond.nodes[0]), index.get(&bond.nodes[1])) else {
+        let (Some(i), Some(j)) = (rows.row(bond.nodes[0]), rows.row(bond.nodes[1])) else {
             return Err(BccIncrementError::Malformed {
                 detail: format!("bond {bid:?} has an endpoint that is not an atom of the molecule"),
             });

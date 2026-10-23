@@ -1,9 +1,10 @@
 //! Hydrogen addition for molecular graphs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::valence::n_implicit_hydrogens;
 use crate::core::Atomistic;
+use crate::core::NeighborKinds;
 use crate::core::NodeId;
 use crate::core::{Props, keys};
 use crate::op::vec3::{cross, norm};
@@ -52,10 +53,14 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     // Collect (atom_id, its atomic number, n_implicit_h) for all heavy atoms
     // up front so that we don't hold a borrow while mutating.
     let mut additions: Vec<(NodeId, u8, u32)> = Vec::new();
+    let mut declared: Vec<NodeId> = Vec::new();
     for (id, atom) in new_mol.atoms() {
         let z = species(id, &atom)?;
         if z == Element::H.z() {
             continue; // existing hydrogens are left alone
+        }
+        if atom.get(keys::H_COUNT).is_some() {
+            declared.push(id);
         }
         // `None` covers the wildcard (Z = 0) and every atom the valence
         // model does not fill: no hydrogens for them.
@@ -64,13 +69,19 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
             _ => {}
         }
     }
+    // A declared `h_count` counts the hydrogens an atom carries undrawn. Once
+    // they are drawn below it is zero: left as it was, the next perception
+    // would count every hydrogen twice — once as a bond, once as declared.
+    for &id in &declared {
+        new_mol.set_atom(id, keys::H_COUNT, 0)?;
+    }
 
     for (heavy_id, heavy_z, n) in additions {
         // Hydrogen positions, when the heavy atom has coordinates to place
         // them from; `None` is the topology-only path.
         let positions: Option<Vec<[f64; 3]>> = new_mol.get_atom(heavy_id)?.position().map(|p| {
             let existing: Vec<[f64; 3]> = new_mol
-                .neighbor_bonds(heavy_id)
+                .neighbors(heavy_id, NeighborKinds::BONDS)
                 .filter_map(|(nb, _)| new_mol.get_atom(nb).ok()?.position())
                 .map(|q| unit([q[0] - p[0], q[1] - p[1], q[2] - p[2]]))
                 .collect();
@@ -235,7 +246,7 @@ fn cap_directions(existing: &[[f64; 3]], k: usize) -> Vec<[f64; 3]> {
 /// An explicit hydrogen is stripped when **both** hold:
 ///
 /// 1. its degree is exactly one, counted over the `bonds` kind alone
-///    ([`Atomistic::neighbor_bonds`]) — the standard cheminformatics
+///    ([`Atomistic::neighbors`]) — the standard cheminformatics
 ///    convention for a "non-bridging" H;
 /// 2. it is the anchor or the handle of no port ([`Atomistic::port_ids`]).
 ///
@@ -295,10 +306,28 @@ pub fn remove_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     for (id, atom) in new_mol.atoms() {
         if species(id, &atom)? == Element::H.z()
             && !port_nodes.contains(&id)
-            && new_mol.neighbor_bonds(id).count() == 1
+            && new_mol.neighbors(id, NeighborKinds::BONDS).count() == 1
         {
             h_ids.push(id);
         }
+    }
+
+    // A heavy atom that declares its undrawn hydrogens (`h_count`) keeps
+    // declaring all of them: the ones removed here become undrawn too, so
+    // drawing and removing hydrogens round-trips the count.
+    let mut undrawn: HashMap<NodeId, i32> = HashMap::new();
+    for &h in &h_ids {
+        let (heavy, _) = new_mol
+            .neighbors(h, NeighborKinds::BONDS)
+            .next()
+            .expect("a removed hydrogen has its one bond");
+        if new_mol.get_atom(heavy)?.get(keys::H_COUNT).is_some() {
+            *undrawn.entry(heavy).or_insert(0) += 1;
+        }
+    }
+    for (heavy, removed) in undrawn {
+        let before = new_mol.get_atom(heavy)?.get_int(keys::H_COUNT).unwrap_or(0);
+        new_mol.set_atom(heavy, keys::H_COUNT, before + removed)?;
     }
 
     // `del_atoms`' only failure is an unknown handle, and every handle here is
@@ -845,7 +874,7 @@ mod tests {
                 "add_hydrogens only appends hydrogens"
             );
             assert_eq!(
-                result.neighbor_bonds(id).count(),
+                result.neighbors(id, NeighborKinds::BONDS).count(),
                 1,
                 "each added H carries exactly one bond"
             );
@@ -1106,5 +1135,30 @@ mod smiles_formula_tests {
                 .n_atoms(),
             8
         );
+    }
+
+    /// A bracket atom's declared hydrogens are drawn once: the declared
+    /// count drops to zero, so drawing again adds nothing, and removing the
+    /// drawn hydrogens declares them again.
+    #[test]
+    fn declared_hydrogens_are_drawn_once_and_round_trip() {
+        let pyrrole = crate::io::smiles::SmilesIr::parse("c1cc[nH]c1")
+            .expect("parse")
+            .to_atomistic()
+            .expect("to_atomistic");
+        let implicit = |mol: &Atomistic| -> Vec<u32> {
+            mol.atom_ids()
+                .filter_map(|id| n_implicit_hydrogens(mol, id))
+                .collect()
+        };
+
+        let drawn = add_hydrogens(&pyrrole).unwrap();
+        assert_eq!(drawn.n_atoms(), 10, "C4H4NH: five hydrogens drawn");
+        assert!(implicit(&drawn).iter().all(|&n| n == 0));
+        assert_eq!(add_hydrogens(&drawn).unwrap().n_atoms(), 10);
+
+        let stripped = remove_hydrogens(&drawn).unwrap();
+        assert_eq!(stripped.n_atoms(), 5);
+        assert_eq!(implicit(&stripped), implicit(&pyrrole));
     }
 }

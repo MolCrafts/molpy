@@ -11,8 +11,9 @@ store, a ``bytearray`` receives the packed record). This module holds the
 rest:
 
 * :class:`MrecFile` — a record opened for its sections: ``sections()``,
-  ``meta()``, ``frame()``, ``system()``, ``forcefield()``, each decoding only
-  the section it names
+  ``meta()``, ``frame()``, ``system()``, ``forcefield()``, ``status()``,
+  ``method()``, ``metrics()``, ``observables()``, each decoding only the
+  section it names
 * :class:`MrecReader` — lazy frame cursor over the ``trajectory`` section
   (``len()``, ``reader[i]``, iteration, ``frame_columns``, ``.step`` /
   ``.time`` labels, ``has_block``, ``to_trajectory()``)
@@ -23,7 +24,6 @@ rest:
   (:meth:`ForceFieldSection.from_forcefield` /
   :meth:`ForceFieldSection.to_forcefield` map it onto a force field)
 * :func:`pack_mrec_zip` — collapse a closed store into one ``*.mrec.zip``
-* :mod:`molpy.io.mrec.validation` — runtime check of a record's frames
 
 The names are those of ``molrs::io::mrec``.
 
@@ -36,27 +36,23 @@ It also holds :class:`MrecMetricReader`, published in the
 
 from __future__ import annotations
 
-from molpy._core import mrec as _mrec
+from molpy import _core
 
-from molpy.io.mrec import validation
+ForceFieldSection = _core.mrec.ForceFieldSection
 
-ForceFieldSection = _mrec.ForceFieldSection
+MrecFile = _core.mrec.MrecFile
 
-MrecFile = _mrec.MrecFile
+MrecReader = _core.mrec.MrecReader
 
-MrecReader = _mrec.MrecReader
+MrecWriter = _core.mrec.MrecWriter
 
-MrecWriter = _mrec.MrecWriter
+SequenceSchema = _core.mrec.SequenceSchema
 
-SequenceSchema = _mrec.SequenceSchema
+pack_mrec_zip = _core.mrec.pack_mrec_zip
 
-pack_mrec_zip = _mrec.pack_mrec_zip
-
-from importlib import import_module as _import_module
 from typing import TYPE_CHECKING
 from molpy.io import metric_reader
 
-_import_module(f"{__name__}.validation")
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
@@ -105,7 +101,7 @@ class MrecMetricReader:
         The raw stream is series-major — every frame's ``mrec/step``, then
         every frame's ``mrec/time`` — so ``since`` counts those records. ``s``
         is the frame's simulation step, or its index when the record has no
-        ``step`` column (see :mod:`._metric_reader`).
+        ``step`` column (see :mod:`molpy.io.metric_reader`).
         """
         with MrecReader(path) as reader:
             columns = {name: getattr(reader, name) for name in ("step", "time")}
@@ -135,6 +131,5 @@ __all__ = [
     "MrecWriter",
     "SequenceSchema",
     "pack_mrec_zip",
-    "validation",
     "MrecMetricReader",
 ]

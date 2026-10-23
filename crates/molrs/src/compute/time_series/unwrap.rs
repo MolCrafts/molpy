@@ -106,12 +106,8 @@ impl Compute for Unwrap {
                 for (frame, (mut sample, crossings)) in
                     out.outer_iter_mut().zip(images.outer_iter()).enumerate()
                 {
-                    let h = input.boxes[frame].matrix();
-                    for (mut r, n) in sample.outer_iter_mut().zip(crossings.outer_iter()) {
-                        for (d, row) in h.iter().enumerate() {
-                            r[d] += row[0] * n[0] as F + row[1] * n[1] as F + row[2] * n[2] as F;
-                        }
-                    }
+                    let unwrapped = input.boxes[frame].unwrap(sample.view(), crossings);
+                    sample.assign(&unwrapped);
                 }
             }
             None => {

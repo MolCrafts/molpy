@@ -1,5 +1,6 @@
 //! Hybridization and conjugation, as RDKit perceives them.
 
+use crate::core::NeighborKinds;
 use molrs::core::Atomistic;
 use molrs::core::BondNumber;
 use molrs::core::NodeId;
@@ -70,12 +71,9 @@ struct Snapshot {
 
 impl Snapshot {
     fn new(mol: &Atomistic) -> Self {
+        // Atom index = the atom table's row, the order `atoms` yields.
         let atoms: Vec<(NodeId, Props)> = mol.atoms().collect();
-        let index: std::collections::HashMap<NodeId, usize> = atoms
-            .iter()
-            .enumerate()
-            .map(|(i, (id, _))| (*id, i))
-            .collect();
+        let rows = mol.atom_table();
         let mut atno = Vec::with_capacity(atoms.len());
         let mut formal_charge = Vec::with_capacity(atoms.len());
         let mut nbrs = Vec::with_capacity(atoms.len());
@@ -87,16 +85,16 @@ impl Snapshot {
             atno.push(atomic_number(atom));
             formal_charge.push(atom.formal_charge());
             nbrs.push(
-                mol.neighbor_bonds(id)
+                mol.neighbors(id, NeighborKinds::BONDS)
                     .filter_map(|(other, bid)| {
-                        const LIVE: &str = "neighbor_bonds yields live bonds";
+                        const LIVE: &str = "neighbors yields live bonds";
                         let order = match mol.bond_number(bid).expect(LIVE) {
                             BondNumber::Triple | BondNumber::Quadruple => 3,
                             BondNumber::Double => 2,
                             BondNumber::Single | BondNumber::Unknown => 1,
                         };
                         let aromatic = mol.bond_type(bid).expect(LIVE).is_aromatic();
-                        Some((*index.get(&other)?, order, aromatic))
+                        Some((rows.row(other)?, order, aromatic))
                     })
                     .collect(),
             );

@@ -1500,12 +1500,13 @@ impl<R: BufRead + Seek> FrameReader for LammpsDataReader<R> {
         }
         if self.frame.get().is_none() {
             let frame = self.parse_file()?;
+            if let Some(frame) = &frame {
+                crate::io::reader::check_read_frame(frame)?;
+            }
             let _ = self.frame.set(frame);
         }
         self.returned = true;
-        // Validate on the way out: a frame that violates the vocabulary is a
-        // malformed file or a reader bug, not a result to return.
-        crate::io::reader::check_read_frame(self.frame.get().unwrap().clone())
+        Ok(self.frame.get().cloned().flatten())
     }
 }
 
@@ -1551,9 +1552,6 @@ impl<W: Write> LammpsDataWriter<W> {
 
 impl<W: Write> FrameWriter for LammpsDataWriter<W> {
     fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         write_lammps_data_frame_with(&mut self.writer, frame, &self.options)
     }
 }
@@ -2012,6 +2010,8 @@ fn write_lammps_data_frame_with<W: Write>(
     frame: &impl FrameAccess,
     options: &LammpsDataWriteOptions,
 ) -> std::io::Result<()> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     let n_atoms = frame
         .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
@@ -2356,9 +2356,9 @@ pub fn write_lammps_data<'a>(
     sink: impl Into<Sink<'a>>,
     frame: &impl FrameAccess,
 ) -> std::io::Result<()> {
-    let mut writer = sink.into().writer()?;
-    write_lammps_data_frame_with(&mut writer, frame, &LammpsDataWriteOptions::default())?;
-    writer.flush()
+    sink.into().put_with(|writer| {
+        write_lammps_data_frame_with(writer, frame, &LammpsDataWriteOptions::default())
+    })
 }
 
 pub struct LammpsDataIndexBuilder {
@@ -2958,6 +2958,17 @@ mod atom_style_tests {
 
         let err = write_lammps_data_frame(&mut Vec::new(), &frame).unwrap_err();
         assert!(err.to_string().contains("mol_id"), "{err}");
+
+        // The door refuses before it touches its sink: an existing file and a
+        // buffer keep what they held.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("system.data");
+        std::fs::write(&path, b"previous run").unwrap();
+        assert!(write_lammps_data(&path, &frame).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous run");
+        let mut buffer = b"previous run".to_vec();
+        assert!(write_lammps_data(&mut buffer, &frame).is_err());
+        assert_eq!(buffer, b"previous run");
     }
 
     /// A type label is a type name, matched exactly: `c3-c3-h1` and

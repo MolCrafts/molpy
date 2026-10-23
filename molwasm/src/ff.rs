@@ -69,7 +69,7 @@ macro_rules! wasm_typifier {
                 let typed = self
                     .inner
                     .typify(&mol)
-                    .map_err(|e| JsValue::from_str(&e))?;
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?;
                 Frame::from_rs(
                     typed.to_frame().map_err(|e| {
                         JsValue::from_str(&format!("toFrame: {e}"))

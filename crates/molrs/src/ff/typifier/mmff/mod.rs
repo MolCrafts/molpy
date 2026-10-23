@@ -38,7 +38,8 @@
 //!
 //! let mut frame = typing.typify(&mol)?.to_frame().map_err(|e| e.to_string())?;
 //! let ff = typing.forcefield();                           // exactly the types assigned
-//! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds(), None)?);
+//! let special = ff.special_bonds().ok_or("the force field states no special_bonds")?;
+//! frame.insert("pairs", intramolecular_pairs(&frame, special, None)?);
 //! let potentials = PotentialCompiler::new(ff).compile(&frame)?; // the standard compile path
 //!
 //! let coords: Vec<f64> = Vec::new();                      // flat [x,y,z, ...]
@@ -62,7 +63,6 @@ use properties::MmffVariant;
 use engine::MmffEngine;
 
 mod assignment;
-mod atom_properties;
 mod atomtype;
 mod charges;
 mod engine;
@@ -74,7 +74,6 @@ mod shipped_forcefield;
 mod tests;
 
 // Re-exports
-pub use atom_properties::MmffAtomProperties;
 
 /// Declare a front door: a newtype over the one [`MmffEngine`], with its variant
 /// and its force-field name pinned by the type itself.
@@ -99,22 +98,6 @@ macro_rules! mmff_front_door {
             pub fn new() -> Self {
                 Self(MmffEngine::shipped($variant))
             }
-
-            #[doc = concat!("Create a typifier over a caller's own `", $set, "` parameter set.")]
-            ///
-            /// `params` is the typing metadata ([`MmffAtomProperties::new`] over
-            /// its rows) and `ff` the force field it prices with (a force-field
-            /// XML holds one:
-            /// [`XmlForcefieldReader`](crate::io::XmlForcefieldReader)).
-            /// The variant is pinned by *this type* — it is never an argument.
-            pub fn from_parts(params: MmffAtomProperties, ff: ForceField) -> Self {
-                Self(MmffEngine::from_parts($variant, params, ff))
-            }
-
-            /// The MMFF typing metadata (atom-type properties, equivalences).
-            pub fn params(&self) -> &MmffAtomProperties {
-                self.0.params()
-            }
         }
 
         impl Typifier for $name {
@@ -134,7 +117,10 @@ macro_rules! mmff_front_door {
             /// and compile it with
             /// `PotentialCompiler::new(typing.forcefield()).compile(&frame)` — see
             /// the module example.
-            fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+            fn assign(
+                &self,
+                graph: &mut Atomistic,
+            ) -> Result<TypeAssignment, crate::ff::typifier::TypingError> {
                 self.0.assign(graph)
             }
 
@@ -161,7 +147,7 @@ mmff_front_door! {
     /// ```no_run
     /// use molrs::ff::typifier::mmff::Mmff94Typifier;
     /// use molrs::ff::typifier::{Typifier, Typing};
-    /// # fn main() -> Result<(), String> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let mol = molrs::core::Atomistic::new();
     /// let typifier = Mmff94Typifier::new();
     /// assert_eq!(typifier.source_forcefield().name, "MMFF94");
@@ -184,7 +170,7 @@ mmff_front_door! {
     /// MMFF94's dynamic / time-averaged pyramidal one.
     ///
     /// The mechanism is the sign and size of the out-of-plane force constant. The
-    /// kernel (`ff::potential::improper::mmff`) evaluates
+    /// form (`ff::potential::improper::Mmff`) evaluates
     ///
     /// ```text
     /// E_oop = 0.5 · 143.9325 · koop · χ²
@@ -207,7 +193,7 @@ mmff_front_door! {
     /// ```no_run
     /// use molrs::ff::typifier::mmff::Mmff94sTypifier;
     /// use molrs::ff::typifier::{Typifier, Typing};
-    /// # fn main() -> Result<(), String> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let mol = molrs::core::Atomistic::new();
     /// let typifier = Mmff94sTypifier::new();
     /// assert_eq!(typifier.source_forcefield().name, "MMFF94s");

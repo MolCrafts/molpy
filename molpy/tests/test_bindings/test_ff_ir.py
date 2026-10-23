@@ -111,6 +111,7 @@ def bond_frame(xyz: np.ndarray = CHAIN) -> mp.core.Frame:
 
 def bond_ff(style: str, **params: float) -> mp.ff.forcefield.ForceField:
     ff = mp.ff.forcefield.ForceField("beads", units="lj")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     b = ff.def_style("atom", "full").def_type("B", mass=1.0)
     ff.def_style("bond", style).def_type("B-B", b, b, **params)
     return ff
@@ -538,7 +539,7 @@ def test_compile_refusals_raise_their_variant(registered) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_prices_a_built_in_by_its_expression() -> None:
+def test_evaluate_prices_a_built_in_on_a_batch() -> None:
     r = np.array([1.0, 1.5])
     e, de = style_registry.evaluate("bond", "harmonic", r, k=300.0, r0=1.2)
     np.testing.assert_allclose(e, 300.0 * (r - 1.2) ** 2, rtol=1e-14)
@@ -552,8 +553,17 @@ def test_evaluate_prices_a_built_in_by_its_expression() -> None:
     assert err.value.param == "r0"
     with pytest.raises(TypeError, match="r00"):
         style_registry.evaluate("bond", "harmonic", r, k=300.0, r00=1.2)
+    # A per-instance built-in is a form too: MMFF's stretch, E = ½·143.9325·kb·dr²
+    # (1 + cs·dr + 7/12·cs²·dr²), cs = −2.
+    e, _ = style_registry.evaluate("bond", "mmff_bond", r, kb=4.258, r0=1.2)
+    dr = r - 1.2
+    want = 0.5 * 143.9325 * 4.258 * dr**2 * (1 - 2 * dr + 7 / 12 * 4 * dr**2)
+    np.testing.assert_allclose(e, want, rtol=1e-12)
+    # PME is a whole-frame kernel with no expression: nothing to evaluate.
     with pytest.raises(ValueError, match="constructor"):
-        style_registry.evaluate("bond", "mmff_bond", r, kb=1.0, r0=1.0)
+        style_registry.evaluate(
+            "pair", "coul/long/pme", r, coulomb=332.06371, dielectric=1.0
+        )
 
 
 def test_the_registry_lists_categories_and_styles(registered) -> None:
@@ -570,7 +580,9 @@ def test_the_registry_lists_categories_and_styles(registered) -> None:
         and cats["improper"].order == "ordered"
     )
     bonds = {s.name: s for s in style_registry.styles("bond")}
-    assert bonds["harmonic"].builtin and bonds["harmonic"].kernel == "constructor"
+    assert bonds["harmonic"].builtin and bonds["harmonic"].kernel == "scalar"
+    pairs = {s.name: s for s in style_registry.styles("pair")}
+    assert pairs["coul/long/pme"].kernel == "constructor"
     fene = bonds["fene/expr"]
     assert (
         not fene.builtin and fene.kernel == "expression" and fene.source == "type_rows"
@@ -623,6 +635,7 @@ def pair_ff(
     style: str, rows: dict[str, dict[str, float]], **style_params
 ) -> mp.ff.forcefield.ForceField:
     ff = mp.ff.forcefield.ForceField("pairs", units="lj")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     atoms = ff.def_style("atom", "full")
     types = {t: atoms.def_type(t, mass=1.0) for t in rows}
     pair = ff.def_style("pair", style, {"cutoff": RC, **style_params})
@@ -740,6 +753,7 @@ def ub_frame(xyz: np.ndarray, block: str) -> mp.core.Frame:
 def ub_reference(xyz: np.ndarray) -> tuple[float, np.ndarray]:
     """LAMMPS ``angle_style charmm`` with K = 0: the 1-3 spring alone."""
     ff = mp.ff.forcefield.ForceField("charmm")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     a = ff.def_style("atom", "full").def_type("A", mass=1.0)
     ff.def_style("angle", "charmm").def_type(
         "t", a, a, a, k=0.0, theta0=109.5, k_ub=UB[0], r_ub=UB[1]
@@ -812,6 +826,7 @@ def test_a_new_category_registers_and_evaluates(registered) -> None:
     reference = ub_reference(x[0])
     for style in ("harmonic", "harmonic/np"):
         ff = mp.ff.forcefield.ForceField("ub")
+        ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
         a = ff.def_style("atom", "full").def_type("A", mass=1.0)
         ff.def_style("urey_bradley", style).def_type(
             "t", a, a, a, k_ub=UB[0], r_ub=UB[1]

@@ -12,10 +12,11 @@
 //!   The table-generated expressions (`dihedral periodic` per term count,
 //!   `nharmonic` per order) are generated here; `dihedral rb`, priced by its
 //!   expression alone, is held to `multi/harmonic`'s native kernel.
-//! * [`every_param_source_is_what_its_constructor_reads`] — the missing
-//!   `ParamSource` gate: a `TypeRows` constructor reads its rows (another
-//!   row, another energy; no rows, an error), a `PerInstance` one ignores
-//!   them (the same energy, bit for bit, with or without a row).
+//! * [`every_param_source_is_what_its_kernel_reads`] — the missing
+//!   `ParamSource` gate: a `TypeRows` kernel reads its rows (another row,
+//!   another energy; no rows, an error), a `PerInstance` one reads its
+//!   per-instance columns and ignores the rows (the same energy, bit for bit,
+//!   with or without a row).
 //! * [`positional_codecs_match_golden_includes`] — every built-in written
 //!   by a [`LammpsForm::Positional`](crate::ff::ir::LammpsForm) codec
 //!   writes, byte for byte, the golden include for the LAMMPS-read hand
@@ -36,8 +37,8 @@ use crate::ff::forcefield::ForceField;
 use crate::ff::ir::Params;
 use crate::ff::ir::{LammpsForm, ParamKind, ParamSource, StyleSpec};
 use crate::ff::potential::ForceTerm;
+use crate::ff::style_registry::Registry;
 use crate::ff::style_registry::conformance::{Rng, SEED};
-use crate::ff::style_registry::{Kernel, Registry};
 use crate::io::lammps::LammpsForcefieldWriter;
 use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
 use crate::io::reader::ForceFieldReader;
@@ -356,6 +357,7 @@ fn one_style(
     style: &[(String, F)],
 ) -> ForceField {
     let mut ff = ForceField::new(name).with_registry(r.clone());
+    ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
     let pairs = |v: &[(String, F)]| {
         let mut p = Params::new();
         for (k, x) in v {
@@ -647,17 +649,18 @@ fn row(spec: &StyleSpec, scale: F) -> Params {
 }
 
 /// The invariant `potential::registry` states and nothing checked: a
-/// constructor ignores its type rows if and only if its style is
-/// registered `PerInstance`.
+/// built-in kernel — a form or a constructor — ignores its type rows if and
+/// only if its style is registered `PerInstance`.
 #[test]
-fn every_param_source_is_what_its_constructor_reads() {
+fn every_param_source_is_what_its_kernel_reads() {
     let builtin = Arc::new(Registry::builtin());
     let mut rng = Rng(SEED);
     let mut checked = Vec::new();
     for (spec, kernel) in builtin.styles(None) {
-        let Some(Kernel::Constructor { .. }) = kernel else {
+        if kernel.is_none() {
+            // Priced by its expression alone (`dihedral rb`), or nothing.
             continue;
-        };
+        }
         if spec.params.iter().any(|d| d.kind != ParamKind::Scalar) {
             // `cmap charmm`: a grid per row, table-driven by construction.
             assert_eq!(spec.source, ParamSource::TypeRows);
@@ -671,8 +674,11 @@ fn every_param_source_is_what_its_constructor_reads() {
         // style: every style builds from its declared parameters alone.
         frame.simbox =
             Some(SimBox::new(Cell::Lengths([20.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap());
-        // Every declared parameter as a per-instance column too: the block's
-        // (one row), or the atoms' for a pair.
+        // A per-instance style's every declared parameter as a per-instance
+        // column: the block's (one row), or the atoms' for a pair. A
+        // table-driven style is handed none — a bonded form reads a column
+        // its block carries before a row (molrec linking rule 4), which is
+        // the row source of a per-instance style, not of a table.
         let block = if category.is_pair_driven() {
             "atoms".to_owned()
         } else {
@@ -680,7 +686,12 @@ fn every_param_source_is_what_its_constructor_reads() {
         };
         let n = frame.get(&block).unwrap().n_rows().unwrap();
         let b = frame.get_mut(&block).unwrap();
-        for decl in &spec.params {
+        let columns = if spec.source == ParamSource::PerInstance {
+            &spec.params[..]
+        } else {
+            &[]
+        };
+        for decl in columns {
             if b.get(&decl.name).is_some() {
                 continue;
             }
@@ -701,6 +712,7 @@ fn every_param_source_is_what_its_constructor_reads() {
         }
         let field = |rows: Option<Params>| {
             let mut ff = ForceField::new("gate").with_registry(builtin.clone());
+            ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
             // 1-4 pairs priced by no pair style: a `dihedral charmm` `w`
             // may price them.
             ff.set_special_bonds(crate::ff::ir::SpecialBonds {
@@ -751,7 +763,7 @@ fn every_param_source_is_what_its_constructor_reads() {
         }
         checked.push(format!("{what} ({:?})", spec.source));
     }
-    println!("{} constructors: {checked:?}", checked.len());
+    println!("{} kernels: {checked:?}", checked.len());
     assert!(checked.len() >= 30, "{checked:?}");
 }
 
@@ -840,6 +852,7 @@ fn style_cases() -> Vec<(String, String)> {
     for units in ["real", "metal"] {
         for (category, name, row, style) in styles {
             let mut ff = ForceField::new("style");
+            ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
             ff.set_units("real");
             let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
             for (t, m) in [("A", 12.011), ("B", 14.007)] {
@@ -980,19 +993,13 @@ fn same_but_last_digit(case: &str, text: &str, want: &str) -> Vec<String> {
 }
 
 /// The positional built-ins no golden include holds (`bond class2`,
-/// `pair buck`, `pair morse` are priced by LAMMPS in
-/// `ff::engine_codec_check` instead, `buck` converted to `metal`).
+/// `pair buck`, `pair morse` are held by read → write → read in
+/// `ff::engine_codec_check` instead).
 const WITHOUT_GOLDEN: [&str; 3] = ["bond class2", "pair buck", "pair morse"];
 
 #[test]
 fn positional_codecs_match_golden_includes() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ff/testdata/builtin_conformance");
-    if let Some(out) = std::env::var_os("MOLRS_PIN_POSITIONAL") {
-        for (name, text) in positional_cases() {
-            std::fs::write(Path::new(&out).join(format!("{name}.lmp")), text).unwrap();
-        }
-        return;
-    }
     let mut held = BTreeSet::new();
     let mut unpinned = BTreeSet::new();
     let (mut identical, mut ulps) = (Vec::new(), Vec::new());

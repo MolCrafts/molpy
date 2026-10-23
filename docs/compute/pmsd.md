@@ -83,8 +83,8 @@ M = DipoleMoment().compute(positions=unwrapped, charges=charges).series(0)
 print(M.shape)                            # -> (400, 3)
 ```
 
-`Msd` wants an `(n_frames, n_items, 3)` array; $\mathbf{M}$ is one item, so
-give it the axis it lacks. To keep the example's answer known in advance, the
+`Msd` is a stream that takes one `(n_items, 3)` frame per `push`;
+$\mathbf{M}$ is one item, so give each frame the axis it lacks. To keep the example's answer known in advance, the
 $\mathbf{M}$ used from here on is a pure random walk:
 
 ```python
@@ -92,7 +92,10 @@ from molpy.compute import Msd
 
 walk = np.random.default_rng(1)
 M = np.cumsum(walk.normal(0, 0.02, size=(400, 3)), axis=0)
-raw = Msd(max_lag=100).compute(positions=M[:, None, :], dt=10.0)
+accumulator = Msd(max_lag=100).accumulator()
+for m in M:
+    accumulator.push(m[None, :], dt=10.0)                # (1, 3): one item
+raw = accumulator.finish()
 print(raw.n_lags, raw.n_channels)         # -> 101 1
 ```
 
@@ -120,8 +123,8 @@ which is precisely the warning you want.
 
 Unwrapping belongs before `DipoleMoment`, not after it. Run `Unwrap` on the
 ion positions (with their image flags, or by continuity from the per-frame
-boxes) so no wrapped ion ever enters $\mathbf{M}$. Do not pass `boxes=` to the
-`Msd` of $\mathbf{M}$: a dipole is not a position in the box, and the
+boxes) so no wrapped ion ever enters $\mathbf{M}$. Do not pass `simbox=` when
+pushing $\mathbf{M}$ into `Msd`: a dipole is not a position in the box, and the
 half-box check that guards a particle MSD means nothing for it.
 
 ### Getting to S/m

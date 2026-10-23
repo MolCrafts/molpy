@@ -153,14 +153,21 @@ class TestEngineRun:
         with pytest.raises(ValueError, match="At least one script is required"):
             _lammps().run([])
 
+    def test_run_refuses_a_bare_string(self, tmp_path):
+        """A str is neither a script nor a path: the caller says which."""
+        with pytest.raises(TypeError, match="Script.from_text"):
+            _lammps(workdir=tmp_path).run("in.lammps")
+
     def test_run_rejects_unknown_keywords(self, tmp_path):
         with pytest.raises(TypeError, match="timeout"):
-            _lammps(workdir=tmp_path).run("units real\n", timeout=60)
+            _lammps(workdir=tmp_path).run(
+                mp.engine.Script.from_text("input", "units real\n"), timeout=60
+            )
 
     def test_run_keeps_no_state(self, tmp_path):
         engine = _lammps(workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()):
-            engine.run("units real\n")
+            engine.run(mp.engine.Script.from_text("input", "units real\n"))
         assert not hasattr(engine, "scripts")
         assert not hasattr(engine, "input_script")
         with pytest.raises(TypeError):
@@ -189,7 +196,9 @@ class TestEngineRun:
     def test_run_with_string(self, tmp_path):
         engine = _lammps(workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()):
-            engine.run("units real\n", capture_output=True)
+            engine.run(
+                mp.engine.Script.from_text("input", "units real\n"), capture_output=True
+            )
         assert (
             (tmp_path / "input.lmp")
             .read_text(encoding="utf-8")
@@ -221,7 +230,11 @@ class TestEngineRun:
         first, second = tmp_path / "a", tmp_path / "b"
         engine = _lammps(workdir=first)
         with patch("subprocess.run", return_value=_completed()):
-            engine.run("units real\n", workdir=second, capture_output=True)
+            engine.run(
+                mp.engine.Script.from_text("input", "units real\n"),
+                workdir=second,
+                capture_output=True,
+            )
         assert not (first / "input.lmp").exists()
         assert (second / "input.lmp").exists()
 
@@ -230,14 +243,18 @@ class TestEngineRun:
             {"timeout": 90, "env_vars": {"OMP_NUM_THREADS": "4"}}, workdir=tmp_path
         )
         with patch("subprocess.run", return_value=_completed()) as mock_run:
-            engine.run("units real\n", capture_output=True)
+            engine.run(
+                mp.engine.Script.from_text("input", "units real\n"), capture_output=True
+            )
         assert mock_run.call_args.kwargs["timeout"] == 90.0
         assert mock_run.call_args.kwargs["env"]["OMP_NUM_THREADS"] == "4"
 
     def test_run_has_no_timeout_unless_configured(self, tmp_path):
         engine = _lammps(workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()) as mock_run:
-            engine.run("units real\n", capture_output=True)
+            engine.run(
+                mp.engine.Script.from_text("input", "units real\n"), capture_output=True
+            )
         assert mock_run.call_args.kwargs["timeout"] is None
         assert mock_run.call_args.kwargs["env"] is None  # inherits the parent's
 
@@ -248,7 +265,7 @@ class TestEngineLogging:
     def test_a_finished_run_logs_start_and_finish(self, tmp_path, molpy_records):
         engine = _lammps({"launcher": ["mpirun", "-np", "2"]}, workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()):
-            engine.run("units real\n")
+            engine.run(mp.engine.Script.from_text("input", "units real\n"))
         started, finished = (
             r for r in molpy_records if r.logger_name == "molpy.engine.lammps"
         )
@@ -265,7 +282,12 @@ class TestEngineLogging:
     def test_a_failed_run_logs_an_error(self, tmp_path, molpy_records):
         engine = _lammps(workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed(3)):
-            assert engine.run("units real\n", check=False).returncode == 3
+            assert (
+                engine.run(
+                    mp.engine.Script.from_text("input", "units real\n"), check=False
+                ).returncode
+                == 3
+            )
         (failed,) = (r for r in molpy_records if r.message == "process failed")
         assert str(failed.level) == "ERROR"
         assert failed.extra["returncode"] == 3
@@ -287,7 +309,7 @@ class TestEngineLogging:
                 mp.tool.ToolError, match="ERROR: Unknown command: bogus"
             ) as raised,
         ):
-            engine.run("bogus\n")
+            engine.run(mp.engine.Script.from_text("input", "bogus\n"))
         assert raised.value.tool == "engine.lammps"
         assert raised.value.returncode == 1
         (failed,) = (r for r in molpy_records if r.message == "process failed")
@@ -299,7 +321,7 @@ class TestEngineLogging:
             patch("subprocess.run", side_effect=subprocess.TimeoutExpired("lmp", 5)),
             pytest.raises(mp.tool.ToolError, match="timed out after 5 s"),
         ):
-            engine.run("units real\n")
+            engine.run(mp.engine.Script.from_text("input", "units real\n"))
         (record,) = (r for r in molpy_records if r.message == "process timed out")
         assert record.extra["timeout_s"] == 5.0
 
@@ -309,7 +331,7 @@ class TestEngineLogging:
             patch("subprocess.run", side_effect=FileNotFoundError("lmp")),
             pytest.raises(mp.tool.ToolError, match="could not start"),
         ):
-            engine.run("units real\n")
+            engine.run(mp.engine.Script.from_text("input", "units real\n"))
         (record,) = (r for r in molpy_records if r.message == "process not started")
         assert "lmp" in record.extra["error"]
 
@@ -338,7 +360,7 @@ class TestEngineLogging:
     ):
         engine = cls(check_executable=False, workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()):
-            engine.run("input\n")
+            engine.run(mp.engine.Script.from_text("input", "input\n"))
         assert {
             r.logger_name for r in molpy_records if r.message.startswith("process")
         } == {logger}

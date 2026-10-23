@@ -167,7 +167,7 @@ TEST_F(MolcTest, BlockInsertAndRead) {
     // Insert 3x3 F column (F is f64).
     F data[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
     size_t shape[2] = {3, 3};
-    ASSERT_MOLRS_OK(molc_block_set(&block, pos_id, MOLC_D_TYPE_FLOAT, data, shape, 2));
+    ASSERT_MOLRS_OK(molc_block_set(&block, pos_id, MOLC_D_TYPE_F64, data, shape, 2));
 
     // nrows
     size_t nrows = 0;
@@ -182,7 +182,7 @@ TEST_F(MolcTest, BlockInsertAndRead) {
     // dtype
     MolcDType dtype{};
     ASSERT_MOLRS_OK(molc_block_column_dtype(block, pos_id, &dtype));
-    EXPECT_EQ(dtype, MOLC_D_TYPE_FLOAT);
+    EXPECT_EQ(dtype, MOLC_D_TYPE_F64);
 
     // shape query
     size_t col_shape[4] = {};
@@ -197,7 +197,7 @@ TEST_F(MolcTest, BlockInsertAndRead) {
     size_t len = 0;
     MolcDType got = MOLC_D_TYPE_STRING;
     ASSERT_MOLRS_OK(molc_block_get(block, pos_id, &bytes, &len, &got));
-    EXPECT_EQ(got, MOLC_D_TYPE_FLOAT);
+    EXPECT_EQ(got, MOLC_D_TYPE_F64);
     ASSERT_EQ(len, 9u);
     const F* ptr = reinterpret_cast<const F*>(bytes);
     for (size_t i = 0; i < 9; ++i) {
@@ -232,15 +232,15 @@ TEST_F(MolcTest, BlockInsertMultipleTypes) {
     // F column (f64)
     F f_data[3] = {-1.5f, 2.7f, 3.14f};
     size_t shape1[1] = {3};
-    ASSERT_MOLRS_OK(molc_block_set(&block, f_id, MOLC_D_TYPE_FLOAT, f_data, shape1, 1));
+    ASSERT_MOLRS_OK(molc_block_set(&block, f_id, MOLC_D_TYPE_F64, f_data, shape1, 1));
 
     // I column (int32_t by default)
     int32_t i_data[3] = {100, 200, 300};
-    ASSERT_MOLRS_OK(molc_block_set(&block, i_id, MOLC_D_TYPE_INT, i_data, shape1, 1));
+    ASSERT_MOLRS_OK(molc_block_set(&block, i_id, MOLC_D_TYPE_I32, i_data, shape1, 1));
 
     // U column (uint64_t / Idx)
     uint64_t u_data[3] = {1, 2, 3};
-    ASSERT_MOLRS_OK(molc_block_set(&block, u_id, MOLC_D_TYPE_UINT, u_data, shape1, 1));
+    ASSERT_MOLRS_OK(molc_block_set(&block, u_id, MOLC_D_TYPE_U64, u_data, shape1, 1));
 
     // verify ncols = 3
     size_t ncols = 0;
@@ -250,26 +250,26 @@ TEST_F(MolcTest, BlockInsertMultipleTypes) {
     // verify dtypes
     MolcDType dt{};
     ASSERT_MOLRS_OK(molc_block_column_dtype(block, f_id, &dt));
-    EXPECT_EQ(dt, MOLC_D_TYPE_FLOAT);
+    EXPECT_EQ(dt, MOLC_D_TYPE_F64);
 
     ASSERT_MOLRS_OK(molc_block_column_dtype(block, i_id, &dt));
-    EXPECT_EQ(dt, MOLC_D_TYPE_INT);
+    EXPECT_EQ(dt, MOLC_D_TYPE_I32);
 
     ASSERT_MOLRS_OK(molc_block_column_dtype(block, u_id, &dt));
-    EXPECT_EQ(dt, MOLC_D_TYPE_UINT);
+    EXPECT_EQ(dt, MOLC_D_TYPE_U64);
 
     // zero-copy read F
     const uint8_t* raw = nullptr;
     size_t n = 0;
     MolcDType got = MOLC_D_TYPE_STRING;
     ASSERT_MOLRS_OK(molc_block_get(block, f_id, &raw, &n, &got));
-    EXPECT_EQ(got, MOLC_D_TYPE_FLOAT);
+    EXPECT_EQ(got, MOLC_D_TYPE_F64);
     ASSERT_EQ(n, 3u);
     EXPECT_FLOAT_EQ(reinterpret_cast<const F*>(raw)[2], 3.14f);
 
     // zero-copy read I
     ASSERT_MOLRS_OK(molc_block_get(block, i_id, &raw, &n, &got));
-    EXPECT_EQ(got, MOLC_D_TYPE_INT);
+    EXPECT_EQ(got, MOLC_D_TYPE_I32);
     ASSERT_EQ(n, 3u);
     EXPECT_EQ(reinterpret_cast<const int32_t*>(raw)[1], 200);
 
@@ -338,14 +338,14 @@ TEST_F(MolcTest, BlockMutablePointer) {
 
     F data[4] = {1.0f, 2.0f, 3.0f, 4.0f};
     size_t shape[1] = {4};
-    ASSERT_MOLRS_OK(molc_block_set(&block, x_id, MOLC_D_TYPE_FLOAT, data, shape, 1));
+    ASSERT_MOLRS_OK(molc_block_set(&block, x_id, MOLC_D_TYPE_F64, data, shape, 1));
 
     // get mutable pointer
     uint8_t* raw = nullptr;
     size_t len = 0;
     MolcDType got = MOLC_D_TYPE_STRING;
     ASSERT_MOLRS_OK(molc_block_get_mut(&block, x_id, &raw, &len, &got));
-    EXPECT_EQ(got, MOLC_D_TYPE_FLOAT);
+    EXPECT_EQ(got, MOLC_D_TYPE_F64);
     ASSERT_EQ(len, 4u);
     F* ptr = reinterpret_cast<F*>(raw);
 
@@ -670,6 +670,7 @@ TEST_F(MolcTest, ForceFieldDefTypeWrongEndpointCountIsInvalidArgument) {
 TEST_F(MolcTest, ForceFieldJsonRoundtrip) {
     MolcForceFieldHandle ff{};
     ASSERT_MOLRS_OK(molc_forcefield_new("gtest_json", &ff));
+    ASSERT_MOLRS_OK(molc_forcefield_set_units(ff, "real"));
 
     const char* spk[] = {"cutoff"};
     double spv[] = {12.0};
@@ -735,7 +736,7 @@ TEST_F(MolcTest, BlockCopyBufferTooSmall) {
 
     F data[5] = {1, 2, 3, 4, 5};
     size_t shape[1] = {5};
-    ASSERT_MOLRS_OK(molc_block_set(&block, col_id, MOLC_D_TYPE_FLOAT, data, shape, 1));
+    ASSERT_MOLRS_OK(molc_block_set(&block, col_id, MOLC_D_TYPE_F64, data, shape, 1));
 
     // buffer too small: two elements, counted in bytes
     F small_buf[2] = {};
@@ -776,10 +777,10 @@ TEST(Schema, IdentifiersAreUnsignedAndTypeIsAString) {
                             "atomi", "atomj", "atomk", "atoml"}) {
         const char* dt = molc_schema_column_dtype(key);
         ASSERT_NE(dt, nullptr) << key;
-        EXPECT_STREQ(dt, "uint") << key;
+        EXPECT_STREQ(dt, "u64") << key;
     }
     EXPECT_STREQ(molc_schema_column_dtype("type"), "string");
-    EXPECT_STREQ(molc_schema_column_dtype("x"), "float");
+    EXPECT_STREQ(molc_schema_column_dtype("x"), "f64");
 }
 
 TEST(Schema, UnconstrainedKeyIsNullNotAnError) {

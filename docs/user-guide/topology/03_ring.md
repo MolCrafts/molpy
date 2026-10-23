@@ -9,7 +9,7 @@ import molpy as mp
 from eo_kit import library
 
 sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}").to_coarsegrain()
-ring = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+ring = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
 ```
 
 The growth placer lays the ring out as an open chain, so the closing bond starts at whatever distance its two ends grew apart; minimise before use.

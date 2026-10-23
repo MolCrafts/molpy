@@ -10,7 +10,7 @@ from eo_kit import library
 
 arm = "[#EO][#EO][#EO]"
 sites = mp.io.cgsmiles.read_cgsmiles(f"{{[#X3]({arm})({arm}){arm}}}").to_coarsegrain()
-star = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+star = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
 ```
 
 A core with fewer ports than arms is refused, naming the core site.

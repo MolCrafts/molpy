@@ -17,6 +17,7 @@ import molpy as mp
 def water_ff() -> mp.ff.forcefield.ForceField:
     """The water fixture's types plus ``NA``, a pair type no water atom uses."""
     ff = mp.ff.forcefield.ForceField("tip3p", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     atoms = ff.def_style("atom", "full")
     ow = atoms.def_type("OW", mass=15.999)
     hw = atoms.def_type("HW", mass=1.008)
@@ -136,6 +137,7 @@ class TestAtomStyleAndUnits:
     @staticmethod
     def _lj_fluid() -> tuple[mp.Frame, mp.ff.forcefield.ForceField]:
         ff = mp.ff.forcefield.ForceField("lj", units="real")
+        ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
         ar = ff.def_style("atom", "full").def_type("AR", mass=39.948)
         ff.def_style("pair", "lj/cut", {"cutoff": 8.5}).def_type(
             "AR", ar, epsilon=0.238, sigma=3.405

@@ -1,5 +1,7 @@
 //! Kernels: a force field's terms evaluated on coordinates — the
-//! [`Potential`] traits, every built-in kernel, the generic form kernels, and
+//! [`Potential`] traits, the generic form kernels and the built-in forms they
+//! price (`bond`, `angle`, `dihedral`, `improper`, `pair`), the kernels no
+//! form carries (`kspace`, `cmap`), and
 //! the weights a non-bonded kernel takes on close pairs ([`PairWeights`],
 //! [`SpecialWeights`]).
 //!
@@ -31,7 +33,7 @@ pub mod soft;
 
 pub use error::CompileError;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use ndarray::{Array1, Array2, ArrayView2};
 
@@ -41,9 +43,9 @@ use molrs::core::BondDistanceWeights;
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
+use molrs::core::keys::{ATOMI, ATOMJ, IS_14};
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::core::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use molrs::op::{F, Idx};
 
 /// Above this many atoms, [`intramolecular_pairs`] refuses rather than
@@ -65,8 +67,12 @@ pub const MAX_ATOMS_FOR_A_FULL_PAIR_LIST: usize = 20_000;
 const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 
 /// Build the intramolecular non-bonded `pairs` block (`atomi`, `atomj`, `is_14`)
-/// from a frame's bond/angle/dihedral topology: every `i < j` pair, excluding
-/// 1-2 (bonded) and 1-3 (angle) pairs and flagging 1-4 (dihedral-end) pairs.
+/// from a frame's bonds: every `i < j` pair, excluding 1-2 and 1-3 pairs and
+/// flagging 1-4 pairs, each class its **bond-graph distance**
+/// ([`Topology::close_pairs`](molrs::core::Topology::close_pairs)) — the
+/// classification [`PotentialCompiler::compile_typed`](crate::ff::compile::PotentialCompiler::compile_typed)
+/// weights by and LAMMPS's `special_bonds` applies, so an `angles` or
+/// `dihedrals` block that is absent or lists only some terms changes nothing.
 ///
 /// This is the neighbour list that [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile) hands to every
 /// pair kernel; every force field (GAFF/LAMMPS, OPLS, MMFF, …) shares this
@@ -92,7 +98,7 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 /// which is also where weights this list cannot express become an [`Err`]
 /// rather than a silently different force field.
 ///
-/// [`SpecialBonds::default`](crate::ff::ir::SpecialBonds::default)
+/// [`SpecialBonds::EXCLUDE_12_13`](crate::ff::ir::SpecialBonds::EXCLUDE_12_13)
 /// excludes both classes.
 ///
 /// # Candidate pairs
@@ -123,28 +129,20 @@ pub fn intramolecular_pairs(
             (n_atoms * (n_atoms - 1) / 2 * BYTES_PER_PAIR_ROW) >> 30,
         ));
     }
-    let ends = |block, a, b| -> HashSet<(usize, usize)> {
-        end_pairs(frame, block, a, b).into_iter().collect()
-    };
-    let pairs_12 = ends(BONDS, ATOMI, ATOMJ);
-    let pairs_13 = ends(ANGLES, ATOMI, ATOMK);
-    let set_14 = ends(DIHEDRALS, ATOMI, ATOML);
+    let classes = bond_classes(frame, n_atoms)?;
 
     let mut pi: Vec<Idx> = Vec::new();
     let mut pj: Vec<Idx> = Vec::new();
     let mut p14: Vec<bool> = Vec::new();
     for a in 0..n_atoms {
         for b in (a + 1)..n_atoms {
-            let key = (a, b);
-            if (!keep_12 && pairs_12.contains(&key)) || (!keep_13 && pairs_13.contains(&key)) {
+            let class = classes.get(&(a, b)).copied();
+            if (!keep_12 && class == Some(1)) || (!keep_13 && class == Some(2)) {
                 continue;
             }
             pi.push(a as Idx);
             pj.push(b as Idx);
-            // A pair that is *both* 1-3 and 1-4 (a four-ring closes one) takes
-            // the closer class: it is the 1-3 weight LAMMPS applies there, and
-            // this list already decided 1-3 by presence.
-            p14.push(set_14.contains(&key) && !pairs_13.contains(&key) && !pairs_12.contains(&key));
+            p14.push(class == Some(3));
         }
     }
 
@@ -169,6 +167,20 @@ pub fn intramolecular_pairs(
         return Err(excluded_override(i, j));
     }
     Ok(pairs)
+}
+
+/// The bond distance (1, 2 or 3) of every pair at most three bonds apart in
+/// `frame`'s `bonds`: [`Topology::close_pairs`](molrs::core::Topology::close_pairs).
+/// A frame with no atoms has none.
+pub(crate) fn bond_classes(
+    frame: &Frame,
+    n_atoms: usize,
+) -> Result<HashMap<(usize, usize), usize>, String> {
+    if n_atoms == 0 {
+        return Ok(HashMap::new());
+    }
+    let topology = molrs::core::Topology::from_frame(frame).map_err(|e| e.to_string())?;
+    Ok(topology.close_pairs(3))
 }
 
 /// One override column of a new pair list: its name, values and validity.
@@ -587,22 +599,6 @@ pub trait PairDriven: Potential {
     /// the same Rust type in molrs (the list is a private source variant), so
     /// the answer cannot be inferred and has to be given.
     fn binds_a_fixed_pair_list(&self) -> bool;
-
-    /// Extend per-atom state onto periodic copies.
-    ///
-    /// `owner[g]` is the atom copy `g` is a copy of, and the copies occupy
-    /// rows `n_owned + g` of the coordinates a periodic régime evaluates over.
-    /// A kernel that keeps anything per atom — a charge, a type index, a
-    /// parameter record — has to cover those rows, because a pair table over
-    /// copies will name them.
-    ///
-    /// Idempotent: the owned entries are the truth and the copies are derived
-    /// from them, so calling this twice with the same map is the same as
-    /// calling it once. Default does nothing, which is right for a kernel that
-    /// keeps nothing per atom.
-    fn gather_onto_copies(&mut self, owner: &[u32]) {
-        let _ = owner;
-    }
 }
 
 /// One member of a force evaluation, with its role fixed when it was built.
@@ -663,14 +659,6 @@ impl ForceTerm {
         match self {
             ForceTerm::Pair(p) => p.binds_a_fixed_pair_list(),
             _ => false,
-        }
-    }
-
-    /// Extend per-atom state onto periodic copies. Only a pair member keeps
-    /// any; see [`PairDriven::gather_onto_copies`].
-    pub fn gather_onto_copies(&mut self, owner: &[u32]) {
-        if let ForceTerm::Pair(p) = self {
-            p.gather_onto_copies(owner);
         }
     }
 }
@@ -829,7 +817,7 @@ impl SpecialWeights {
         }
     }
 
-    /// The weight on the pair `(i, j)`, both owned indices. `1.0` when the two
+    /// The weight on the pair of atoms `(i, j)`. `1.0` when the two
     /// are far enough apart in the bond graph to interact normally.
     pub fn weight(&self, i: usize, j: usize) -> F {
         let Some(list) = self.per_atom.get(i) else {
@@ -852,12 +840,6 @@ impl SpecialWeights {
 
     /// Fill `out` with one weight per row of `pairs`.
     ///
-    /// `owner` maps a periodic copy to the atom it copies — index `a` is a copy
-    /// when `a >= n_owned`, and its owner is `owner[a - n_owned]`. A pair
-    /// naming a copy is weighted as that owner: a bond graph knows atoms, and a
-    /// copy is the same atom seen through a face. Pass an empty slice when the
-    /// table names atoms directly, as a minimum-image one does.
-    ///
     /// # Why a column and not a split
     ///
     /// Partitioning the table into a full-strength one and a group per
@@ -876,66 +858,27 @@ impl SpecialWeights {
     /// apply" and skips the multiply entirely, which is the common case and the
     /// one worth not paying for. `scratch` is the caller's buffer, reused
     /// across steps — [`fill_factors`](Self::fill_factors) is what fills it.
-    pub fn factors_for<'a>(
-        &self,
-        pairs: &Neighbors,
-        n_owned: usize,
-        owner: &[u32],
-        scratch: &'a mut Vec<F>,
-    ) -> &'a [F] {
+    pub fn factors_for<'a>(&self, pairs: &Neighbors, scratch: &'a mut Vec<F>) -> &'a [F] {
         if self.is_empty() {
             return &[];
         }
-        self.fill_factors(pairs, n_owned, owner, scratch);
+        self.fill_factors(pairs, scratch);
         scratch
     }
 
-    pub fn fill_factors(&self, pairs: &Neighbors, n_owned: usize, owner: &[u32], out: &mut Vec<F>) {
+    pub fn fill_factors(&self, pairs: &Neighbors, out: &mut Vec<F>) {
         let i_col = pairs.query_point_indices();
         let j_col = pairs.point_indices();
         out.clear();
         out.reserve(i_col.len());
-        let own = |a: usize| {
-            if a < n_owned {
-                a
-            } else {
-                owner[a - n_owned] as usize
-            }
-        };
         for p in 0..i_col.len() {
             let (i, j) = (i_col[p] as usize, j_col[p] as usize);
-            // An atom and a *copy of itself* are a real interaction, and no
-            // bond-graph weight describes it: the walk is root-inclusive, so
-            // asking for `weight(i, i)` would answer 0 — the weight of an atom
-            // with itself, which is a different question and not one this pair
-            // is asking.
-            let (oi, oj) = (own(i), own(j));
-            out.push(if oi == oj { 1.0 } else { self.weight(oi, oj) });
+            // An atom and its own periodic image are a real interaction, and
+            // no bond-graph weight describes it: the walk is root-inclusive,
+            // so `weight(i, i)` would answer 0 — the weight of an atom with
+            // itself, a different question from the one this pair asks.
+            out.push(if i == j { 1.0 } else { self.weight(i, j) });
         }
-    }
-}
-
-/// Rebuild the copies' entries of a per-atom vector from their owners'.
-///
-/// `v` holds one entry per atom for the first `n_owned`, then one per copy.
-/// The owned entries are the truth; the copies are derived, so this truncates
-/// before extending and is therefore idempotent — which matters, because a
-/// periodic régime calls it again every time the copy list is rebuilt and has
-/// no way to know whether the last call took.
-pub(crate) fn gather_copies<T: Clone>(v: &mut Vec<T>, n_owned: usize, owner: &[u32]) {
-    debug_assert!(
-        v.len() >= n_owned,
-        "a per-atom vector shorter than the atoms it describes"
-    );
-    v.truncate(n_owned);
-    v.reserve(owner.len());
-    for &o in owner {
-        debug_assert!(
-            (o as usize) < n_owned,
-            "a copy names an owner that is not an atom"
-        );
-        let x = v[o as usize].clone();
-        v.push(x);
     }
 }
 
@@ -1069,15 +1012,6 @@ impl PairDriven for Potentials {
     fn binds_a_fixed_pair_list(&self) -> bool {
         self.inner.iter().any(ForceTerm::binds_a_fixed_pair_list)
     }
-
-    /// Every member gathers. An aggregate that swallowed this would leave a
-    /// typed kernel's per-atom tables covering the owned atoms only, while the
-    /// pair table it is handed names copies.
-    fn gather_onto_copies(&mut self, owner: &[u32]) {
-        for m in &mut self.inner {
-            m.gather_onto_copies(owner);
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1089,6 +1023,65 @@ mod tests {
     use super::*;
     use crate::ff::compile::PotentialCompiler;
     use crate::ff::potential::fixtures::OneShot;
+
+    /// A pair's class is its bond distance: a chain that states only its
+    /// bonds, or bonds plus a partial `angles` / `dihedrals` block, gives the
+    /// same list as one stating every angle and dihedral — the classes the
+    /// neighbour-driven door weights by.
+    #[test]
+    fn pair_classes_follow_bond_distance_not_the_listed_terms() {
+        use molrs::core::keys::{ATOMK, ATOML};
+        use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
+        let block = |cols: &[(&str, Vec<Idx>)]| {
+            let mut b = Block::new();
+            for (k, v) in cols {
+                b.insert(*k, Array1::from_vec(v.clone()).into_dyn(), None)
+                    .unwrap();
+            }
+            b
+        };
+        // Chain 0-1-2-3-4.
+        let chain = |angles: bool, dihedrals: bool| {
+            let mut f = Frame::new();
+            f.insert(ATOMS, block(&[("id", vec![0, 1, 2, 3, 4])]));
+            f.insert(
+                BONDS,
+                block(&[(ATOMI, vec![0, 1, 2, 3]), (ATOMJ, vec![1, 2, 3, 4])]),
+            );
+            if angles {
+                f.insert(
+                    ANGLES,
+                    block(&[(ATOMI, vec![0]), (ATOMJ, vec![1]), (ATOMK, vec![2])]),
+                );
+            }
+            if dihedrals {
+                f.insert(
+                    DIHEDRALS,
+                    block(&[
+                        (ATOMI, vec![0]),
+                        (ATOMJ, vec![1]),
+                        (ATOMK, vec![2]),
+                        (ATOML, vec![3]),
+                    ]),
+                );
+            }
+            f
+        };
+        let listed = |f: &Frame| {
+            let p = intramolecular_pairs(f, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
+            let i = p.get(ATOMI).unwrap().get::<u64>().unwrap().to_owned();
+            let j = p.get(ATOMJ).unwrap().get::<u64>().unwrap().to_owned();
+            let f14 = p.get(IS_14).unwrap().get::<bool>().unwrap().to_owned();
+            (i, j, f14)
+        };
+        let expected = listed(&chain(false, false));
+        // 0-3, 0-4, 1-4: the 1-4 pairs are 0-3 and 1-4.
+        assert_eq!(expected.0.as_slice().unwrap(), &[0, 0, 1]);
+        assert_eq!(expected.1.as_slice().unwrap(), &[3, 4, 4]);
+        assert_eq!(expected.2.as_slice().unwrap(), &[true, false, true]);
+        assert_eq!(listed(&chain(true, true)), expected);
+        assert_eq!(listed(&chain(true, false)), expected);
+    }
 
     /// The default scales nothing, and says so.
     ///
@@ -1157,33 +1150,6 @@ mod tests {
     /// A four-atom frame carrying one term of every bonded arity, so a single
     /// force field produces a bond, an angle, a dihedral and an improper
     /// kernel and the rebinding contract can be checked on all four at once.
-    /// Gathering twice is gathering once.
-    ///
-    /// A periodic régime calls this again every time the copy list is rebuilt
-    /// and has no way to check whether the last call took — so appending
-    /// rather than rebuilding would grow the vector without bound, and every
-    /// index past the first rebuild would name the wrong atom.
-    #[test]
-    fn gathering_onto_copies_is_idempotent() {
-        let owned = vec![10_u8, 20, 30];
-        let owner = [2_u32, 0, 2];
-
-        let mut v = owned.clone();
-        gather_copies(&mut v, owned.len(), &owner);
-        assert_eq!(v, vec![10, 20, 30, 30, 10, 30]);
-
-        gather_copies(&mut v, owned.len(), &owner);
-        assert_eq!(
-            v,
-            vec![10, 20, 30, 30, 10, 30],
-            "a second gather changed it"
-        );
-
-        // A shorter copy list shrinks it back rather than leaving a tail.
-        gather_copies(&mut v, owned.len(), &owner[..1]);
-        assert_eq!(v, vec![10, 20, 30, 30]);
-    }
-
     fn make_all_bonded_frame() -> Frame {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
@@ -1376,7 +1342,7 @@ mod tests {
         // Build the neighbour list the real way — `intramolecular_pairs` owns
         // the atomi/atomj/is_14 convention; with no bonds it yields the single
         // unexcluded (0,1) pair, is_14 = false.
-        let pairs = intramolecular_pairs(&frame, &SpecialBonds::default(), None).unwrap();
+        let pairs = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
         frame.insert("pairs", pairs);
 
         frame
@@ -1527,6 +1493,7 @@ mod tests {
         .unwrap();
 
         let mut ff = ForceField::new("test");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "test/custom", Params::new())
             .unwrap()
             .def_type("A", &["A"], Params::new())
@@ -1562,6 +1529,7 @@ mod tests {
     #[test]
     fn test_compile_energy() {
         let mut ff = ForceField::new("test");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
@@ -1583,6 +1551,7 @@ mod tests {
     #[test]
     fn a_pair_type_is_found_through_its_endpoints_not_its_name() {
         let mut ff = ForceField::new("test");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
@@ -1604,6 +1573,7 @@ mod tests {
     #[test]
     fn test_compile_forces() {
         let mut ff = ForceField::new("test");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
@@ -1650,10 +1620,11 @@ mod tests {
             .unwrap();
         frame.insert(
             "pairs",
-            intramolecular_pairs(&frame, &SpecialBonds::default(), None).unwrap(),
+            intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap(),
         );
 
         let mut ff = ForceField::new("test");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::new())
             .unwrap()
             .def_type(
@@ -1755,7 +1726,7 @@ mod tests {
         frame.insert("dihedrals", dihedrals);
 
         // The real neighbour list: only (0,3), flagged is_14.
-        let pairs = intramolecular_pairs(&frame, &SpecialBonds::default(), None).unwrap();
+        let pairs = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
         assert_eq!(
             pairs.n_rows(),
             Some(1),
@@ -1772,7 +1743,7 @@ mod tests {
                 Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
             )
             .unwrap();
-        let mut sb = *ff.special_bonds();
+        let mut sb = crate::ff::ir::SpecialBonds::EXCLUDE_12_13;
         sb.lj[2] = 0.5;
         ff.set_special_bonds(sb);
 
@@ -1807,6 +1778,7 @@ mod tests {
         // A style whose topology block is absent from the frame contributes
         // nothing (no rows of that kind) — skipped, not an error.
         let mut ff = ForceField::new("test");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
@@ -1845,7 +1817,7 @@ mod tests {
             .unwrap();
         frame.insert("atoms", atoms);
 
-        let err = intramolecular_pairs(&frame, &SpecialBonds::default(), None)
+        let err = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None)
             .expect_err("a list this size is not an answer");
         assert!(err.contains("neighbour list"), "{err}");
         assert!(err.contains("compile_typed"), "{err}");
@@ -1862,7 +1834,7 @@ mod tests {
             )
             .unwrap();
         small.insert("atoms", atoms);
-        assert!(intramolecular_pairs(&small, &SpecialBonds::default(), None).is_ok());
+        assert!(intramolecular_pairs(&small, &SpecialBonds::EXCLUDE_12_13, None).is_ok());
     }
 }
 

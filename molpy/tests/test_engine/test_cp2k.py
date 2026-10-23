@@ -24,7 +24,7 @@ def test_a_failure_carries_the_tail_of_cp2k_out(tmp_path):
         patch("subprocess.run", side_effect=fails),
         pytest.raises(mp.tool.ToolError, match="ABORT: bad &GLOBAL"),
     ):
-        engine.run("&GLOBAL\n", workdir=tmp_path)
+        engine.run(mp.engine.Script.from_text("input", "&GLOBAL\n"), workdir=tmp_path)
 
 
 def test_run_invokes_the_binary_with_input_and_log_flags(tmp_path):

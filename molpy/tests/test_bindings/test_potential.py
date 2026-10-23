@@ -327,23 +327,22 @@ class TestDefaults:
     """A default the spec declares prices an absent parameter exactly as
     stating it does: no kernel states one of its own."""
 
-    def test_coul_cut_dielectric_defaults_to_1(self) -> None:
+    def test_coul_cut_dielectric_is_declared_not_defaulted(self) -> None:
         coords = np.array([0.0, 0.0, 0.0, 2.5, 0.0, 0.0])
-        bare = ExplicitTerms(
-            "pair", "coul/cut", [[0, 1]], charges=[0.5, -0.4], coulomb=332.06371
-        ).compile()
+        with pytest.raises(ValueError, match="dielectric"):
+            ExplicitTerms(
+                "pair", "coul/cut", [[0, 1]], charges=[0.5, -0.4], coulomb=332.06371
+            ).compile()
         stated = ExplicitTerms(
             "pair",
             "coul/cut",
             [[0, 1]],
             charges=[0.5, -0.4],
             coulomb=332.06371,
-            dielectric=1.0,
-            delta=0.0,
+            dielectric=2.0,
         ).compile()
-        e = bare.evaluate(coords)[0]
-        assert math.isclose(e, 332.06371 * 0.5 * -0.4 / 2.5, rel_tol=1e-12)
-        assert e == stated.evaluate(coords)[0]
+        e = stated.evaluate(coords)[0]
+        assert math.isclose(e, 332.06371 / 2.0 * 0.5 * -0.4 / 2.5, rel_tol=1e-12)
 
     def test_a_phase_defaults_to_0(self) -> None:
         bare = ExplicitTerms(

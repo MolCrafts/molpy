@@ -101,9 +101,11 @@ gate_ruff() {
 }
 
 # Every partner in .github/partners.env resolves, no path dependency points
-# where CI has no checkout, no workflow spells a partner commit of its own.
+# where CI has no checkout, no workflow spells a partner commit of its own;
+# every binder manifest carries the workspace version (scripts/versions.py).
 gate_partners() {
     python3 scripts/partners.py check
+    python3 scripts/versions.py
     uv --directory molpy lock --check
 }
 
@@ -131,8 +133,12 @@ gate_ffi() {
     cargo_test test --locked --manifest-path crates/molrs-ffi/Cargo.toml
 }
 
+# The build regenerates molcxx/src/bridge.rs from build.rs's schema; the
+# committed copy (what Atomiverse's CMake reads) must be what it regenerates.
 gate_cxx() {
     cargo_test test --locked --manifest-path molcxx/Cargo.toml
+    git diff --exit-code -- molcxx/src/bridge.rs ||
+        { echo "molcxx/src/bridge.rs differs from build.rs's schema: commit the regenerated file" >&2; return 1; }
 }
 
 # molpy's locked environment (molpy/uv.lock) with one molpy wheel installed:
@@ -183,19 +189,29 @@ gate_python() {
         ${report[@]+"${report[@]}"}
 }
 
-# The stub is the Python type contract of the native module: molpy/_core.pyi
-# is held to itself and to the extension it describes, with
+# The stubs are the Python type contract of the native module: molpy/_core.pyi
+# and the side stubs of the modules that copy its names at import time
+# (molpy/core/{keys,schema,constants}.pyi) are held to themselves and to the
+# runtime they describe, with
 # molpy/pyproject.toml's [tool.mypy] (strict, the source-tree stub first on
 # the path). `mypy` type-checks the stub; `mypy.stubtest` imports molpy._core
 # and checks every name, signature, parameter kind and default the stub
 # declares against the compiled module, and every public runtime name the
 # stub misses. stubtest-allowlist.txt holds the structural exemptions only.
+#
+# stubtest runs from an empty directory, so the runtime it imports is the
+# installed wheel and never molpy/ (the source tree has no _core, or a stale
+# one); MYPYPATH points mypy at the source tree's stubs.
 gate_types() {
     molpy_env
-    uv --directory molpy run --no-sync python -m mypy molpy/_core.pyi
-    uv --directory molpy run --no-sync python -m mypy.stubtest \
-        molpy._core --mypy-config-file pyproject.toml \
-        --allowlist stubtest-allowlist.txt --ignore-disjoint-bases
+    uv --directory molpy run --no-sync python -m mypy molpy/_core.pyi \
+        molpy/core/keys.pyi molpy/core/schema.pyi molpy/core/constants.pyi
+    scratch
+    local src=$PWD/molpy
+    (cd "$WORK" && MYPYPATH="$src" "$MOLPY_PYTHON" -m mypy.stubtest \
+        molpy._core molpy.core.keys molpy.core.schema molpy.core.constants \
+        --mypy-config-file "$src/pyproject.toml" \
+        --allowlist "$src/stubtest-allowlist.txt" --ignore-disjoint-bases)
 }
 
 # Profile and target dir are explicit: CMake caches both, and a build-test/
@@ -251,10 +267,12 @@ gate_mrec() {
     deactivate
 }
 
-# The manual (zensical.toml, docs/), --strict, its API reference imported from
-# the tested molpy wheel.
+# The manual (zensical.toml, docs/): every ```python block run against the
+# tested molpy wheel (scripts/run_doc_blocks.py), then the site built
+# --strict, its API reference imported from the same wheel.
 gate_docs() {
     molpy_env --extra doc
+    uv --directory molpy run --no-sync python -I ../scripts/run_doc_blocks.py
     uv --directory molpy run --no-sync zensical build --clean --strict -f ../zensical.toml
 }
 

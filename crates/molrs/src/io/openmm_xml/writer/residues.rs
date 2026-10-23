@@ -14,7 +14,7 @@ use std::ops::Range;
 use molrs::core::Frame;
 
 use super::{Charges, OpenmmXmlWriter, esc};
-use crate::ff::forcefield::{AtomType, ForceField};
+use crate::ff::forcefield::{ForceField, TypeDef};
 use crate::io::pdb::labels::AtomLabels;
 use crate::io::writer::ForceFieldWriteError;
 
@@ -138,8 +138,8 @@ fn type_elements(
     types: &[&str],
     elements: &[&str],
 ) -> Result<HashMap<String, String>, ForceFieldWriteError> {
-    let defined: HashMap<&str, &AtomType> = ff
-        .get_atomtypes()
+    let defined: HashMap<&str, &TypeDef> = ff
+        .get_types("atom")
         .into_iter()
         .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) != Some("*"))
         .map(|t| (t.name.as_str(), t))
@@ -581,7 +581,7 @@ mod tests {
         }
         // Charges live on the templates: the types read back without them.
         assert!(
-            back.get_atomtypes()
+            back.get_types("atom")
                 .iter()
                 .all(|t| t.params.get("charge").is_none())
         );
@@ -596,8 +596,11 @@ mod tests {
             crate::io::openmm_xml::OpenmmXmlReader::new().read(xml.as_bytes())
         }
         .unwrap();
-        for t in ff.get_atomtypes() {
-            let again = back.get_atomtypes().into_iter().find(|b| b.name == t.name);
+        for t in ff.get_types("atom") {
+            let again = back
+                .get_types("atom")
+                .into_iter()
+                .find(|b| b.name == t.name);
             assert_eq!(
                 again.and_then(|b| b.params.get("charge")),
                 t.params.get("charge"),
@@ -622,6 +625,7 @@ mod tests {
     /// that leaves each.
     fn ethylene_units() -> (ForceField, Frame) {
         let mut ff = ForceField::new("units");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         let atom = |mass: f64, q: f64, e: &str| {
             let mut p = Params::from_iter([("mass", mass), ("charge", q)]);
             p.set("element", e);
@@ -735,6 +739,7 @@ mod tests {
         // Types with neither charges nor elements: both from the frame.
         let bare = |pair: &str| {
             let mut ff = ForceField::new("bare");
+            ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
             ff.def_style("atom", "full", Params::new())
                 .unwrap()
                 .def_type("CT", &[], Params::from_iter([("mass", 12.011)]))

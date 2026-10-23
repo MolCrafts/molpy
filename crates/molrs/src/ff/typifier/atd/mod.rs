@@ -24,7 +24,7 @@ use crate::ff::params::atomtype_gff::ATOMTYPE_GFF;
 use crate::ff::params::atomtype_gff2::ATOMTYPE_GFF2;
 use crate::ff::params::atomtype_sybyl::ATOMTYPE_SYBYL;
 use crate::ff::params::{AtdRule, AtdTable};
-use crate::ff::typifier::{Annotation, TypeAssignment, Typifier, species_label};
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier, TypingError, species_label};
 
 /// Which `ATOMTYPE_*.DEF` table an [`AtdTypifier`] walks.
 ///
@@ -145,6 +145,19 @@ pub(crate) enum AtdError {
     },
 }
 
+impl From<AtdError> for TypingError {
+    fn from(err: AtdError) -> Self {
+        match err {
+            AtdError::MissingAtomType {
+                table,
+                atom,
+                atomic_number,
+            } => TypingError::missing_atom(table, atom, atomic_number),
+            AtdError::Malformed { detail } => TypingError::Malformed { detail },
+        }
+    }
+}
+
 impl std::fmt::Display for AtdError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -186,7 +199,7 @@ impl std::fmt::Display for AtdError {
 /// use molrs::ff::typifier::Typing;
 /// use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
 ///
-/// # fn main() -> Result<(), String> {
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mol = Atomistic::new();
 /// let mut typing = Typing::new(AtdTypifier::new(AtdParameterSet::Bcc));
 /// let typed = typing.typify(&mol)?;       // every atom's `type` stamped
@@ -314,10 +327,26 @@ impl Typifier for AtdTypifier {
     ///
     /// # Errors
     ///
-    /// A message naming the atom no rule of the table matched.
-    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
-        self.perceive_bond_types(graph).map_err(|e| e.to_string())?;
-        let types = self.types_of(graph).map_err(|e| e.to_string())?;
+    /// A message naming the atom no rule of the table matched — including
+    /// one the table's catch-all row labels `DU`: that label is the
+    /// table's "no rule matched", never a type to hand back.
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
+        self.perceive_bond_types(graph)
+            .map_err(TypingError::malformed)?;
+        let types = self.types_of(graph)?;
+        if let Some(atom) = types.iter().position(|t| *t == DUMMY_TYPE) {
+            let atomic_number = graph
+                .atom_ids()
+                .nth(atom)
+                .and_then(|id| graph.get_atom(id).ok())
+                .and_then(|a| a.atomic_number())
+                .expect("Atomistic invariant: every typed atom carries an atomic number");
+            return Err(TypingError::missing_atom(
+                self.set.table().name,
+                atom,
+                atomic_number,
+            ));
+        }
         Ok(TypeAssignment {
             nodes: types
                 .into_iter()
@@ -336,7 +365,11 @@ impl Typifier for AtdTypifier {
     /// parameters, so there is nothing to match against. Built once.
     fn source_forcefield(&self) -> &ForceField {
         static LIBRARY: OnceLock<ForceField> = OnceLock::new();
-        LIBRARY.get_or_init(|| ForceField::new("ATD"))
+        LIBRARY.get_or_init(|| {
+            let mut ff = ForceField::new("ATD");
+            ff.set_units("real");
+            ff
+        })
     }
 }
 

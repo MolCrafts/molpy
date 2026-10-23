@@ -77,7 +77,7 @@ pub struct SkinPair {
 /// margin so the index can stay valid across several steps. Pair *search* is
 /// delegated to the wrapped [`NeighborList`] (LinkCell, BruteForce, …).
 ///
-/// Constructed as `VerletSkin::new(NeighborList::new(cutoff + skin), …)`.
+/// Constructed as `VerletSkin::new(NeighborList::new(cutoff + skin)?, …)`.
 ///
 /// The list is built at `r_build = cutoff + skin` and stays complete out to
 /// `cutoff` while no atom has moved more than `skin/2` since the last build
@@ -153,9 +153,9 @@ impl VerletSkin {
         positions: ArrayView2<'_, F>,
         simbox: SimBox,
     ) -> Result<Self, SkinError> {
-        if cutoff <= 0.0 {
+        if !(cutoff > 0.0 && cutoff.is_finite()) {
             return Err(SkinError::Invalid(format!(
-                "cutoff must be > 0 Å, got {cutoff} Å"
+                "cutoff must be a positive finite length, got {cutoff} Å"
             )));
         }
         if policy.skin < 0.0 {
@@ -321,6 +321,11 @@ impl VerletSkin {
     /// the caller's (the pair potential still masks the skin shell).
     pub fn search(&self) -> &NeighborList {
         &self.search
+    }
+
+    /// Hand the pair search back, to wrap again for another cell.
+    pub fn into_search(self) -> NeighborList {
+        self.search
     }
 
     fn rebuild_edges(&mut self) {
@@ -522,7 +527,6 @@ impl VerletSkin {
         // it decides how often the search runs, and it may not decide what
         // interacts. A kernel without a cutoff of its own would otherwise score
         // the shell, and the energy would step every time the list rebuilt.
-        // `GhostSet::fill_pairs` cuts at the cutoff for the same reason.
         //
         // Serial, and deliberately: the rows come out in the order of the
         // edges, and a parallel append would let scheduling decide it.
@@ -572,7 +576,7 @@ mod tests {
                 .unwrap();
             pool.install(|| {
                 let mut skin = VerletSkin::new(
-                    NeighborList::new(8.0),
+                    NeighborList::new(8.0).unwrap(),
                     8.0,
                     NeighborPolicy {
                         skin: 0.0,
@@ -625,14 +629,14 @@ mod tests {
         pos: ArrayView2<'_, F>,
         box_a: F,
     ) -> VerletSkin {
-        let search = NeighborList::new(cutoff + policy.skin);
+        let search = NeighborList::new(cutoff + policy.skin).unwrap();
         VerletSkin::new(search, cutoff, policy, pos, cube(box_a)).unwrap()
     }
 
     #[test]
     fn delay_must_be_multiple_of_every() {
         let Err(err) = VerletSkin::new(
-            NeighborList::new(2.0),
+            NeighborList::new(2.0).unwrap(),
             2.0,
             NeighborPolicy {
                 every: 2,
@@ -650,7 +654,7 @@ mod tests {
     #[test]
     fn search_cutoff_must_match_r_build() {
         let Err(err) = VerletSkin::new(
-            NeighborList::new(2.0),
+            NeighborList::new(2.0).unwrap(),
             2.0,
             NeighborPolicy {
                 skin: 1.0,
@@ -667,7 +671,7 @@ mod tests {
     #[test]
     fn r_build_beyond_half_width_is_rejected() {
         let Err(err) = VerletSkin::new(
-            NeighborList::new(2.5),
+            NeighborList::new(2.5).unwrap(),
             2.5,
             NeighborPolicy::default(),
             two_atoms(1.0).view(),
@@ -838,7 +842,7 @@ mod tests {
         };
         let cutoff = 3.5;
         let a = VerletSkin::new(
-            NeighborList::new(cutoff + policy.skin),
+            NeighborList::new(cutoff + policy.skin).unwrap(),
             cutoff,
             policy,
             pos.view(),
@@ -846,7 +850,7 @@ mod tests {
         )
         .unwrap();
         let b = VerletSkin::new(
-            NeighborList::brute_force(cutoff + policy.skin),
+            NeighborList::brute_force(cutoff + policy.skin).unwrap(),
             cutoff,
             policy,
             pos.view(),

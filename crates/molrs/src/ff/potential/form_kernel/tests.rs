@@ -19,7 +19,7 @@ use crate::ff::ir::{
 use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::potential::fixtures::OneShot;
 use crate::ff::potential::flat_coords::{accumulate_angle_forces, compute_angle};
-use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
+use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm, ScalarPair};
 use crate::ff::potential::pair::fixtures::{assert_virial_matches_forces, table_over};
 use crate::ff::potential::{Accumulator, ForceTerm, PairDriven, Potentials};
 use crate::ff::style_registry::{Kernel, Registry};
@@ -559,10 +559,9 @@ fn scalar_pair_equals_lj_cut_at_both_doors() {
 }
 
 /// A pair form reads the atoms' charges as `q1`, `q2`, and prices exactly
-/// `coul/cut` over a neighbour table — including after the table names a
-/// periodic copy.
+/// `coul/cut` over a neighbour table.
 #[test]
-fn scalar_pair_binds_charges_and_follows_copies() {
+fn scalar_pair_binds_charges() {
     let spec = StyleSpec::new("pair", "coul/form")
         .style_params(vec![p("coulomb", "E*L/Q^2"), p("cutoff", "L")])
         .source(ParamSource::PerInstance)
@@ -571,10 +570,10 @@ fn scalar_pair_binds_charges_and_follows_copies() {
     let style = Params::from_iter([("cutoff", 10.0), ("coulomb", 332.0716), ("dielectric", 1.0)]);
     let (builtin, generic) = twin("pair", "coul/cut", "coul/form", style, &[]);
     let frame = molecule();
-    let mut ta = PotentialCompiler::new(&builtin)
+    let ta = PotentialCompiler::new(&builtin)
         .compile_typed(&frame)
         .unwrap();
-    let mut tb = PotentialCompiler::new(
+    let tb = PotentialCompiler::new(
         &generic
             .clone()
             .with_registry(std::sync::Arc::new(reg.clone())),
@@ -582,19 +581,267 @@ fn scalar_pair_binds_charges_and_follows_copies() {
     .compile_typed(&frame)
     .unwrap();
     assert_eq!(ta[0].1, tb[0].1);
-    // Atom 5 is a periodic copy of atom 0, shifted.
-    let mut coords = COORDS.to_vec();
-    coords.extend([0.3, -2.0, 1.1]);
-    ta[0].0.gather_onto_copies(&[0]);
-    tb[0].0.gather_onto_copies(&[0]);
+    let coords = COORDS.to_vec();
     let (ForceTerm::Pair(pa), ForceTerm::Pair(pb)) = (&ta[0].0, &tb[0].0) else {
         panic!("a pair member");
     };
-    let table = table_over(&coords, &[(0, 3), (1, 4), (2, 5), (4, 5)]);
+    let table = table_over(&coords, &[(0, 3), (1, 4), (2, 4), (0, 2)]);
     assert_close(
         "coulomb typed",
         pa.over_pairs(&coords, &table),
         pb.over_pairs(&coords, &table),
         1e-12,
     );
+}
+
+/// Every built-in pair style but PME (a scalar form) prices a fixed pair
+/// list and a neighbour table over the same pairs alike, **bit for bit**,
+/// and the neighbour door's virial is `Σ f ⊗ x` on a free boundary.
+///
+/// This is the whole claim of the two doors: nothing about the physics
+/// differs, only *when* a parameter is found — against a list at
+/// construction, or from the atoms when a pair turns up. Two types, unlike
+/// each other, so a table indexed the wrong way round would answer
+/// differently; every pair of five atoms, a cutoff where the style declares
+/// one, and a weight of one.
+#[test]
+fn every_pair_form_prices_a_pair_list_and_a_table_alike() {
+    use crate::ff::potential::pair::fixtures::assert_same;
+    let row = |v: &[(&'static str, F)]| Params::from_iter(v.iter().copied());
+    type Rows = Vec<(&'static str, Vec<&'static str>, Params)>;
+    let cases: Vec<(&str, Params, Rows)> = vec![
+        (
+            "lj/cut",
+            row(&[("cutoff", 4.0), ("shift", 1.0)]),
+            vec![
+                ("C", vec!["C"], row(&[("epsilon", 0.11), ("sigma", 3.4)])),
+                ("O", vec!["O"], row(&[("epsilon", 0.21), ("sigma", 2.96)])),
+            ],
+        ),
+        (
+            "lj/class2",
+            row(&[("cutoff", 4.0)]),
+            vec![
+                ("C", vec!["C"], row(&[("epsilon", 0.11), ("sigma", 3.4)])),
+                ("O", vec!["O"], row(&[("epsilon", 0.21), ("sigma", 2.96)])),
+            ],
+        ),
+        (
+            "buck",
+            row(&[("cutoff", 4.0)]),
+            vec![
+                (
+                    "C",
+                    vec!["C"],
+                    row(&[("a", 12000.0), ("rho", 0.31), ("c", 280.0)]),
+                ),
+                (
+                    "O",
+                    vec!["O"],
+                    row(&[("a", 7000.0), ("rho", 0.27), ("c", 140.0)]),
+                ),
+                (
+                    "C-O",
+                    vec!["C", "O"],
+                    row(&[("a", 9000.0), ("rho", 0.29), ("c", 190.0)]),
+                ),
+            ],
+        ),
+        (
+            "morse",
+            row(&[("cutoff", 4.0)]),
+            vec![
+                (
+                    "C",
+                    vec!["C"],
+                    row(&[("d0", 0.25), ("alpha", 1.9), ("r0", 3.4)]),
+                ),
+                (
+                    "O",
+                    vec!["O"],
+                    row(&[("d0", 0.31), ("alpha", 1.7), ("r0", 2.9)]),
+                ),
+                (
+                    "C-O",
+                    vec!["C", "O"],
+                    row(&[("d0", 0.18), ("alpha", 2.1), ("r0", 3.1)]),
+                ),
+            ],
+        ),
+        (
+            "lj/charmm",
+            row(&[("inner", 2.5), ("cutoff", 4.0)]),
+            vec![
+                ("C", vec!["C"], row(&[("epsilon", 0.11), ("sigma", 3.4)])),
+                ("O", vec!["O"], row(&[("epsilon", 0.21), ("sigma", 2.96)])),
+            ],
+        ),
+        (
+            "coul/cut",
+            row(&[
+                ("coulomb", 332.0716),
+                ("dielectric", 1.0),
+                ("delta", 0.05),
+                ("cutoff", 4.0),
+            ]),
+            vec![],
+        ),
+        (
+            "coul/charmm",
+            row(&[
+                ("coulomb", 332.0716),
+                ("dielectric", 1.0),
+                ("inner", 2.5),
+                ("cutoff", 4.0),
+            ]),
+            vec![],
+        ),
+        (
+            "thole",
+            row(&[("coulomb", 332.0716), ("dielectric", 1.0)]),
+            vec![
+                (
+                    "C",
+                    vec!["C"],
+                    row(&[("charge", 0.4), ("alpha", 1.1), ("damp", 2.6)]),
+                ),
+                (
+                    "O",
+                    vec!["O"],
+                    row(&[("charge", -0.7), ("alpha", 0.8), ("damp", 2.1)]),
+                ),
+            ],
+        ),
+        (
+            "coul/tt",
+            row(&[("coulomb", 332.0716), ("dielectric", 1.0)]),
+            vec![
+                ("C", vec!["C"], row(&[("charge", 0.4)])),
+                ("O", vec!["O"], row(&[("charge", -0.7)])),
+            ],
+        ),
+        (
+            "mmff_vdw",
+            Params::new(),
+            vec![
+                (
+                    "C",
+                    vec!["C"],
+                    row(&[
+                        ("alpha", 1.05),
+                        ("n_eff", 2.49),
+                        ("a_i", 3.89),
+                        ("g_i", 1.282),
+                    ]),
+                ),
+                (
+                    "O",
+                    vec!["O"],
+                    row(&[
+                        ("alpha", 0.7),
+                        ("n_eff", 3.15),
+                        ("a_i", 3.89),
+                        ("g_i", 1.282),
+                        ("da", 2.0),
+                    ]),
+                ),
+            ],
+        ),
+        ("uff_lj", Params::new(), vec![]),
+    ];
+    let builtin = Registry::builtin();
+    let pair_styles: Vec<String> = builtin
+        .styles(Some("pair"))
+        .filter(|(spec, _)| spec.name != "coul/long/pme")
+        .map(|(spec, _)| spec.name.to_string())
+        .collect();
+    let covered: Vec<&str> = cases.iter().map(|c| c.0).collect();
+    for name in &pair_styles {
+        assert!(
+            covered.contains(&name.as_str()),
+            "pair `{name}` is not in the test"
+        );
+    }
+    // Two types, C and O, alternating; per-atom `x1`, `D1` for `uff_lj`.
+    let mut frame = molecule();
+    let atoms = frame.get_mut("atoms").unwrap();
+    atoms
+        .insert("type", strings(&["C", "O", "C", "O", "C"]), None)
+        .unwrap();
+    for (key, v) in [
+        ("x1", [3.5, 3.1, 3.8, 2.9, 3.3]),
+        ("D1", [0.06, 0.09, 0.05, 0.12, 0.07]),
+    ] {
+        atoms
+            .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
+            .unwrap();
+    }
+    let links: Vec<(usize, usize)> = (0..5)
+        .flat_map(|i| ((i + 1)..5).map(move |j| (i, j)))
+        .collect();
+    let mut pairs = Block::new();
+    pairs
+        .insert(
+            "atomi",
+            idx(&links.iter().map(|l| l.0).collect::<Vec<_>>()),
+            None,
+        )
+        .unwrap();
+    pairs
+        .insert(
+            "atomj",
+            idx(&links.iter().map(|l| l.1).collect::<Vec<_>>()),
+            None,
+        )
+        .unwrap();
+    frame.insert("pairs", pairs);
+    frame.remove("bonds");
+    frame.remove("angles");
+    frame.remove("dihedrals");
+    let table = table_over(&COORDS, &links);
+    for (name, style, rows) in cases {
+        let mut ff = ForceField::new("t");
+        ff.set_special_bonds(SpecialBonds {
+            lj: [1.0; 3],
+            coul: [1.0; 3],
+        });
+        let s = ff.def_style("pair", name, style).unwrap();
+        for (label, ends, params) in rows {
+            s.def_type(label, &ends, params).unwrap();
+        }
+        let compiler = PotentialCompiler::new(&ff);
+        let compiled = compiler
+            .compile(&frame)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let typed = compiler
+            .compile_typed(&frame)
+            .unwrap_or_else(|e| panic!("{name} (typed): {e}"));
+        let ForceTerm::Pair(kernel) = &typed[0].0 else {
+            panic!("{name}: a pair member");
+        };
+        assert_same(
+            name,
+            compiled.energy_forces_at(&COORDS),
+            kernel.over_pairs(&COORDS, &table),
+        );
+        assert_virial_matches_forces(name, &COORDS, kernel.over_pairs_virial(&COORDS, &table));
+        // The built-in prices pair by pair through its form's law,
+        // monomorphized; its registered `dyn` form, a batch at a time through
+        // `eval`. The two are one force law.
+        let (spec, Some(Kernel::Scalar(form))) = builtin.style("pair", name).unwrap() else {
+            panic!("{name}: a scalar form");
+        };
+        let style = ff.get_style("pair", name).unwrap();
+        let rows = style.defs().kernel_type_params().unwrap();
+        let refs: Vec<(&str, &Params)> = rows.iter().map(|(l, p)| (l.as_str(), p)).collect();
+        let (params, gathered) = spec.gather(style.params(), &refs).unwrap();
+        let tp: Vec<(&str, &Params)> = gathered.iter().map(|(l, p)| (l.as_str(), p)).collect();
+        let batched = ScalarPair::typed(form.clone(), spec, &params, &tp, &frame).unwrap();
+        assert_close(
+            &format!("{name}: fused vs batched"),
+            kernel.over_pairs(&COORDS, &table),
+            batched.over_pairs(&COORDS, &table),
+            1e-12,
+        );
+    }
 }

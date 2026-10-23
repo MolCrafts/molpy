@@ -1,9 +1,9 @@
-"""Type stubs for molrs Python bindings.
+"""Type stubs of the native module ``molpy._core``.
 
-Hand-maintained. Keep in sync with the PyO3 source in `molpy/src/**.rs`
-on every PR that touches `#[pyfunction]` or `#[pyclass]`. `tests/test_stub_parity.py`
-is the freshness guard: every compiled `_core` export must be declared here, with
-the same parameter names as the compiled signature.
+Hand-maintained beside the PyO3 source in `molpy/src/**.rs`. The `types` gate
+(`scripts/check.sh types`) holds it to the compiled module with
+`mypy.stubtest`: every name, signature, parameter kind and default declared
+here, and every public runtime name missing here, fails the gate.
 """
 
 import os
@@ -14,10 +14,10 @@ from collections.abc import (
     Iterable,
     Iterator,
     KeysView,
+    Mapping,
     Sequence,
     ValuesView,
 )
-from collections.abc import Mapping as _AbcMapping
 from typing import (
     Any,
     ClassVar,
@@ -40,7 +40,7 @@ type ArrayBool = npt.NDArray[np.bool_]
 type ArrayU8 = npt.NDArray[np.uint8]
 type ArrayU32 = npt.NDArray[np.uint32]
 type ArrayI64 = npt.NDArray[np.int64]
-type PathInput = str | os.PathLike[str]
+type PathInput = os.PathLike[str]
 # One node or relation field value: what ``**props`` takes and what a read
 # answers. ``bool`` is kept apart from ``int`` at runtime.
 type PropValue = bool | int | float | str
@@ -55,7 +55,7 @@ _TGraph = TypeVar("_TGraph", MolGraph, Atomistic, CoarseGrain)
 __version__: str
 
 def _restore_pickled_state(
-    obj: object, state: tuple[object, _AbcMapping[str, object]]
+    obj: object, state: tuple[object, Mapping[str, object]]
 ) -> None:
     """Pickle state setter: ``obj.__setstate__(state[0])``, then merge the
     instance ``__dict__`` ``state[1]`` back."""
@@ -117,14 +117,16 @@ class Box:
         cls,
         cell: Cell | npt.ArrayLike,
         origin: npt.ArrayLike = ...,
-        pbc: npt.ArrayLike = ...,
+        pbc: npt.ArrayLike | None = None,
     ) -> Self:
-        """``Box(cell, origin=(0, 0, 0), pbc=(True, True, True))``; ``cell`` is
-        a :class:`Cell` or the ``(3, 3)`` cell matrix (Å, lattice vectors as
-        columns).
+        """``Box(cell, origin=(0, 0, 0), pbc=None)``; ``cell`` is a
+        :class:`Cell` or the ``(3, 3)`` cell matrix (Å, lattice vectors as
+        columns). ``pbc`` omitted is periodic on every axis of a defined cell
+        and on none of an undefined one.
 
-        Raises ``ValueError`` for a singular matrix, a non-positive length or
-        lengths/angles that describe no cell."""
+        Raises ``ValueError`` for a singular matrix, a non-positive length,
+        lengths/angles that describe no cell, or an undefined cell with a
+        periodic axis."""
     @staticmethod
     def cube(a: float, origin: npt.ArrayLike = ..., pbc: npt.ArrayLike = ...) -> Box:
         """A cubic box of edge ``a`` (Å). Raises ``ValueError`` for a
@@ -316,6 +318,14 @@ class VerletSkin:
 
 # A column key: a plain name or a ``molpy.core.keys.Key``.
 type ColumnKey = str | keys.Key
+# A column mapping keyed by plain names, canonical keys, or both. Spelled as a
+# union because `Mapping` is invariant in its key: a `dict[str, ...]` is no
+# `Mapping[str | Key, ...]`.
+type ColumnMapping = (
+    Mapping[str, npt.ArrayLike]
+    | Mapping[keys.Key, npt.ArrayLike]
+    | Mapping[ColumnKey, npt.ArrayLike]
+)
 
 @final
 class Block:
@@ -327,7 +337,7 @@ class Block:
     from a frame (``frame["atoms"]``) is a handle on the stored block.
     """
 
-    def __new__(cls, data: _AbcMapping[ColumnKey, npt.ArrayLike] | None = None) -> Self:
+    def __new__(cls, data: ColumnMapping | None = None) -> Self:
         """Build from a mapping of column name -> array (each value goes through
         ``__setitem__``, so a canonical key adopts its schema dtype). Copying a
         block is :meth:`copy`; ``Block(block)`` raises ``TypeError``."""
@@ -491,8 +501,8 @@ class Block:
     def copy(self) -> Block:
         """Deep copy: no buffer shared with this block."""
     def dtype(self, key: ColumnKey) -> str:
-        """The dtype name of a column (``"float"``, ``"int"``, ``"i64"``,
-        ``"uint"``, ``"bool"``, ``"u8"``, ``"string"``, …). ``KeyError`` for
+        """The dtype name of a column (``"f64"``, ``"i32"``, ``"i64"``,
+        ``"u64"``, ``"bool"``, ``"u8"``, ``"string"``, …). ``KeyError`` for
         an absent column."""
     def __reduce__(self) -> tuple[Any, ...]: ...
     def __setstate__(self, state: dict[str, Any]) -> None: ...
@@ -609,18 +619,15 @@ class Frame:
 
     def __new__(
         cls,
-        blocks: _AbcMapping[str, Block | _AbcMapping[ColumnKey, npt.ArrayLike]]
-        | None = None,
+        blocks: Mapping[str, Block | ColumnMapping] | None = None,
         *,
-        meta: _AbcMapping[str, Any] | None = None,
+        meta: Mapping[str, Any] | None = None,
         box: Box | None = None,
     ) -> Self:
         """Copying a frame is :meth:`copy`; ``Frame(frame)`` raises ``TypeError``."""
     def __getitem__(self, key: str, /) -> Block:
         """A handle on the stored block: its members read and write this frame."""
-    def __setitem__(
-        self, key: str, value: Block | _AbcMapping[ColumnKey, npt.ArrayLike], /
-    ) -> None: ...
+    def __setitem__(self, key: str, value: Block | ColumnMapping, /) -> None: ...
     def __delitem__(self, key: str, /) -> None: ...
     def __contains__(self, key: str, /) -> bool: ...
     def __len__(self) -> int: ...
@@ -1104,8 +1111,8 @@ class Topology:
     def dihedrals(self) -> npt.NDArray[np.uint64]:
         """``(n_dihedrals, 4)`` unique ``[i, j, k, l]`` with ``j < k``."""
     def impropers(self) -> npt.NDArray[np.uint64]:
-        """``(n, 4)`` ``[center, i, j, k]`` per sorted 3-combination of the
-        neighbours of every atom of degree >= 3."""
+        """``(n, 4)`` ``[center, i, j, k]``, one per atom with exactly three
+        neighbours (legs sorted); a four-neighbour centre carries none."""
     def neighbors(self, idx: int) -> list[int]:
         """``IndexError`` for a non-atom index."""
     def degree(self, idx: int) -> int:
@@ -1310,7 +1317,7 @@ class UnitPreset:
     @staticmethod
     def register(
         name: str,
-        units: _AbcMapping[str, str],
+        units: Mapping[str, str],
         *,
         boltzmann: float,
         coulomb: float,
@@ -1567,7 +1574,18 @@ class Atomistic:
         """Set a bond's chemical class and its localized bond number together
         — the one door that writes ``bond_type`` / ``bond_number``."""
     def bond_between(self, a: Atom, b: Atom) -> Bond | None: ...
-    def neighbor_bonds(self, node: Atom) -> list[tuple[Atom, Bond]]: ...
+    @overload
+    def neighbors(
+        self,
+        node: Atom,
+        *,
+        ports: Literal[False] = False,
+        terms: Literal[False] = False,
+    ) -> list[tuple[Atom, Bond]]: ...
+    @overload
+    def neighbors(
+        self, node: Atom, *, ports: bool = ..., terms: bool = ...
+    ) -> list[tuple[str, Atom, Any]]: ...
     def topo_distances(
         self, atom: Atom, max_hops: int | None = None
     ) -> list[tuple[Atom, int]]: ...
@@ -1763,7 +1781,18 @@ class CoarseGrain:
     def add_bond(self, a: Bead, b: Bead, /, **props: PropValue) -> CgBond: ...
     def del_bond(self, bond: CgBond) -> None: ...
     def del_bonds(self, bonds: Iterable[CgBond]) -> None: ...
-    def neighbor_bonds(self, node: Bead) -> list[tuple[Bead, CgBond]]: ...
+    @overload
+    def neighbors(
+        self,
+        node: Bead,
+        *,
+        ports: Literal[False] = False,
+        terms: Literal[False] = False,
+    ) -> list[tuple[Bead, CgBond]]: ...
+    @overload
+    def neighbors(
+        self, node: Bead, *, ports: bool = ..., terms: bool = ...
+    ) -> list[tuple[str, Bead, Any]]: ...
     # --- ports ---
     @property
     def ports(self) -> Refs[Port]: ...
@@ -1859,7 +1888,7 @@ class NodeRef:
     def get[T](self, key: ColumnKey, default: T) -> PropValue | T: ...
     def update(
         self,
-        *args: _AbcMapping[str, PropValue] | Iterable[tuple[str, PropValue]],
+        *args: Mapping[str, PropValue] | Iterable[tuple[str, PropValue]],
         **kwargs: PropValue,
     ) -> None: ...
     @classmethod
@@ -1909,7 +1938,7 @@ class RelationRef:
     def get[T](self, key: ColumnKey, default: T) -> PropValue | T: ...
     def update(
         self,
-        *args: _AbcMapping[str, PropValue] | Iterable[tuple[str, PropValue]],
+        *args: Mapping[str, PropValue] | Iterable[tuple[str, PropValue]],
         **kwargs: PropValue,
     ) -> None: ...
     @classmethod
@@ -2347,6 +2376,7 @@ class keys:
     ISOTOPE: keys.Key
     IS_AROMATIC: keys.Key
     STEREO: keys.Key
+    @final
     class Key:
         """A canonical name; ``str(key)`` / ``.key`` is the plain string."""
 
@@ -2388,6 +2418,7 @@ class keys:
     FX: Key
     FY: Key
     FZ: Key
+    HETERO: Key
     IBEAD: Key
     ICODE: Key
     ID: Key
@@ -2472,11 +2503,12 @@ class schema:
     """``molpy.core.schema``: the Frame vocabulary's blocks and columns,
     projected from the Rust tables."""
 
+    @final
     class ColumnSpec:
         """One canonical column of the Frame vocabulary."""
 
-        def __init__(
-            self,
+        def __new__(
+            cls,
             key: str,
             const_name: str,
             dtype: str,
@@ -2484,7 +2516,7 @@ class schema:
             dimension: str,
             unit: str,
             doc: str,
-        ) -> None: ...
+        ) -> Self: ...
         @property
         def key(self) -> str: ...
         @property
@@ -2502,11 +2534,12 @@ class schema:
         @property
         def numpy_dtype(self) -> str: ...
 
+    @final
     class BlockSpec:
         """One canonical block of the Frame vocabulary."""
 
-        def __init__(
-            self,
+        def __new__(
+            cls,
             name: str,
             row_kind: str,
             endpoint_target: str | None,
@@ -2516,7 +2549,7 @@ class schema:
             open: bool,
             doc: str,
             declared_endpoints: list[str],
-        ) -> None: ...
+        ) -> Self: ...
         @property
         def name(self) -> str: ...
         @property
@@ -2858,7 +2891,7 @@ def read_inpcrd(source: _IoSource, frame: Frame | None = None) -> Frame:
     it in place and ``frame`` returned."""
 
 def read_prep(source: _IoSource) -> dict[str, Any]: ...
-def write_prep(sink: _IoSink, residue: _AbcMapping[str, Any]) -> None: ...
+def write_prep(sink: _IoSink, residue: Mapping[str, Any]) -> None: ...
 def read_lammps_data(source: _IoSource, atom_style: str | None = None) -> Frame:
     """Read a LAMMPS data file. Typed blocks carry ``type_id`` and the string
     ``type``; ``atom_style`` fixes the ``Atoms`` layout as LAMMPS's
@@ -2868,7 +2901,7 @@ def write_lammps_data(
     sink: _IoSink,
     frame: Frame,
     *,
-    type_labels: _AbcMapping[str, Sequence[str]] | None = None,
+    type_labels: Mapping[str, Sequence[str]] | None = None,
     atom_style: str | None = None,
     units: str | None = None,
 ) -> None: ...
@@ -2916,7 +2949,7 @@ def write_lammps_bond_react_system(
     workdir: PathInput,
     frame: Frame,
     forcefield: ForceField,
-    templates: _AbcMapping[str, BondReactTemplate] | Sequence[BondReactTemplate],
+    templates: Mapping[str, BondReactTemplate] | Sequence[BondReactTemplate],
 ) -> None:
     """Write ``{stem}.data``, ``{stem}.ff`` and per template
     ``{name}_pre.mol`` / ``{name}_post.mol`` / ``{name}.map`` into
@@ -2926,14 +2959,21 @@ def write_lammps_bond_react_system(
 def write_mrec(
     sink: _IoSink,
     *,
-    meta: _AbcMapping[str, Any] | None = None,
+    meta: Mapping[str, Any] | None = None,
     frame: Frame | None = None,
     system: Frame | None = None,
     trajectory: Trajectory | None = None,
     forcefield: ForceField | mrec.ForceFieldSection | None = None,
+    status: Mapping[str, Any] | None = None,
+    method: Mapping[str, Any] | None = None,
+    metrics: Mapping[str, Any] | None = None,
+    observables: Mapping[str, Any] | None = None,
 ) -> None:
-    """Write a record: ``meta`` and whichever state sections are given (a
-    ``bytearray`` receives the packed record)."""
+    """Write a record: ``meta`` and whichever sections are given (a
+    ``bytearray`` receives the packed record). ``status`` and ``method`` are
+    documents. ``metrics`` has ``catalog``, ``series``, ``steps``,
+    ``wall_time`` and ``wal``. ``observables`` maps a name to ``meta`` and
+    ``data``."""
 
 @final
 class BondReactTemplate:
@@ -3375,7 +3415,7 @@ class GromacsTopForcefieldReader:
         cls,
         *,
         include: bool = False,
-        include_dirs: Sequence[os.PathLike[str] | str] = ...,
+        include_dirs: Sequence[os.PathLike[str]] = ...,
         skip_directives: Sequence[str] = ...,
     ) -> Self: ...
     def read(self, source: _IoSource) -> ForceField: ...
@@ -3450,8 +3490,8 @@ class mrec:
 
         def __init__(
             self,
-            document: _AbcMapping[str, Any],
-            tables: _AbcMapping[str, Block] | None = None,
+            document: Mapping[str, Any],
+            tables: Mapping[str, Block] | None = None,
         ) -> None: ...
         @property
         def document(self) -> dict[str, Any]: ...
@@ -3478,6 +3518,10 @@ class mrec:
         def frame(self) -> Frame | None: ...
         def system(self) -> Frame | None: ...
         def forcefield(self) -> mrec.ForceFieldSection | None: ...
+        def status(self) -> dict[str, Any] | None: ...
+        def method(self) -> dict[str, Any] | None: ...
+        def metrics(self) -> dict[str, Any] | None: ...
+        def observables(self) -> dict[str, Any] | None: ...
 
     class MrecReader:
         """Lazy one-frame cursor over a record's ``trajectory`` section."""
@@ -3553,7 +3597,7 @@ class mrec:
             flush_every: int | None = ...,
             compression: str | None = ...,
             durable: bool = ...,
-            meta: _AbcMapping[str, Any] | None = ...,
+            meta: Mapping[str, Any] | None = ...,
         ) -> None: ...
         @staticmethod
         def open(
@@ -3578,12 +3622,6 @@ class mrec:
 
     @staticmethod
     def pack_mrec_zip(path: PathInput) -> str: ...
-
-    class validation:
-        """``molpy.io.mrec.validation``: the record contract's runtime checks."""
-
-        @staticmethod
-        def validate_frame(frame: Frame) -> None: ...
 
 # The in-memory doors: each one its path twin on a str / bytes.
 # ---------------------------------------------------------------------------
@@ -3615,6 +3653,129 @@ class CarbonTubeBuilder:
     @property
     def periodic(self) -> bool: ...
 
+@final
+class SymOp:
+    """One space-group operator ``x' = R x + t`` on fractional coordinates."""
+
+    @staticmethod
+    def parse(triplet: str) -> SymOp: ...
+    @property
+    def rotation(self) -> ArrayF: ...
+    @property
+    def translation(self) -> ArrayF: ...
+
+@final
+class SpaceGroup:
+    """A space group as its list of affine operators."""
+
+    @staticmethod
+    def from_triplets(triplets: Sequence[str]) -> SpaceGroup: ...
+    @staticmethod
+    def from_generators(generators: Sequence[str]) -> SpaceGroup: ...
+    @staticmethod
+    def from_frame(frame: Frame) -> SpaceGroup: ...
+    @property
+    def order(self) -> int: ...
+    @property
+    def operators(self) -> list[SymOp]: ...
+    def equivalent_positions(
+        self, frac: Sequence[float], *, symprec: float = 1e-5
+    ) -> ArrayF: ...
+
+@final
+@final
+class Site:
+    """A lattice basis site in fractional coordinates of the cell."""
+
+    def __new__(
+        cls,
+        label: str,
+        species: str,
+        fractional: tuple[float, float, float],
+        charge: float = 0.0,
+        attrs: dict[str, bool | int | float | str] | None = None,
+    ) -> Self: ...
+    @property
+    def label(self) -> str: ...
+    @property
+    def species(self) -> str: ...
+    @property
+    def fractional(self) -> tuple[float, float, float]: ...
+    @property
+    def charge(self) -> float: ...
+    @property
+    def attrs(self) -> dict[str, bool | int | float | str]: ...
+
+@final
+class Lattice:
+    """A Bravais lattice: a :class:`Box` unit cell and its basis sites."""
+
+    def __new__(cls, box: Box, basis: Sequence[Site] | None = None) -> Self: ...
+    @staticmethod
+    def from_vectors(
+        a1: Sequence[float],
+        a2: Sequence[float],
+        a3: Sequence[float],
+        basis: Sequence[Site] | None = None,
+    ) -> Lattice: ...
+    @property
+    def box(self) -> Box: ...
+    @property
+    def basis(self) -> tuple[Site, ...]: ...
+    @property
+    def a1(self) -> ArrayF: ...
+    @property
+    def a2(self) -> ArrayF: ...
+    @property
+    def a3(self) -> ArrayF: ...
+    def with_site(self, site: Site) -> Lattice: ...
+    def supercell(self, repeats: tuple[int, int, int]) -> Box: ...
+    @staticmethod
+    def sc(a: float, species: str) -> Lattice: ...
+    @staticmethod
+    def bcc(a: float, species: str) -> Lattice: ...
+    @staticmethod
+    def fcc(a: float, species: str) -> Lattice: ...
+    @staticmethod
+    def rocksalt(a: float, species_a: str, species_b: str) -> Lattice: ...
+    @staticmethod
+    def from_spacegroup(
+        box: Box,
+        sites: Sequence[Site],
+        spacegroup: SpaceGroup,
+        *,
+        symprec: float = 1e-5,
+    ) -> Lattice: ...
+    @staticmethod
+    def from_cif(frame: Frame, *, symprec: float = 1e-5) -> Lattice: ...
+    def build(
+        self,
+        region: RegionLike | None = None,
+        *,
+        repeats: tuple[int, int, int] | None = None,
+    ) -> Atomistic: ...
+
+@final
+class DrudeBuilder:
+    """CL&Pol polarizer: a Drude shell on every polarizable atom."""
+
+    def __new__(
+        cls,
+        polarizability: Mapping[str, Mapping[str, float]]
+        | Iterable[Mapping[str, Any]]
+        | None = None,
+        *,
+        drude_prefix: str = "D",
+    ) -> Self: ...
+    def apply(self, mol: Atomistic) -> Atomistic: ...
+
+@final
+class Tip4pBuilder:
+    """A TIP4P M-site on each water's HOH bisector."""
+
+    def __new__(cls, d_om: float = 0.1546, *, box: Box | None = None) -> Self: ...
+    def apply(self, mol: Atomistic) -> Atomistic: ...
+
 class GrapheneBuilder:
     def __new__(
         cls,
@@ -3640,7 +3801,7 @@ class GrapheneBuilder:
 class SitePlacer:
     """``molpy.builder.SitePlacer`` — translation-only placement. Frozen.
 
-    Each copy's centre of mass (Å, weights ``mass``) lands on its site;
+    Each copy's centroid (the mean of its atom positions, Å) lands on its site;
     rotation is the orienter's job. Takes no arguments.
     """
 
@@ -3651,7 +3812,7 @@ class GrowthPlacer:
     """``molpy.builder.GrowthPlacer`` — grows each molecule onto its parents'
     ports. Frozen.
 
-    The first copy of a molecule keeps its template pose (its centre of mass
+    The first copy of a molecule keeps its template pose (its centroid
     on the site when the site graph has positions); every later copy is
     rotated and moved so the anchor of its port toward its parent lands on
     the parent's leaving handle, pointing back along that bond. Needs no site
@@ -3665,7 +3826,7 @@ class GrowthPlacer:
 class AxisOrienter:
     """``molpy.builder.AxisOrienter`` — turns each copy onto its site. Frozen.
 
-    Turns each copy about its template's centre of mass. A chain site (only
+    Turns each copy about its template's centroid. A chain site (only
     ``<`` / ``>`` ports, a two-port template) matches the template's
     backbone-to-centre direction to the site axis (``CoarseGrain.axes``) and
     its two joining atoms to the site's bond line. Any other bonded site fits
@@ -3695,11 +3856,11 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
         where a site bonds. A template without ports can only fill an
         unbonded site.
     placer : SitePlacer | GrowthPlacer
-        ``SitePlacer`` moves each copy's centre of mass onto its site;
+        ``SitePlacer`` moves each copy's centroid onto its site;
         ``GrowthPlacer`` grows each molecule onto its parents' ports and needs
         no site positions.
     orienter : AxisOrienter, optional
-        Turns each copy about its centre of mass before it is placed; needs
+        Turns each copy about its centroid before it is placed; needs
         site positions.
 
     Raises
@@ -3714,7 +3875,7 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
 
     def __new__(
         cls,
-        library: _AbcMapping[str, G],
+        library: Mapping[str, G],
         placer: SitePlacer | GrowthPlacer,
         orienter: AxisOrienter | None = None,
     ) -> Assembler[G]: ...
@@ -3749,8 +3910,6 @@ class ConformerStageReport:
     def steps(self) -> int: ...
     @property
     def converged(self) -> bool: ...
-    @property
-    def elapsed_ms(self) -> int: ...
 
 @final
 class ConformerReport:
@@ -3772,7 +3931,6 @@ class Conformer:
 
     def __new__(
         cls,
-        speed: str = "medium",
         add_hydrogens: bool = True,
         seed: int | None = None,
     ) -> Self: ...
@@ -3786,6 +3944,17 @@ class Conformer:
 # `molrs/ff/forcefield.py`, beside the code that defines them.
 # ---------------------------------------------------------------------------
 
+@final
+class Nonbonded:
+    """The nonbonded treatment a force field's pair styles state."""
+
+    @property
+    def coulomb(self) -> Literal["long", "cut"] | None: ...
+    @property
+    def coulomb_cutoff(self) -> float | None: ...
+    @property
+    def vdw_cutoff(self) -> float | None: ...
+
 class ForceField:
     """A force field: styles and their types. Subclassable; pickles by
     content. Styles and types are read and written through their handles."""
@@ -3794,7 +3963,11 @@ class ForceField:
     @property
     def name(self) -> str: ...
     @property
-    def units(self) -> str: ...
+    def units(self) -> str | None: ...
+    def nonbonded(self, length_unit: str | None = None) -> Nonbonded:
+        """The nonbonded treatment the pair styles state, each read by its
+        declared role; cutoffs in ``length_unit`` (the force field's own
+        when ``None``)."""
     def merge(self, other: ForceField) -> Self: ...
     def canonical(self) -> ForceField:
         """Every style of a form family in its canonical style's category
@@ -3838,7 +4011,7 @@ class ForceField:
         ``style``, ``type``, ``exact``, ``sum_sq``, ``rms``, ``max_abs``,
         ``offset``). ``sum_sq`` is monotone in the metric."""
     @property
-    def special_bonds(self) -> tuple[list[float], list[float]]: ...
+    def special_bonds(self) -> tuple[list[float], list[float]] | None: ...
     def set_special_bonds(self, lj: Sequence[float], coul: Sequence[float]) -> None: ...
     def materialize_one_four(self, frame: Frame) -> int:
         """Write the 1-4 pairs of ``frame`` as per-pair override cells on its
@@ -4388,9 +4561,8 @@ class TypeAssignment:
 
     def __new__(
         cls,
-        nodes: Sequence[_AbcMapping[str, Annotation]],
-        links: _AbcMapping[type | str, Sequence[_AbcMapping[str, Annotation]]]
-        | None = None,
+        nodes: Sequence[Mapping[str, Annotation]],
+        links: Mapping[type | str, Sequence[Mapping[str, Annotation]]] | None = None,
         *,
         styles: Sequence[tuple[str, str, dict[str, AssignmentParamValue]]] = (),
         pairs: Sequence[
@@ -4485,7 +4657,7 @@ class AtdTypifier(Typifier[Atomistic]):
 
     ``parameter_set`` is the antechamber ``-at`` flag and is **required**: seven
     tables exist, they disagree, and there is no default. An atom no rule matches
-    comes back labelled ``"DU"`` — the table's own catch-all row, not a fallback.
+    raises ``ValueError`` — the table's catch-all ``"DU"`` names no type.
 
     ``bond_orders`` says which bond orders the types follow:
     ``BondOrderSource.Connectivity`` (the core default) judges them from the
@@ -4598,15 +4770,15 @@ def clpol_polarizability() -> dict[str, dict[str, float]]:
     """CL&Pol Drude parameters per atom type (``m_D``, ``q_D_sign``, ``k_D``,
     ``alpha``, ``a_thole``): the shipped ``alpha.ff`` table."""
 
-def assign_cmaps(frame: Frame, forcefield: ForceField) -> int: ...
+def assign_cmaps(mol: Atomistic, forcefield: ForceField) -> int: ...
 def intramolecular_pairs(
     frame: Frame,
-    forcefield: ForceField | None = None,
+    forcefield: ForceField,
     neighbors: Neighbors | None = None,
 ) -> Block:
     """The special-bonds pair list (``atomi`` / ``atomj`` / ``is_14``) of a
-    typed frame; candidates from ``neighbors`` when given, else every
-    ``i < j`` pair."""
+    typed frame under ``forcefield``'s declared weights; candidates from
+    ``neighbors`` when given, else every ``i < j`` pair."""
 
 # ---------------------------------------------------------------------------
 # Record / Trajectory / Observables
@@ -6691,19 +6863,15 @@ class md:
         @property
         def dt(self) -> float: ...
 
-    class NeighborList:
-        """Verlet list mounted at the ``neighbor`` phase. ``cutoff`` and ``skin``
-        are in the frame's length unit. Moved into :meth:`MD.set_neighbor`."""
-
-        def __init__(self, cutoff: float, skin: float) -> None: ...
-
     class MD:
         """Phase driver. :meth:`run` writes the frame it is given."""
 
         def __init__(self) -> None: ...
         def set_integrator(self, integrator: "md.VelocityVerlet") -> None: ...
         def set_thermostat(self, thermostat: "md.FixLangevin") -> None: ...
-        def set_neighbor(self, neighbor: "md.NeighborList") -> None: ...
+        def set_neighbor(self, list: NeighborList, *, skin: float = 0.0) -> None:
+            """Mount ``list`` (moved in) as the run's neighbour list; pairs
+            within ``list.cutoff - skin`` reach the pair kernels."""
         def set_evaluator(self, potential: Any) -> None: ...
         def run(self, frame: Frame, n_steps: int) -> None: ...
 
@@ -6871,13 +7039,13 @@ class style_registry:
         category: str,
         name: str,
         *,
-        params: Sequence[ir.ParamSpec] | _AbcMapping[str, str] | None = None,
-        style_params: Sequence[ir.ParamSpec] | _AbcMapping[str, str] | None = None,
+        params: Sequence[ir.ParamSpec] | Mapping[str, str] | None = None,
+        style_params: Sequence[ir.ParamSpec] | Mapping[str, str] | None = None,
         expression: str | None = None,
         kernel: Callable[..., tuple[ArrayF, ArrayF]] | None = None,
         compound: bool = False,
         special: Literal["lj", "coul"] | None = None,
-        samples: Sequence[_AbcMapping[str, Any]] | None = None,
+        samples: Sequence[Mapping[str, Any]] | None = None,
         replace: bool = False,
         lammps: str | None = None,
     ) -> None: ...

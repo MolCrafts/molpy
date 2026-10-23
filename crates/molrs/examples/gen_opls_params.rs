@@ -22,7 +22,6 @@ use std::process::ExitCode;
 use molrs::core::constants::{COULOMB_REAL, OPLS_COULOMB_14, OPLS_LJ_14};
 use molrs::core::unit_factors::KCAL_TO_KJ;
 use molrs::ff::forcefield::ForceField;
-use molrs::ff::forcefield::StyleDefs;
 use molrs::ff::ir::Params;
 use molrs::ff::ir::torsion::{MultiHarmonicForm, OplsForm};
 use molrs::io::{gromacs::GromacsTopForcefieldReader, reader::ForceFieldReader};
@@ -341,7 +340,7 @@ impl Table {
             }
         }
         let sb = ff
-            .declared_special_bonds()
+            .special_bonds()
             .ok_or("the force field declares no special bonds ([ defaults ])")?;
         if sb.lj != [0.0, 0.0, OPLS_LJ_14] || sb.coul != [0.0, 0.0, OPLS_COULOMB_14] {
             return Err(format!(
@@ -364,8 +363,9 @@ impl Table {
                     key.0, key.1
                 ));
             }
-            match style.defs() {
-                StyleDefs::Atom(types) => {
+            let types = style.defs().types();
+            match style.category() {
+                "atom" => {
                     for t in types {
                         let what = format!("atom/full {}", t.name);
                         let pair = lj
@@ -394,15 +394,15 @@ impl Table {
                         table.atoms.push(row);
                     }
                 }
-                StyleDefs::Pair(types) if style.name() == "lj/cut" => {
-                    if let Some(t) = types.iter().find(|t| t.itom != t.jtom) {
+                "pair" if style.name() == "lj/cut" => {
+                    if let Some(t) = types.iter().find(|t| t.endpoints[0] != t.endpoints[1]) {
                         return Err(format!(
                             "pair/lj/cut cross row {}-{} has no place in the table",
-                            t.itom, t.jtom
+                            t.endpoints[0], t.endpoints[1]
                         ));
                     }
                 }
-                StyleDefs::Pair(types) => {
+                "pair" => {
                     let p = style.params();
                     if !types.is_empty()
                         || p.get("coulomb").and_then(|v| v.as_num()) != Some(COULOMB_REAL)
@@ -415,27 +415,31 @@ impl Table {
                         );
                     }
                 }
-                StyleDefs::Bond(types) => {
+                "bond" => {
                     for t in types {
                         let what = format!("bond/harmonic {}", t.name);
                         table.bonds.push(BondRow {
-                            ends: [t.itom.clone(), t.jtom.clone()],
+                            ends: [t.endpoints[0].clone(), t.endpoints[1].clone()],
                             k: param(&t.params, "k", &what)?,
                             r0: param(&t.params, "r0", &what)?,
                         });
                     }
                 }
-                StyleDefs::Angle(types) => {
+                "angle" => {
                     for t in types {
                         let what = format!("angle/harmonic {}", t.name);
                         table.angles.push(AngleRow {
-                            ends: [t.itom.clone(), t.jtom.clone(), t.ktom.clone()],
+                            ends: [
+                                t.endpoints[0].clone(),
+                                t.endpoints[1].clone(),
+                                t.endpoints[2].clone(),
+                            ],
                             k: param(&t.params, "k", &what)?,
                             theta0: param(&t.params, "theta0", &what)?,
                         });
                     }
                 }
-                StyleDefs::Dihedral(types) => {
+                "dihedral" => {
                     for t in types {
                         // The reader keeps RB exactly (`multi/harmonic`); the
                         // table holds its OPLS Fourier projection, exact when
@@ -462,21 +466,19 @@ impl Table {
                         let f = OplsForm::nearest(&series).k;
                         table.dihedrals.push(DihedralRow {
                             ends: [
-                                t.itom.clone(),
-                                t.jtom.clone(),
-                                t.ktom.clone(),
-                                t.ltom.clone(),
+                                t.endpoints[0].clone(),
+                                t.endpoints[1].clone(),
+                                t.endpoints[2].clone(),
+                                t.endpoints[3].clone(),
                             ],
                             f,
                         });
                     }
                 }
-                // `StyleDefs` is non-exhaustive: improper, cmap and any later
-                // category have no row type here.
+                // Improper, cmap and any other category have no row type here.
                 other => {
                     return Err(format!(
-                        "{} styles have no row type in the OPLS-AA table",
-                        other.category()
+                        "{other} styles have no row type in the OPLS-AA table"
                     ));
                 }
             }

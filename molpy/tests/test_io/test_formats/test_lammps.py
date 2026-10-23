@@ -154,7 +154,7 @@ class TestReadLammpsData:
         """body.lmp carries a ``Bodies`` section the native reader does not
         read; the read raises rather than dropping the section."""
 
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError):
             mp.io.read_lammps_data(lammps_dir / "body.lmp", atom_style="body")
 
     def test_labelmap_file(self, lammps_dir):
@@ -233,7 +233,7 @@ class TestReadLammpsData:
     def test_a_layout_the_style_does_not_have_is_refused(self, lammps_dir):
         """``atom_style`` fixes the ``Atoms`` layout, as LAMMPS's does: a
         ``full`` file read as ``atomic`` is an error, not a column drop."""
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError):
             mp.io.read_lammps_data(lammps_dir / "molid.lmp", atom_style="atomic")
 
 
@@ -563,7 +563,7 @@ Atoms
         with open(tmp_file, "w", encoding="utf-8") as f:
             f.write(malformed_content)
 
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError):
             mp.io.read_lammps_data(tmp_file, atom_style="atomic")
 
 
@@ -787,7 +787,7 @@ def test_write_lammps_data_requires_type_columns(tmp_path):
         {"x": np.zeros(1), "y": np.zeros(1), "z": np.zeros(1), "mass": np.ones(1)}
     )
     frame.box = mp.Box(mp.core.Cell.lengths([5.0, 5.0, 5.0]))
-    with pytest.raises(OSError, match="neither 'type' nor 'type_id'"):
+    with pytest.raises(ValueError, match="neither 'type' nor 'type_id'"):
         mp.io.write_lammps_data(tmp_path / "bad.data", frame)
 
 

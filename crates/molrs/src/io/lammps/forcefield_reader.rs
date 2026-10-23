@@ -349,7 +349,7 @@ impl LammpsForcefieldReader {
     ///
     /// let text = format!("# UNITS: real\n# map 1\n{}", "0.5\n".repeat(576));
     /// let ff = LammpsForcefieldReader::new().read_cmap(text.as_bytes()).unwrap();
-    /// assert_eq!(ff.units(), "real");
+    /// assert_eq!(ff.units(), Some("real"));
     /// assert!(ff.get_style("cmap", "charmm").is_some());
     /// ```
     ///
@@ -1723,7 +1723,6 @@ fn parse_special_bonds(rest: &[&str], where_: &dyn Fn() -> String) -> Result<Spe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::{AngleType, DihedralType, Style, StyleDefs};
     use crate::ff::potential::fixtures::OneShot;
 
     /// A LAMMPS include covering every style, with values copied from a real
@@ -1746,19 +1745,6 @@ dihedral_style fourier
 dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 "#;
 
-    fn angle_types(s: &Style) -> &[AngleType] {
-        match s.defs() {
-            StyleDefs::Angle(v) => v,
-            _ => unreachable!(),
-        }
-    }
-    fn dihedral_types(s: &Style) -> &[DihedralType] {
-        match s.defs() {
-            StyleDefs::Dihedral(v) => v,
-            _ => unreachable!(),
-        }
-    }
-
     #[test]
     fn reads_lammps_units() {
         let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
@@ -1779,7 +1765,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 
         // angle: K, theta0 in degrees.
         let angle = ff.get_style("angle", "harmonic").unwrap();
-        let at = &angle_types(angle)[0];
+        let at = &angle.defs().types()[0];
         assert_eq!(
             at.params.get("k").and_then(|v| v.as_num()),
             Some(76.79),
@@ -1794,7 +1780,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         // dihedral fourier is molrs's `periodic`: k1/periodicity1/phase1 (deg).
         assert!(ff.get_style("dihedral", "fourier").is_none());
         let dih = ff.get_style("dihedral", "periodic").unwrap();
-        let dt = &dihedral_types(dih)[0];
+        let dt = &dih.defs().types()[0];
         assert!(
             (dt.params.get("k1").and_then(|v| v.as_num()).unwrap() - 0.06).abs() < 1e-12,
             "k1"
@@ -1854,7 +1840,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 
         // AMBER/GAFF 1-4 scaling is recorded on the ForceField's special_bonds
         // (1-2/1-3 excluded), the source the pair kernels consume.
-        let sb = ff.special_bonds();
+        let sb = ff.special_bonds().unwrap();
         assert_eq!(sb.lj, [0.0, 0.0, 0.5]);
         assert!((sb.coul_14() - 1.0 / 1.2).abs() < 1e-12);
         assert_eq!(sb.coul[0], 0.0);
@@ -1914,8 +1900,8 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
                     .as_bytes(),
             )
             .unwrap();
-        assert!((amber.special_bonds().coul_14() - 5.0 / 6.0).abs() < 1e-12);
-        assert_eq!(amber.special_bonds().lj_14(), 0.5);
+        assert!((amber.special_bonds().unwrap().coul_14() - 5.0 / 6.0).abs() < 1e-12);
+        assert_eq!(amber.special_bonds().unwrap().lj_14(), 0.5);
 
         let err = LammpsForcefieldReader::new()
             .read("pair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n".as_bytes())
@@ -1934,8 +1920,8 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
                     .as_bytes(),
             )
             .unwrap();
-        assert_eq!(ff.units(), "lj");
-        assert_eq!(ff.declared_units(), Some("lj"));
+        assert_eq!(ff.units(), Some("lj"));
+        assert_eq!(ff.units(), Some("lj"));
     }
 
     #[test]
@@ -1946,7 +1932,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
                     .as_bytes(),
             )
             .unwrap();
-        assert_eq!(ff.units(), "real");
+        assert_eq!(ff.units(), Some("real"));
     }
 
     #[test]
@@ -2185,7 +2171,7 @@ bond_style harmonic
 bond_coeff c3-c3 1.0 1.5
 ";
         let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
-        assert_eq!(ff.units(), "metal");
+        assert_eq!(ff.units(), Some("metal"));
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         assert_eq!(
             lj.get_pairtype("c3", None)
@@ -2337,7 +2323,7 @@ Angles
         let ff = LammpsForcefieldReader::new()
             .read_data_coeffs(&data_frame(LABELLED_DATA), None)
             .unwrap();
-        assert_eq!(ff.units(), "real");
+        assert_eq!(ff.units(), Some("real"));
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let eps = |t: &str| {
             lj.get_pairtype(t, None)
@@ -2540,7 +2526,7 @@ PairIJ Coeffs # lj/cut
     fn data_coeffs_angle_harmonic_hint_reads() {
         let ff = read_data("Angle Coeffs # harmonic\n\n1 50.0 109.5\n").unwrap();
         let a = ff.get_style("angle", "harmonic").unwrap();
-        let at = &angle_types(a)[0];
+        let at = &a.defs().types()[0];
         assert_eq!(at.params.get("k").and_then(|v| v.as_num()), Some(50.0));
         assert_eq!(
             at.params.get("theta0").and_then(|v| v.as_num()),
@@ -2580,7 +2566,7 @@ PairIJ Coeffs # lj/cut
     fn data_coeffs_dihedral_hint_selects_kernel() {
         let ff = read_data("Dihedral Coeffs # opls/omp\n\n1 1.0 2.0 3.0 4.0\n").unwrap();
         let d = ff.get_style("dihedral", "opls").unwrap();
-        let dt = &dihedral_types(d)[0];
+        let dt = &d.defs().types()[0];
         assert!((dt.params.get("k4").and_then(|v| v.as_num()).unwrap() - 4.0).abs() < 1e-12);
     }
 
@@ -2605,7 +2591,7 @@ dihedral_coeff CT-CT-CT-CT 1.0 2.0 3.0 4.0
 ";
         let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let d = ff.get_style("dihedral", "opls").unwrap();
-        let dt = &dihedral_types(d)[0];
+        let dt = &d.defs().types()[0];
         assert!((dt.params.get("k1").and_then(|v| v.as_num()).unwrap() - 1.0).abs() < 1e-12);
         assert!((dt.params.get("k4").and_then(|v| v.as_num()).unwrap() - 4.0).abs() < 1e-12);
     }
@@ -2744,7 +2730,7 @@ dihedral_coeff A-B-C-D 0.2 3 180 1.0
 ";
         let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let d = ff.get_style("dihedral", "charmm").unwrap();
-        let dt = &dihedral_types(d)[0];
+        let dt = &d.defs().types()[0];
         assert!((dt.params.get("k").and_then(|v| v.as_num()).unwrap() - 0.2).abs() < 1e-12);
         assert!(
             (dt.params
@@ -2811,9 +2797,12 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
         let ff = LammpsForcefieldReader::new()
             .read_cmap(ALANINE.as_bytes())
             .unwrap();
-        assert_eq!(ff.units(), "real");
-        let rows = ff.get_cmaptypes();
-        assert_eq!((rows[0].name.as_str(), rows[0].mtom.as_str()), ("1", "1"));
+        assert_eq!(ff.units(), Some("real"));
+        let rows = ff.get_types("cmap");
+        assert_eq!(
+            (rows[0].name.as_str(), rows[0].endpoints[4].as_str()),
+            ("1", "1")
+        );
         assert_eq!(
             rows[0].params.get("grid").and_then(|v| v.as_array()),
             Some(map)
@@ -2853,7 +2842,7 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
         let path = dir.path().join("sys.ff");
         std::fs::write(&path, include).unwrap();
         let ff = LammpsForcefieldReader::new().read(path.as_path()).unwrap();
-        assert_eq!(ff.get_cmaptypes().len(), 1);
+        assert_eq!(ff.get_types("cmap").len(), 1);
 
         for (text, why) in [
             (

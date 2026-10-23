@@ -67,7 +67,7 @@ pub fn covalent_radius(atomic_number: u32) -> Result<f64, JsValue> {
 /// ```js
 /// const frame = readXyz(text);        // atoms.element: ["O", "H", "H"]
 /// fillAtomicNumbers(frame);           // atoms.atomic_number: [8n, 1n, 1n]
-/// const mol3d = new Conformer("fast").generate(frame);
+/// const mol3d = new Conformer().generate(frame);
 /// ```
 #[wasm_bindgen(js_name = fillAtomicNumbers)]
 pub fn fill_atomic_numbers(frame: &Frame) -> Result<(), JsValue> {

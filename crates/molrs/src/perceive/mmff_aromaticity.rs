@@ -31,6 +31,7 @@
 use std::collections::HashMap;
 
 use crate::core::Element;
+use crate::core::NeighborKinds;
 use crate::core::{Atomistic, BondNumber, BondOrder, NodeId};
 use crate::perceive::Hybridization;
 use crate::perceive::{RingSet, perceive_rings};
@@ -85,10 +86,26 @@ pub(crate) struct MmffTopology {
 impl MmffTopology {
     /// Build the snapshot from an [`Atomistic`] molecule.
     ///
-    /// Returns `Err("*")` — the symbol of the offending atom — for a wildcard
-    /// atom (`atomic_number` 0), which names no element MMFF could type.
+    /// MMFF types a molecule whose hydrogens are all drawn: the snapshot's
+    /// degrees and valences count bonds only.
+    ///
+    /// Returns an error naming the atom for a wildcard atom (`atomic_number`
+    /// 0), which names no element MMFF could type, and for one that carries
+    /// hydrogens the graph does not draw ([`n_implicit_hydrogens`](crate::perceive::n_implicit_hydrogens)
+    /// above zero): run `add_hydrogens` first.
     pub(crate) fn build(mol: &Atomistic) -> Result<Self, String> {
-        let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let atom_ids: Vec<NodeId> = mol.atom_ids().collect();
+        for (i, &id) in atom_ids.iter().enumerate() {
+            if let Some(n) = crate::perceive::n_implicit_hydrogens(mol, id)
+                && n > 0
+            {
+                return Err(format!(
+                    "atom {i} carries {n} hydrogen(s) the graph does not draw; MMFF types \
+                     explicit hydrogens only — add them first (perceive::add_hydrogens)"
+                ));
+            }
+        }
+        // A snapshot's own index (it outlives no edit of `mol`).
         let idx_of: HashMap<NodeId, usize> = atom_ids
             .iter()
             .enumerate()
@@ -104,10 +121,12 @@ impl MmffTopology {
 
         for (i, &id) in atom_ids.iter().enumerate() {
             let atom = mol.get_atom(id).map_err(|e| e.to_string())?;
-            let el = Element::by_number(atomic_number(&atom)).ok_or_else(|| "*".to_owned())?;
+            let el = Element::by_number(atomic_number(&atom)).ok_or_else(|| {
+                format!("atom {i} is the wildcard '*', which names no element MMFF types")
+            })?;
             atno[i] = el.z();
             formal_charge[i] = atom.formal_charge();
-            for (nbr_id, bid) in mol.neighbor_bonds(id) {
+            for (nbr_id, bid) in mol.neighbors(id, NeighborKinds::BONDS) {
                 let j = idx_of[&nbr_id];
                 // `nbr_order` is the chemical class MMFF perceives against;
                 // `nbr_kekule` is the localized structure. They differ exactly
@@ -160,13 +179,14 @@ impl MmffTopology {
 
     /// RDKit `getDegree()`: number of explicit (heavy + H) neighbors.
     ///
-    /// In our pipeline all hydrogens are explicit, so this equals
+    /// [`build`](Self::build) refuses undrawn hydrogens, so this equals
     /// `getTotalDegree()` as well.
     pub(crate) fn degree(&self, i: usize) -> usize {
         self.nbrs[i].len()
     }
 
-    /// RDKit `getTotalDegree()`. With explicit Hs this is `degree`.
+    /// RDKit `getTotalDegree()`: `degree`, every hydrogen being drawn
+    /// ([`build`](Self::build)).
     pub(crate) fn total_degree(&self, i: usize) -> usize {
         self.degree(i)
     }
@@ -180,8 +200,9 @@ impl MmffTopology {
     }
 
     /// RDKit `getValence(EXPLICIT) + getNumImplicitHs()` — the total bond
-    /// order around the atom. With explicit Hs, `getNumImplicitHs() == 0`,
-    /// so this is simply the integer sum of Kekulé bond orders.
+    /// order around the atom. [`build`](Self::build) refuses undrawn
+    /// hydrogens, so `getNumImplicitHs() == 0` and this is the integer sum of
+    /// Kekulé bond orders.
     pub(crate) fn total_bond_order(&self, i: usize) -> u32 {
         self.nbr_kekule[i]
             .iter()

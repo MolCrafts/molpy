@@ -1057,7 +1057,9 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
 ///   we divide by the literal 18.2223 (a chamber file: √332.0716, ParmEd's
 ///   `CHARMM_ELECTROSTATIC`) to electron charge for the Frame.
 pub fn read_prmtop<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
-    read_frame_from(src.into().reader()?)
+    let frame = read_frame_from(src.into().reader()?)?;
+    crate::io::reader::check_read_frame(&frame)?;
+    Ok(frame)
 }
 
 /// Parse AMBER prmtop structure text from any [`BufRead`].

@@ -34,6 +34,7 @@ LAMMPS input files:
 - A LAMMPS force-field file (`.ff`) containing TIP3P coefficients
 
 ```python
+import copy
 import math
 from pathlib import Path
 
@@ -80,7 +81,7 @@ The reader names each bonded type by joining its endpoint atom types with `::`
 it is spelled the way the force field lists it:
 
 ```python
-ff = mp.io.read_openmm_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
+ff = mp.io.openmm_xml.OpenmmXmlReader().read(mp.resources.get_path("forcefield/tip3p.xml"))
 print("bond types:", [t.name for t in ff.get_types("bond")])
 print("angle types:", [t.name for t in ff.get_types("angle")])
 
@@ -101,15 +102,15 @@ print("angle types:", [a.get("type") for a in water_template.angles])
 A template is a reusable `Atomistic`; an instance is a copy you place in a
 larger system. Transforms are deterministic rigid-body operations —
 `translate(delta)`, `rotate(axis, angle, about=None)` (angle in radians) and
-`scale([sx, sy, sz], about=None)` — that move the structure in place and return
-it, so they chain:
+`scale([sx, sy, sz], about=None)` — that move the structure in place (they
+return `None`). Copy the template first with `copy.copy`:
 
 ```python
-water_instance = water_template.copy().rotate(
-    [0.0, 0.0, 1.0], math.pi / 2.0, about=[0.0, 0.0, 0.0]
-).translate([5.0, 0.0, 0.0])
+water_instance = copy.copy(water_template)
+water_instance.rotate([0.0, 0.0, 1.0], math.pi / 2.0, about=[0.0, 0.0, 0.0])
+water_instance.translate([5.0, 0.0, 0.0])
 
-print("instance center (Å):", water_instance.center().tolist())
+print("instance center (Å):", water_instance.center(water_instance.atoms).tolist())
 ```
 
 ### 4. Build a water box
@@ -125,8 +126,10 @@ spacing = 3.2  # Å
 water_box = mp.Atomistic(name="water_box_tip3p")
 for idx in range(n**3):
     ix, iy, iz = idx % n, (idx // n) % n, idx // (n * n)
-    mol = water_template.copy().rotate([0.0, 0.0, 1.0], 0.1 * idx)
-    water_box.merge(mol.translate([ix * spacing, iy * spacing, iz * spacing]))
+    mol = copy.copy(water_template)
+    mol.rotate([0.0, 0.0, 1.0], 0.1 * idx)
+    mol.translate([ix * spacing, iy * spacing, iz * spacing])
+    water_box.merge(mol)
 
 box = mp.Box(mp.core.Cell.lengths([n * spacing] * 3))
 print("box lengths (Å):", box.lengths.tolist())
@@ -173,7 +176,7 @@ out_dir = Path("quickstart-output")
 out_dir.mkdir(parents=True, exist_ok=True)
 
 mp.io.write_lammps_data(out_dir / "water_box_tip3p.data", frame)
-mp.io.write_lammps_forcefield(out_dir / "water_box_tip3p.ff", ff, frame)
+mp.io.lammps.LammpsForcefieldWriter(frame).write(out_dir / "water_box_tip3p.ff", ff)
 
 print("wrote:", out_dir / "water_box_tip3p.data")
 print("wrote:", out_dir / "water_box_tip3p.ff")

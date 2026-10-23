@@ -13,7 +13,7 @@ are implementation modules, outside `mp.builder.__all__`.
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `mp.builder.Assembler` | `Assembler(library, placer, orienter=None).assemble(sites, cls=None)`: one copy of `library[bead_type]` per site of an `mp.CoarseGrain`, each site bond joining one accepting port of each end; returns the world as `cls` (`mp.MolGraph` by default) | Every site-graph build: chains, blocks, rings, stars, combs, backmapping |
+| `mp.builder.Assembler` | `Assembler(library, placer, orienter=None).assemble(sites)`: one copy of `library[bead_type]` per site of an `mp.CoarseGrain`, each site bond joining one accepting port of each end; returns the world as the library's graph type (`mp.MolGraph`, `mp.Atomistic` or `mp.CoarseGrain`) | Every site-graph build: chains, blocks, rings, stars, combs, backmapping |
 | `mp.builder.GrowthPlacer` | Grows each molecule breadth-first onto its parent's ports; needs no site positions | Topologies from CGsmiles notation |
 | `mp.builder.SitePlacer` | Puts each copy's centre of mass on its site | Sites with positions (a coarsened CG model) |
 | `mp.builder.AxisOrienter` | Turns each copy onto its site: backbone-to-centre along the site axis and joining atoms along the bonds for chain units; port directions fitted to bond directions for branch units | Backmapping with `SitePlacer` |
@@ -53,7 +53,7 @@ assert eo.n_ports == 2
 
 sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|5}").to_coarsegrain()
 assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
-chain = assembler.assemble(sites, mp.Atomistic)
+chain = assembler.assemble(sites)
 
 atoms = chain.to_frame()["atoms"]
 assert sorted(set(atoms["frag_id"].tolist())) == [0, 1, 2, 3, 4]  # one per site
@@ -195,8 +195,7 @@ chains = [
     assembler.assemble(
         mp.io.cgsmiles.read_cgsmiles(
             "{" + "".join(f"[#{m}]" for m in chain.monomers) + "}"
-        ).to_coarsegrain(),
-        mp.Atomistic,
+        ).to_coarsegrain()
     )
     for chain in plan.chains[:2]
 ]

@@ -6,10 +6,6 @@
 //! the force-field **name** they build under, and the
 //! [`MmffVariant`] their front door pins. Nothing
 //! here is a number: every value comes from the table.
-//!
-//! A caller's own parameter set is its typing table and a force field (a
-//! force-field XML holds one: `molrs::io::read_xml_forcefield`), which
-//! [`Mmff94Typifier::from_parts`] takes — but the *shipped* set is not text.
 
 use std::sync::{Arc, OnceLock};
 
@@ -17,11 +13,8 @@ use super::properties::MmffVariant;
 use crate::ff::forcefield::{DefError, ForceField};
 use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::params::mmff::{
-    MMFF_ELE_STYLE, MMFF_PROP, MMFF_STYLES, MMFF_VDW, MMFF_VDW_STYLE, encode_da_byte,
+    MMFF_ELE_STYLE, MMFF_STYLES, MMFF_VDW, MMFF_VDW_STYLE, encode_da_byte,
 };
-
-use super::atom_properties::MmffAtomProperties;
-use super::engine::MmffLibrary;
 
 /// MMFF's vdW 1-4 weight.
 ///
@@ -37,19 +30,14 @@ const VDW_SCALE_14: f64 = 1.0;
 /// [`force_field`] runs once per variant, under the variant's own name
 /// (`"MMFF94"` or `"MMFF94s"`), so constructing an MMFF typifier is an `Arc`
 /// clone.
-pub(super) fn library(variant: MmffVariant) -> Arc<MmffLibrary> {
-    static MMFF94: OnceLock<Arc<MmffLibrary>> = OnceLock::new();
-    static MMFF94S: OnceLock<Arc<MmffLibrary>> = OnceLock::new();
+pub(super) fn library(variant: MmffVariant) -> Arc<ForceField> {
+    static MMFF94: OnceLock<Arc<ForceField>> = OnceLock::new();
+    static MMFF94S: OnceLock<Arc<ForceField>> = OnceLock::new();
     let (cell, name) = match variant {
         MmffVariant::Mmff94 => (&MMFF94, "MMFF94"),
         MmffVariant::Mmff94s => (&MMFF94S, "MMFF94s"),
     };
-    Arc::clone(cell.get_or_init(|| {
-        Arc::new(MmffLibrary {
-            params: typing_params(),
-            ff: force_field(name),
-        })
-    }))
+    Arc::clone(cell.get_or_init(|| Arc::new(force_field(name))))
 }
 
 /// Build the shipped [`ForceField`] under `name` (`"MMFF94"` or `"MMFF94s"`).
@@ -71,6 +59,8 @@ fn force_field(name: &str) -> ForceField {
 /// lookups take the first matching style; the numbers are the table's too.
 fn try_force_field(name: &str) -> Result<ForceField, DefError> {
     let mut ff = ForceField::new(name);
+    // The MMFF94 tables are kcal/mol and Å.
+    ff.set_units("real");
 
     for style in MMFF_STYLES {
         match style.category {
@@ -132,15 +122,6 @@ fn try_force_field(name: &str) -> Result<ForceField, DefError> {
         coul: [0.0, 0.0, MMFF_ELE_STYLE.scale14],
     });
     Ok(ff)
-}
-
-/// The typing metadata: MMFF's 95 nine-column atom-property rows.
-///
-/// `sbmb` picks the stretch-bend row, `arom` / `pilp` / `mltb` drive bond
-/// classification, `crd` / `val` gate the type assignment. None of them appears
-/// in an energy.
-fn typing_params() -> MmffAtomProperties {
-    MmffAtomProperties::new(MMFF_PROP.iter().copied())
 }
 
 #[cfg(test)]

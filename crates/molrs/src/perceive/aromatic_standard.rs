@@ -10,7 +10,7 @@
 //! Run them with:
 //!
 //! ```text
-//! cargo test -p molcrafts-molrs --lib --features smiles aromatic_standard
+//! cargo mrs-test -- perceive::aromatic_standard
 //! ```
 //!
 //! # The invariants, in one place
@@ -158,16 +158,12 @@ fn aromatic_bonds(mol: &Atomistic) -> Vec<RelationId> {
 /// The molecule's `(bond_type, bond_number)` per bond, keyed by endpoint index
 /// pair — a comparison that survives a different bond iteration order.
 fn signature(mol: &Atomistic) -> HashMap<(usize, usize), (u32, u32)> {
-    let index: HashMap<NodeId, usize> = mol
-        .atoms()
-        .enumerate()
-        .map(|(i, (id, _))| (id, i))
-        .collect();
+    let rows = mol.atom_table();
     mol.bonds()
         .map(|(bid, _)| {
             let ends = mol.get_bond(bid).expect("endpoints").nodes;
             let (a, b) = (ends[0], ends[1]);
-            let (i, j) = (index[&a], index[&b]);
+            let (i, j) = (rows.row(a).unwrap(), rows.row(b).unwrap());
             (
                 (i.min(j), i.max(j)),
                 (bond_type(mol, bid), bond_number(mol, bid)),
@@ -659,27 +655,23 @@ fn a_protonated_ring_nitrogen_never_ends_up_four_valent() {
         ("purine", "c1nc2[nH]cnc2cn1"),
     ] {
         let mol = standardize(smiles);
-        let index: HashMap<NodeId, usize> = mol
-            .atoms()
-            .enumerate()
-            .map(|(i, (id, _))| (id, i))
-            .collect();
+        let rows = mol.atom_table();
 
         let mut valence = vec![0u32; mol.n_atoms()];
         for (bid, _) in mol.bonds() {
             let ends = mol.get_bond(bid).expect("endpoints").nodes;
             let (a, b) = (ends[0], ends[1]);
             let n = bond_number(&mol, bid);
-            valence[index[&a]] += n;
-            valence[index[&b]] += n;
+            valence[rows.row(a).unwrap()] += n;
+            valence[rows.row(b).unwrap()] += n;
         }
 
         for (id, atom) in mol.atoms() {
             if uint_prop(&atom, ATOMIC_NUMBER) != Some(Z_N) {
                 continue;
             }
-            let total =
-                valence[index[&id]] + crate::perceive::n_implicit_hydrogens(&mol, id).unwrap_or(0);
+            let total = valence[rows.row(id).unwrap()]
+                + crate::perceive::n_implicit_hydrogens(&mol, id).unwrap_or(0);
             assert!(
                 total <= 3,
                 "{name}: a neutral ring nitrogen reached valence {total}"

@@ -16,7 +16,8 @@ import pytest
 
 def _forcefield() -> mp.ff.forcefield.ForceField:
     """Two atom types and two bond types; ``c3-oh`` is used only by the template."""
-    ff = mp.ff.forcefield.ForceField("hand")
+    ff = mp.ff.forcefield.ForceField("hand", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
     oh = atoms.def_type("oh", mass=15.999)
@@ -132,7 +133,8 @@ def test_the_system_covers_template_only_types(tmp_path):
 
 def test_a_forcefield_missing_a_label_writes_nothing(tmp_path):
     workdir = tmp_path / "rxn"
-    ff = mp.ff.forcefield.ForceField("hand")
+    ff = mp.ff.forcefield.ForceField("hand", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
     ff.def_style("pair", "lj/cut", {"cutoff": 9.0}).def_type(

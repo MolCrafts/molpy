@@ -298,7 +298,7 @@ mod tests {
         frame_set_column_f64(&mut fref, "atoms", "y", &zeros).unwrap();
         frame_set_column_f64(&mut fref, "atoms", "z", &zeros).unwrap();
         if !h.is_empty() {
-            frame_set_box_h(&mut fref, h).unwrap();
+            frame_set_box(&mut fref, h, &[0.0; 3], &[true; 3]).unwrap();
         }
         fref
     }
@@ -354,7 +354,7 @@ mod tests {
             std::env::temp_dir().join(format!("molcxx-xyz-symbols-{}.xyz", std::process::id()));
         let fref = engine_frame(&[8, 1, 1], &[0.0, 1.0, -1.0], &[]);
         write_xyz(path.to_str().unwrap(), &fref, false).unwrap();
-        let mut columns = frame_block_columns(&fref, "atoms");
+        let mut columns = frame_block_columns(&fref, "atoms").unwrap();
         columns.sort();
         assert_eq!(columns, [keys::ATOMIC_NUMBER, "x", "y", "z"]);
 
@@ -432,7 +432,7 @@ mod tests {
 
         let frame = read_xyz(path.to_str().unwrap()).expect("read_xyz");
         std::fs::remove_file(path).unwrap();
-        let columns = frame_block_columns(&frame, "atoms");
+        let columns = frame_block_columns(&frame, "atoms").unwrap();
         assert!(columns.iter().any(|column| column == "atomic_number"));
         assert!(!columns.iter().any(|column| column == "species"));
         assert!(!columns.iter().any(|column| column == "element"));
@@ -445,7 +445,7 @@ mod tests {
             [8u64, 1]
         );
         assert_eq!(
-            frame_box_h(&frame),
+            frame_box(&frame).unwrap().h,
             [5.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 5.0]
         );
     }
@@ -522,13 +522,14 @@ mod tests {
         );
         assert!(
             !frame_block_columns(&back, "atoms")
+                .unwrap()
                 .iter()
                 .any(|column| column == keys::ELEMENT),
             "no symbol column is synthesized for the native format"
         );
         assert_eq!(frame_column_f64(&back, "atoms", "q").unwrap(), [-0.6, 0.3]);
         assert_eq!(frame_column_f64(&back, "atoms", "x").unwrap(), [0.0, 1.0]);
-        assert_eq!(frame_box_h(&back), CUBE_10);
+        assert_eq!(frame_box(&back).unwrap().h, CUBE_10);
         assert!(
             read_mrec_trajectory_frame(path, 0).is_err(),
             "a frame record has no trajectory section"

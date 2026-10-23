@@ -18,7 +18,7 @@ module named after their Rust owner (`mp.core` is `molrs::core`).
 | Layer | What it means | Names |
 |-------|---------------|-------|
 | **Promoted core data classes** | The data classes a user handles directly, on the root as the `mp.core` objects (`mp.Frame is mp.core.Frame`). No function, algorithm or unit preset is promoted. | `Frame`, `Block`, `Trajectory`, `Box`, `MolGraph`, `Atomistic`, `CoarseGrain`, `Atom`, `Bond`, `Angle`, `Dihedral`, `Improper`, `Bead`, `CgBond`, `Port`, `VirtualSite`, `DrudeParticle`, `MasslessSite`, `Element`, `Topology` |
-| **Subsystems of the core** | One molpy module per subsystem of the Rust core. Behaviour and docs come from the native core. | `mp.core` — the core data model in one module: the classes above plus `FrameMeta`, `MetaValue`, `keys`, `schema`, `NodeRef`, `Refs`, regions (`Cuboid`, `Sphere`, `HalfSpace`, `Region`, …), `NeighborList`, `VerletSkin`, `UnitRegistry`, `UnitPreset`, `Quantity`, … · `mp.perceive` (`assign_rings`, `perceive_rings`, `add_hydrogens`, `assign_aromaticity`, …, `RingSet`, `SmartsPattern`, `Reaction`, `SubgraphMatcher`, …) · `mp.optimize` (`Lbfgs`, `OptimizationReport`) · `mp.conformer` (`Conformer`, …) · `mp.io` (every `read_*` / `write_*`, with the per-format submodules `mp.io.smiles`, `mp.io.cgsmiles`, `mp.io.lammps`, `mp.io.mrec`, and the trajectory readers' `mp.io.pdb`, `mp.io.xyz`, `mp.io.gro`, `mp.io.dcd`, `mp.io.trr`, `mp.io.xtc`) · `mp.ff` (`forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `clpol_scaling`) · `mp.compute` · `mp.md` · `mp.op` · `mp.builder` · `mp.stream` |
+| **Subsystems of the core** | One molpy module per subsystem of the Rust core. Behaviour and docs come from the native core. | `mp.core` — the core data model in one module: the classes above plus `FrameMeta`, `MetaValue`, `keys`, `schema`, `NodeRef`, `Refs`, regions (`Cuboid`, `Sphere`, `HalfSpace`, `Region`, …), `NeighborList`, `VerletSkin`, `UnitRegistry`, `UnitPreset`, `Quantity`, … · `mp.perceive` (`assign_rings`, `perceive_rings`, `add_hydrogens`, `assign_aromaticity`, …, `RingSet`, `SmartsPattern`, `Reaction`, `SubgraphMatcher`, …) · `mp.optimize` (`Lbfgs`, `OptimizationReport`) · `mp.conformer` (`Conformer`, …) · `mp.io` (every `read_*` / `write_*`, with the per-format submodules `mp.io.smiles`, `mp.io.cgsmiles`, `mp.io.lammps`, `mp.io.mrec`, the force-field formats' `mp.io.openmm_xml`, `mp.io.gromacs`, `mp.io.amber`, `mp.io.xml`, and the trajectory readers' `mp.io.pdb`, `mp.io.xyz`, `mp.io.gro`, `mp.io.dcd`, `mp.io.trr`, `mp.io.xtc`) · `mp.ff` (`forcefield`, `potential`, `compile`, `typifier`, `charge`, `ir`, `style_registry`, `params`, `clpol_scaling`) · `mp.compute` · `mp.md` · `mp.op` · `mp.builder` · `mp.stream` |
 | **molpy's additions** | Defined in molpy, placed in the subsystem whose types they act on. | `mp.core`: the selectors (`ColumnSelector`, `AtomIndexSelector`, `MaskPredicate`) and `TrajectorySplitter` with its strategies · `mp.io.lammps`: `LammpsLogMetricReader` · `mp.io.mlp_jsonl`: `MlpJsonlMetricReader` · `mp.io.mrec`: `MrecMetricReader` · `mp.ff.typifier`: the AmberTools typifiers · `mp.builder`: crystals, polymers, virtual sites, `PackingTemplate` |
 | **molpy's own subpackages** | Python only, no Rust counterpart. | `mp.engine` (with `Script`), `mp.tool`, `mp.config`, `mp.resources` |
 
@@ -32,7 +32,7 @@ module named after their Rust owner (`mp.core` is `molrs::core`).
 | Represent a time-ordered frame sequence | `Trajectory` | [Core](core.md) |
 | Perceive angles/dihedrals in place; bond-graph distances; molecule ids of a frame | `generate_topology`, `topo_distances`, `Topology.from_frame` | [Core](core.md) |
 | Define and query force field parameters | `mp.ff.forcefield.ForceField`, `Style`, `ForceFieldType` | [Core](core.md) |
-| Parse SMILES / SMARTS | `mp.io.read_smiles_str`, `mp.io.smiles.SmilesIr`, `mp.perceive.SmartsPattern` | [Notation](notation.md) |
+| Parse SMILES / SMARTS | `mp.io.smiles.read_smiles`, `mp.io.smiles.SmilesIr`, `mp.perceive.SmartsPattern` | [Notation](notation.md) |
 | Perceive hydrogens / aromaticity / rings | `mp.perceive.add_hydrogens`, `assign_aromaticity`, `perceive_rings`, `RingSet` | [Core](core.md) |
 | Apply a reaction SMARTS to a graph (bond formation / removal) | `Reaction` | [Notation](notation.md) |
 | Generate `fix bond/react` pre/post topology templates | `mp.io.lammps.BondReactTemplate`, `write_lammps_bond_react_system` | [IO](io.md) |
@@ -42,7 +42,7 @@ module named after their Rust owner (`mp.core` is `molrs::core`).
 | Assign force field types (OPLS-AA, MMFF94, GAFF / GAFF2; AM1-BCC charges with `mp.ff.charge.Am1BccModel`, sqm via AmberTools) | `mp.ff.typifier.OplsAaTypifier`, `Mmff94Typifier`, `AtdTypifier`, `GaffTypifier`, `AntechamberTypifier`, `TleapTypifier` | [Typifier](typifier.md) |
 | Evaluate bond, angle, and pair potentials | `mp.ff.compile.PotentialCompiler`, `ExplicitTerms`, `mp.ff.potential.Potentials` | [Potential](potential.md) |
 | Register a force-field style or category from Python | `mp.ff.style_registry.StyleDeclaration`, `register_style`, `register_category` | [Potential](potential.md) |
-| Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.io.read_openmm_forcefield` | [I/O](io.md) |
+| Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.io.openmm_xml.OpenmmXmlReader` | [I/O](io.md) |
 | Store a frame, trajectory or force field as a `*.mrec` record | `mp.io.write_mrec`, `mp.io.mrec.MrecReader`, `mp.io.mrec.MrecFile` | [I/O](io.md) |
 | Catch an external program's failure, inspect its environment | `mp.tool.ToolError`, `mp.tool.EnvironmentSpec` | [Tool](tool.md) |
 | Plan polydisperse polymer systems | `SystemPlanner`, `PolydisperseChainGenerator`, `SchulzZimmPolydisperse` | [Builder](builder.md) |
@@ -56,7 +56,7 @@ module named after their Rust owner (`mp.core` is `molrs::core`).
 | Package | Responsibility |
 |---------|---------------|
 | [Core](core.md) | Foundational data structures: `Atomistic`, `Frame`, `Block`, `Box`, `Trajectory`, `NodeRef`/`RelationRef`, regions, `UnitRegistry` / `UnitPreset`, and `mp.ff.forcefield.ForceField` |
-| [Notation](notation.md) | SMILES / CGsmiles text (`mp.io.read_smiles_str`, `mp.io.smiles.SmilesIr`, `mp.io.cgsmiles.CgSmilesIr`), SMARTS patterns (`mp.perceive.SmartsPattern`) |
+| [Notation](notation.md) | SMILES / CGsmiles text (`mp.io.smiles.read_smiles`, `mp.io.smiles.SmilesIr`, `mp.io.cgsmiles.CgSmilesIr`), SMARTS patterns (`mp.perceive.SmartsPattern`) |
 | [Builder](builder.md) | System construction: site-graph assembly and placers, polydisperse planning, nanostructures, crystals, virtual sites |
 | [Pack](pack.md) | Spatial packing via molpack (`molcrafts-molpack`) |
 | [Conformer](conformer.md) | 3D conformer generation from molecular graphs |

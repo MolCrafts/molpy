@@ -302,7 +302,7 @@ class TestMrecReader:
     def test_claims_a_packed_record(self, tmp_path: Path):
         """molrs packs a closed record into ``*.mrec.zip``; it is the same run."""
         packed = Path(
-            mp.io.mrec.pack_mrec_zip(str(write_mrec(tmp_path / "run.mrec", [0, 10])))
+            mp.io.mrec.pack_mrec_zip(write_mrec(tmp_path / "run.mrec", [0, 10]))
         )
         assert packed.name == "run.mrec.zip"
         assert "**/*.mrec.zip" in mp.io.mrec.MrecMetricReader.patterns

@@ -114,7 +114,7 @@ class LammpsLogMetricReader:
         source: str = "",
         request: ReadRequest | None = None,
     ) -> Iterator[dict[str, Any]]:
-        """Yield the thermo records *request* selects (see :mod:`._metric_reader`).
+        """Yield the thermo records *request* selects (see :mod:`molpy.io.metric_reader`).
 
         The raw stream is row-major: for each run, for each thermo row, one
         record per non-``Step`` column, so ``since`` counts those records.

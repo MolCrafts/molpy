@@ -9,6 +9,7 @@ use slotmap::{Key, KeyData, SecondaryMap, new_key_type};
 use smallvec::SmallVec;
 
 use crate::core::Block;
+use crate::core::DType;
 use crate::core::Frame;
 use crate::core::MolRsError;
 use crate::core::keys;
@@ -394,12 +395,26 @@ enum TypedColumn<'a> {
 impl<'a> MaskedColumns<'a> {
     /// Type `block`'s columns, skipping the keys in `skip` (a relation
     /// block's endpoint columns, which are structure rather than properties).
-    /// A dtype that graph properties cannot represent is refused explicitly.
+    ///
+    /// Graph properties store integers as [`I`], so a wider integer column
+    /// reads back at its own width only when the Frame schema declares that
+    /// width for its key ([`emit_column`] re-types it on the way out). Any
+    /// other `i64` / `u64` column, and every dtype graph properties cannot
+    /// represent, is refused explicitly rather than narrowed.
     fn of(block: &'a Block, skip: &[String]) -> Result<Self, MolRsError> {
         let mut cols = Vec::with_capacity(block.len());
         for key in block.keys() {
             if skip.iter().any(|s| s == key) {
                 continue;
+            }
+            if let Some(dtype @ (DType::I64 | DType::Uint)) = block.dtype(key)
+                && crate::core::schema::column(key).map(|spec| spec.dtype) != Some(dtype)
+            {
+                return Err(MolRsError::validation(format!(
+                    "column '{key}' has dtype {dtype}, which graph properties hold as i32; \
+                     only a Frame-schema key declared {dtype} keeps that width through a \
+                     graph, so this column would come back narrowed"
+                )));
             }
             let typed = if let Some(arr) = block.get(key).and_then(|c| c.get::<f64>()) {
                 TypedColumn::Float(arr)
@@ -1170,6 +1185,35 @@ impl MolGraph {
         self.neighbor_relations(id).map(|(_, _, other)| other)
     }
 
+    /// Arity-2 relations incident to `id` that `which` selects.
+    ///
+    /// `bond` is the kind the leaf calls a chemical bond. Ports are the kind
+    /// named `"ports"`. Every other arity-2 kind is a term. The adjacency
+    /// index holds only arity-2 relations, so angles and dihedrals never
+    /// appear here.
+    pub(crate) fn adjacent<'a, K: crate::core::adjacency::AdjacencyKind + 'a>(
+        &'a self,
+        id: NodeId,
+        bond: KindId,
+        which: crate::core::adjacency::NeighborKinds<K>,
+    ) -> impl Iterator<Item = K::Item<'a>> + 'a {
+        let port = self.kind_id("ports");
+        self.adjacency
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .filter_map(move |&(kind, rid)| {
+                let eps = self.kinds[kind.0 as usize].endpoints.get(rid)?;
+                let other = if eps[0] == id { eps[1] } else { eps[0] };
+                let is_bond = kind == bond;
+                let is_port = Some(kind) == port;
+                if !which.include(is_bond, is_port) {
+                    return None;
+                }
+                Some(which.item(self.kind_name(kind), is_bond, is_port, other, rid))
+            })
+    }
+
     /// Iterate over `(kind, relation, other_node)` for each arity-2 relation
     /// incident to a node. Domain leaves build typed neighbor queries on this.
     pub fn neighbor_relations(
@@ -1760,13 +1804,7 @@ impl MolGraph {
     pub(crate) fn to_frame(&self) -> Result<Frame, MolRsError> {
         let mut frame = Frame::new();
 
-        let node_ids: Vec<NodeId> = self.nodes.handles().collect();
-        let n = node_ids.len();
-        let id_to_row: HashMap<NodeId, usize> = node_ids
-            .iter()
-            .enumerate()
-            .map(|(i, &id)| (id, i))
-            .collect();
+        let n = self.nodes.len();
 
         // ---- atoms (node) block: one column per component (zero-copy reads;
         // columns are already dense and aligned to node row order), in the
@@ -1785,7 +1823,7 @@ impl MolGraph {
             if self.kinds[kidx].props.is_empty() {
                 continue;
             }
-            let block = self.relation_block(kid, &id_to_row)?;
+            let block = self.relation_block(kid)?;
             frame.insert(&self.kind_name[kidx], block);
         }
 
@@ -1793,19 +1831,15 @@ impl MolGraph {
     }
 
     /// The [`Frame`] block of one relation kind: the `atomi`/`atomj`/… endpoint
-    /// columns in position order, addressing nodes by the row order
-    /// `id_to_row` fixes, plus one column per relation property.
+    /// columns in position order, addressing nodes by their node-table row,
+    /// plus one column per relation property.
     ///
     /// # Errors
     ///
     /// [`MolRsError::Validation`] if a column is refused by the block: a
     /// column of the wrong row count, or a canonical key written at a dtype
     /// the Frame schema forbids. [`to_frame`](Self::to_frame) propagates it.
-    fn relation_block(
-        &self,
-        kind: KindId,
-        id_to_row: &HashMap<NodeId, usize>,
-    ) -> Result<Block, MolRsError> {
+    fn relation_block(&self, kind: KindId) -> Result<Block, MolRsError> {
         use ndarray::Array1;
 
         let kidx = kind.0 as usize;
@@ -1818,7 +1852,12 @@ impl MolGraph {
         for pos in 0..self.kind_arity[kidx] {
             let col: Vec<Idx> = rids
                 .iter()
-                .map(|rid| id_to_row[&k.endpoints[*rid][pos]] as Idx)
+                .map(|rid| {
+                    let node = k.endpoints[*rid][pos];
+                    self.nodes
+                        .row(node)
+                        .expect("a relation endpoint is a live node") as Idx
+                })
                 .collect();
             block
                 .insert(rel_col_name(pos), Array1::from_vec(col).into_dyn(), None)
@@ -2626,6 +2665,28 @@ mod tests {
         assert_eq!(atom.get("id"), Some(&PropValue::Int(4)));
         assert_eq!(atom.get("mol_id"), Some(&PropValue::Int(9)));
         assert_eq!(atom.get("frozen"), Some(&PropValue::Bool(true)));
+    }
+
+    /// A `u64` or `i64` column the Frame schema does not declare at that
+    /// width would come back as `i32`: the read refuses it instead, and no
+    /// node is added.
+    #[test]
+    fn extend_from_frame_refuses_an_undeclared_wide_integer_column() {
+        for column in [
+            crate::core::Column::from(ndarray::arr1(&[7_u64]).into_dyn()),
+            crate::core::Column::from(ndarray::arr1(&[7_i64]).into_dyn()),
+        ] {
+            let mut atoms = Block::new();
+            atoms
+                .insert("probe", column, None)
+                .expect("a fresh block takes the column");
+            let mut frame = Frame::new();
+            frame.insert("atoms", atoms);
+            let mut g = MolGraph::new();
+            let msg = g.extend_from_frame(&frame).unwrap_err().to_string();
+            assert!(msg.contains("'probe'") && msg.contains("narrowed"), "{msg}");
+            assert_eq!(g.n_nodes(), 0);
+        }
     }
 
     /// The Frame schema declares `x` a float, so a string is not a narrower

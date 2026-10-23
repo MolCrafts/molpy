@@ -323,6 +323,8 @@ mod tests {
         let lj = |eps: f64, sigma: f64| Params::from_iter([("epsilon", eps), ("sigma", sigma)]);
         let bond = |k: f64, r0: f64| Params::from_iter([("k", k), ("r0", r0)]);
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
             .unwrap()
             .def_type("c3", &["c3"], lj(0.1078, 3.39771))

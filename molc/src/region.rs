@@ -52,18 +52,15 @@ fn publish(region: Arc<dyn Region + Send + Sync>, out: *mut MolcRegionHandle) ->
 }
 
 /// Run `f` against a live region, or report a stale handle.
+///
+/// The region is cloned out of the registry first, so `f` runs with the
+/// registry unlocked: a panic in it cannot poison the registry.
 fn with_region<R>(
     handle: MolcRegionHandle,
     f: impl FnOnce(&dyn Region) -> R,
 ) -> Result<R, MolcStatus> {
-    let registry = lock_registry();
-    match registry.regions.get(handle_to_region_key(handle)) {
-        Some(r) => Ok(r.with_region(f)),
-        None => {
-            error::set_last_error("stale or unknown region handle");
-            Err(MolcStatus::InvalidRegionHandle)
-        }
-    }
+    let region = region_arc(handle)?;
+    Ok(f(&*region))
 }
 
 fn region_arc(handle: MolcRegionHandle) -> Result<Arc<dyn Region + Send + Sync>, MolcStatus> {
@@ -168,7 +165,7 @@ pub unsafe extern "C" fn molc_region_parallelepiped(
         match Parallelepiped::new(cell, F3::from_vec(o.to_vec())) {
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
-                error::set_last_error(e);
+                error::set_last_error(e.to_string());
                 MolcStatus::InvalidArgument
             }
         }
@@ -192,7 +189,7 @@ pub unsafe extern "C" fn molc_region_half_space(
         match HalfSpace::new(triple(normal3), triple(point3)) {
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
-                error::set_last_error(e);
+                error::set_last_error(e.to_string());
                 MolcStatus::InvalidArgument
             }
         }
@@ -218,7 +215,7 @@ pub unsafe extern "C" fn molc_region_cylinder(
         match Cylinder::new(triple(base3), triple(axis3), radius, length) {
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
-                error::set_last_error(e);
+                error::set_last_error(e.to_string());
                 MolcStatus::InvalidArgument
             }
         }
@@ -242,7 +239,7 @@ pub unsafe extern "C" fn molc_region_ellipsoid(
         match Ellipsoid::new(triple(center3), triple(semi_axes3)) {
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
-                error::set_last_error(e);
+                error::set_last_error(e.to_string());
                 MolcStatus::InvalidArgument
             }
         }

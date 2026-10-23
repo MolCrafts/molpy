@@ -144,7 +144,10 @@ density in $r$ and integrates to 1, and its second moment reproduces the MSD:
 r, dr = result.r_centers, result.dr
 print(np.round((result.g_self * dr).sum(axis=1), 6))      # -> [1. 1. 1.]
 second = (r**2 * result.g_self * dr).sum(axis=1)
-msd = Msd(max_lag=150).compute(positions=positions, dt=1.0).values[result.lags, 0]
+accumulator = Msd(max_lag=150).accumulator()
+for frame_positions in positions:
+    accumulator.push(frame_positions, dt=1.0)
+msd = accumulator.finish().values[result.lags, 0]
 print(np.round(second / msd, 3))                          # -> [1.004 1.001 1.001]
 ```
 

@@ -129,35 +129,10 @@ impl MolGraph {
         }
 
         // Multi-source BFS: hops[v] = min distance to any center.
-        let mut hops: HashMap<NodeId, i64> = HashMap::new();
-        let mut queue = VecDeque::new();
-        for &c in centers {
-            if hops.insert(c, 0).is_none() {
-                queue.push_back(c);
-            }
-        }
-        while let Some(cur) = queue.pop_front() {
-            let d = hops[&cur];
-            if d >= radius {
-                continue;
-            }
-            for (k, _rid, other) in self.neighbor_relations(cur) {
-                if k != kind {
-                    continue;
-                }
-                let nd = d + 1;
-                if nd > radius {
-                    continue;
-                }
-                match hops.get(&other) {
-                    Some(&old) if old <= nd => {}
-                    _ => {
-                        hops.insert(other, nd);
-                        queue.push_back(other);
-                    }
-                }
-            }
-        }
+        let mut hops: HashMap<NodeId, i64> = self
+            .hops_from(centers, kind, Some(radius), None)
+            .into_iter()
+            .collect();
 
         let mut selected: HashSet<NodeId> = hops.keys().copied().collect();
 
@@ -165,7 +140,10 @@ impl MolGraph {
         // grown set — the added nodes have no BFS distance yet, and a node the
         // radius already reached keeps the same one (see `ExtractedBall`).
         if self.close_under_groups(&mut selected, whole_groups) {
-            hops = self.hops_within(centers, &selected, kind);
+            hops = self
+                .hops_from(centers, kind, None, Some(&selected))
+                .into_iter()
+                .collect();
         }
 
         let mut boundary: Vec<NodeId> = selected
@@ -229,33 +207,49 @@ impl MolGraph {
         }
     }
 
-    /// Multi-source BFS from `centers` restricted to `selected`, unbounded.
-    fn hops_within(
+    /// Hop counts over relations of the arity-2 `kind` from `centers`: the
+    /// one bounded multi-source BFS of the graph layer.
+    ///
+    /// Every node reached comes back once, in discovery order, with its
+    /// distance to the nearest center (a center is at 0). The search stops
+    /// expanding at `max_hops` (`None`: unbounded) and, given `within`, never
+    /// leaves that node set. A node not reached is absent; a center that is
+    /// not live, or not in `within`, seeds nothing. The cost is the ball
+    /// reached, not the graph.
+    pub(crate) fn hops_from(
         &self,
         centers: &[NodeId],
-        selected: &HashSet<NodeId>,
         kind: KindId,
-    ) -> HashMap<NodeId, i64> {
-        let mut hops: HashMap<NodeId, i64> = HashMap::with_capacity(selected.len());
+        max_hops: Option<i64>,
+        within: Option<&HashSet<NodeId>>,
+    ) -> Vec<(NodeId, i64)> {
+        let admitted = |n: &NodeId| within.is_none_or(|set| set.contains(n));
+        let mut hops: HashMap<NodeId, i64> = HashMap::new();
+        let mut order: Vec<(NodeId, i64)> = Vec::new();
         let mut queue = VecDeque::new();
         for &c in centers {
-            if selected.contains(&c) && hops.insert(c, 0).is_none() {
+            if self.node_table().contains(c) && admitted(&c) && hops.insert(c, 0).is_none() {
+                order.push((c, 0));
                 queue.push_back(c);
             }
         }
         while let Some(cur) = queue.pop_front() {
-            let d = hops[&cur] + 1;
+            let d = hops[&cur];
+            if max_hops.is_some_and(|limit| d >= limit) {
+                continue;
+            }
             for (k, _rid, other) in self.neighbor_relations(cur) {
-                if k != kind || !selected.contains(&other) {
+                if k != kind || !admitted(&other) {
                     continue;
                 }
                 if let std::collections::hash_map::Entry::Vacant(slot) = hops.entry(other) {
-                    slot.insert(d);
+                    slot.insert(d + 1);
+                    order.push((other, d + 1));
                     queue.push_back(other);
                 }
             }
         }
-        hops
+        order
     }
 
     /// Build a new graph with mirrored kind registry, remapped nodes in

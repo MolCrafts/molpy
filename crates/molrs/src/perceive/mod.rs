@@ -54,7 +54,7 @@
 //! | [`assign_equivalence_classes`] | `equiv_class` (0-based class id) | — |
 //!
 //! The modules are private; every name is re-exported here, so the Rust path
-//! `molrs::perceive::<name>` is the Python path `molrs.perceive.<name>`.
+//! `molrs::perceive::<name>` is the Python path `molpy.perceive.<name>`.
 
 /// Executable specification for the Aromatic Bond Representation Standard.
 /// Tests only; see the module docs for how to run the red line.
@@ -102,4 +102,4 @@ pub use stereo::{
     perceive_chiral_centers, perceive_tetrahedral_stereo,
 };
 pub use subgraph::SubgraphMatcher;
-pub use valence::n_implicit_hydrogens;
+pub use valence::{n_hydrogens, n_implicit_hydrogens};

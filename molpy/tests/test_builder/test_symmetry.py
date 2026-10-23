@@ -3,7 +3,6 @@
 import numpy as np
 import pytest
 
-from molpy.builder.symmetry import parse_triplet
 import molpy as mp
 
 #: Generators of Fm-3m (No. 225): the two F-centring translations, then 2z, 2y,
@@ -41,7 +40,8 @@ class TestSpaceGroup:
 
     def test_closed_translations_lie_in_unit_interval(self):
         group = mp.builder.SpaceGroup.from_generators(["-y,x-y,z", "x+2/3,y+1/3,z+1/3"])
-        for _, t in group.operators:
+        for op in group.operators:
+            t = op.translation
             assert np.all((t >= 0.0) & (t < 1.0))
 
     def test_from_triplets_accepts_cif_meta_tuple(self):
@@ -81,23 +81,23 @@ class TestEquivalentPositions:
 
 
 def test_parse_triplet_identity():
-    R, t = parse_triplet("x,y,z")
-    assert np.allclose(R, np.eye(3))
-    assert np.allclose(t, 0)
+    op = mp.builder.SymOp.parse("x,y,z")
+    assert np.allclose(op.rotation, np.eye(3))
+    assert np.allclose(op.translation, 0)
 
 
 def test_parse_triplet_fraction_and_sign():
-    R, t = parse_triplet("-y+1/2, x+1/2, z+1/2")
-    assert np.allclose(R, [[0, -1, 0], [1, 0, 0], [0, 0, 1]])
-    assert np.allclose(t, [0.5, 0.5, 0.5])
+    op = mp.builder.SymOp.parse("-y+1/2, x+1/2, z+1/2")
+    assert np.allclose(op.rotation, [[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    assert np.allclose(op.translation, [0.5, 0.5, 0.5])
 
 
 def test_translation_wrapped_into_unit_cell():
-    _, t = parse_triplet("x+5/4, y, z-3/4")
+    t = mp.builder.SymOp.parse("x+5/4, y, z-3/4").translation
     assert np.allclose(t, [0.25, 0.0, 0.25])  # 5/4 -> 1/4, -3/4 -> 1/4
     assert all(0 <= ti < 1 for ti in t)
 
 
 def test_bad_triplet_rejected():
     with pytest.raises(ValueError):
-        parse_triplet("x,y")
+        mp.builder.SymOp.parse("x,y")

@@ -40,10 +40,7 @@ strategies (:class:`FrameIntervalStrategy`, :class:`TimeIntervalStrategy`,
 :class:`CustomStrategy`, the :class:`SplitStrategy` base).
 """
 
-# `collections.abc.Mapping` is aliased so that it is not exported here.
-from collections.abc import Mapping as _AbcMapping
-
-from collections.abc import MutableMapping as _AbcMutableMapping
+import collections.abc
 
 from molpy._core import (
     Angle,
@@ -104,13 +101,13 @@ from molpy.core import constants, keys, schema
 
 # `frame.meta` implements the full mapping protocol in Rust; this makes
 # `isinstance(frame.meta, MutableMapping)` say so too.
-_AbcMutableMapping.register(FrameMeta)  # ty: ignore[unresolved-attribute]
+collections.abc.MutableMapping.register(FrameMeta)  # ty: ignore[unresolved-attribute]
 
 # Registration supplies isinstance only — MetaDocument implements its own
 # surface. Callers that branch on Mapping rather than dict:
 # molvis/python/src/molvis/wire.py:389,530
 # molrec/tests/molrs_adapter.py:110-113
-_AbcMapping.register(MetaDocument)  # ty: ignore[unresolved-attribute]
+collections.abc.Mapping.register(MetaDocument)  # ty: ignore[unresolved-attribute]
 
 from molpy.core.selector import AtomIndexSelector, ColumnSelector, MaskPredicate
 from molpy.core.splitter import (

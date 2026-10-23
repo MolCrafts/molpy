@@ -18,6 +18,9 @@ from typing import ClassVar, Literal
 from molpy.tool.process import ToolError, tail_of
 from molpy.tool.tool import Tool
 
+#: antechamber's ``-c`` charge methods.
+ChargeMethod = Literal["gas", "bcc", "abcg2", "mul", "be3", "cm2", "esp"]
+
 
 class AmberProgram(Tool):
     """One AmberTools program, run in :attr:`workdir`.
@@ -120,9 +123,7 @@ class Antechamber(AmberProgram):
         parameter_set: Literal["gaff", "gaff2", "amber", "bcc", "abcg2", "sybyl"],
         input_format: Literal["pdb", "mol2", "ac"] = "pdb",
         output_format: Literal["mol2", "ac"] = "mol2",
-        charge_method: Literal[
-            "gas", "bcc", "abcg2", "mul", "be3", "cm2", "esp"
-        ] = "bcc",
+        charge_method: ChargeMethod = "bcc",
         net_charge: int = 0,
         formal_charges: bool = False,
         check: bool = True,

@@ -199,6 +199,8 @@ water = mp.Frame(
 )
 water.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ff = mp.ff.forcefield.ForceField("tip3p", units="real")
+# A rigid water has no 1-4 pairs: every 1-2 / 1-3 pair is excluded.
+ff.set_special_bonds([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
 atoms = ff.def_style("atom", "full")
 ow = atoms.def_type("OW", mass=15.999, charge=-0.834, element="O")
 hw = atoms.def_type("HW", mass=1.008, charge=0.417, element="H")

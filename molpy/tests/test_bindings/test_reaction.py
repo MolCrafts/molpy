@@ -17,9 +17,9 @@ from molpy.core import Atom, BondNumber, BondOrder
 Z = {"H": 1, "C": 6, "N": 7, "O": 8, "S": 16, "Br": 35}
 
 
-def _atom(mol, symbol, x, y, z):
+def _atom(mol, symbol, x, y, z, **props):
     """Add an atom of element ``symbol`` at ``(x, y, z)``; return its view."""
-    return mol.add_atom(atomic_number=Z[symbol], x=x, y=y, z=z)
+    return mol.add_atom(atomic_number=Z[symbol], x=x, y=y, z=z, **props)
 
 
 # ---------------------------------------------------------------------------
@@ -30,13 +30,14 @@ def _atom(mol, symbol, x, y, z):
 def _amine_plus_ester():
     """A single Atomistic holding two disconnected fragments.
 
-    Amine  : N0 with two explicit H (matches ``[N;H2:1]``).
+    Amine  : N0 with two explicit H and no undrawn one, ``h_count = 0``
+             (matches ``[N;H2:1]``; by valence alone a bare N is NH3).
     Ester  : carbonyl C0 =O1, single -O2- to methyl C3
              (matches ``[C:2](=O)OC``; leaving group = O2 + C3).
     """
     mol = mp.core.Atomistic()
     # amine
-    n0 = _atom(mol, "N", 0.0, 0.0, 0.0)
+    n0 = _atom(mol, "N", 0.0, 0.0, 0.0, h_count=0)
     h1 = _atom(mol, "H", 0.6, 0.8, 0.0)
     h2 = _atom(mol, "H", -0.6, 0.8, 0.0)
     mol.add_bond(n0, h1)
@@ -55,7 +56,7 @@ def _amine_plus_ester():
 
 def _bonded(mol, atom):
     """The atoms bonded to ``atom``."""
-    return {other for other, _ in mol.neighbor_bonds(atom)}
+    return {other for other, _ in mol.neighbors(atom)}
 
 
 def _bind(reaction, mol):
@@ -244,8 +245,9 @@ def test_apply_touched_thiol_ene_two_carbons_and_sulfur():
     mol = mp.core.Atomistic()
     c1 = _atom(mol, "C", 0.0, 0.0, 0.0)
     c2 = _atom(mol, "C", 1.3, 0.0, 0.0)
-    s3 = _atom(mol, "S", 3.0, 0.0, 0.0)
-    hs = _atom(mol, "H", 3.0, 1.0, 0.0)  # explicit H so [S;H1] matches
+    # One drawn H and no undrawn one (by valence alone a bare S is H2S).
+    s3 = _atom(mol, "S", 3.0, 0.0, 0.0, h_count=0)
+    hs = _atom(mol, "H", 3.0, 1.0, 0.0)
     b = mol.add_bond(c1, c2)
     mol.set_bond_class(b, BondOrder.Double, BondNumber.Double)
     mol.add_bond(s3, hs)

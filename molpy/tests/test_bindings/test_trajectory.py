@@ -38,6 +38,17 @@ def test_integer_index_counts_from_either_end():
         traj[-6]
 
 
+def test_an_indexed_frame_is_the_trajectorys_own():
+    """``traj[i]`` is live, as ``frame["atoms"]`` is: an edit through it is
+    an edit to the trajectory, and a slice shares the same frames."""
+    traj = _labelled()
+    traj[1]["atoms"]["x"] = np.array([42.0])
+    assert _x(traj[1]) == 42.0
+    assert _x(traj[1:3][0]) == 42.0
+    traj[1:3][1]["atoms"]["x"] = np.array([7.0])
+    assert _x(traj[2]) == 7.0
+
+
 def test_a_slice_is_a_sub_trajectory_with_its_labels():
     sub = _labelled()[1:5:2]
     assert isinstance(sub, Trajectory)
@@ -147,16 +158,10 @@ def test_observable_record_refuses_an_unsupported_value():
         mp.core.ObservableRecord("bad", "scalar", object())
 
 
-def test_trajectory_snapshots_do_not_share_writable_arrays():
+def test_the_constructor_takes_its_own_copies():
     source = _frames(1)[0]
     trajectory = Trajectory([source])
     source["atoms"]["x"][0] = 41
-    assert _x(trajectory[0]) == 0
-    frame = trajectory[0]
-    frame["atoms"]["x"][0] = 42
-    assert _x(trajectory[0]) == 0
-    sliced = trajectory[:]
-    sliced.frames[0]["atoms"]["x"][0] = 43
     assert _x(trajectory[0]) == 0
 
 

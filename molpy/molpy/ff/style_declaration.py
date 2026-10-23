@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
-from molpy._core import style_registry as _style_registry
+from molpy import _core
 
 
 class StyleDeclaration:
@@ -70,7 +70,7 @@ class StyleDeclaration:
     params: ClassVar[Sequence[Any] | Mapping[str, str]] = ()
     style_params: ClassVar[Sequence[Any] | Mapping[str, str]] = ()
     expression: ClassVar[str | None] = None
-    special: ClassVar[str | None] = None
+    special: ClassVar[Literal["lj", "coul"] | None] = None
     samples: ClassVar[Sequence[Mapping[str, Any]] | None] = None
     compound: ClassVar[bool] = False
     replace: ClassVar[bool] = False
@@ -93,7 +93,7 @@ class StyleDeclaration:
         if callable(getattr(cls, "kernel", None)):
             # `kernel` is optional, so it is not declared on the base class.
             kernel = getattr(cls(), "kernel")
-        _style_registry.register_style(
+        _core.style_registry.register_style(
             cls.category,
             cls.name,
             params=cls.params,
@@ -112,9 +112,9 @@ class StyleDeclaration:
         cls, q: Any = None, *, x: Any = None, **params: Any
     ) -> tuple[Any, Any]:
         """:func:`evaluate` of this style."""
-        return _style_registry.evaluate(cls.category, cls.name, q, x=x, **params)
+        return _core.style_registry.evaluate(cls.category, cls.name, q, x=x, **params)
 
     @classmethod
     def unregister(cls) -> None:
         """:func:`unregister_style` this style."""
-        _style_registry.unregister_style(cls.category, cls.name)
+        _core.style_registry.unregister_style(cls.category, cls.name)

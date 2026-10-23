@@ -19,7 +19,8 @@
 //! terms:
 //!
 //! * `dE/dq` (`∂E/∂x`) against a central difference of `E`, relative
-//!   [`DERIVATIVE_RTOL`] ([`IrError::Derivative`]);
+//!   [`DERIVATIVE_RTOL`] ([`IrError::Derivative`]), unless the style's force
+//!   is not its gradient;
 //! * a pair's energy under exchanging `q1` and `q2`, relative
 //!   [`SYMMETRY_RTOL`] ([`IrError::Asymmetric`]);
 //! * an expression beside a native form, with an expression engine
@@ -28,7 +29,9 @@
 //!
 //! Relative errors are measured against `max(|value|, RMS of the values)`.
 //! A Tier-3 constructor builds a whole kernel from a Frame and is never
-//! sampled; its declarations are checked like any other.
+//! sampled; its declarations are checked like any other. A sealed built-in
+//! form is not sampled at run time either: its gate is the test suite's
+//! `builtin_conformance`, on more points than a compile's terms.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -58,7 +61,7 @@ pub const PROBE_TERMS: usize = 8;
 pub(crate) const SEED: u64 = 0x1F1F_0002;
 
 /// `^[a-z][a-z0-9_]*$`, molrec's category name.
-fn is_category_name(name: &str) -> bool {
+pub(crate) fn is_category_name(name: &str) -> bool {
     let mut bytes = name.bytes();
     bytes.next().is_some_and(|b| b.is_ascii_lowercase())
         && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
@@ -572,7 +575,10 @@ pub(crate) fn check_probe(
                 .map(|k| (e_up[k] - e_down[k]) / (2.0 * h[k]))
                 .collect();
             let scale = rms(&de);
-            for k in 0..e.len() {
+            // A style whose force is not its energy's gradient (LAMMPS's
+            // switched `coul/charmm`) writes the derivative its force is
+            // built from; there is no difference of `E` to hold it to.
+            for k in (0..e.len()).filter(|_| spec.force_is_gradient) {
                 if near_edge(category.coordinate, probe.q[k], h[k])
                     || ![e[k], e_up[k], e_down[k], de[k]]
                         .iter()
@@ -598,7 +604,7 @@ pub(crate) fn check_probe(
             let h = 1e-5;
             let flat: Vec<F> = grad.iter().flatten().copied().collect();
             let scale = rms(&flat);
-            for a in 0..probe.arity {
+            for a in (0..probe.arity).filter(|_| spec.force_is_gradient) {
                 for d in 0..3 {
                     let shifted = |by: F| {
                         let mut x = probe.x.clone();

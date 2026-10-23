@@ -17,9 +17,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use serde_json::Value as JsonValue;
 
-use super::json_to_py::json_object_to_pydict;
 use super::source::{PySink, PySource};
-use crate::core::frame::PyFrame;
+use crate::core::frame::{PyFrame, json_map_to_plain_dict};
 use crate::error::io_error_to_pyerr;
 
 /// A `read_<fmt>(source) -> Frame` door over the core function `$rs`.
@@ -769,7 +768,7 @@ pub fn read_prep<'py>(py: Python<'py>, source: PySource<'_>) -> PyResult<Bound<'
     let value = serde_json::to_value(&res)
         .map_err(|e| PyValueError::new_err(format!("failed to serialize prep residue: {e}")))?;
     match value {
-        JsonValue::Object(map) => json_object_to_pydict(py, &map),
+        JsonValue::Object(map) => json_map_to_plain_dict(py, &map),
         _ => Err(PyValueError::new_err(
             "internal error: prep residue did not serialize to an object",
         )),

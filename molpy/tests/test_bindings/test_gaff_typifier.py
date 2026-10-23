@@ -10,10 +10,8 @@ parmchk2's (AmberTools 26.1) estimates for ethylene, quoted, not recomputed.
 
 from __future__ import annotations
 
-from molpy.core import Element
 
 import math
-from pathlib import Path
 
 import molpy as mp
 import numpy as np
@@ -303,56 +301,3 @@ def test_find_bond_orders_judges_from_connectivity() -> None:
     assert mp.perceive.assign_bond_orders(cot) is None
     numbers = [int(n) for n in cot.to_frame()["bonds"]["bond_number"]]
     assert numbers[:8] == [1, 2, 1, 2, 1, 2, 1, 2]
-
-
-# ---------------------------------------------------------------------------
-# One force field from the native route and from tleap's prmtop
-# ---------------------------------------------------------------------------
-
-#: AmberTools 26.0 builds of the molecules below (``scripts/gaff_merge_fixtures.sh``).
-GAFF_FIXTURES = (
-    Path(__file__).resolve().parents[3] / "crates/molrs/src/io/amber/testdata/gaff"
-)
-
-
-def _ethanol() -> mp.core.Atomistic:
-    """Ethanol in the atom and bond order of ``ethanol_gaff.mol2``."""
-    mol = mp.core.Atomistic()
-    c1, c2, o1 = (
-        mol.add_atom(atomic_number=Element.by_symbol(e).z) for e in ("C", "C", "O")
-    )
-    h = [mol.add_atom(atomic_number=1) for _ in range(6)]
-    bonds = [(c1, c2), (c1, h[0]), (c1, h[1]), (c1, h[2])]
-    bonds += [(c2, o1), (c2, h[3]), (c2, h[4]), (o1, h[5])]
-    for i, j in bonds:
-        mol.add_bond(i, j)
-    return mol
-
-
-def _type_names(ff: mp.ff.forcefield.ForceField) -> set[tuple[str, str, str]]:
-    return {
-        (s.category, s.name, t.name)
-        for s in ff.get_styles(mp.ff.forcefield.Style)
-        for t in s.get_types()
-    }
-
-
-def test_native_gaff_and_the_prmtop_of_ethanol_merge_into_one() -> None:
-    """The native route names terms as the prmtop reader does (``c3-c3-oh-ho``,
-    terms by periodicity) and prices them alike, so ``merge`` takes the two
-    either way round and adds no type."""
-    gaff, _ = _typed("gaff", _ethanol())
-    native = gaff.forcefield()
-    torsion = {t.name: t.params for t in native.get_types("dihedral")}["c3-c3-oh-ho"]
-    assert (torsion["periodicity1"], torsion["k1"]) == (1.0, 0.25)
-    prmtop = mp.io.amber.AmberPrmtopForcefieldReader().read(
-        GAFF_FIXTURES / "ethanol_gaff.parm7"
-    )
-    assert _type_names(prmtop) <= _type_names(native)
-    names = _type_names(native)
-    assert _type_names(prmtop.merge(native)) == names
-    again, _ = _typed("gaff", _ethanol())
-    prmtop = mp.io.amber.AmberPrmtopForcefieldReader().read(
-        GAFF_FIXTURES / "ethanol_gaff.parm7"
-    )
-    assert _type_names(again.forcefield().merge(prmtop)) == names

@@ -1,5 +1,6 @@
 //! A finite, capped cylinder.
 
+use super::RegionError;
 use super::primitives::Region;
 use crate::op::{F, Fnx3};
 use ndarray::Array2;
@@ -28,21 +29,31 @@ impl Cylinder {
     ///
     /// # Errors
     ///
-    /// Returns `Err` if `axis` is zero or not finite, or if `radius` or
-    /// `length` is not positive.
-    pub fn new(base: [F; 3], axis: [F; 3], radius: F, length: F) -> Result<Self, String> {
+    /// [`RegionError`] when `axis` is zero or not finite, `radius` or
+    /// `length` is not positive, or `base` is not finite.
+    pub fn new(base: [F; 3], axis: [F; 3], radius: F, length: F) -> Result<Self, RegionError> {
+        const SHAPE: &str = "Cylinder";
         let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
         if !(len > 0.0 && len.is_finite()) {
-            return Err("Cylinder: axis must be a finite non-zero vector".to_string());
+            return Err(RegionError::NoDirection {
+                shape: SHAPE,
+                param: "axis",
+            });
         }
-        if !(radius > 0.0 && radius.is_finite()) {
-            return Err(format!("Cylinder: radius must be > 0, got {radius}"));
-        }
-        if !(length > 0.0 && length.is_finite()) {
-            return Err(format!("Cylinder: length must be > 0, got {length}"));
+        for (param, value) in [("radius", radius), ("length", length)] {
+            if !(value > 0.0 && value.is_finite()) {
+                return Err(RegionError::NonPositive {
+                    shape: SHAPE,
+                    param,
+                    value,
+                });
+            }
         }
         if base.iter().any(|b| !b.is_finite()) {
-            return Err("Cylinder: base must be finite".to_string());
+            return Err(RegionError::NonFinite {
+                shape: SHAPE,
+                param: "base",
+            });
         }
         Ok(Self {
             base,

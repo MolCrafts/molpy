@@ -12,8 +12,9 @@
 //!   three tiers: an expression ([`ExpressionKernel`]), a batch form of one
 //!   coordinate or of the atoms' positions
 //!   ([`ScalarForm`], [`CompoundForm`], built
-//!   into the form kernels of [`crate::ff::potential::form_kernel`]), or a
-//!   constructor that builds a whole kernel (every built-in kernel; `dihedral
+//!   into the form kernels of [`crate::ff::potential::form_kernel`] — every
+//!   built-in whose energy is such a function), or a constructor that
+//!   builds a whole kernel (`pair coul/long/pme`, `cmap charmm`; `dihedral
 //!   rb` is a built-in priced by its expression alone);
 //! * the [`Registry`] refuses anything that does not conform
 //!   ([`conformance`], [`IrError`]) and seals the built-ins;
@@ -170,8 +171,9 @@ pub enum Kernel {
     /// Tier 2: a batch N-body function of positions, built into
     /// [`CompoundTerms`].
     Compound(Arc<dyn CompoundForm>),
-    /// Tier 3: a constructor that builds the whole [`ForceTerm`] itself — every
-    /// built-in kernel.
+    /// Tier 3: a constructor that builds the whole [`ForceTerm`] itself — a
+    /// kernel no form carries (PME's reciprocal-space sum, CMAP's splined
+    /// grids).
     Constructor {
         compiled: KernelConstructor,
         /// The neighbour-driven form of a pair style, and the special-bonds
@@ -244,12 +246,70 @@ impl fmt::Debug for Kernel {
     }
 }
 
+/// A built-in form's kernel built monomorphized on the form's type: the
+/// same form kernel ([`ScalarPair`], [`ScalarBonded`], [`CompoundTerms`]) a
+/// [`Kernel::Scalar`] / [`Kernel::Compound`] is built into, its force law
+/// inlined (a pair style [`fused`](ScalarPair::fused) into one pass), where
+/// the registered `dyn` form is called through a vtable a batch at a time.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Native {
+    compiled: NativeBuild,
+    /// The neighbour-driven form of a pair style.
+    typed: Option<NativeBuild>,
+}
+
+type NativeBuild = fn(
+    &CategorySpec,
+    &StyleSpec,
+    &Params,
+    &[(&str, &Params)],
+    &Frame,
+) -> Result<ForceTerm, crate::ff::potential::CompileError>;
+
+impl Native {
+    /// The kernels of the scalar form `Fm`.
+    pub(crate) fn scalar<Fm: ScalarForm + Default>() -> Self {
+        Self {
+            compiled: |category, spec, style, tp, frame| {
+                let form = Arc::new(Fm::default());
+                Ok(if category.is_pair_driven() {
+                    ForceTerm::pair(ScalarPair::compiled(form, spec, style, tp, frame)?.fused())
+                } else {
+                    ForceTerm::indexed(ScalarBonded::build(form, category, spec, style, tp, frame)?)
+                })
+            },
+            typed: Some(|_, spec, style, tp, frame| {
+                let form = Arc::new(Fm::default());
+                Ok(ForceTerm::pair(
+                    ScalarPair::typed(form, spec, style, tp, frame)?.fused(),
+                ))
+            }),
+        }
+    }
+
+    /// The kernel of the compound form `Fm`.
+    pub(crate) fn compound<Fm: CompoundForm + Default>() -> Self {
+        Self {
+            compiled: |category, spec, style, tp, frame| {
+                let form = Arc::new(Fm::default());
+                Ok(ForceTerm::indexed(CompoundTerms::build(
+                    form, category, spec, style, tp, frame,
+                )?))
+            },
+            typed: None,
+        }
+    }
+}
+
 /// One registered style: its spec and its kernel (none for a style priced
 /// by its expression alone, or in a category that prices nothing).
 #[derive(Clone, Debug)]
 pub(crate) struct RegisteredStyle {
     spec: StyleSpec,
     kernel: Option<Kernel>,
+    /// A sealed built-in form's kernel monomorphized on its type, which
+    /// prices it in place of `kernel`'s `dyn` form.
+    native: Option<Native>,
     sealed: bool,
     /// What the first-compile verdict is keyed on instead of the form's
     /// address: the registry expression an instance expression is checked
@@ -291,6 +351,7 @@ impl RegisteredStyle {
         Some(compile(category, &spec).map(|x| RegisteredStyle {
             spec,
             kernel: Some(Kernel::Expression(x)),
+            native: None,
             sealed: false,
             probe_id: None,
         }))
@@ -348,6 +409,7 @@ impl RegisteredStyle {
         Ok(Cow::Owned(RegisteredStyle {
             spec,
             kernel,
+            native: None,
             sealed: false,
             probe_id,
         }))
@@ -395,7 +457,11 @@ impl RegisteredStyle {
         }
     }
 
-    /// Run the first-compile conformance check of a form kernel.
+    /// Run the first-compile conformance check of a form kernel. A sealed
+    /// built-in is not sampled at run time: its gate is
+    /// `style_registry::builtin_conformance` (every built-in against its
+    /// Appendix-A expression on seeded configurations, both compile doors),
+    /// which holds it on more points than one compile's terms would.
     fn first_compile(
         &self,
         category: &CategorySpec,
@@ -403,6 +469,9 @@ impl RegisteredStyle {
         expressions: Option<ExpressionCompiler>,
         probe: impl FnOnce() -> Probe,
     ) -> Result<(), IrError> {
+        if self.sealed {
+            return Ok(());
+        }
         conformance::check_at_first_compile(
             category,
             &self.spec,
@@ -428,6 +497,9 @@ impl RegisteredStyle {
         let (params, tp) = (&params, &borrowed(&rows));
         if let Some(Kernel::Constructor { compiled, .. }) = &self.kernel {
             return compiled(params, tp, frame);
+        }
+        if let (true, Some(native)) = (self.sealed, &self.native) {
+            return (native.compiled)(category, &self.spec, params, tp, frame);
         }
         let form = self.form(category, expressions)?;
         let coords = frame_coords(frame);
@@ -477,6 +549,15 @@ impl RegisteredStyle {
                 ..
             }) => return Ok(Some((constructor(params, tp, frame)?, *class))),
             _ => {}
+        }
+        if let (true, Some(native)) = (self.sealed, &self.native) {
+            return Ok(match native.typed {
+                Some(typed) => Some((
+                    typed(category, &self.spec, params, tp, frame)?,
+                    self.spec.special_class(),
+                )),
+                None => None,
+            });
         }
         let form = self.form(category, expressions)?;
         let ExpressionForm::Scalar(f) = &form.form else {
@@ -579,11 +660,11 @@ impl Registry {
 
     /// Every built-in category and style, sealed.
     ///
-    /// The kernels are the built-in constructors (`BuiltinKernels`), each with
-    /// its spec from [`builtin_styles`]; a spec without a constructor is
-    /// priced by its expression or prices nothing (`dihedral rb`, `drude
-    /// harmonic`, `atom full`, …). A test holds the two tables to one set of
-    /// names.
+    /// The kernels are the built-in kernels (`BuiltinKernels`: forms, and
+    /// the two constructors no form carries), each with its spec from
+    /// [`builtin_styles`]; a spec without a kernel is priced by its
+    /// expression or prices nothing (`dihedral rb`, `drude harmonic`, `atom
+    /// full`, …). A test holds the two tables to one set of names.
     pub fn builtin() -> Self {
         let mut r = Self::new();
         r.set_expression_compiler(Some(compile_expression));
@@ -602,9 +683,13 @@ impl Registry {
         let builtin_kernels = BuiltinKernels::builtin();
         for spec in builtin_styles() {
             let kernel = builtin_kernels.kernel(&spec.category, &spec.name);
+            let native = builtin_kernels.native(&spec.category, &spec.name);
             let (category, name) = (spec.category.clone(), spec.name.clone());
             r.register_style(spec, kernel)
                 .unwrap_or_else(|e| panic!("built-in {category} `{name}`: {e}"));
+            if let Some(entry) = r.styles.get_mut(&(category.to_string(), name.to_string())) {
+                entry.native = native;
+            }
         }
         for (category, style, codec) in crate::ff::ir::form::builtin_forms() {
             r.register_form(category, style, codec)
@@ -692,6 +777,7 @@ impl Registry {
             RegisteredStyle {
                 spec,
                 kernel,
+                native: None,
                 sealed: false,
                 probe_id: None,
             },
@@ -1028,23 +1114,22 @@ pub fn with_global_registry<R>(f: impl FnOnce(&Registry) -> R) -> R {
 /// The style registers no form of the `torsion` family, or its embedding
 /// refuses the row (a charmm `w ≠ 0`, a non-integer periodicity, …).
 pub fn torsion_series(
+    reg: &Registry,
     category: &str,
     style: &str,
     style_params: &Params,
     row: &Params,
 ) -> std::result::Result<FourierSeries, String> {
     let what = format!("{category} {style}");
-    let canonical = with_global_registry(|r| {
-        let codec = r
-            .form(category, style)
-            .filter(|c| c.family == FAMILY)
-            .ok_or_else(|| format!("{what} has no form of the `{FAMILY}` family"))?;
-        (codec.embed)(&TypeParams {
-            style: style_params.clone(),
-            row: row.clone(),
-        })
-        .map_err(|e| format!("{what}: {e}"))
-    })?;
+    let codec = reg
+        .form(category, style)
+        .filter(|c| c.family == FAMILY)
+        .ok_or_else(|| format!("{what} has no form of the `{FAMILY}` family"))?;
+    let canonical = (codec.embed)(&TypeParams {
+        style: style_params.clone(),
+        row: row.clone(),
+    })
+    .map_err(|e| format!("{what}: {e}"))?;
     canonical_series(&canonical).map_err(|e| format!("{what}: {e}"))
 }
 

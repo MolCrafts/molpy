@@ -199,6 +199,100 @@ impl ObservableRecord {
         }
     }
 
+    /// The metadata document as the `observables/meta/<name>` attribute map
+    /// stores it: the named keys that are set, then every producer key.
+    pub fn document(&self) -> JsonMap<String, JsonValue> {
+        let mut attrs = self.extra.clone();
+        attrs.insert("kind".into(), self.kind.as_str().into());
+        attrs.insert("description".into(), self.description.clone().into());
+        attrs.insert("time_dependent".into(), self.time_dependent.into());
+        if let Some(unit) = &self.unit {
+            attrs.insert("unit".into(), unit.clone().into());
+        }
+        if !self.axes.is_empty() {
+            attrs.insert("axes".into(), self.axes.clone().into());
+        }
+        if let Some(sampling) = &self.sampling {
+            attrs.insert("sampling".into(), sampling.clone().into());
+        }
+        if let Some(domain) = &self.domain {
+            attrs.insert("domain".into(), domain.clone().into());
+        }
+        if let Some(target) = &self.target {
+            attrs.insert("target".into(), target.clone().into());
+        }
+        attrs
+    }
+
+    /// The observable `name` from its metadata document — the inverse of
+    /// [`document`](Self::document) — and its `values`. A key
+    /// [`document`](Self::document) does not name is a producer key, kept in
+    /// [`extra`](Self::extra); a kind this build does not define is carried
+    /// as [`ObservableKind::Other`]. An absent `description` is empty and an
+    /// absent `time_dependent` false; the other named keys are optional.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] naming the key for a missing `kind`, or a
+    /// named key of the wrong JSON type (an `axes` entry included) — never
+    /// read as its default.
+    pub fn from_document(
+        name: &str,
+        mut attrs: JsonMap<String, JsonValue>,
+        values: Column,
+    ) -> Result<Self, MolRsError> {
+        let mut take = |key: &str| attrs.remove(key);
+        let wrong = |key: &str, what: &str, value: &JsonValue| {
+            MolRsError::validation(format!(
+                "observable '{name}': '{key}' must be {what}, not {value}"
+            ))
+        };
+        let text = |key: &str, value: Option<JsonValue>| -> Result<Option<String>, MolRsError> {
+            match value {
+                None => Ok(None),
+                Some(JsonValue::String(s)) => Ok(Some(s)),
+                Some(other) => Err(wrong(key, "a string", &other)),
+            }
+        };
+        let kind = text("kind", take("kind"))?
+            .map(ObservableKind::from)
+            .ok_or_else(|| MolRsError::validation(format!("observable '{name}' has no 'kind'")))?;
+        let description = text("description", take("description"))?.unwrap_or_default();
+        let time_dependent = match take("time_dependent") {
+            None => false,
+            Some(JsonValue::Bool(b)) => b,
+            Some(other) => return Err(wrong("time_dependent", "a bool", &other)),
+        };
+        let unit = text("unit", take("unit"))?;
+        let axes = match take("axes") {
+            None => Vec::new(),
+            Some(JsonValue::Array(items)) => items
+                .into_iter()
+                .map(|item| match item {
+                    JsonValue::String(s) => Ok(s),
+                    other => Err(wrong("axes", "a list of strings", &other)),
+                })
+                .collect::<Result<_, _>>()?,
+            Some(other) => return Err(wrong("axes", "a list of strings", &other)),
+        };
+        let sampling = text("sampling", take("sampling"))?;
+        let domain = text("domain", take("domain"))?;
+        let target = text("target", take("target"))?;
+        Ok(Self {
+            name: name.to_string(),
+            kind,
+            description,
+            time_dependent,
+            unit,
+            axes,
+            sampling,
+            domain,
+            target,
+            extra: attrs,
+            values: ObservableValues::Column(values),
+        })
+    }
+
     /// Validate the observable payload against the declared kind.
     ///
     /// Every kind, an [`ObservableKind::Other`] included, is carried as one
@@ -213,6 +307,35 @@ impl ObservableRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `from_document` reads back what `document` writes, keeps producer
+    /// keys, and refuses a named key of the wrong type instead of defaulting.
+    #[test]
+    fn an_observable_document_round_trips_and_wrong_types_are_refused() {
+        let column = || Column::from(ndarray::Array1::from_vec(vec![1.0_f64, 2.0]).into_dyn());
+        let mut obs = ObservableRecord::new("rg", ObservableKind::Scalar, column());
+        obs.unit = Some("angstrom".into());
+        obs.axes = vec!["time".into()];
+        obs.time_dependent = true;
+        obs.extra.insert("producer".into(), "molpy".into());
+        let back = ObservableRecord::from_document("rg", obs.document(), column()).unwrap();
+        assert_eq!(back.document(), obs.document());
+        assert_eq!(back.extra.get("producer"), Some(&JsonValue::from("molpy")));
+
+        for (key, value) in [
+            ("time_dependent", JsonValue::from("yes")),
+            ("axes", serde_json::json!(["time", 3])),
+            ("unit", JsonValue::from(1)),
+        ] {
+            let mut doc = obs.document();
+            doc.insert(key.into(), value);
+            let err = ObservableRecord::from_document("rg", doc, column()).unwrap_err();
+            assert!(err.to_string().contains(key), "{err}");
+        }
+        let mut doc = obs.document();
+        doc.remove("kind");
+        assert!(ObservableRecord::from_document("rg", doc, column()).is_err());
+    }
 
     #[test]
     fn empty_trajectory_has_no_frames() {

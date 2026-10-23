@@ -290,7 +290,10 @@ impl<R: BufRead> SdfReader<R> {
             }
         }
 
-        Ok(Some(build_frame(&atoms, &bonds)?))
+        let frame = build_frame(&atoms, &bonds)?;
+        // Every door reads through here, so every door checks here.
+        crate::io::reader::check_read_frame(&frame)?;
+        Ok(Some(frame))
     }
 }
 
@@ -337,9 +340,7 @@ impl<R: BufRead + Seek> TrajectoryReader for SdfReader<R> {
 
 impl<R: BufRead> FrameReader for SdfReader<R> {
     fn read(&mut self) -> std::io::Result<Option<Frame>> {
-        // Validate on the way out: a frame that violates the vocabulary
-        // is a malformed file or a reader bug, not a result to return.
-        crate::io::reader::check_read_frame(self.read_single_record()?)
+        self.read_single_record()
     }
 }
 

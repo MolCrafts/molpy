@@ -3,17 +3,16 @@
 //! what parameters (the `dihedral charmm` `w`, the per-pair override cells,
 //! `special_bonds`).
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::ff::compile::gathered;
 use crate::ff::compile::one_four::check_materialized;
 use crate::ff::forcefield::ForceField;
-use crate::ff::ir::{CombiningRule, Params};
-use crate::ff::potential::end_pairs;
+use crate::ff::ir::{CombiningRule, OneFour, Params, SpecialClass};
 use crate::ff::potential::pair::PairExceptions;
-use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
-use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
+use crate::ff::potential::pair::lj_rows::{charmm_pair_params, lj_pair_params, mixing_of};
 use crate::ff::potential::param_reads;
+use crate::ff::potential::{bond_classes, end_pairs};
 use molrs::core::Frame;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOML};
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
@@ -39,12 +38,15 @@ const QQ: usize = 2;
 const LJ_SCALE: usize = 3;
 const COUL_SCALE: usize = 4;
 
-/// The van-der-Waals style an exception's default LJ comes from.
-enum Vdw<'f> {
+/// The van-der-Waals style a 1-4 pair's Lennard-Jones parameters come from:
+/// the one answer [`pair_styles`] gives the exceptions kernel and
+/// [`ForceField::materialize_one_four`] alike.
+pub(crate) enum Vdw<'f> {
     None,
     LjCut(HashMap<String, Params>, CombiningRule),
-    Charmm(HashMap<String, Params>, CombiningRule),
-    /// A style with no LJ 12-6 form (`buck`, `morse`, Mie `lj/cut`, …).
+    Charmm(HashMap<String, Params>, CombiningRule, OneFour),
+    /// A van-der-Waals style with no LJ 12-6 form (`buck`, `morse`, Mie
+    /// `lj/cut`, …).
     Other(&'f str),
 }
 
@@ -108,10 +110,10 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
         .get(PAIRS)
         .and_then(|b| b.get("is_14"))
         .and_then(|c| c.get::<bool>());
-    let classes = BondClasses::new(frame);
-    let sb = ff.special_bonds();
+    let classes = bond_distances(frame)?;
+    let sb = ff.required_special_bonds()?;
     let lj_rows = match &vdw {
-        Vdw::Charmm(rows, _) | Vdw::LjCut(rows, _) => as_refs(rows),
+        Vdw::Charmm(rows, ..) | Vdw::LjCut(rows, _) => as_refs(rows),
         _ => HashMap::new(),
     };
 
@@ -128,7 +130,7 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
         // The class weight is needed only for a pair the dihedral does not
         // price, and only where an override leaves a scale null.
         let class = || match &classes {
-            Some(c) => c.distance(i, j),
+            Some(c) => c.get(&(i.min(j), i.max(j))).copied().unwrap_or(0),
             None => {
                 let flagged = row.is_some_and(|r| is_14.is_some_and(|f| f[r]));
                 if flagged { 3 } else { 0 }
@@ -153,7 +155,7 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
             }
         };
         let (eps, sigma, w_lj) = match &vdw {
-            Vdw::Charmm(_, mixing) | Vdw::LjCut(_, mixing) => {
+            Vdw::Charmm(_, mixing, _) | Vdw::LjCut(_, mixing) => {
                 let (e, s) = match (cell[EPS], cell[SIGMA]) {
                     (Some(e), Some(s)) => (e, s),
                     (e, s) => {
@@ -226,7 +228,7 @@ pub(crate) fn dihedral_weights(
             continue;
         }
         let mut by_type: HashMap<String, F> = HashMap::new();
-        let (_, rows) = gathered(style).map_err(|e| e.to_string())?;
+        let (_, rows) = gathered(ff, style).map_err(|e| e.to_string())?;
         for (name, p) in rows {
             let w = param_reads::type_num("charmm", &name, &p, "w").map_err(|e| e.to_string())?;
             // LAMMPS: "Incorrect weight arg for dihedral coefficients".
@@ -290,9 +292,16 @@ fn check_one_four(
             .filter(|(_, f)| **f)
             .map(|(k, _)| *k)
             .collect(),
-        None => BondClasses::new(frame)
-            .map(|c| c.pairs_at_three())
-            .unwrap_or_default(),
+        None => {
+            let mut at_three: Vec<(usize, usize)> = bond_distances(frame)?
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|&(_, d)| d == 3)
+                .map(|(pair, _)| pair)
+                .collect();
+            at_three.sort_unstable();
+            at_three
+        }
     };
     let covered = |i: usize, j: usize| {
         overridden.contains(&(i, j)) || wsum.get(&(i, j)).is_some_and(|&w| w > 0.0)
@@ -302,7 +311,7 @@ fn check_one_four(
 
 /// LAMMPS's `DihedralCharmm::init_style` checks for a field with `w > 0`.
 fn check_weightflag(ff: &ForceField) -> Result<(), String> {
-    let sb = ff.special_bonds();
+    let sb = ff.required_special_bonds()?;
     if sb.lj[2] != 0.0 || sb.coul[2] != 0.0 {
         return Err(format!(
             "dihedral charmm has a 1-4 weight w > 0 beside special_bonds 1-4 weights \
@@ -374,125 +383,80 @@ fn pair_ends(frame: &Frame) -> Vec<(usize, usize)> {
     end_pairs(frame, PAIRS, ATOMI, ATOMJ)
 }
 
-/// The force field's van-der-Waals style and Coulomb constant, as far as an
-/// exception needs them.
-fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), String> {
+/// The force field's van-der-Waals style and Coulomb prefactor
+/// (`coulomb / dielectric`), as far as a 1-4 pair needs them.
+///
+/// Each pair style is classed by the [`SpecialClass`] its registered spec
+/// declares (in the force field's own registry), not by its name: a Coulomb
+/// style prices `q_i q_j / r` in its declared constant, every other one is
+/// van der Waals.
+///
+/// # Errors
+///
+/// Two van-der-Waals styles or two Coulomb styles (a 1-4 pair stands in for
+/// one of each); a buffered Coulomb (`delta ≠ 0`); a Coulomb style that
+/// declares no `coulomb` / `dielectric`.
+pub(crate) fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), String> {
     let (mut vdw, mut coul) = (Vdw::None, None);
     let mut seen_vdw = None::<&str>;
     for style in ff.get_styles("pair") {
         let name = style.name();
-        let found = match name {
-            "lj/cut" => {
-                let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
-                let num = |k: &str| param_reads::style_num(name, &p, k).map_err(|e| e.to_string());
-                if num("n")? == 12.0 && num("m")? == 6.0 {
-                    let mixing = mixing_of(name, &p).map_err(|e| e.to_string())?;
-                    Some(Vdw::LjCut(rows.into_iter().collect(), mixing))
-                } else {
-                    Some(Vdw::Other(name))
-                }
-            }
-            "lj/charmm" => {
-                let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
-                let mixing = charmm_mixing(&p).map_err(|e| e.to_string())?;
-                Some(Vdw::Charmm(rows.into_iter().collect(), mixing))
-            }
-            "coul/cut" | "coul/charmm" => {
-                let (p, _) = gathered(style).map_err(|e| e.to_string())?;
-                if p.get("delta")
-                    .and_then(|v| v.as_num())
-                    .is_some_and(|d| d != 0.0)
-                {
-                    return Err(format!(
-                        "pair style '{name}': a buffered Coulomb (delta ≠ 0) has no 1-4 \
-                         exception form"
-                    ));
-                }
-                if coul.is_some() {
-                    return Err("1-4 exceptions: the force field has two Coulomb styles".into());
-                }
-                let num = |k: &str| param_reads::style_num(name, &p, k).map_err(|e| e.to_string());
-                coul = Some(num("coulomb")? / num("dielectric")?);
-                None
-            }
-            _ => Some(Vdw::Other(name)),
-        };
-        if let Some(v) = found {
-            if let Some(prev) = seen_vdw {
+        let class = ff
+            .registry()
+            .with(|r| r.style("pair", name).map(|(spec, _)| spec.special_class()))
+            .unwrap_or(SpecialClass::Vdw);
+        let (p, rows) = gathered(ff, style).map_err(|e| e.to_string())?;
+        let num = |k: &str| param_reads::style_num(name, &p, k).map_err(|e| e.to_string());
+        if class == SpecialClass::Coulomb {
+            if p.get("delta")
+                .and_then(|v| v.as_num())
+                .is_some_and(|d| d != 0.0)
+            {
                 return Err(format!(
-                    "1-4 exceptions: pair styles '{prev}' and '{name}' are both non-Coulomb; \
-                     an exception stands in for one Lennard-Jones style"
+                    "pair style '{name}': a buffered Coulomb (delta ≠ 0) has no 1-4 \
+                     exception form"
                 ));
             }
-            seen_vdw = Some(name);
-            vdw = v;
+            if coul.is_some() {
+                return Err("1-4 exceptions: the force field has two Coulomb styles".into());
+            }
+            coul = Some(num("coulomb")? / num("dielectric")?);
+            continue;
         }
+        let found = match name {
+            "lj/cut" if num("n")? == 12.0 && num("m")? == 6.0 => Vdw::LjCut(
+                rows.into_iter().collect(),
+                mixing_of(name, &p).map_err(|e| e.to_string())?,
+            ),
+            "lj/charmm" => Vdw::Charmm(
+                rows.into_iter().collect(),
+                mixing_of(name, &p).map_err(|e| e.to_string())?,
+                OneFour::of(&p)?,
+            ),
+            _ => Vdw::Other(name),
+        };
+        if let Some(prev) = seen_vdw {
+            return Err(format!(
+                "1-4 exceptions: pair styles '{prev}' and '{name}' are both van der Waals; \
+                 a 1-4 pair stands in for one Lennard-Jones style"
+            ));
+        }
+        seen_vdw = Some(name);
+        vdw = found;
     }
     Ok((vdw, coul))
 }
 
-/// Bond-graph distances up to 3, from the frame's `bonds`.
-struct BondClasses {
-    adjacency: Vec<Vec<usize>>,
-}
+/// Bond-graph distance of each atom pair, up to 3.
+type BondDistances = HashMap<(usize, usize), usize>;
 
-impl BondClasses {
-    fn new(frame: &Frame) -> Option<Self> {
-        frame.get(BONDS)?;
-        let n = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
-        let mut adjacency = vec![Vec::new(); n];
-        for (a, b) in end_pairs(frame, BONDS, ATOMI, ATOMJ) {
-            if a < n && b < n && a != b {
-                adjacency[a].push(b);
-                adjacency[b].push(a);
-            }
-        }
-        Some(Self { adjacency })
+/// Bond-graph distances up to 3 ([`bond_classes`]) when the frame carries
+/// `bonds`; `None` without them, where a `pairs` row's `is_14` flag is all
+/// the classification there is.
+fn bond_distances(frame: &Frame) -> Result<Option<BondDistances>, String> {
+    if frame.get(BONDS).is_none() {
+        return Ok(None);
     }
-
-    /// Every `(lo, hi)` pair at bond distance exactly 3.
-    fn pairs_at_three(&self) -> Vec<(usize, usize)> {
-        let mut out = Vec::new();
-        for i in 0..self.adjacency.len() {
-            let mut depth = HashMap::from([(i, 0usize)]);
-            let mut queue = VecDeque::from([i]);
-            while let Some(a) = queue.pop_front() {
-                let d = depth[&a];
-                if d == 3 {
-                    if a > i {
-                        out.push((i, a));
-                    }
-                    continue;
-                }
-                for &b in &self.adjacency[a] {
-                    if let std::collections::hash_map::Entry::Vacant(e) = depth.entry(b) {
-                        e.insert(d + 1);
-                        queue.push_back(b);
-                    }
-                }
-            }
-        }
-        out.sort_unstable();
-        out
-    }
-
-    /// The bond distance of `(i, j)` when it is 1, 2 or 3; 0 beyond.
-    fn distance(&self, i: usize, j: usize) -> usize {
-        let mut seen = HashSet::from([i]);
-        let mut queue = VecDeque::from([(i, 0usize)]);
-        while let Some((a, d)) = queue.pop_front() {
-            if a == j {
-                return d;
-            }
-            if d == 3 {
-                continue;
-            }
-            for &b in self.adjacency.get(a).map(Vec::as_slice).unwrap_or(&[]) {
-                if seen.insert(b) {
-                    queue.push_back((b, d + 1));
-                }
-            }
-        }
-        0
-    }
+    let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
+    bond_classes(frame, n_atoms).map(Some)
 }

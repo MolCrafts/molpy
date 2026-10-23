@@ -140,9 +140,9 @@ def test_kekule_phase_change_changes_hash():
     a, ha = _ethanol()
     b, hb = _ethanol()
     aromatic = mp.core.BondOrder.Aromatic
-    (_other, bond) = b.neighbor_bonds(hb[0])[0]
+    (_other, bond) = b.neighbors(hb[0])[0]
     b.set_bond_class(bond, aromatic, mp.core.BondNumber.Single)
-    (_other, bond_a) = a.neighbor_bonds(ha[0])[0]
+    (_other, bond_a) = a.neighbors(ha[0])[0]
     a.set_bond_class(bond_a, aromatic, mp.core.BondNumber.Double)
     assert a.structural_hash() != b.structural_hash()
 
@@ -168,7 +168,7 @@ def test_canonical_order_consistent_bijection():
     # Pairing position-by-position yields matching species + degree.
     for ia, ib in zip(oa, ob):
         assert ia["atomic_number"] == ib["atomic_number"]
-        assert len(a.neighbor_bonds(ia)) == len(b.neighbor_bonds(ib))
+        assert len(a.neighbors(ia)) == len(b.neighbors(ib))
 
 
 # ---------------------------------------------------------------------------

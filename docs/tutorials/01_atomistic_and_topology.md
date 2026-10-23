@@ -67,12 +67,12 @@ print(bond.itom["name"], bond.jtom["name"], bond.get("order"))
 
 An atom does not store its own neighbour list. The container owns connectivity,
 so graph operations stay explicit and consistent. `topo_distances` walks the
-bond graph from one atom handle and returns `(handle, hops)` pairs; the
-neighbours are the atoms one bond away.
+bond graph from one atom and returns `(atom, hops)` pairs; the neighbours are
+the atoms one bond away.
 
 ```python
-neighbors = [h for h, d in mol.topo_distances(c2.handle, max_hops=1) if d == 1]
-print(sorted(mol.get(h, "name") for h in neighbors))
+neighbors = [a for a, d in mol.topo_distances(c2, max_hops=1) if d == 1]
+print(sorted(a["name"] for a in neighbors))
 # -> ['C1', 'O1']
 ```
 
@@ -119,19 +119,20 @@ Graph-distance queries (neighbours within $n$ bonds, BFS distances) run on the
 same structure once connectivity is defined:
 
 ```python
-within_one = propane.topo_distances(cb.handle, max_hops=1)
-print(sorted(propane.get(h, "name") for h, _ in within_one))
+within_one = propane.topo_distances(cb, max_hops=1)
+print(sorted(a["name"] for a, _ in within_one))
 # -> ['C1', 'C2', 'C3']
-dists = propane.topo_distances(ca.handle)
-print({propane.get(h, "name"): d for h, d in dists})
+dists = propane.topo_distances(ca)
+print({a["name"]: d for a, d in dists})
 # -> {'C1': 0, 'C2': 1, 'C3': 2}
 ```
 
 ## Composition and copies
 
-Independent clones use `copy()`. `merge` adds another graph into this one in
-place (it returns the old-to-new handle map); many copies are repeated merges of
-translated copies.
+Independent clones use `copy()`. `merge` moves another graph into this one in
+place (it returns the merged atoms, now in this graph, and leaves the other
+graph empty); `translate` shifts a graph in place. Many copies are repeated
+merges of translated copies.
 
 ```python
 from copy import copy
@@ -143,20 +144,24 @@ water.add_bond(ow, h1)
 water.add_bond(ow, h2)
 
 two = copy(water)
-two.merge(copy(water).translate([5.0, 0.0, 0.0]))
+shifted = copy(water)
+shifted.translate([5.0, 0.0, 0.0])
+two.merge(shifted)
 print(len(two.atoms), len(two.bonds))
 # -> 6 4
 
 row = mp.Atomistic(name="row")
 for i in range(4):
-    row.merge(copy(water).translate([i * 4.0, 0.0, 0.0]))
+    piece = copy(water)
+    piece.translate([i * 4.0, 0.0, 0.0])
+    row.merge(piece)
 print(len(row.atoms))
 # -> 12
 ```
 
 !!! note "Bulk numeric access"
     When you need every $x$ coordinate as an array — not each atom as a Python
-    object — use `mol.atoms["x"]`, `mol.atoms["x", "y", "z"]`, or `mol.column("x")`. Prefer
+    object — use `mol.atoms["x"]` or `mol.atoms["x", "y", "z"]`. Prefer
     `list(mol.atoms)` only when you need identity-stable objects for editing or
     graph algorithms.
 

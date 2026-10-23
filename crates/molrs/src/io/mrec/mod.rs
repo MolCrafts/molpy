@@ -21,7 +21,9 @@
 //!   place) or a packed record's bytes, [`MrecFile::from_storage`] any open
 //!   Zarr store (in-memory, a host's); then [`sections`](MrecFile::sections)
 //!   lists them, [`meta`](MrecFile::meta), [`frame`](MrecFile::frame),
-//!   [`system`](MrecFile::system) and [`forcefield`](MrecFile::forcefield)
+//!   [`system`](MrecFile::system), [`forcefield`](MrecFile::forcefield),
+//!   [`status`](MrecFile::status), [`method`](MrecFile::method),
+//!   [`metrics`](MrecFile::metrics) and [`observables`](MrecFile::observables)
 //!   decode one, and [`record`](MrecFile::record) all of them.
 //! - A run too large to hold in memory: pin a [`SequenceSchema`], append with
 //!   [`MrecWriter`], read one frame at a time with [`MrecReader`]
@@ -29,7 +31,6 @@
 //!   [`MrecReader::from_storage`] any open storage).
 //! - [`pack_mrec_zip`] collapses a closed directory into one `*.mrec.zip`.
 //! - [`ForceFieldSection`] — the `forcefield` section as data.
-//! - [`validation`] — the runtime check of a record's frames.
 //!   The language-neutral JSON Schema lives in molrec
 //!   (`schema/core/record.schema.json`).
 //!
@@ -67,13 +68,12 @@
 mod forcefield_mapping;
 pub(crate) mod forcefield_section;
 mod record;
-pub mod validation;
 pub(crate) mod zarr_storage;
 
 pub use forcefield_section::{EndpointKey, ForceFieldSection, SectionStyle, style_block_name};
 pub use record::{MolRec, Observables};
 pub use zarr_storage::{
-    Compression, MrecFile, MrecReader, MrecWriter, SequenceSchema, dtype_from_schema_tag,
+    Compression, MrecFile, MrecReader, MrecWriter, SequenceSchema, StoredMetrics, StoredObservable,
 };
 
 #[cfg(feature = "filesystem")]

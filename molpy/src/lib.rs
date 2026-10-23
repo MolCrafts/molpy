@@ -49,25 +49,30 @@ mod conformer;
 mod core;
 mod ff;
 mod io;
+mod lattice;
 mod md;
 mod op;
 mod optimize;
 mod perceive;
 mod stream;
+mod symmetry;
+mod virtual_sites;
 
 /// The FFI ABI handshake token of this build.
 ///
 /// Returns ``(abi_line, version, frameref_capsule_name, forcefield_capsule_name,
 /// regionref_capsule_name)``
-/// — e.g. ``("0.17", "0.17.0", "molrs.FrameRef/0.17", "molrs.ForceFieldRef/0.17")``.
+/// — e.g. ``("0.19", "0.19.0", "molrs.FrameRef/0.19+<fingerprint>", …)``, the
+/// fingerprint naming the compiler and handle layout of this build.
 ///
 /// A downstream extension that exchanges ``molrs_ffi`` handle capsules with
 /// this wheel (e.g. molpack) calls this once at import and compares
 /// ``abi_line`` against the line of the molrs it statically embeds; a mismatch
 /// is raised as a clear ``ImportError`` instead of surfacing later as a
 /// capsule-name ``ValueError`` (or, before capsule names were versioned,
-/// undefined behavior). Patch versions may differ — layout is frozen within a
-/// minor line (see `molrs-ffi`'s layout snapshot gate).
+/// undefined behavior). The capsule names also carry the build fingerprint,
+/// so two builds exchange handles only when compiler and layout agree too
+/// (`molrs-ffi`'s layout snapshot test is the gate on the layout).
 #[pyfunction]
 fn _ffi_abi_token() -> (&'static str, &'static str, String, String, String) {
     (

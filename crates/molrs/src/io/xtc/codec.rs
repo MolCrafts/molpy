@@ -767,6 +767,8 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     if precision != 0.0 {
         frame.meta.insert("precision", precision as f64);
     }
+    // Every door reads through here, so every door checks here.
+    crate::io::reader::check_read_frame(&frame)?;
     Ok(Some(frame))
 }
 
@@ -914,15 +916,13 @@ impl<R: BufRead + Seek> FrameReader for XtcReader<R> {
             };
             let frame = parse_frame_at(&mut self.reader, off)?;
             self.cursor += 1;
-            return crate::io::reader::check_read_frame(Some(frame));
+            return Ok(Some(frame));
         }
-        match parse_frame_here(&mut self.reader)? {
-            Some(frame) => {
-                self.cursor += 1;
-                crate::io::reader::check_read_frame(Some(frame))
-            }
-            None => Ok(None),
+        let frame = parse_frame_here(&mut self.reader)?;
+        if frame.is_some() {
+            self.cursor += 1;
         }
+        Ok(frame)
     }
 }
 
@@ -961,6 +961,8 @@ fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
 }
 
 fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<()> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     let natoms = frame
         .visit_block("atoms", |a| a.n_rows().unwrap_or(0))
         .ok_or_else(|| invalid_data("XTC write: frame has no atoms block"))?;
@@ -1061,9 +1063,6 @@ impl<W: Write> Writer for XtcWriter<W> {
 
 impl<W: Write> FrameWriter for XtcWriter<W> {
     fn write(&mut self, frame: &Frame) -> Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         write_xtc_frame(&mut self.writer, frame)?;
         self.writer.flush()
     }
@@ -1080,9 +1079,7 @@ pub fn read_xtc<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
 
 /// Write one frame as a one-frame XTC file (Å → nm).
 pub fn write_xtc<'a>(sink: impl Into<Sink<'a>>, frame: &impl FrameAccess) -> Result<()> {
-    let mut w = sink.into().writer()?;
-    write_xtc_frame(&mut w, frame)?;
-    w.flush()
+    sink.into().put_with(|w| write_xtc_frame(w, frame))
 }
 
 impl XtcReader<Box<dyn ReadSeek>> {

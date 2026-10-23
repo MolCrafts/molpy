@@ -22,7 +22,7 @@ use zarrs::node::{Node, NodeMetadata};
 #[cfg(feature = "zarr")]
 use zarrs::storage::WritableStorageTraits;
 use zarrs::storage::{
-    ReadableListableStorage, ReadableStorageTraits, ReadableWritableListableStorage,
+    ReadableListableStorage, ReadableStorageTraits, ReadableWritableListableStorage, StoreKey,
 };
 
 use crate::io::mrec::MrecReader;
@@ -45,14 +45,12 @@ use crate::io::mrec::{MrecWriter, SequenceSchema};
 #[cfg(feature = "filesystem")]
 use crate::io::{Sink, Source};
 use molrs::core::Column;
+use molrs::core::Frame;
 use molrs::core::MolRsError;
+use molrs::core::{ObservableRecord, ObservableValues};
+use molrs::io::mrec::MolRec;
 #[cfg(feature = "filesystem")]
 use zarrs::storage::store::MemoryStore;
-// Not `filesystem`-gated: the store-taking section door below names it in
-// every configuration, wasm included.
-use molrs::core::Frame;
-use molrs::core::{ObservableKind, ObservableRecord, ObservableValues};
-use molrs::io::mrec::MolRec;
 
 // ---------------------------------------------------------------------------
 // Write
@@ -191,6 +189,34 @@ pub struct MrecFile {
     store: ReadableListableStorage,
 }
 
+/// The `metrics` section as stored: the catalog document, dense series, the
+/// steps and wall times that were written, and the WAL text when the file
+/// is there.
+#[derive(Debug, Clone)]
+pub struct StoredMetrics {
+    /// `metrics/` group attributes.
+    pub catalog: JsonMap<String, JsonValue>,
+    /// Logical series name → `f64` values.
+    pub series: std::collections::BTreeMap<String, Vec<f64>>,
+    /// Logical series name → `i64` steps. A series with no steps is absent.
+    pub steps: std::collections::BTreeMap<String, Vec<i64>>,
+    /// Logical series name → RFC 3339 times.
+    pub wall_time: std::collections::BTreeMap<String, Vec<String>>,
+    /// `metrics/metrics.jsonl`, when the store has the file.
+    pub wal: Option<String>,
+}
+
+/// One observable as stored: its metadata document and its data column.
+#[derive(Debug, Clone)]
+pub struct StoredObservable {
+    /// The observable's node name.
+    pub name: String,
+    /// `observables/meta/<name>` attributes, as stored.
+    pub meta: JsonMap<String, JsonValue>,
+    /// The data array `observables/<name>`.
+    pub values: Column,
+}
+
 impl MrecFile {
     /// Open a record: a `*.mrec` directory store, a packed `*.mrec.zip`
     /// (read in place, a section costing the bytes of that section), or the
@@ -275,6 +301,69 @@ impl MrecFile {
             .map_err(io_error)
     }
 
+    /// The `status` document, or `None` when the record has no status section.
+    pub fn status(&self) -> std::io::Result<Option<JsonMap<String, JsonValue>>> {
+        self.document_section("status")
+    }
+
+    /// The `method` document, or `None` when the record has no method section.
+    pub fn method(&self) -> std::io::Result<Option<JsonMap<String, JsonValue>>> {
+        self.document_section("method")
+    }
+
+    /// The `metrics` section — catalog, dense series, steps, wall times and
+    /// the WAL text — or `None` when the record has none.
+    pub fn metrics(&self) -> std::io::Result<Option<StoredMetrics>> {
+        if !self.sections()?.iter().any(|name| name == "metrics") {
+            return Ok(None);
+        }
+        let path = join_path("/", "metrics");
+        let mut record = MolRec::new();
+        record.metrics = read_json_group(&self.store, &path).map_err(io_error)?;
+        read_metrics_body(&self.store, &path, &mut record).map_err(io_error)?;
+        Ok(Some(StoredMetrics {
+            catalog: record.metrics,
+            series: record.metrics_series,
+            steps: record.metrics_steps,
+            wall_time: record.metrics_wall_time,
+            wal: record.metrics_wal,
+        }))
+    }
+
+    /// The `observables` section, each entry the stored metadata document and
+    /// its data array, or `None` when the record has none. A broken pairing
+    /// or a document without `kind` is refused.
+    pub fn observables(&self) -> std::io::Result<Option<Vec<StoredObservable>>> {
+        if !self.sections()?.iter().any(|name| name == "observables") {
+            return Ok(None);
+        }
+        let mut record = MolRec::new();
+        read_observables(&self.store, "/observables", &mut record).map_err(io_error)?;
+        Ok(Some(
+            record
+                .observables
+                .iter()
+                .map(|(name, obs)| {
+                    let ObservableValues::Column(values) = &obs.values;
+                    StoredObservable {
+                        name: name.clone(),
+                        meta: obs.document(),
+                        values: values.clone(),
+                    }
+                })
+                .collect(),
+        ))
+    }
+
+    fn document_section(&self, name: &str) -> std::io::Result<Option<JsonMap<String, JsonValue>>> {
+        if !self.sections()?.iter().any(|section| section == name) {
+            return Ok(None);
+        }
+        read_json_group(&self.store, &join_path("/", name))
+            .map(Some)
+            .map_err(io_error)
+    }
+
     /// Every section of the record. Root sections this build does not
     /// interpret are ignored, never misread, and `meta` keys it does not
     /// recognise are kept.
@@ -349,10 +438,16 @@ pub fn write_mrec_storage(
             check_storable_block(table, &path)?;
         }
     }
-    for name in record.metrics_series.keys() {
-        safe_series_name(name)?;
-    }
-    for (name, _) in record.observables.iter() {
+    check_metrics(record)?;
+    for (name, obs) in record.observables.iter() {
+        check_observable_name(name)?;
+        if obs.time_dependent
+            && matches!(&obs.values, ObservableValues::Column(column) if column.shape().is_empty())
+        {
+            return Err(MolRsError::zarr(format!(
+                "observable '{name}' is time_dependent but its array has no leading axis"
+            )));
+        }
         zarrs::node::NodePath::new(&join_path("/observables", name)).map_err(zerr)?;
         zarrs::node::NodePath::new(&join_path("/observables/meta", name)).map_err(zerr)?;
     }
@@ -412,7 +507,7 @@ pub fn write_mrec_storage(
             write_json_group(&store, &join_path(prefix, name), section)?;
         }
     }
-    if !record.metrics.is_empty() || !record.metrics_series.is_empty() {
+    if metrics_present(record) {
         write_metrics(&store, &join_path(prefix, "metrics"), record)?;
     }
 
@@ -496,12 +591,75 @@ fn original_series_name(encoded: &str) -> Result<String, MolRsError> {
         .map_err(|_| MolRsError::zarr(format!("metrics series name '{encoded}' is not UTF-8")))
 }
 
+/// A metrics section is present when any of its parts is: the catalog, a
+/// dense series, its steps or times, or the WAL file.
+fn metrics_present(record: &MolRec) -> bool {
+    !record.metrics.is_empty()
+        || !record.metrics_series.is_empty()
+        || !record.metrics_steps.is_empty()
+        || !record.metrics_wall_time.is_empty()
+        || record.metrics_wal.is_some()
+}
+
+/// Steps and wall times align with their series, and every series name is a
+/// legal key. Runs before the store is erased.
+fn check_metrics(record: &MolRec) -> Result<(), MolRsError> {
+    for name in record
+        .metrics_series
+        .keys()
+        .chain(record.metrics_steps.keys())
+        .chain(record.metrics_wall_time.keys())
+    {
+        safe_series_name(name)?;
+    }
+    let aligned = |name: &str, got: usize, what: &str| -> Result<(), MolRsError> {
+        let Some(series) = record.metrics_series.get(name) else {
+            return Err(MolRsError::zarr(format!(
+                "metrics {what} '{name}' has no series"
+            )));
+        };
+        if series.len() != got {
+            return Err(MolRsError::zarr(format!(
+                "metrics series '{name}' has {} points but {what} has {got}",
+                series.len()
+            )));
+        }
+        Ok(())
+    };
+    for (name, steps) in &record.metrics_steps {
+        aligned(name, steps.len(), "steps")?;
+    }
+    for (name, times) in &record.metrics_wall_time {
+        aligned(name, times.len(), "wall_time")?;
+    }
+    Ok(())
+}
+
+/// An observable is one array and one metadata group: a single node name,
+/// and not `meta`, which is the metadata group.
+fn check_observable_name(name: &str) -> Result<(), MolRsError> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name == "meta"
+        || name.contains('/')
+        || name.starts_with("__")
+    {
+        return Err(MolRsError::zarr(format!(
+            "observable name '{name}' is not a single node name (non-empty, no '/', not \
+             '.', '..' or 'meta', no leading '__')"
+        )));
+    }
+    Ok(())
+}
+
 /// Write the `metrics/` section: the catalog document as group attributes,
-/// and each closed series as one float64 array at
-/// `metrics/series/<safe_name>`.
+/// each closed series as `metrics/series/<safe name>` (`f64`), its steps as
+/// `metrics/steps/<safe name>` (`i64`) and its times as
+/// `metrics/wall_time/<safe name>` (`string`), plus the JSONL WAL file when
+/// the record carries one.
 ///
-/// The live JSONL WAL (`metrics/metrics.jsonl`) is host-owned and never
-/// written here.
+/// The WAL is stored as given. This door does not densify it.
 #[cfg(feature = "zarr")]
 fn write_metrics(
     store: &ReadableWritableListableStorage,
@@ -509,21 +667,42 @@ fn write_metrics(
     record: &MolRec,
 ) -> Result<(), MolRsError> {
     write_json_group(store, prefix, &record.metrics)?;
-    if record.metrics_series.is_empty() {
+    write_metric_columns(store, prefix, "series", &record.metrics_series)?;
+    write_metric_columns(store, prefix, "steps", &record.metrics_steps)?;
+    write_metric_columns(store, prefix, "wall_time", &record.metrics_wall_time)?;
+    if let Some(wal) = &record.metrics_wal {
+        let key = wal_store_key(prefix)?;
+        store
+            .set(&key, wal.as_bytes().to_vec().into())
+            .map_err(|e| MolRsError::zarr(format!("metrics WAL: {e}")))?;
+    }
+    Ok(())
+}
+
+/// One metrics child group (`series`, `steps`, `wall_time`): nothing when
+/// `values` is empty, else one array per series under its safe name.
+#[cfg(feature = "zarr")]
+fn write_metric_columns<T: molrs::core::BlockDtype + Clone>(
+    store: &ReadableWritableListableStorage,
+    prefix: &str,
+    child: &str,
+    values: &std::collections::BTreeMap<String, Vec<T>>,
+) -> Result<(), MolRsError> {
+    if values.is_empty() {
         return Ok(());
     }
-    let series_path = join_path(prefix, "series");
+    let group = join_path(prefix, child);
     GroupBuilder::new()
-        .build(store.clone(), &series_path)?
+        .build(store.clone(), &group)?
         .store_metadata()?;
-    for (name, values) in &record.metrics_series {
+    for (name, column_values) in values {
         let column = Column::from(
-            ndarray::ArrayD::from_shape_vec(vec![values.len()], values.clone())
-                .map_err(|e| MolRsError::zarr(format!("metrics series '{name}': {e}")))?,
+            ndarray::ArrayD::from_shape_vec(vec![column_values.len()], column_values.clone())
+                .map_err(|e| MolRsError::zarr(format!("metrics {child} '{name}': {e}")))?,
         );
         write_column(
             store,
-            &join_path(&series_path, &safe_series_name(name)?),
+            &join_path(&group, &safe_series_name(name)?),
             &column,
             None,
         )?;
@@ -531,32 +710,39 @@ fn write_metrics(
     Ok(())
 }
 
-/// Read `metrics/series/<name>` float64 arrays back into
-/// [`MolRec::metrics_series`]. A `metrics/` group without a `series/` child
-/// is a document-only section; a non-float64 series is an error rather than
-/// a silent narrowing.
-fn read_metrics_series(
+/// `metrics/metrics.jsonl` as a store key. `prefix` is the metrics group
+/// (`/metrics`); the key has no leading slash.
+fn wal_store_key(prefix: &str) -> Result<StoreKey, MolRsError> {
+    let relative = prefix.trim_start_matches('/');
+    StoreKey::new(format!("{relative}/metrics.jsonl")).map_err(zerr)
+}
+
+/// Read one metrics child group (`series`, `steps`, `wall_time`) into
+/// logical-name → column. An absent child is an empty map: a series with no
+/// steps has no `steps/` array.
+fn read_metric_group(
     store: &ReadableListableStorage,
     metrics_path: &str,
-    record: &mut MolRec,
-) -> Result<(), MolRsError> {
+    child: &str,
+) -> Result<std::collections::BTreeMap<String, Column>, MolRsError> {
     let node = Node::open(store, metrics_path)?;
-    let has_series = node.children().iter().any(|child| {
-        matches!(child.metadata(), NodeMetadata::Group(_))
-            && child.path().as_str().ends_with("/series")
+    let suffix = format!("/{child}");
+    let present = node.children().iter().any(|entry| {
+        matches!(entry.metadata(), NodeMetadata::Group(_))
+            && entry.path().as_str().ends_with(&suffix)
     });
-    if !has_series {
-        return Ok(());
+    if !present {
+        return Ok(std::collections::BTreeMap::new());
     }
-    let series_path = join_path(metrics_path, "series");
-    let series_node = Node::open(store, &series_path)?;
-    for child in series_node.children() {
-        if !matches!(child.metadata(), NodeMetadata::Array(_)) {
+    let group = Node::open(store, &join_path(metrics_path, child))?;
+    let mut out = std::collections::BTreeMap::new();
+    for entry in group.children() {
+        if !matches!(entry.metadata(), NodeMetadata::Array(_)) {
             continue;
         }
-        let path = child.path().as_str();
-        let name = path.rsplit('/').next().unwrap_or("");
-        if name.is_empty() {
+        let path = entry.path().as_str();
+        let encoded = path.rsplit('/').next().unwrap_or("");
+        if encoded.is_empty() {
             continue;
         }
         let column = read_column(
@@ -564,18 +750,69 @@ fn read_metrics_series(
             path,
             &ArraySubset::new_with_shape(Array::open(store.clone(), path)?.shape().to_vec()),
         )?;
+        out.insert(original_series_name(encoded)?, column);
+    }
+    Ok(out)
+}
+
+/// Read the dense metrics arrays and the WAL file into `record`. The catalog
+/// document is the group's attributes, read by the caller.
+fn read_metrics_body(
+    store: &ReadableListableStorage,
+    metrics_path: &str,
+    record: &mut MolRec,
+) -> Result<(), MolRsError> {
+    for (name, column) in read_metric_group(store, metrics_path, "series")? {
         let values = column.get::<f64>().ok_or_else(|| {
             MolRsError::zarr(format!(
                 "metrics series '{name}' must be a float64 array, got {}",
                 column.dtype().name()
             ))
         })?;
-        record.metrics_series.insert(
-            original_series_name(name)?,
-            values.iter().copied().collect(),
-        );
+        record
+            .metrics_series
+            .insert(name, values.iter().copied().collect());
     }
+    for (name, column) in read_metric_group(store, metrics_path, "steps")? {
+        let values = column.get::<i64>().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "metrics steps '{name}' must be an int64 array, got {}",
+                column.dtype().name()
+            ))
+        })?;
+        record
+            .metrics_steps
+            .insert(name, values.iter().copied().collect());
+    }
+    for (name, column) in read_metric_group(store, metrics_path, "wall_time")? {
+        let values = column.get::<String>().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "metrics wall_time '{name}' must be a string array, got {}",
+                column.dtype().name()
+            ))
+        })?;
+        record
+            .metrics_wall_time
+            .insert(name, values.iter().cloned().collect());
+    }
+    record.metrics_wal = read_wal(store, metrics_path)?;
     Ok(())
+}
+
+/// The WAL file when the store has one. Absence is `None`; a non-UTF-8 file
+/// is refused.
+fn read_wal(
+    store: &ReadableListableStorage,
+    metrics_path: &str,
+) -> Result<Option<String>, MolRsError> {
+    let key = wal_store_key(metrics_path)?;
+    match store.get(&key) {
+        Ok(Some(bytes)) => String::from_utf8(bytes.to_vec())
+            .map(Some)
+            .map_err(|_| MolRsError::zarr("metrics/metrics.jsonl is not UTF-8".to_string())),
+        Ok(None) => Ok(None),
+        Err(error) => Err(MolRsError::zarr(format!("metrics WAL: {error}"))),
+    }
 }
 
 #[cfg(feature = "zarr")]
@@ -593,26 +830,7 @@ fn write_observables(
         .store_metadata()?;
 
     for (name, obs) in record.observables.iter() {
-        let mut attrs = obs.extra.clone();
-        attrs.insert("kind".into(), obs.kind.as_str().into());
-        attrs.insert("description".into(), obs.description.clone().into());
-        attrs.insert("time_dependent".into(), obs.time_dependent.into());
-        if let Some(unit) = &obs.unit {
-            attrs.insert("unit".into(), unit.clone().into());
-        }
-        if !obs.axes.is_empty() {
-            attrs.insert("axes".into(), obs.axes.clone().into());
-        }
-        if let Some(sampling) = &obs.sampling {
-            attrs.insert("sampling".into(), sampling.clone().into());
-        }
-        if let Some(domain) = &obs.domain {
-            attrs.insert("domain".into(), domain.clone().into());
-        }
-        if let Some(target) = &obs.target {
-            attrs.insert("target".into(), target.clone().into());
-        }
-        write_json_group(store, &join_path(&meta_path, name), &attrs)?;
+        write_json_group(store, &join_path(&meta_path, name), &obs.document())?;
 
         let ObservableValues::Column(column) = &obs.values;
         write_column(store, &join_path(prefix, name), column, None)?;
@@ -720,7 +938,7 @@ fn read_record(store: &ReadableListableStorage) -> Result<MolRec, MolRsError> {
             "status" => record.status = read_json_group(store, &path)?,
             "metrics" => {
                 record.metrics = read_json_group(store, &path)?;
-                read_metrics_series(store, &path, &mut record)?;
+                read_metrics_body(store, &path, &mut record)?;
             }
             // A root section this build does not interpret is ignored. Its
             // layout is unknown — it may hold arrays directly, or be shaped
@@ -797,6 +1015,7 @@ fn read_observables(
 ) -> Result<(), MolRsError> {
     let meta_path = join_path(prefix, "meta");
     let node = Node::open(store, prefix)?;
+    let mut seen = std::collections::BTreeSet::new();
 
     for child in node.children() {
         if !matches!(child.metadata(), NodeMetadata::Array(_)) {
@@ -807,6 +1026,7 @@ fn read_observables(
         if name.is_empty() {
             continue;
         }
+        seen.insert(name.to_string());
 
         let attrs = zarrs::group::Group::open(store.clone(), &join_path(&meta_path, name))
             .map_err(|_| {
@@ -817,75 +1037,31 @@ fn read_observables(
             .attributes()
             .clone();
 
-        // A kind this build does not define is carried through as
-        // `ObservableKind::Other` and written back unchanged.
-        let kind = attrs
-            .get("kind")
-            .and_then(JsonValue::as_str)
-            .map(ObservableKind::from)
-            .ok_or_else(|| MolRsError::zarr(format!("observable '{name}' is missing 'kind'")))?;
-
-        let mut extra = attrs.clone();
-        for key in [
-            "kind",
-            "description",
-            "time_dependent",
-            "unit",
-            "axes",
-            "sampling",
-            "domain",
-            "target",
-        ] {
-            extra.remove(key);
-        }
-
-        let obs = ObservableRecord {
-            name: name.to_string(),
-            kind,
-            description: attrs
-                .get("description")
-                .and_then(JsonValue::as_str)
-                .unwrap_or("")
-                .to_string(),
-            time_dependent: attrs
-                .get("time_dependent")
-                .and_then(JsonValue::as_bool)
-                .unwrap_or(false),
-            unit: attrs
-                .get("unit")
-                .and_then(JsonValue::as_str)
-                .map(str::to_string),
-            axes: attrs
-                .get("axes")
-                .and_then(JsonValue::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            sampling: attrs
-                .get("sampling")
-                .and_then(JsonValue::as_str)
-                .map(str::to_string),
-            domain: attrs
-                .get("domain")
-                .and_then(JsonValue::as_str)
-                .map(str::to_string),
-            target: attrs
-                .get("target")
-                .and_then(JsonValue::as_str)
-                .map(str::to_string),
-            extra,
-            // An observable's array is its whole column.
-            values: ObservableValues::Column(read_column(
-                store,
-                path,
-                &ArraySubset::new_with_shape(Array::open(store.clone(), path)?.shape().to_vec()),
-            )?),
-        };
+        // An observable's array is its whole column.
+        let values = read_column(
+            store,
+            path,
+            &ArraySubset::new_with_shape(Array::open(store.clone(), path)?.shape().to_vec()),
+        )?;
+        let obs = ObservableRecord::from_document(name, attrs, values)
+            .map_err(|e| MolRsError::zarr(format!("observables/meta/{name}: {e}")))?;
         record.observables.insert(obs)?;
+    }
+
+    // A metadata group without its array is the other half of the pairing.
+    if let Ok(meta) = Node::open(store, &meta_path) {
+        for child in meta.children() {
+            if !matches!(child.metadata(), NodeMetadata::Group(_)) {
+                continue;
+            }
+            let name = child.path().as_str().rsplit('/').next().unwrap_or("");
+            if name.is_empty() || seen.contains(name) {
+                continue;
+            }
+            return Err(MolRsError::zarr(format!(
+                "observable '{name}' has metadata but no 'observables/{name}' array"
+            )));
+        }
     }
     Ok(())
 }
@@ -951,6 +1127,8 @@ mod tests {
     use super::*;
     use crate::core::Cell;
     use molrs::core::Frame;
+    use molrs::core::ObservableKind;
+    use molrs::core::ObservableRecord;
     use molrs::core::Trajectory;
     use molrs::core::{Block, Column};
     use molrs::io::mrec::ForceFieldSection;
@@ -958,6 +1136,92 @@ mod tests {
     use ndarray::ArrayD;
     use std::path::Path;
     use tempfile::tempdir;
+
+    #[test]
+    fn run_sections_round_trip_and_a_bad_metrics_write_keeps_them() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("run.mrec");
+        let mut rec = MolRec::new();
+        rec.status.insert("state".into(), "succeeded".into());
+        rec.status.insert("x_note".into(), JsonValue::Null);
+        rec.method.insert("type".into(), "classical".into());
+        rec.method.insert("description".into(), "minimize".into());
+        rec.method
+            .insert("engine".into(), serde_json::json!({"name": "lammps"}));
+        rec.metrics.insert(
+            "series".into(),
+            serde_json::json!({"train/loss": {"count": 2}}),
+        );
+        rec.metrics_series
+            .insert("train/loss".into(), vec![0.5, 0.25]);
+        rec.metrics_steps.insert("train/loss".into(), vec![1, 2]);
+        rec.metrics_wall_time.insert(
+            "train/loss".into(),
+            vec![
+                "2026-08-04T00:00:01+00:00".into(),
+                "2026-08-04T00:00:02+00:00".into(),
+            ],
+        );
+        rec.metrics_wal = Some("{\"t\":\"scalar\"}\n".into());
+        let mut energy = ObservableRecord::new(
+            "energy",
+            ObservableKind::Scalar,
+            Column::from(ndarray::ArrayD::from_elem(ndarray::IxDyn(&[]), 1.5 as F)),
+        );
+        energy.description = "total energy".into();
+        energy.unit = Some("hartree".into());
+        energy.extra.insert("x_reviewed".into(), JsonValue::Null);
+        rec.observables.insert(energy).unwrap();
+        write_mrec(&path, &rec).unwrap();
+
+        let file = MrecFile::open(&path).unwrap();
+        let status = file.status().unwrap().unwrap();
+        assert_eq!(status["state"], "succeeded");
+        assert!(status["x_note"].is_null());
+        let metrics = file.metrics().unwrap().unwrap();
+        assert_eq!(metrics.series["train/loss"], vec![0.5, 0.25]);
+        assert_eq!(metrics.steps["train/loss"], vec![1, 2]);
+        assert_eq!(
+            metrics.wall_time["train/loss"],
+            vec!["2026-08-04T00:00:01+00:00", "2026-08-04T00:00:02+00:00"]
+        );
+        assert_eq!(metrics.wal.as_deref(), Some("{\"t\":\"scalar\"}\n"));
+        assert!(path.join("metrics/series/train%2Floss/zarr.json").is_file());
+        assert_eq!(
+            std::fs::read_to_string(path.join("metrics/metrics.jsonl")).unwrap(),
+            "{\"t\":\"scalar\"}\n"
+        );
+        let observables = file.observables().unwrap().unwrap();
+        assert_eq!(observables.len(), 1);
+        assert_eq!(observables[0].name, "energy");
+        assert!(observables[0].meta["x_reviewed"].is_null());
+        assert_eq!(observables[0].meta["kind"], "scalar");
+
+        let mut broken = rec.clone();
+        broken.metrics_steps.insert("train/loss".into(), vec![1]);
+        assert!(write_mrec(&path, &broken).is_err());
+        assert_eq!(
+            MrecFile::open(&path)
+                .unwrap()
+                .metrics()
+                .unwrap()
+                .unwrap()
+                .steps["train/loss"],
+            vec![1, 2]
+        );
+
+        let mut named_meta = MolRec::new();
+        named_meta.status.insert("state".into(), "running".into());
+        named_meta
+            .observables
+            .insert(ObservableRecord::new(
+                "meta",
+                ObservableKind::Scalar,
+                Column::from(ndarray::ArrayD::from_elem(ndarray::IxDyn(&[]), 1.0 as F)),
+            ))
+            .unwrap();
+        assert!(write_mrec(&path, &named_meta).is_err());
+    }
 
     #[test]
     fn invalid_replacements_leave_the_existing_record_untouched() {
@@ -1770,7 +2034,7 @@ mod tests {
     // -- the wasm32 precision fixture ---------------------------------------
 
     /// The packed record molwasm reads to prove a wasm32 reader decodes a
-    /// precision column (`numcodecs.shuffle` + `zstd`, written here by the C
+    /// precision column (`numcodecs.shuffle` + `zstd`, written by the C
     /// encoder) through the pure-Rust `zstd` plugin.
     const WASM_PRECISION_FIXTURE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -1780,36 +2044,6 @@ mod tests {
     /// The values the fixture's `x` columns were presented with; the wasm
     /// test rounds them with the same rule and compares bit for bit.
     const FIXTURE_X: [[F; 3]; 2] = [[0.123_456_789, -1.000_488, 7.3], [0.2, 1.75, -3.062_57]];
-
-    fn precision_fixture_record() -> MolRec {
-        let precise = |values: &[F]| {
-            let mut frame = frame_with_x(values);
-            frame
-                .get_mut("atoms")
-                .unwrap()
-                .set_precision("x", 1e-3)
-                .unwrap();
-            frame
-        };
-        let mut record = MolRec::new();
-        record.frame = Some(precise(&FIXTURE_X[0]));
-        record.trajectory = Some(Trajectory::from_frames(
-            FIXTURE_X.iter().map(|values| precise(values)).collect(),
-        ));
-        record
-    }
-
-    /// `cargo mrs-test -- --ignored regenerate_the_wasm_precision_fixture`
-    /// rewrites the checked-in fixture.
-    #[test]
-    #[ignore = "rewrites a checked-in fixture"]
-    fn regenerate_the_wasm_precision_fixture() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("precision.mrec");
-        write_mrec(&path, &precision_fixture_record()).unwrap();
-        let packed = crate::io::mrec::zarr_storage::pack_mrec_zip(&path).unwrap();
-        std::fs::copy(packed, WASM_PRECISION_FIXTURE).unwrap();
-    }
 
     #[test]
     fn the_wasm_precision_fixture_is_a_shuffled_zstd_precision_record() {

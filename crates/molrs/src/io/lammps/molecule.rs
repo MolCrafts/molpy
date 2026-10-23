@@ -37,24 +37,31 @@ const JSON_UNITS: &str = "units";
 ///
 /// Read from a file, the frame's meta carries its path as `source_file`.
 pub fn read_lammps_molecule<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
-    read_lammps_molecule_native(src.into())
+    let frame = read_lammps_molecule_native(src.into())?;
+    crate::io::reader::check_read_frame(&frame)?;
+    Ok(frame)
 }
 
 /// Read a LAMMPS molecule template in its JSON format (`format: "molecule"`).
 ///
 /// Read from a file, the frame's meta carries its path as `source_file`.
 pub fn read_lammps_molecule_json<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
-    read_json(src.into())
+    let frame = read_json(src.into())?;
+    crate::io::reader::check_read_frame(&frame)?;
+    Ok(frame)
 }
 
 /// Write a frame as a LAMMPS molecule template file (the native text format).
 pub fn write_lammps_molecule<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
-    write_lammps_molecule_native(sink.into(), frame)
+    crate::io::writer::check_write_frame(frame)?;
+    sink.into()
+        .put_with(|w| write_lammps_molecule_native(w, frame))
 }
 
 /// Write a frame as a LAMMPS molecule template in its JSON format.
 pub fn write_lammps_molecule_json<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
-    write_json(sink.into(), frame)
+    crate::io::writer::check_write_frame(frame)?;
+    sink.into().put_with(|w| write_json(w, frame))
 }
 
 // ── native reader ───────────────────────────────────────────────────────────
@@ -411,7 +418,7 @@ fn parse_native_connectivity(
 
 // ── native writer ───────────────────────────────────────────────────────────
 
-fn write_lammps_molecule_native(sink: Sink<'_>, frame: &Frame) -> Result<()> {
+fn write_lammps_molecule_native(w: &mut impl Write, frame: &Frame) -> Result<()> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
@@ -422,7 +429,6 @@ fn write_lammps_molecule_native(sink: Sink<'_>, frame: &Frame) -> Result<()> {
         return Err(invalid_data("Frame must contain atoms data"));
     }
     let sections = topology(frame)?;
-    let mut w = sink.writer()?;
     let title = frame
         .meta
         .get("title")
@@ -688,6 +694,32 @@ fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
 
 // ── JSON ────────────────────────────────────────────────────────────────────
 
+/// Refuse a molecule-file `units` style whose numbers a [`Frame`] cannot hold
+/// as written: a frame's lengths are Å, its masses g/mol and its charges e
+/// ([`keys::UNITS`]), so only a preset in exactly those units passes
+/// (`real`, `metal`). A file in another style would need every coordinate,
+/// mass and charge converted, and `lj` names no physical scale to convert by.
+fn check_frame_units(style: &str) -> Result<()> {
+    let frame_unit = [
+        ("length", "angstrom"),
+        ("mass", "gram_per_mole"),
+        ("charge", "elementary_charge"),
+    ];
+    let preset = molrs::core::UnitPreset::builtin(style)
+        .ok_or_else(|| invalid_data(format!("unknown LAMMPS units style `{style}`")))?;
+    if let Some((dimension, _)) = frame_unit
+        .iter()
+        .find(|(dimension, unit)| preset.unit(dimension) != Some(*unit))
+    {
+        return Err(invalid_data(format!(
+            "LAMMPS units `{style}` states {dimension} in {}, but a frame holds Å, g/mol and e; \
+             only `real` and `metal` molecules are read and written as they are",
+            preset.unit(dimension).unwrap_or("no unit")
+        )));
+    }
+    Ok(())
+}
+
 fn read_json(src: Source<'_>) -> Result<Frame> {
     let text = src.text()?;
     let data: JsonValue = serde_json::from_str(&text).map_err(invalid_data)?;
@@ -712,6 +744,7 @@ fn read_json(src: Source<'_>) -> Result<Frame> {
                 "JSON molecule field `{JSON_UNITS}` must be a string, got {units}"
             ))
         })?;
+        check_frame_units(units)?;
         // The frame's `units` is the force-field units object
         // (`{"preset": …}`), not a bare string.
         frame.meta.insert(
@@ -876,7 +909,7 @@ fn read_json(src: Source<'_>) -> Result<Frame> {
     Ok(frame)
 }
 
-fn write_json(sink: Sink<'_>, frame: &Frame) -> Result<()> {
+fn write_json(w: &mut impl Write, frame: &Frame) -> Result<()> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
@@ -927,6 +960,7 @@ fn write_json(sink: Sink<'_>, frame: &Frame) -> Result<()> {
                 keys::UNITS
             ))
         })?;
+        check_frame_units(preset)?;
         data[JSON_UNITS] = json!(preset);
     }
 
@@ -989,9 +1023,7 @@ fn write_json(sink: Sink<'_>, frame: &Frame) -> Result<()> {
         data["inertia"] = json!(inn.to_vec());
     }
 
-    let mut w = sink.writer()?;
-    serde_json::to_writer_pretty(&mut w, &data).map_err(invalid_data)?;
-    w.flush()
+    serde_json::to_writer_pretty(w, &data).map_err(invalid_data)
 }
 
 #[cfg(test)]
@@ -1203,5 +1235,38 @@ Angles
         write_lammps_molecule_json(&out, &frame).unwrap();
         let text = std::fs::read_to_string(&out).unwrap();
         assert!(text.contains("\"units\": \"real\""), "{text}");
+    }
+
+    /// A molecule in `nano` units has nm coordinates; a frame's are Å. It is
+    /// refused on read and on write instead of entering a frame unconverted.
+    #[test]
+    fn json_units_whose_numbers_are_not_frame_units_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nano.json");
+        std::fs::write(
+            &path,
+            r#"{"format": "molecule", "units": "nano",
+                "types": {"format": ["atom-id", "type"], "data": [[1, "C"]]},
+                "coords": {"format": ["atom-id", "x", "y", "z"], "data": [[1, 0.1, 0.0, 0.0]]}}"#,
+        )
+        .unwrap();
+        let err = read_lammps_molecule_json(&path).unwrap_err().to_string();
+        assert!(err.contains("nano") && err.contains("nanometer"), "{err}");
+
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert("type", ndarray::arr1(&["C".to_string()]).into_dyn(), None)
+            .unwrap();
+        frame.insert("atoms", atoms);
+        frame.meta.insert(
+            keys::UNITS,
+            MetaValue::Json(serde_json::json!({ "preset": "lj" })),
+        );
+        let mut sink = Vec::new();
+        let err = write_lammps_molecule_json(&mut sink, &frame)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`lj`"), "{err}");
     }
 }

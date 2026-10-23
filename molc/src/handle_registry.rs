@@ -107,13 +107,35 @@ pub(crate) static REGISTRY: LazyLock<Mutex<HandleRegistry>> =
     LazyLock::new(|| Mutex::new(HandleRegistry::new()));
 
 /// Lock the handle registry, returning a guard.
+///
+/// A panic caught by `ffi_try!` while the lock was held poisons it; the
+/// registry is recovered rather than left poisoned, so one caught panic does
+/// not turn every later call — `molc_shutdown` included — into a failure.
+/// Every registry edit is a single insert or remove, so a recovered registry
+/// holds whole entries only.
 pub(crate) fn lock_registry() -> MutexGuard<'static, HandleRegistry> {
-    REGISTRY.lock().expect("REGISTRY poisoned")
+    REGISTRY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A panic while the registry is held poisons the mutex; the next lock
+    /// recovers it instead of failing every later call.
+    #[test]
+    fn a_poisoned_registry_is_recovered() {
+        let _ = std::thread::spawn(|| {
+            let _guard = lock_registry();
+            panic!("a caught panic inside an FFI call");
+        })
+        .join();
+        assert!(REGISTRY.is_poisoned());
+        let registry = lock_registry();
+        drop(registry);
+    }
     use molrs::core::{Cell, Sphere};
     use ndarray::Array1;
     use std::sync::Arc;

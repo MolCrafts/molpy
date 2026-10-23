@@ -331,7 +331,7 @@ class TestLammpsDataLabels:
         )
         atoms = mp.io.read_lammps_data(path, atom_style="atomic")["atoms"]
         assert "charge" not in atoms and "mol_id" not in atoms
-        with pytest.raises(OSError, match="atom style"):
+        with pytest.raises(ValueError, match="atom style"):
             mp.io.read_lammps_data(path, atom_style="nonsense")
 
     def test_write_declares_extra_type_labels(self, tmp_path):
@@ -345,7 +345,7 @@ class TestLammpsDataLabels:
         assert "Bond Type Labels\n\n1 OW-HW\n2 OX-HW\n" in text
         # An atom type no row uses has no mass the frame states, and the
         # writer invents none: the error names the explicit route.
-        with pytest.raises(OSError, match=r"atom type 3 \(OX\) has no mass"):
+        with pytest.raises(ValueError, match=r"atom type 3 \(OX\) has no mass"):
             mp.io.write_lammps_data(out, frame, type_labels={"atoms": ["OX"]})
         # Stating it through the frame meta is that route.
         masses = dict(frame.meta["lammps_type_masses"])
@@ -388,9 +388,9 @@ class TestLammpsDataStyleAndUnits:
 
     def test_a_named_style_missing_columns_raises(self, tmp_path):
         lj = mp.io.read_lammps_data(mp.io.Text(self.LJ_FLUID))
-        with pytest.raises(OSError, match=r"mol_id.*charge|charge.*mol_id"):
+        with pytest.raises(ValueError, match=r"mol_id.*charge|charge.*mol_id"):
             mp.io.write_lammps_data(tmp_path / "lj.data", lj, atom_style="full")
-        with pytest.raises(OSError, match="frame\\['bonds'\\]"):
+        with pytest.raises(ValueError, match="frame\\['bonds'\\]"):
             capture(
                 mp.io.write_lammps_data,
                 mp.io.read_lammps_data(mp.io.Text(self.FULL)),
@@ -413,17 +413,14 @@ class TestLammpsDataStyleAndUnits:
         # Å/fs -> Å/ps; Å, g/mol and e are metal's too.
         np.testing.assert_allclose(metal["atoms"]["vx"], [100.0, -100.0])
         np.testing.assert_allclose(metal["atoms"]["x"], frame["atoms"]["x"])
-        lj = mp.io.read_lammps_data(
-            mp.io.Text(capture(mp.io.write_lammps_data, frame, units="lj"))
+        home = mp.io.read_lammps_data(
+            mp.io.Text(capture(mp.io.write_lammps_data, metal, units="real"))
         )
-        # One e at the canonical sigma = 1 Å, epsilon = 1 kcal/mol.
-        np.testing.assert_allclose(lj["atoms"]["charge"], [-9.1112, 9.1112], rtol=1e-4)
-        for there in (metal, lj):
-            home = mp.io.read_lammps_data(
-                mp.io.Text(capture(mp.io.write_lammps_data, there, units="real"))
-            )
-            for key in ("x", "charge", "vx", "vz"):
-                np.testing.assert_allclose(home["atoms"][key], frame["atoms"][key])
+        for key in ("x", "charge", "vx", "vz"):
+            np.testing.assert_allclose(home["atoms"][key], frame["atoms"][key])
+        # Reduced units need the system's sigma, epsilon and mass: refused.
+        with pytest.raises(ValueError, match="lj reference"):
+            capture(mp.io.write_lammps_data, frame, units="lj")
 
     def test_an_unsupported_unit_style_is_a_value_error(self, tmp_path):
         frame = mp.io.read_lammps_data(mp.io.Text(self.FULL))
@@ -461,7 +458,7 @@ class TestInpcrdIntoFrame:
         atoms = mp.core.Block()
         atoms.insert("x", np.zeros(3))
         frame["atoms"] = atoms
-        with pytest.raises(OSError, match="rows"):
+        with pytest.raises(ValueError, match="rows"):
             mp.io.read_inpcrd(path, frame)
         assert "y" not in frame["atoms"]
 
@@ -531,7 +528,7 @@ class TestCrystalSymmetryMeta:
     def test_malformed_symops_are_refused_on_write(self):
         frame = mp.io.read_cif(mp.io.Text(P21C_CIF))
         frame.meta["symops"] = "x,y,z"
-        with pytest.raises(OSError, match="symops"):
+        with pytest.raises(ValueError, match="symops"):
             capture(mp.io.write_cif, frame)
 
     def test_read_pdb_keeps_the_cryst1_space_group(self):

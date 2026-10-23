@@ -1,32 +1,22 @@
-//! Engine codecs against the engines (`ff-ir-02-protocol` §8): styles
-//! the engines have no molrs arm for — registered at run time with a spec,
-//! or built in with an expression — written by molrs and priced by the
-//! engine, to relative 1e-10 of molrs's own energy.
+//! Engine codecs in process (`ff-ir-02-protocol` §8): styles the engines
+//! have no molrs arm for — registered at run time with a spec, or built in
+//! with an expression — written by molrs's engine writers, read back, and
+//! priced by molrs to the same energy.
 //!
-//! | Case | Engine | What it holds |
+//! | Case | Format | What it holds |
 //! |---|---|---|
-//! | `fene` | LAMMPS `run 0` | a run-time `bond fene` registered with `LammpsForm::Positional`: `bond_style fene` |
-//! | `smooth` | LAMMPS `run 0` | a run-time `pair lj/smooth/linear`, positional, mixed by `pair_modify mix arithmetic` |
-//! | `metal` | LAMMPS `run 0` | built-in `bond morse` and `pair buck` of a `real` field written in `metal`: the conversion per dimension (`E`, `1/L`, `E*L^6`) |
-//! | `morse` | LAMMPS `run 0` | built-in `pair morse`, positional, a row per pair |
-//! | `openmm` | OpenMM 8.6.1 Reference | the `fene` bond (`CustomBondForce`), built-in `bond morse`, `angle class2` and `improper cvff` (`CustomBondForce`, `CustomAngleForce`, `CustomTorsionForce` with `ordering="charmm"`), a run-time compound category `urey_bradley` (`CustomCompoundBondForce`, by the XML's `<Script>`), the `lj/smooth/linear` pair (`CustomNonbondedForce`) |
-//!
-//! `scripts/ff_engine_codec_check.sh` writes the inputs (this module's
-//! [`write_engine_inputs`] with `MOLRS_ENGINE_CODEC_DIR` set), runs the
-//! engines and prints their numbers; `--pin` stores them in
-//! `testdata/engine_codecs/engines.tsv`, which
-//! [`every_engine_prices_the_codec_cases_as_molrs`] holds molrs to.
+//! | `fene` | LAMMPS | a run-time `bond fene` registered with `LammpsForm::Positional`: `bond_style fene` |
+//! | `smooth` | LAMMPS | a run-time `pair lj/smooth/linear`, positional, mixed by `pair_modify mix arithmetic` |
+//! | `metal` | LAMMPS | built-in `bond morse` and `pair buck` of a `real` field written in `metal`: the conversion per dimension (`E`, `1/L`, `E*L^6`) |
+//! | `morse` | LAMMPS | built-in `pair morse`, positional, a row per pair |
+//! | `openmm` | OpenMM XML | the `fene` bond (`CustomBondForce`), built-in `bond morse`, `angle class2` and `improper cvff` (`CustomBondForce`, `CustomAngleForce`, `CustomTorsionForce` with `ordering="charmm"`), a run-time compound category `urey_bradley` (`CustomCompoundBondForce`, by the XML's `<Script>`), the `lj/smooth/linear` pair (`CustomNonbondedForce`) |
 
 use crate::core::Cell;
 use crate::ff::potential::fixtures::OneShot;
 use crate::io::writer::WrittenText;
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
-use std::path::Path;
 use std::sync::Arc;
 
 use ndarray::Array1;
-use serde_json::json;
 
 use crate::ff::compile::PotentialCompiler;
 use crate::ff::forcefield::ForceField;
@@ -43,7 +33,6 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
-use molrs::io::lammps::data::write_lammps_data;
 use molrs::op::{F, Idx};
 
 fn dim(s: &str) -> ParamDimension {
@@ -121,16 +110,11 @@ pub(crate) fn registry() -> Arc<Registry> {
     Arc::new(r)
 }
 
-/// One case: a force field, its frame, its configurations (Å, on the 0.01 Å
-/// grid every file holds exactly) and the engine pricing it.
+/// One case: a force field and its frame.
 pub(crate) struct Case {
     pub name: &'static str,
-    pub engine: &'static str,
     pub ff: ForceField,
     pub frame: Frame,
-    pub configs: Vec<Vec<F>>,
-    /// The LAMMPS `units` the files are written in.
-    pub units: &'static str,
 }
 
 fn strings(v: &[&str]) -> ndarray::ArrayD<String> {
@@ -206,7 +190,8 @@ fn atom_types(ff: &mut ForceField, types: &[(&str, F)]) {
 /// `bondCutoff`), not only the rows the frame's `angles` and `dihedrals`
 /// blocks happen to hold.
 fn with_pairs(ff: &ForceField, mut frame: Frame) -> Frame {
-    let pairs = intramolecular_pairs(&graph_topology(&frame), ff.special_bonds(), None).unwrap();
+    let pairs =
+        intramolecular_pairs(&graph_topology(&frame), ff.special_bonds().unwrap(), None).unwrap();
     frame.insert("pairs", pairs);
     frame
 }
@@ -269,18 +254,6 @@ fn graph_topology(frame: &Frame) -> Frame {
     out
 }
 
-/// `x` shifted by `d` Å along `(1, -1, 2)` on every second atom: a second
-/// configuration on the grid.
-fn shifted(x: &[F], d: F) -> Vec<F> {
-    x.chunks(3)
-        .enumerate()
-        .flat_map(|(i, p)| {
-            let s = if i % 2 == 1 { d } else { 0.0 };
-            [p[0] + s, p[1] - s, p[2] + 2.0 * s]
-        })
-        .collect()
-}
-
 pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
     let mut out = Vec::new();
     let masses = [("A", 12.011), ("B", 14.007), ("C", 15.999), ("D", 32.06)];
@@ -306,12 +279,8 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
         )
         .unwrap();
     }
-    let x = vec![
-        0.0, 0.0, 0.0, 0.97, 0.0, 0.0, 0.97, 1.2, 0.0, 0.97, 1.2, 0.9,
-    ];
     out.push(Case {
         name: "fene",
-        engine: "lammps",
         frame: with_pairs(
             &ff,
             frame(
@@ -323,8 +292,6 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
                 )],
             ),
         ),
-        configs: vec![x.clone(), shifted(&x, 0.05)],
-        units: "real",
         ff,
     });
 
@@ -351,15 +318,9 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
         Params::from_iter([("epsilon", 0.15), ("sigma", 3.6)]),
     )
     .unwrap();
-    let x = vec![
-        0.0, 0.0, 0.0, 3.7, 0.0, 0.0, 0.0, 3.9, 0.0, 3.6, 3.8, 0.4, 1.8, 1.9, 3.5,
-    ];
     out.push(Case {
         name: "smooth",
-        engine: "lammps",
         frame: with_pairs(&ff, frame(&["A", "A", "B", "B", "B"], &masses, &[])),
-        configs: vec![x.clone(), shifted(&x, 0.13)],
-        units: "real",
         ff,
     });
 
@@ -394,10 +355,8 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
         )
         .unwrap();
     }
-    let x = vec![0.0, 0.0, 0.0, 1.61, 0.0, 0.0, 0.3, 3.4, 0.2, 1.7, 3.1, 0.9];
     out.push(Case {
         name: "metal",
-        engine: "lammps",
         frame: with_pairs(
             &ff,
             frame(
@@ -406,8 +365,6 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
                 &[("bonds", &[(&[0, 1], "A-B"), (&[2, 3], "A-B")])],
             ),
         ),
-        configs: vec![x.clone(), shifted(&x, 0.07)],
-        units: "metal",
         ff,
     });
 
@@ -435,13 +392,9 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
             )
             .unwrap();
     }
-    let x = vec![0.0, 0.0, 0.0, 3.4, 0.5, 0.0, 0.7, 3.9, 0.3, 3.8, 3.6, 2.2];
     out.push(Case {
         name: "morse",
-        engine: "lammps",
         frame: with_pairs(&ff, frame(&["A", "B", "A", "B"], &masses, &[])),
-        configs: vec![x.clone(), shifted(&x, 0.11)],
-        units: "real",
         ff,
     });
 
@@ -519,13 +472,8 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
         )
         .unwrap();
     }
-    let x = vec![
-        0.0, 0.0, 0.0, 1.42, 0.31, 0.0, 2.05, 1.62, 0.12, 3.47, 1.81, 0.4, 1.2, 4.9, 3.3, 1.9,
-        -0.95, 0.6,
-    ];
     out.push(Case {
         name: "openmm",
-        engine: "openmm",
         frame: with_pairs(
             &ff,
             frame(
@@ -550,79 +498,8 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
                 ],
             ),
         ),
-        configs: vec![x.clone(), shifted(&x, 0.09)],
-        units: "real",
         ff,
     });
-    out
-}
-
-/// The term each style's energy counts in.
-fn term(category: &str) -> &'static str {
-    match category {
-        "bond" => "bond",
-        "angle" => "angle",
-        "improper" => "improper",
-        "urey_bradley" => "urey_bradley",
-        "pair" => "vdw",
-        other => panic!("no term for {other}"),
-    }
-}
-
-/// molrs's energy of `case` at configuration `k`, per term and in total,
-/// in the units of the engine's files.
-pub(crate) fn molrs_terms(case: &Case, reg: &Registry, k: usize) -> BTreeMap<&'static str, F> {
-    let x = &case.configs[k];
-    let energy_of = |ff: &ForceField, frame: &Frame| {
-        PotentialCompiler::new(ff)
-            .compile(frame)
-            .unwrap()
-            .energy_at(x)
-    };
-    let energy = |ff: &ForceField| energy_of(ff, &case.frame);
-    let to_file = if case.units == "real" {
-        1.0
-    } else {
-        LammpsUnitConverter::canonical()
-            .unwrap()
-            .energy(1.0, "real", case.units)
-            .unwrap()
-    };
-    let mut out: BTreeMap<&'static str, F> = BTreeMap::new();
-    for style in case.ff.styles() {
-        if style.category() == "atom" {
-            continue;
-        }
-        let mut one = case.ff.empty_like();
-        let s = one
-            .def_style(style.category(), style.name(), style.params().clone())
-            .unwrap();
-        for (name, ends, p) in style.type_rows() {
-            s.def_type(name, &ends, p.clone()).unwrap();
-        }
-        // The style alone, on the rows of its own types.
-        let mut own = case.frame.clone();
-        let block = &reg.category(style.category()).unwrap().block;
-        if let Some(b) = case.frame.get(block)
-            && style.category() != "pair"
-        {
-            let names: Vec<&str> = style.type_rows().iter().map(|r| r.0).collect();
-            let types = b.get("type").unwrap().get::<String>().unwrap();
-            let keep: Vec<usize> = (0..types.len())
-                .filter(|&r| names.contains(&types[[r]].as_str()))
-                .collect();
-            own.insert(block.as_ref(), b.select_rows(&keep).unwrap());
-        }
-        *out.entry(term(style.category())).or_default() += energy_of(&one, &own) * to_file;
-    }
-    out.insert("total", energy(&case.ff) * to_file);
-    out
-}
-
-/// `frame` at `x` without its pair list: a LAMMPS data file.
-fn placed(frame: &Frame, x: &[F]) -> Frame {
-    let mut out = at(frame, x);
-    out.remove("pairs");
     out
 }
 
@@ -642,137 +519,9 @@ fn at(frame: &Frame, x: &[F]) -> Frame {
     out
 }
 
-/// Write the case's engine inputs into `dir/<case>/`.
-fn stage_case_inputs(dir: &Path, case: &Case, reg: &Arc<Registry>, tsv: &mut String) {
-    let root = dir.join(case.name);
-    std::fs::create_dir_all(&root).unwrap();
-    match case.engine {
-        "lammps" => {
-            let labels = TypeLabels::from_frame(&case.frame).unwrap();
-            let text = LammpsForcefieldWriter::new(&labels)
-                .with_precision(17)
-                .with_units(case.units)
-                .written(&case.ff)
-                .unwrap();
-            let (pre, post): (Vec<&str>, Vec<&str>) =
-                text.lines().partition(|l| l.starts_with("units"));
-            std::fs::write(root.join("pre.lmp"), pre.join("\n") + "\n").unwrap();
-            std::fs::write(root.join("system.ff"), post.join("\n") + "\n").unwrap();
-            for (k, x) in case.configs.iter().enumerate() {
-                // Masses (g/mol) and lengths (Å) are the same numbers in
-                // `real` and `metal`.
-                write_lammps_data(&root.join(format!("data_{k}.lmp")), &placed(&case.frame, x))
-                    .unwrap();
-            }
-        }
-        "openmm" => {
-            let xml = OpenmmXmlWriter::new().written(&case.ff).unwrap();
-            std::fs::write(root.join("ff.xml"), xml).unwrap();
-            let atoms = case.frame.get("atoms").unwrap();
-            let types = atoms.get("type").unwrap().get::<String>().unwrap();
-            let bonds = case.frame.get("bonds").unwrap();
-            let col = |k: &str| -> Vec<usize> {
-                bonds
-                    .get(k)
-                    .unwrap()
-                    .get::<u64>()
-                    .map(|c| c.iter().map(|&v| v as usize).collect())
-                    .unwrap()
-            };
-            let system = json!({
-                "types": types.iter().cloned().collect::<Vec<_>>(),
-                "bonds": col("atomi").into_iter().zip(col("atomj")).map(|(i, j)| [i, j]).collect::<Vec<_>>(),
-                "configs": case.configs,
-            });
-            std::fs::write(root.join("system.json"), system.to_string()).unwrap();
-        }
-        other => panic!("engine {other}"),
-    }
-    for k in 0..case.configs.len() {
-        for (t, v) in molrs_terms(case, reg, k) {
-            writeln!(tsv, "{}\t{k}\t{}\t{t}\t{v:?}", case.name, case.engine).unwrap();
-        }
-    }
-}
-
-/// With `MOLRS_ENGINE_CODEC_DIR` set, write every case's engine inputs
-/// there and molrs's numbers to `molrs.tsv` (the script's job).
-#[test]
-fn write_engine_inputs() {
-    let Some(dir) = std::env::var_os("MOLRS_ENGINE_CODEC_DIR") else {
-        return;
-    };
-    let dir = Path::new(&dir);
-    let reg = registry();
-    let mut tsv = String::new();
-    for case in cases(&reg) {
-        stage_case_inputs(dir, &case, &reg, &mut tsv);
-    }
-    std::fs::write(dir.join("molrs.tsv"), tsv).unwrap();
-}
-
-/// `(case, config, engine) → term → value`, from the pinned table.
-fn pinned() -> BTreeMap<(String, usize, String), BTreeMap<String, F>> {
-    let mut out: BTreeMap<_, BTreeMap<String, F>> = BTreeMap::new();
-    for line in include_str!("testdata/engine_codecs/engines.tsv").lines() {
-        if line.starts_with('#') || line.trim().is_empty() {
-            continue;
-        }
-        let c: Vec<&str> = line.split('\t').collect();
-        let [case, k, engine, term, value] = c[..] else {
-            panic!("bad line {line:?}");
-        };
-        out.entry((case.to_owned(), k.parse().unwrap(), engine.to_owned()))
-            .or_default()
-            .insert(term.to_owned(), value.parse().unwrap());
-    }
-    out
-}
-
-/// Every pinned engine number is molrs's to relative 1e-10 (of the term,
-/// or of 1 kcal/mol for a smaller one), every case, configuration and
-/// term.
-#[test]
-fn every_engine_prices_the_codec_cases_as_molrs() {
-    let table = pinned();
-    let reg = registry();
-    let mut bad = Vec::new();
-    let mut seen = 0;
-    for case in cases(&reg) {
-        for k in 0..case.configs.len() {
-            let got = table
-                .get(&(case.name.to_owned(), k, case.engine.to_owned()))
-                .unwrap_or_else(|| panic!("{} config {k}: no pinned numbers", case.name));
-            let want = molrs_terms(&case, &reg, k);
-            assert_eq!(
-                got.keys().collect::<Vec<_>>(),
-                want.keys()
-                    .map(|t| t.to_string())
-                    .collect::<Vec<_>>()
-                    .iter()
-                    .collect::<Vec<_>>(),
-                "{} config {k}: the engine's terms are molrs's",
-                case.name
-            );
-            for (t, w) in want {
-                let g = got[t];
-                let rel = (g - w).abs() / w.abs().max(1.0);
-                seen += 1;
-                if rel > 1e-10 {
-                    bad.push(format!(
-                        "{} config {k} {t}: {} {g:.17e}, molrs {w:.17e}, rel {rel:.1e}",
-                        case.name, case.engine
-                    ));
-                }
-            }
-        }
-    }
-    assert!(seen > 0);
-    assert!(bad.is_empty(), "{}", bad.join("\n"));
-}
-
 // ── the codecs, in process ──────────────────────────────────────────────────
 
+#[cfg(test)]
 mod codecs {
     use super::*;
     use crate::ff::ir::expression::{Binding, Geometry, compile};
@@ -1096,6 +845,8 @@ mod codecs {
         close(scale.apply(2.0, dim("E/A^2")), 2.0 * fe);
         assert!(sys.scale("real", "real").unwrap().is_identity());
         // Through a writer: `buck`'s `c` (E·L⁶) is the energy's factor.
+        let reference = crate::io::lammps::units::LammpsLjReference::canonical().unwrap();
+        let sys = LammpsUnitConverter::with_reference(&reference).unwrap();
         let to_lj = sys.scale("real", "lj").unwrap();
         let l = sys.length(1.0, "real", "lj").unwrap();
         close(
@@ -1214,6 +965,10 @@ mod codecs {
         ));
         // GROMACS and frcmod: a style that is not built in.
         let mut ff = ForceField::new("x");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 1.0 / 1.2],
+        });
         ff.set_units("real");
         let mut p = Params::new();
         p.set("expression", "k*(r-r0)^4");
@@ -1334,6 +1089,10 @@ mod codecs {
         )
         .unwrap();
         let mut ff = ForceField::new("q").with_registry(Arc::new(r));
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 1.0 / 1.2],
+        });
         ff.set_units("real");
         ff.def_style("quint", "x", Params::new())
             .unwrap()
@@ -1355,6 +1114,10 @@ mod codecs {
     /// carrying `extra` besides its parameters.
     fn with_row_extras(extra: &Params) -> (ForceField, Frame) {
         let mut ff = ForceField::new("extras");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 1.0 / 1.2],
+        });
         ff.set_units("real");
         let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
         for (t, m) in [("A", 16.0), ("B", 1.008)] {

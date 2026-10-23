@@ -208,7 +208,7 @@
 mod system;
 
 #[cfg(test)]
-mod engine_check;
+mod write_read_check;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -313,7 +313,7 @@ const NO_IR_FORM: &[&str] = &[
 /// assert_eq!(lj.params().get("mixing").and_then(|v| v.as_text()), Some("geometric"));
 ///
 /// // b₀ = 0.109 nm is r0 = 1.09 Å.
-/// let bonds = ff.get_bondtypes();
+/// let bonds = ff.get_types("bond");
 /// let r0 = bonds[0].params.get("r0").and_then(|v| v.as_num()).expect("r0");
 /// assert!((r0 - 1.09).abs() < 1e-12);
 /// # Ok::<(), std::io::Error>(())
@@ -1202,6 +1202,8 @@ impl Scan {
     /// The force field the directive rows define, and the lookup tables.
     fn directives(&self) -> Result<Directives, String> {
         let mut ff = ForceField::new("GROMACS");
+        // Every GROMACS quantity is converted to kcal/mol and Å as it is read.
+        ff.set_units("real");
         let rows = |section: &'static str| self.rows.iter().filter(move |r| r.section == section);
 
         let mut defaults_rows = rows("defaults");
@@ -1577,7 +1579,7 @@ fn define_bonded(
 mod tests {
     use super::*;
     use crate::core::constants::VACUUM_DIELECTRIC;
-    use crate::ff::forcefield::{AtomType, ForceField, PairType, Style, StyleDefs};
+    use crate::ff::forcefield::{ForceField, Style, TypeDef};
     use crate::ff::ir::Params;
     use molrs::core::constants::COULOMB_REAL;
 
@@ -1617,13 +1619,13 @@ mod tests {
             .collect()
     }
 
-    fn atom_type<'a>(ff: &'a ForceField, name: &str) -> &'a AtomType {
+    fn atom_type<'a>(ff: &'a ForceField, name: &str) -> &'a TypeDef {
         style(ff, "atom", "full")
             .get_atomtype(name)
             .unwrap_or_else(|| panic!("no atom type {name}"))
     }
 
-    fn lj_self_row<'a>(ff: &'a ForceField, name: &str) -> &'a PairType {
+    fn lj_self_row<'a>(ff: &'a ForceField, name: &str) -> &'a TypeDef {
         style(ff, "pair", "lj/cut")
             .get_pairtype(name, None)
             .unwrap_or_else(|| panic!("no lj/cut self row for {name}"))
@@ -1631,50 +1633,7 @@ mod tests {
 
     /// Every bonded type of `s` as `(endpoints, params)`.
     fn bonded(s: &Style) -> Vec<(Vec<&str>, &Params)> {
-        match s.defs() {
-            StyleDefs::Bond(v) => v
-                .iter()
-                .map(|t| (vec![t.itom.as_str(), t.jtom.as_str()], &t.params))
-                .collect(),
-            StyleDefs::Angle(v) => v
-                .iter()
-                .map(|t| {
-                    (
-                        vec![t.itom.as_str(), t.jtom.as_str(), t.ktom.as_str()],
-                        &t.params,
-                    )
-                })
-                .collect(),
-            StyleDefs::Dihedral(v) => v
-                .iter()
-                .map(|t| {
-                    (
-                        vec![
-                            t.itom.as_str(),
-                            t.jtom.as_str(),
-                            t.ktom.as_str(),
-                            t.ltom.as_str(),
-                        ],
-                        &t.params,
-                    )
-                })
-                .collect(),
-            StyleDefs::Improper(v) => v
-                .iter()
-                .map(|t| {
-                    (
-                        vec![
-                            t.itom.as_str(),
-                            t.jtom.as_str(),
-                            t.ktom.as_str(),
-                            t.ltom.as_str(),
-                        ],
-                        &t.params,
-                    )
-                })
-                .collect(),
-            other => panic!("{} is not a bonded style", other.category()),
-        }
+        s.type_rows().into_iter().map(|(_, e, p)| (e, p)).collect()
     }
 
     /// The params of the only type of `category/name`, with its endpoints.
@@ -1729,7 +1688,7 @@ mod tests {
     #[test]
     fn fudge_factors_are_the_1_4_special_bond_weights() {
         let ff = read("[ defaults ]\n1  3  yes  0.5  0.8333\n");
-        let sb = ff.special_bonds();
+        let sb = ff.special_bonds().unwrap();
         assert_eq!(sb.lj, [0.0, 0.0, 0.5]);
         assert_eq!(sb.coul, [0.0, 0.0, 0.8333]);
     }
@@ -1752,7 +1711,9 @@ mod tests {
     /// at full weight by its own parameters, and fudgeLJ is unused.
     #[test]
     fn gen_pairs_no_prices_1_4_lj_at_full_weight() {
-        let sb = *read("[ defaults ]\n1  3  no  0.5  0.8333\n").special_bonds();
+        let sb = *read("[ defaults ]\n1  3  no  0.5  0.8333\n")
+            .special_bonds()
+            .unwrap();
         assert_eq!(sb.lj, [0.0, 0.0, 1.0]);
         assert_eq!(sb.coul, [0.0, 0.0, 0.8333]);
     }
@@ -1790,7 +1751,7 @@ mod tests {
 
         let lj = lj_self_row(&ff, "opls_135");
         assert_eq!(
-            (lj.itom.as_str(), lj.jtom.as_str()),
+            (lj.endpoints[0].as_str(), lj.endpoints[1].as_str()),
             ("opls_135", "opls_135")
         );
         assert_param(&lj.params, "sigma", 3.5, 1e-12);
@@ -1927,7 +1888,7 @@ mod tests {
             "bondtypes",
             "CT  HC  1  0.10900  284512.0\nCT  HC  1  0.10900  284512.0",
         ));
-        assert_eq!(ff.get_bondtypes().len(), 1);
+        assert_eq!(ff.get_types("bond").len(), 1);
     }
 
     /// Two rows of one label pair with different k: a conflict, not
@@ -1955,7 +1916,7 @@ mod tests {
             "bondtypes",
             "CT  HC  1  0.10900  284512.0\nHC  CT  1  0.10900  284512.0",
         ));
-        assert_eq!(ff.get_bondtypes().len(), 2);
+        assert_eq!(ff.get_types("bond").len(), 2);
     }
 
     // -- [ angletypes ] --------------------------------------------------------
@@ -2229,11 +2190,17 @@ mod tests {
             "cmaptypes",
             "C NH1 CT1 C NH1 1 2 2\\\n4.184 8.368\\\n-4.184 0.0",
         ));
-        let types = ff.get_cmaptypes();
+        let types = ff.get_types("cmap");
         assert_eq!(types.len(), 1);
         let t = types[0];
         assert_eq!(
-            [&t.itom, &t.jtom, &t.ktom, &t.ltom, &t.mtom],
+            [
+                &t.endpoints[0],
+                &t.endpoints[1],
+                &t.endpoints[2],
+                &t.endpoints[3],
+                &t.endpoints[4]
+            ],
             ["C", "NH1", "CT1", "C", "NH1"]
         );
         let grid = t
@@ -2341,7 +2308,7 @@ mod tests {
             .expect("A");
         assert_param(&row.params, "epsilon14", 0.2, 1e-12);
         assert_param(&row.params, "sigma14", 2.5, 1e-12);
-        assert_eq!(ff.special_bonds().lj, [0.0, 0.0, 0.5]);
+        assert_eq!(ff.special_bonds().unwrap().lj, [0.0, 0.0, 0.5]);
     }
 
     /// Pairtypes that restate what GROMACS would generate change nothing: the
@@ -2393,7 +2360,7 @@ mod tests {
             .get_pairtype("opls_135", Some("opls_140"))
             .expect("cross row");
         assert_eq!(
-            (cross.itom.as_str(), cross.jtom.as_str()),
+            (cross.endpoints[0].as_str(), cross.endpoints[1].as_str()),
             ("opls_135", "opls_140"),
             "stored in byte order"
         );
@@ -2454,7 +2421,7 @@ mod tests {
             .with_skipped_directive("constrainttypes")
             .read(text.as_bytes())
             .unwrap_or_else(|e| panic!("skipped section still refused: {e}"));
-        assert_eq!(ff.get_bondtypes().len(), 1);
+        assert_eq!(ff.get_types("bond").len(), 1);
     }
 
     /// Skipping one section does not skip another.
@@ -2517,8 +2484,8 @@ mod tests {
             .with_skipped_directive("atoms")
             .read(text.as_bytes())
             .unwrap_or_else(|e| panic!("skipped sections still refused: {e}"));
-        assert_eq!(ff.get_bondtypes().len(), 1);
-        assert!(ff.get_atomtypes().is_empty(), "[ atoms ] defined a type");
+        assert_eq!(ff.get_types("bond").len(), 1);
+        assert!(ff.get_types("atom").is_empty(), "[ atoms ] defined a type");
     }
 
     // -- preprocessor ------------------------------------------------------------
@@ -2529,9 +2496,9 @@ mod tests {
     /// The bond label pairs read from `body`, which sits in `[ bondtypes ]`.
     fn bond_pairs(body: &str) -> Vec<(String, String)> {
         let ff = read(&format!("{DEFAULTS}[ bondtypes ]\n{body}\n"));
-        ff.get_bondtypes()
+        ff.get_types("bond")
             .iter()
-            .map(|t| (t.itom.clone(), t.jtom.clone()))
+            .map(|t| (t.endpoints[0].clone(), t.endpoints[1].clone()))
             .collect()
     }
 
@@ -2664,7 +2631,7 @@ mod tests {
             .with_include(true)
             .read(path.as_path())
             .unwrap_or_else(|e| panic!("read: {e}"));
-        assert_eq!(ff.get_bondtypes().len(), 1);
+        assert_eq!(ff.get_types("bond").len(), 1);
     }
 
     /// An include the including file's directory does not hold resolves
@@ -2686,7 +2653,7 @@ mod tests {
             .with_include_dir(&share)
             .read(top.as_path())
             .unwrap_or_else(|e| panic!("read: {e}"));
-        assert_eq!(ff.get_bondtypes().len(), 1);
+        assert_eq!(ff.get_types("bond").len(), 1);
         let err = GromacsTopForcefieldReader::new()
             .with_include(true)
             .read(top.as_path())

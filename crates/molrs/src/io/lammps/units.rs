@@ -18,11 +18,12 @@ pub fn parse_lammps_units_style(s: &str) -> Result<&'static str, String> {
     }
 }
 
-/// Reference scales for `define_lj_units` (physical mass, σ, ε).
+/// Reference scales for `define_lj_units` (physical mass, σ, ε): the one
+/// system-specific fact a conversion to or from LAMMPS `lj` units needs.
 ///
-/// Canonical defaults: `1 g/mol`, `1 Å`, `1 kcal/mol` so that one reduced
-/// energy unit equals one thermochemical kcal/mol and one reduced length
-/// equals one ångström — matching LAMMPS real for the bridge path.
+/// [`canonical`](Self::canonical) (`1 g/mol`, `1 Å`, `1 kcal/mol`) is the hub
+/// between two physical styles, where the reference cancels; it is not a
+/// system's σ and ε, so it never converts to or from `lj`.
 #[derive(Debug, Clone)]
 pub struct LammpsLjReference {
     pub mass: Quantity,
@@ -60,22 +61,38 @@ impl LammpsLjReference {
 ///
 /// A **canonical reference** `(m=1 g/mol, σ=1 Å, ε=1 kcal/mol)` makes
 /// real↔metal bridge through lj without material-specific scales, while still
-/// never hard-coding eV↔kcal factors in the force-field reader.
+/// never hard-coding eV↔kcal factors in the force-field reader. The canonical
+/// converter refuses `lj` on one side only: a reduced value means nothing
+/// without the system's own σ, ε and mass ([`with_reference`](Self::with_reference)).
 pub struct LammpsUnitConverter {
     reg: UnitRegistry,
+    /// Whether the lj units are a system's own (given by the caller), so a
+    /// value may be converted to or from `lj`.
+    lj_reference: bool,
 }
 
 impl LammpsUnitConverter {
-    /// Build a system with the given lj reference scales.
+    /// Build a system with the given lj reference scales: converts to and
+    /// from `lj`.
     pub fn with_reference(reference: &LammpsLjReference) -> Result<Self, UnitsError> {
         let mut reg = UnitRegistry::new();
         reg.define_lj_units(&reference.mass, &reference.sigma, &reference.epsilon)?;
-        Ok(Self { reg })
+        Ok(Self {
+            reg,
+            lj_reference: true,
+        })
     }
 
-    /// Canonical bridge (`1 g/mol`, `1 Å`, `1 kcal/mol`).
+    /// Canonical bridge (`1 g/mol`, `1 Å`, `1 kcal/mol`) between physical
+    /// styles; refuses a conversion to or from `lj`.
     pub fn canonical() -> Result<Self, UnitsError> {
-        Self::with_reference(&LammpsLjReference::canonical()?)
+        let reference = LammpsLjReference::canonical()?;
+        let mut reg = UnitRegistry::new();
+        reg.define_lj_units(&reference.mass, &reference.sigma, &reference.epsilon)?;
+        Ok(Self {
+            reg,
+            lj_reference: false,
+        })
     }
 
     /// Registry with lj units defined (for tests / advanced callers).
@@ -105,6 +122,13 @@ impl LammpsUnitConverter {
     ) -> Result<F, String> {
         if from == to {
             return Ok(value);
+        }
+        if !self.lj_reference && (from == "lj" || to == "lj") {
+            return Err(format!(
+                "converting {} from LAMMPS `{from}` to `{to}` units needs the system's lj \
+                 reference (σ, ε, mass); none was given",
+                dimension.name()
+            ));
         }
         let parse = |style: &str| {
             let unit = Self::unit_of(style, dimension)?;
@@ -215,6 +239,26 @@ mod tests {
         );
         #[cfg(feature = "ff")]
         assert!(sys.scale("real", "real").unwrap().is_identity());
+    }
+
+    /// `lj` is a system's own units: without its σ, ε and mass a reduced
+    /// value is refused, not relabelled.
+    #[test]
+    fn lj_needs_the_systems_reference() {
+        let bridge = LammpsUnitConverter::canonical().unwrap();
+        let err = bridge.energy(1.0, "real", "lj").unwrap_err();
+        assert!(err.contains("lj reference"), "{err}");
+        assert!(bridge.length(1.0, "lj", "metal").is_err());
+
+        let reg = UnitRegistry::new();
+        let argon = LammpsLjReference {
+            mass: reg.quantity(39.948, "gram_per_mole").unwrap(),
+            sigma: reg.quantity(3.4, "angstrom").unwrap(),
+            epsilon: reg.quantity(0.238, "kilocalorie_per_mole").unwrap(),
+        };
+        let sys = LammpsUnitConverter::with_reference(&argon).unwrap();
+        assert!((sys.length(3.4, "real", "lj").unwrap() - 1.0).abs() < 1e-12);
+        assert!((sys.energy(0.476, "real", "lj").unwrap() - 2.0).abs() < 1e-12);
     }
 
     #[test]

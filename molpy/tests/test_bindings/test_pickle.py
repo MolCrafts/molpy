@@ -275,7 +275,7 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
     # Unpickling adds every node through the leaf's checked add: a state whose
     # atom has no valid ``atomic_number`` (or bead no ``bead_type``) raises.
     with pytest.raises(ValueError, match="atomic_number"):
-        mp.core.Atomistic().__setstate__(({}, ([{"x": 0.0}], [])))
+        mp.core.Atomistic().__setstate__(({}, ([{"x": 0.0}], [], [])))
     with pytest.raises(ValueError, match="bead_type"):
         mp.core.CoarseGrain().__setstate__(({}, ([{"x": 0.0}], []), None, []))
 

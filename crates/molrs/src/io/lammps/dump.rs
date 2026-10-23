@@ -3,7 +3,7 @@
 use crate::io::frame_columns::insert_column_of_length;
 use crate::io::lammps::box_bounds::{BoxBounds, pbc_from_boundary_tokens, simbox_from_bounds};
 use crate::io::lammps::columns::{canonical_dump_column, native_dump_column};
-use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
+use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use crate::io::{Sink, SinkWriter, Source, invalid_data};
 use molrs::core::Frame;
@@ -647,6 +647,8 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         frame.simbox = Some(simbox);
     }
 
+    // Every door reads through here, so every door checks here.
+    crate::io::reader::check_read_frame(&frame)?;
     Ok(Some(frame))
 }
 
@@ -708,7 +710,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 /// ```
 pub struct LammpsDumpReader<R: BufRead> {
     reader: R,
-    index: OnceLock<FrameIndex>,
+    index: OnceLock<Vec<FrameOffset>>,
 }
 
 impl<R: BufRead + Seek> LammpsDumpReader<R> {
@@ -720,107 +722,19 @@ impl<R: BufRead + Seek> LammpsDumpReader<R> {
         }
     }
 
-    /// Build frame index by scanning for `ITEM: TIMESTEP` markers.
+    /// Index the file's snapshots ([`LammpsDumpIndexBuilder`], the one dump
+    /// indexer).
     fn build_index_impl(&mut self) -> std::io::Result<()> {
         if self.index.get().is_some() {
             return Ok(());
         }
-
-        let start_pos = self.reader.stream_position()?;
-        self.reader.seek(SeekFrom::Start(0))?;
-
-        let mut frame_index = FrameIndex::new();
-        let mut current_pos: u64 = 0;
-        let mut line = String::new();
-
-        loop {
-            // Record potential frame start
-            let frame_start = current_pos;
-
-            // Read next line
-            line.clear();
-            let bytes = self.reader.read_line(&mut line)?;
-            if bytes == 0 {
-                break; // EOF
-            }
-            current_pos += bytes as u64;
-
-            if !line.trim().starts_with("ITEM: TIMESTEP") {
-                continue;
-            }
-
-            // Found a frame start
-            frame_index.add_frame(frame_start);
-
-            // Skip timestep value
-            line.clear();
-            let bytes = self.reader.read_line(&mut line)?;
-            if bytes == 0 {
-                break;
-            }
-            current_pos += bytes as u64;
-
-            // Skip "ITEM: NUMBER OF ATOMS" or "ITEM: NUMBER OF ENTRIES"
-            // — both flavors share this scaffolding (see parse_single_frame).
-            line.clear();
-            let bytes = self.reader.read_line(&mut line)?;
-            if bytes == 0 {
-                break;
-            }
-            current_pos += bytes as u64;
-
-            // Read row count (natoms for ATOMS, nentries for ENTRIES).
-            line.clear();
-            let bytes = self.reader.read_line(&mut line)?;
-            if bytes == 0 {
-                break;
-            }
-            current_pos += bytes as u64;
-            let nrows: usize = line.trim().parse().unwrap_or(0);
-
-            // Skip "ITEM: BOX BOUNDS ..."
-            line.clear();
-            let bytes = self.reader.read_line(&mut line)?;
-            if bytes == 0 {
-                break;
-            }
-            current_pos += bytes as u64;
-
-            // Skip 3 box lines
-            for _ in 0..3 {
-                line.clear();
-                let bytes = self.reader.read_line(&mut line)?;
-                if bytes == 0 {
-                    break;
-                }
-                current_pos += bytes as u64;
-            }
-
-            // Skip "ITEM: ATOMS ..." or "ITEM: ENTRIES ..."
-            line.clear();
-            let bytes = self.reader.read_line(&mut line)?;
-            if bytes == 0 {
-                break;
-            }
-            current_pos += bytes as u64;
-
-            // Skip nrows data lines
-            for _ in 0..nrows {
-                line.clear();
-                let bytes = self.reader.read_line(&mut line)?;
-                if bytes == 0 {
-                    break;
-                }
-                current_pos += bytes as u64;
-            }
-        }
-
-        self.reader.seek(SeekFrom::Start(start_pos))?;
+        let offsets = crate::io::frame_index::index_stream(
+            &mut self.reader,
+            Box::new(LammpsDumpIndexBuilder::new()),
+        )?;
         self.index
-            .set(frame_index)
-            .map_err(|_| std::io::Error::other("failed to set index"))?;
-
-        Ok(())
+            .set(offsets)
+            .map_err(|_| std::io::Error::other("failed to set index"))
     }
 
     /// Read frame at a specific byte offset.
@@ -840,9 +754,7 @@ impl<R: BufRead + Seek> Reader for LammpsDumpReader<R> {
 
 impl<R: BufRead + Seek> FrameReader for LammpsDumpReader<R> {
     fn read(&mut self) -> std::io::Result<Option<Frame>> {
-        // Validate on the way out: a frame that violates the vocabulary
-        // is a malformed file or a reader bug, not a result to return.
-        crate::io::reader::check_read_frame(parse_single_frame(&mut self.reader)?)
+        parse_single_frame(&mut self.reader)
     }
 }
 
@@ -861,7 +773,7 @@ impl<R: BufRead + Seek> TrajectoryReader for LammpsDumpReader<R> {
             return Ok(None);
         }
 
-        let offset = offsets.get(index).unwrap();
+        let offset = offsets[index].byte_offset;
         self.read_at_offset(offset)
     }
 
@@ -942,9 +854,6 @@ impl<W: Write> Writer for LammpsDumpWriter<W> {
 
 impl<W: Write> FrameWriter for LammpsDumpWriter<W> {
     fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         let columns: Option<Vec<&str>> = self
             .columns
             .as_ref()
@@ -967,6 +876,8 @@ fn write_lammps_dump_frame<W: Write>(
     frame: &impl FrameAccess,
     columns: Option<&[&str]>,
 ) -> std::io::Result<()> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     let natoms = frame
         .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
         .ok_or_else(|| invalid_data("Frame must contain 'atoms' block"))?;
@@ -1365,9 +1276,8 @@ pub fn write_lammps_dump<'a>(
     frame: &impl FrameAccess,
     columns: Option<&[&str]>,
 ) -> std::io::Result<()> {
-    let mut writer = sink.into().writer()?;
-    write_lammps_dump_frame(&mut writer, frame, columns)?;
-    writer.flush()
+    sink.into()
+        .put_with(|writer| write_lammps_dump_frame(writer, frame, columns))
 }
 
 impl LammpsDumpReader<Box<dyn ReadSeek>> {
@@ -1388,11 +1298,12 @@ pub fn write_lammps_dump_local<'a, FA: FrameAccess>(
     sink: impl Into<Sink<'a>>,
     frames: &[FA],
 ) -> std::io::Result<()> {
-    let mut writer = sink.into().writer()?;
-    for frame in frames {
-        write_lammps_dump_local_frame(&mut writer, frame)?;
-    }
-    writer.flush()
+    sink.into().put_with(|writer| {
+        for frame in frames {
+            write_lammps_dump_local_frame(writer, frame)?;
+        }
+        Ok(())
+    })
 }
 
 // ============================================================================

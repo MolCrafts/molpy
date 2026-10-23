@@ -115,7 +115,13 @@ def _frame_times(trajectory: Trajectory) -> np.ndarray:
                 f"frame {i} has no meta[{_TIME!r}]; pass Trajectory(frames, "
                 "time=...) or set each frame's time"
             )
-        times.append(float(frame.meta[_TIME]))
+        time = frame.meta[_TIME]
+        if not isinstance(time, (int, float)):
+            raise TypeError(
+                f"TimeIntervalStrategy: frame {i}'s meta[{_TIME!r}] is "
+                f"{type(time).__name__}, not a number"
+            )
+        times.append(float(time))
     return np.asarray(times, dtype=np.float64)
 
 

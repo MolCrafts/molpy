@@ -100,10 +100,10 @@ def vibrational_dos(trajectory: Trajectory) -> dict[str, float]:
     windowed and zero-padded to four times its length; ``Spectrum`` reports
     angular frequencies in rad/fs, converted here to wavenumbers.
     """
-    n_frames = trajectory.velocities.shape[0]
-    vacf = Vacf(VDOS_MAX_LAG, mean="keep").compute(
-        velocities=trajectory.velocities.reshape(n_frames, -1), dt=trajectory.dt
-    )
+    accumulator = Vacf(VDOS_MAX_LAG, mean="keep").accumulator()
+    for velocities in trajectory.velocities:
+        accumulator.push(velocities.reshape(-1, 1), dt=trajectory.dt)
+    vacf = accumulator.finish()
     spectrum = Spectrum("cosine_sq", 4).compute(
         signal=vacf.channel(0), dt=vacf.lag_times[1]
     )

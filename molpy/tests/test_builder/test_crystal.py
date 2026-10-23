@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 
-import dataclasses
-
 import numpy as np
 import pytest
 import molpy as mp
@@ -15,7 +13,7 @@ class TestSite:
         assert site.species == "Ni"
         assert site.fractional == (0.0, 0.0, 0.0)
         assert site.charge == 0.0
-        assert site.attrs is None
+        assert site.attrs == {}
 
     def test_site_with_charge(self):
         site = mp.builder.Site(
@@ -44,7 +42,7 @@ class TestSite:
 
     def test_site_is_frozen(self):
         site = mp.builder.Site(label="A", species="C", fractional=(0.0, 0.0, 0.0))
-        with pytest.raises(dataclasses.FrozenInstanceError):
+        with pytest.raises(AttributeError):
             site.label = "B"  # type: ignore[misc]
 
 
@@ -53,7 +51,7 @@ class TestLattice:
         box = mp.Box(mp.core.Cell.lengths([1.0] * 3))
         lattice = mp.builder.Lattice(box, basis=[])
 
-        assert lattice.box is box
+        np.testing.assert_array_equal(lattice.box.matrix, box.matrix)
         assert lattice.basis == ()
 
     def test_lattice_rejects_a_matrix(self):
@@ -90,7 +88,7 @@ class TestLattice:
         assert base.basis == ()
         assert extended.basis == (site,)
         assert extended is not base
-        assert extended.box is base.box
+        np.testing.assert_array_equal(extended.box.matrix, base.box.matrix)
 
     def test_box_to_cart_single(self):
         lattice = mp.builder.Lattice(
@@ -179,7 +177,7 @@ class TestLattice:
             box, [mp.builder.Site("C1", "C", (0.1, 0.2, 0.3))], group
         )
 
-        assert lat.box is box
+        np.testing.assert_array_equal(lat.box.matrix, box.matrix)
         assert [s.label for s in lat.basis] == ["C1_0", "C1_1"]
         np.testing.assert_allclose(lat.basis[1].fractional, [0.9, 0.8, 0.7])
 

@@ -39,13 +39,20 @@
 
 use std::collections::HashMap;
 
+use crate::core::NeighborKinds;
 use molrs::core::Atomistic;
 use molrs::core::NodeId;
 
 use crate::ff::ir::Params;
 use crate::ff::params::{ParmTable, ParmchkTable, ParmchkType};
 use crate::ff::typifier::Provenance;
-use crate::ff::typifier::estimate::DEFAULT_IMPROPER;
+
+/// parmchk2's improper default: `1.1 kcal/mol`, phase 180°, periodicity 2.
+///
+/// Not a row of any table — it is the value parmchk2 falls back on when nothing
+/// matches, and it prints no penalty for it ("a default is not a substitution, so
+/// there is nothing to score").
+const DEFAULT_IMPROPER: (f64, f64, u32) = (1.1, 180.0, 2);
 
 /// The wildcard atom type.
 const X: &str = "X";
@@ -99,7 +106,12 @@ pub(super) fn impropers(
     let index: HashMap<NodeId, usize> = order.iter().enumerate().map(|(i, &a)| (a, i)).collect();
     let neighbours: Vec<Vec<NodeId>> = order
         .iter()
-        .map(|&a| graph.neighbor_bonds(a).map(|(n, _)| n).collect())
+        .map(|&a| {
+            graph
+                .neighbors(a, NeighborKinds::BONDS)
+                .map(|(n, _)| n)
+                .collect()
+        })
         .collect();
     let written: Vec<Row> = table
         .impropers

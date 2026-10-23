@@ -197,7 +197,7 @@ def test_del_atom_cascades():
 def test_del_bond():
     """del_bond removes just the bond, leaving atoms intact."""
     mol, c, _o, _ho = _methanol()
-    (_other, bond) = mol.neighbor_bonds(c)[0]
+    (_other, bond) = mol.neighbors(c)[0]
     n_atoms_before = mol.n_atoms
     n_bonds_before = mol.n_bonds
     mol.del_bond(bond)
@@ -208,7 +208,7 @@ def test_del_bond():
 def test_set_bond_class():
     """set_bond_class writes both facts together: the class and the number."""
     mol, c, _o, _ho = _methanol()
-    (_other, bond) = mol.neighbor_bonds(c)[0]
+    (_other, bond) = mol.neighbors(c)[0]
     mol.set_bond_class(bond, BondOrder.Double, BondNumber.Double)
     # Both are written — a class with no number leaves the bond
     # un-standardized.

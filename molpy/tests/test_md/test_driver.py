@@ -28,7 +28,7 @@ def test_one_step_writes_energy_and_forces_onto_the_frame():
     frame = _pair()
     sim = mp.md.MD()
     sim.set_integrator(mp.md.VelocityVerlet(0.001))
-    sim.set_neighbor(mp.md.NeighborList(2.5, 0.5))
+    sim.set_neighbor(mp.core.NeighborList(3.0), skin=0.5)
     sim.set_evaluator(mp.ff.potential.PairLjCut(1.0, 1.0, 2.5))
     sim.run(frame, 1)
     assert np.isfinite(frame.meta["energy"]) and frame.meta["energy"] != 0.0

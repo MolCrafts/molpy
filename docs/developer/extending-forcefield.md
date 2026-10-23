@@ -37,6 +37,7 @@ class Fene(StyleDeclaration):  # LAMMPS bond_style fene, by its expression
     params = [ParamSpec("k", "E/L^2"), ParamSpec("r0", "L"), ParamSpec("epsilon", "E"), ParamSpec("sigma", "L")]
     expression = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
                   "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
+    lammps = "positional"  # written as bond_style fene, coefficients in this order
 
 class BeadSpring(Typifier):  # every bead B, every bond FENE; lj units
     def source_forcefield(self):
@@ -49,8 +50,13 @@ class BeadSpring(Typifier):  # every bead B, every bond FENE; lj units
         return TypeAssignment([bead] * len(graph.atoms), links={mp.Bond: [spring] * len(bonds)},
                      styles=[("atom", "full", {}), ("bond", "fene", {})])
 
+chain = mp.Atomistic()  # ten bonded beads (atomic number 0: no element)
+beads = [chain.add_atom(atomic_number=0, x=0.97 * i, y=0.0, z=0.0) for i in range(10)]
+for a, b in zip(beads, beads[1:]):
+    chain.add_bond(a, b)
+
 typifier = BeadSpring()
-frame = typifier.typify(chain).to_frame()  # chain: an mp.Atomistic of bonded beads
+frame = typifier.typify(chain).to_frame()
 ff = typifier.forcefield()
 energy, forces = PotentialCompiler(ff).compile(frame).evaluate(frame)
 mp.io.write_mrec(Path("chain.mrec"), frame=frame, forcefield=ff)
@@ -109,7 +115,7 @@ class UreyBradley(mp.ff.style_registry.StyleDeclaration):
 ```
 
 A typifier's `TypeAssignment` then keys its rows by the kind name
-(`links={"urey_bradleys": rows}`, after `graph.register_kind("urey_bradleys", 3)`),
+(`links={"urey_bradleys": rows}`, after `graph.declare_term("urey_bradleys", 3)`),
 and the terms land in the frame's `urey_bradleys` block.
 
 ## Engines
@@ -117,7 +123,7 @@ and the terms land in the frame's `urey_bradleys` block.
 Exporting to an engine is molrs's job, and molpy adds no formatter of its
 own: `LammpsEngine.generate_inputs` (and the `minimize` / `md` runs built on
 it) takes every `*_style` line and coefficient from molrs's LAMMPS writer
-(`mp.io.write_lammps_forcefield_str`), so it writes whatever that can write —
+(`mp.io.lammps.LammpsForcefieldWriter`), so it writes whatever that can write —
 `hybrid` styles and `angle charmm` with its Urey-Bradley term included — and a
 style an engine cannot hold is refused by molrs, by name, never written
 half-formed. The `.mrec` record is the format that always holds a registered

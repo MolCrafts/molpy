@@ -22,9 +22,11 @@ use crate::error::molrs_error_to_pyerr;
 /// labels.
 ///
 /// ``len(traj)``, ``traj[i]`` (negative indices count from the end) and
-/// iteration give frames; ``traj[a:b:c]`` is the sub-trajectory of those
-/// frames with their labels, and :meth:`map` builds a new trajectory frame by
-/// frame. Lazy, seekable reading from disk is a file reader's
+/// iteration give the trajectory's own frames — live: an edit to
+/// ``traj[i]`` is an edit to the trajectory, as an edit to ``frame["atoms"]``
+/// is an edit to the frame. ``traj[a:b:c]`` is the sub-trajectory of those
+/// frames with their labels (the same frame objects), and :meth:`map` builds
+/// a new trajectory frame by frame. Lazy, seekable reading from disk is a file reader's
 /// (:mod:`molpy.io`), not this container's.
 ///
 /// Parameters
@@ -40,10 +42,47 @@ use crate::error::molrs_error_to_pyerr;
 /// ------
 /// ValueError
 ///     If ``step`` or ``time`` does not have one entry per frame.
-#[pyclass(module = "molpy.core", name = "Trajectory", from_py_object, subclass)]
-#[derive(Clone)]
+#[pyclass(
+    module = "molpy.core",
+    name = "Trajectory",
+    skip_from_py_object,
+    subclass
+)]
 pub struct PyTrajectory {
-    pub(crate) inner: CoreTrajectory,
+    /// The frames, each the one object ``traj[i]`` returns.
+    frames: Vec<Py<PyFrame>>,
+    step: Option<Vec<i64>>,
+    time: Option<Vec<F>>,
+}
+
+impl PyTrajectory {
+    /// A trajectory of copies of `trajectory`'s frames.
+    pub(crate) fn from_core(py: Python<'_>, trajectory: CoreTrajectory) -> PyResult<Self> {
+        let frames = trajectory
+            .frames
+            .into_iter()
+            .map(|frame| Py::new(py, PyFrame::from_core_frame(frame)?))
+            .collect::<PyResult<_>>()?;
+        Ok(Self {
+            frames,
+            step: trajectory.step,
+            time: trajectory.time,
+        })
+    }
+
+    /// The trajectory as molrs holds one: each frame copied out of its store.
+    pub(crate) fn to_core(&self, py: Python<'_>) -> PyResult<CoreTrajectory> {
+        let frames = self
+            .frames
+            .iter()
+            .map(|frame| frame.borrow(py).clone_core_frame())
+            .collect::<PyResult<_>>()?;
+        Ok(CoreTrajectory {
+            frames,
+            step: self.step.clone(),
+            time: self.time.clone(),
+        })
+    }
 }
 
 /// A named observable and its metadata: ``molrs::core::ObservableRecord``.
@@ -75,6 +114,7 @@ impl PyTrajectory {
     #[new]
     #[pyo3(signature = (frames, step=None, time=None))]
     fn new(
+        py: Python<'_>,
         frames: Vec<PyRef<'_, PyFrame>>,
         step: Option<ArrayArg1<'_, i64>>,
         time: Option<ArrayArg1<'_, f64>>,
@@ -91,26 +131,37 @@ impl PyTrajectory {
             inner.time = Some(time.as_slice()?.iter().copied().map(|v| v as F).collect());
         }
         inner.validate().map_err(molrs_error_to_pyerr)?;
-        Ok(Self { inner })
+        Self::from_core(py, inner)
     }
 
     fn __len__(&self) -> usize {
-        self.inner.frames.len()
+        self.frames.len()
     }
 
-    /// The frame at an integer index (negative counts from the end), or the
-    /// sub-trajectory a slice selects, its ``step`` / ``time`` sliced alike.
+    /// The frame at an integer index (negative counts from the end) — the
+    /// trajectory's own, live — or the sub-trajectory a slice selects, its
+    /// ``step`` / ``time`` sliced alike.
     fn __getitem__(slf: &Bound<'_, Self>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let py = slf.py();
         let this = slf.borrow();
-        let n = this.inner.frames.len();
+        let n = this.frames.len();
         if let Ok(slice) = key.cast::<PySlice>() {
             let ix = slice.indices(n as isize)?;
             let indices: Vec<usize> = (0..ix.slicelength)
                 .map(|k| (ix.start + k as isize * ix.step) as usize)
                 .collect();
+            fn pick<T: Copy>(labels: &Option<Vec<T>>, indices: &[usize]) -> Option<Vec<T>> {
+                labels
+                    .as_ref()
+                    .map(|v| indices.iter().map(|&i| v[i]).collect())
+            }
             let sub = Self {
-                inner: this.inner.select(&indices),
+                frames: indices
+                    .iter()
+                    .map(|&i| this.frames[i].clone_ref(py))
+                    .collect(),
+                step: pick(&this.step, &indices),
+                time: pick(&this.time, &indices),
             };
             return Ok(Bound::new(py, sub)?.into_any().unbind());
         }
@@ -119,26 +170,26 @@ impl PyTrajectory {
         if resolved < 0 || resolved as usize >= n {
             return Err(PyIndexError::new_err("trajectory index out of range"));
         }
-        let frame = this.inner.frames[resolved as usize].clone();
-        Ok(Bound::new(py, PyFrame::from_core_frame(frame)?)?
-            .into_any()
-            .unbind())
+        Ok(this.frames[resolved as usize].clone_ref(py).into_any())
     }
 
     /// A new trajectory of ``func(frame)`` for every frame, keeping this
-    /// one's ``step`` / ``time`` labels. This trajectory is not modified.
+    /// one's ``step`` / ``time``. ``func`` receives a copy of each frame, so
+    /// this trajectory is never edited; each returned frame is copied in.
     ///
     /// Raises
     /// ------
     /// TypeError
     ///     If ``func`` returns something other than a :class:`Frame`.
-    fn map(&self, func: &Bound<'_, PyAny>) -> PyResult<Self> {
+    fn map(&self, py: Python<'_>, func: &Bound<'_, PyAny>) -> PyResult<Self> {
         let frames = self
-            .inner
             .frames
             .iter()
             .map(|frame| {
-                let mapped = func.call1((PyFrame::from_core_frame(frame.clone())?,))?;
+                // The callable gets its own copy: mapping builds a new
+                // trajectory and never edits this one.
+                let own = PyFrame::from_core_frame(frame.borrow(py).clone_core_frame()?)?;
+                let mapped = func.call1((Py::new(py, own)?,))?;
                 let mapped = mapped.cast::<PyFrame>().map_err(|_| {
                     PyTypeError::new_err(format!(
                         "Trajectory.map: func must return a Frame, got {}",
@@ -148,30 +199,28 @@ impl PyTrajectory {
                             .map_or_else(|_| "?".into(), |n| n.to_string())
                     ))
                 })?;
-                mapped.borrow().clone_core_frame()
+                Py::new(
+                    py,
+                    PyFrame::from_core_frame(mapped.borrow().clone_core_frame()?)?,
+                )
             })
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
-            inner: CoreTrajectory {
-                frames,
-                step: self.inner.step.clone(),
-                time: self.inner.time.clone(),
-            },
+            frames,
+            step: self.step.clone(),
+            time: self.time.clone(),
         })
     }
 
+    /// The frames, the trajectory's own (live).
     #[getter]
-    fn frames(&self) -> PyResult<Vec<PyFrame>> {
-        self.inner
-            .frames
-            .iter()
-            .map(|f| PyFrame::from_core_frame(f.clone()))
-            .collect()
+    fn frames(&self, py: Python<'_>) -> Vec<Py<PyFrame>> {
+        self.frames.iter().map(|f| f.clone_ref(py)).collect()
     }
 
     #[getter]
     fn step<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArrayDyn<i64>>> {
-        self.inner.step.as_ref().map(|step| {
+        self.step.as_ref().map(|step| {
             ArrayD::from_shape_vec(IxDyn(&[step.len()]), step.clone())
                 .unwrap()
                 .into_pyarray(py)
@@ -180,7 +229,7 @@ impl PyTrajectory {
 
     #[getter]
     fn time<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArrayDyn<f64>>> {
-        self.inner.time.as_ref().map(|time| {
+        self.time.as_ref().map(|time| {
             let values: Vec<f64> = time.to_vec();
             ArrayD::from_shape_vec(IxDyn(&[values.len()]), values)
                 .unwrap()
@@ -189,13 +238,16 @@ impl PyTrajectory {
     }
 
     fn __repr__(&self) -> String {
-        format!("Trajectory(n_frames={})", self.inner.frames.len())
+        format!("Trajectory(n_frames={})", self.frames.len())
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::pickle::reduce_via_type(slf.as_any(), (this.frames()?, this.step(py), this.time(py)))
+        crate::pickle::reduce_via_type(
+            slf.as_any(),
+            (this.frames(py), this.step(py), this.time(py)),
+        )
     }
 }
 

@@ -9,7 +9,7 @@
 use std::ops::Deref;
 
 use super::lbfgs::{Converge, minimize_core};
-use super::{LbfgsSettings, OptimizationReport, Optimizer};
+use super::{LbfgsSettings, OptimizationReport, OptimizeError, Optimizer};
 use crate::core::Frame;
 use crate::core::keys::FREE;
 use crate::core::schema::block_names::ATOMS;
@@ -18,15 +18,12 @@ use crate::op::F;
 
 /// Check a flat coordinate buffer: `Ok(false)` when there is nothing to
 /// move, `Err` when its length is not `3·n_atoms`.
-fn has_atoms(coords: &[F]) -> Result<bool, String> {
+fn has_atoms(coords: &[F]) -> Result<bool, OptimizeError> {
     if coords.is_empty() {
         return Ok(false);
     }
     if !coords.len().is_multiple_of(3) {
-        return Err(format!(
-            "coords length {} is not a multiple of 3 (expected 3·n_atoms)",
-            coords.len()
-        ));
+        return Err(OptimizeError::CoordsLength { len: coords.len() });
     }
     Ok(true)
 }
@@ -81,8 +78,9 @@ where
     /// Relax flat `3·n_atoms` coordinates in place, every atom free.
     ///
     /// # Errors
-    /// Returns `Err` if `coords.len()` is not a multiple of three.
-    pub fn minimize_coords(&self, coords: &mut [F]) -> Result<OptimizationReport, String> {
+    /// [`OptimizeError::CoordsLength`] if `coords.len()` is not a multiple of
+    /// three.
+    pub fn minimize_coords(&self, coords: &mut [F]) -> Result<OptimizationReport, OptimizeError> {
         if !has_atoms(coords)? {
             return Ok(OptimizationReport::EMPTY);
         }
@@ -106,32 +104,28 @@ where
     ///
     /// # Errors
     ///
-    /// When `coords.len() != n_structs · n_atoms · 3`, or `n_atoms` is zero
-    /// for a non-empty batch.
+    /// [`OptimizeError::BatchShape`] when `coords.len() != n_structs · n_atoms
+    /// · 3`, or `n_atoms` is zero for a non-empty batch.
     pub fn minimize_batch(
         &self,
         coords: &mut [F],
         n_atoms: usize,
         n_structs: usize,
-    ) -> Result<Vec<OptimizationReport>, String> {
+    ) -> Result<Vec<OptimizationReport>, OptimizeError> {
         let stride = n_atoms * 3;
-        let expected = n_structs * stride;
-        if coords.len() != expected {
-            return Err(format!(
-                "coords length {} != n_structs ({}) · n_atoms ({}) · 3 = {}",
-                coords.len(),
-                n_structs,
-                n_atoms,
-                expected
-            ));
+        let shape = || OptimizeError::BatchShape {
+            len: coords.len(),
+            n_structs,
+            n_atoms,
+        };
+        if coords.len() != n_structs * stride {
+            return Err(shape());
         }
         if n_structs == 0 {
             return Ok(Vec::new());
         }
         if stride == 0 {
-            return Err(format!(
-                "n_atoms must be > 0 for a batch of {n_structs} structures"
-            ));
+            return Err(shape());
         }
         coords
             .chunks_mut(stride)
@@ -140,13 +134,17 @@ where
     }
 
     /// Minimize free DOFs only, evaluating the potential on the full system.
-    fn minimize_masked(&self, full: &mut [F], free: &[bool]) -> Result<OptimizationReport, String> {
+    fn minimize_masked(
+        &self,
+        full: &mut [F],
+        free: &[bool],
+    ) -> Result<OptimizationReport, OptimizeError> {
         let n = free.len();
         if full.len() != n * 3 {
-            return Err(format!(
-                "free mask length {n} does not match coords atom count {}",
-                full.len() / 3
-            ));
+            return Err(OptimizeError::FreeMask {
+                len: n,
+                n_atoms: full.len() / 3,
+            });
         }
         let free_idx: Vec<usize> = free
             .iter()
@@ -214,8 +212,8 @@ where
     P: Deref + Send + Sync,
     P::Target: Potential,
 {
-    fn minimize(&mut self, frame: &mut Frame) -> Result<OptimizationReport, String> {
-        let mut xyz = frame.coords().map_err(|e| e.to_string())?;
+    fn minimize(&mut self, frame: &mut Frame) -> Result<OptimizationReport, OptimizeError> {
+        let mut xyz = frame.coords()?;
         let free = frame_free_mask(frame, xyz.nrows())?;
         // `Frame::coords` builds a fresh row-major N×3 array, so its buffer is
         // the flat `[x0, y0, z0, x1, …]` the minimizer works on.
@@ -226,7 +224,7 @@ where
             None => self.minimize_coords(coords)?,
             Some(mask) => self.minimize_masked(coords, &mask)?,
         };
-        frame.set_coords(xyz.view()).map_err(|e| e.to_string())?;
+        frame.set_coords(xyz.view())?;
         Ok(report)
     }
 }
@@ -234,7 +232,7 @@ where
 // ── Frame helpers ────────────────────────────────────────────────────────────
 
 /// `None` ⇒ all free. `Some(mask)` length = n_atoms.
-fn frame_free_mask(frame: &Frame, n_atoms: usize) -> Result<Option<Vec<bool>>, String> {
+fn frame_free_mask(frame: &Frame, n_atoms: usize) -> Result<Option<Vec<bool>>, OptimizeError> {
     let Some(atoms) = frame.get(ATOMS) else {
         return Ok(None);
     };
@@ -242,10 +240,10 @@ fn frame_free_mask(frame: &Frame, n_atoms: usize) -> Result<Option<Vec<bool>>, S
         return Ok(None);
     };
     if col.len() != n_atoms {
-        return Err(format!(
-            "atoms.free length {} != n_atoms {n_atoms}",
-            col.len()
-        ));
+        return Err(OptimizeError::FreeMask {
+            len: col.len(),
+            n_atoms,
+        });
     }
     Ok(Some(col.iter().copied().collect()))
 }

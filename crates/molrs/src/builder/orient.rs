@@ -39,7 +39,7 @@ pub struct SiteView<'a> {
 ///
 /// An orienter answers the question a [`Placer`](crate::builder::Placer)
 /// leaves open (operator, 2026-09-28: the placer only translates, the
-/// orienter rotates): which rotation, about the template's centre of mass,
+/// orienter rotates): which rotation, about the template's centroid,
 /// turns a copy before it is moved onto its site? The
 /// [`Assembler`](crate::builder::Assembler) holds one of each and applies the
 /// orienter's motion first, then the placer's.
@@ -55,7 +55,7 @@ pub struct SiteView<'a> {
 /// [`Assembler`](crate::builder::Assembler) holding one can cross threads.
 pub trait Orienter<G: Graph>: Send + Sync {
     /// One [`Rigid`] per site of `sites`, in order: a rotation about the
-    /// template's centre of mass (the centre maps to itself), applied to a
+    /// template's centroid (the centre maps to itself), applied to a
     /// copy of `template` before the placer moves it.
     ///
     /// # Errors
@@ -75,14 +75,14 @@ pub trait Orienter<G: Graph>: Send + Sync {
 ///   `+` for the partner `q` on the `>` port and `−` on the `<` port (the
 ///   central difference `q_> − q_<` along a chain, one-sided at its ends);
 /// - template: primary = `R_c − m`, from the midpoint `m` of its `<` and `>`
-///   anchors to its centre of mass `R_c`; secondary = `a_> − a_<`.
+///   anchors to its centroid `R_c`; secondary = `a_> − a_<`.
 ///
 /// The copy turns by `R = F_site F_templateᵀ` about `R_c`.
 ///
 /// **Branch site** — any other site with bonds (a `$` or `!` port, or a
 /// template that is not a two-port chain unit). The rotation is the
 /// least-squares fit ([`superpose`](crate::op::superpose)) of the
-/// template's port directions (centre of mass → handle) onto the site's bond
+/// template's port directions (centroid → handle) onto the site's bond
 /// directions (site → partner), each set taken with its negation so the fit
 /// is a pure rotation about `R_c` (the approach of CG2AT2, Vickery &
 /// Stansfeld, *J. Chem. Theory Comput.* **17**, 6472 (2021),
@@ -176,7 +176,7 @@ impl TemplateGeometry {
                 .ok_or_else(|| OrientError::Template("a port atom has no x/y/z".to_owned()))
         };
         let center = template
-            .center(&template.node_ids().collect::<Vec<_>>())
+            .centroid(&template.node_ids().collect::<Vec<_>>())
             .map_err(OrientError::Center)?;
         let mut ports = HashMap::new();
         let (mut left, mut right) = (Vec::new(), Vec::new());
@@ -316,7 +316,7 @@ pub enum OrientError {
     /// The template's ports do not read back, a port atom has no
     /// coordinates, or a link names a port the template lacks.
     Template(String),
-    /// The template has no centre of mass.
+    /// The template has no centroid.
     Center(CenterError),
     /// Chain site `index` has no axis.
     NoAxis {
@@ -335,7 +335,7 @@ impl fmt::Display for OrientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Template(why) => write!(f, "the template has no usable geometry: {why}"),
-            Self::Center(e) => write!(f, "the template has no centre of mass: {e}"),
+            Self::Center(e) => write!(f, "the template has no centroid: {e}"),
             Self::NoAxis { index } => write!(f, "site {index} is a chain site without an axis"),
             Self::Frame { index } => write!(
                 f,
@@ -408,7 +408,7 @@ mod tests {
                 keys::Z => 0.0,
             })
             .unwrap();
-        // The side atom is a wildcard dummy (Z = 0): only its mass matters.
+        // The side atom is a wildcard dummy (Z = 0) off the C-C line.
         let x = f
             .add_atom(props! {
                 keys::ATOMIC_NUMBER => 0u8,
@@ -417,9 +417,6 @@ mod tests {
                 keys::Z => 0.0,
             })
             .unwrap();
-        for (atom, mass) in [(c0, 1.0), (c1, 1.0), (h0, 1.0), (h1, 1.0), (x, 4.0)] {
-            f.set_atom(atom, keys::MASS, mass).expect("mass");
-        }
         for (a, b) in [(c0, c1), (c0, h0), (c1, h1), (c0, x)] {
             f.add_bond(a, b, props! {}).expect("bond");
         }
@@ -499,9 +496,10 @@ mod tests {
             .orient_many(&unit, &[site])
             .expect("orientable")[0];
 
-        let com = [0.0, 1.0, 0.0];
-        close(transform_point(&rot, com), com);
-        close(turned(&rot, [0.0; 3], com), [0.0, 0.0, 1.0]);
+        // The centroid of the five atoms (y = 0, 0, 0, 0, 2).
+        let centroid = [0.0, 0.4, 0.0];
+        close(transform_point(&rot, centroid), centroid);
+        close(turned(&rot, [0.0; 3], centroid), [0.0, 0.0, 0.4]);
         close(
             turned(&rot, [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
             [0.0, 2.0, 0.0],

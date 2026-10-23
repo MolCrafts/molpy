@@ -32,13 +32,12 @@
 mod distgeom;
 mod options;
 mod report;
-mod topological_distance;
 
 /// ETKDGv3 conformer-embedding pipeline (the active [`Conformer`] backend);
 /// reached only through [`Conformer::generate`].
 mod etkdg;
 
-pub use options::{ConformerOptions, ConformerSpeed, ForceFieldKind};
+pub use options::ConformerOptions;
 pub use report::{ConformerReport, ConformerStageReport, StageKind};
 
 use molrs::core::Atomistic;
@@ -116,7 +115,7 @@ impl Default for Conformer {
 
 #[cfg(test)]
 mod tests {
-    use super::{Conformer, ConformerOptions, ConformerSpeed};
+    use super::{Conformer, ConformerOptions};
     use crate::props;
     use molrs::core::Atomistic;
     use molrs::core::BondNumber;
@@ -161,7 +160,6 @@ mod tests {
 
     fn conformer() -> Conformer {
         Conformer::new(ConformerOptions {
-            speed: ConformerSpeed::Fast,
             rng_seed: Some(42),
             ..ConformerOptions::default()
         })

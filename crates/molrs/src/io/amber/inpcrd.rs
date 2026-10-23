@@ -5,11 +5,10 @@ use crate::io::frame_columns::insert_column;
 use crate::io::{Source, invalid_data};
 use std::io::{BufRead, Result};
 
-use ndarray::Array2;
-
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
+use molrs::core::constants::AMBER_VELOCITY_TO_ANGSTROM_PER_PS;
 use molrs::op::{F, Idx};
 
 // ---------------------------------------------------------------------------
@@ -105,7 +104,9 @@ fn eat_section(lines: &[String], n_atoms: usize) -> Result<Vec<F>> {
 ///   truncates the header time)
 /// - `frame.simbox`: orthorhombic cell from the first three box floats when present
 pub fn read_inpcrd<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
-    read_frame_from(src.into().reader()?)
+    let frame = read_frame_from(src.into().reader()?)?;
+    crate::io::reader::check_read_frame(&frame)?;
+    Ok(frame)
 }
 
 /// Merge the coordinates an AMBER inpcrd / restrt holds — `coordinates`, as
@@ -141,7 +142,7 @@ pub fn merge_inpcrd(frame: &mut Frame, coordinates: Frame) -> Result<()> {
                     source.n_rows().unwrap_or(0)
                 )));
             }
-            for key in ["x", "y", "z", "vel"] {
+            for key in ["x", "y", "z", "vx", "vy", "vz"] {
                 if let Some(col) = source.get(key) {
                     atoms.insert(key, col.clone(), None).map_err(invalid_data)?;
                 }
@@ -221,15 +222,26 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
         }
     }
 
-    // Optional box line (3–6 floats; first three → diagonal lengths).
-    let mut box_lengths: Option<[F; 3]> = None;
+    // Optional box line: `a b c`, or `a b c alpha beta gamma` (degrees) —
+    // a truncated octahedron or any triclinic box states its angles.
+    let mut cell: Option<Cell> = None;
     if cursor < raw_lines.len() {
         let raw = raw_lines[cursor].as_str();
         if !raw.trim().is_empty() {
-            let box_floats = parse_floats_line(raw)?;
-            if box_floats.len() >= 3 {
-                box_lengths = Some([box_floats[0], box_floats[1], box_floats[2]]);
-            }
+            cell = Some(match parse_floats_line(raw)?.as_slice() {
+                &[a, b, c] => Cell::Lengths([a, b, c]),
+                &[a, b, c, alpha, beta, gamma] => Cell::LengthsAngles {
+                    lengths: [a, b, c],
+                    angles: [alpha, beta, gamma],
+                },
+                other => {
+                    return Err(invalid_data(format!(
+                        "inpcrd box line has {} numbers; it holds 3 lengths, or 3 lengths and \
+                         3 angles",
+                        other.len()
+                    )));
+                }
+            });
         }
     }
 
@@ -254,27 +266,26 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
     insert_column(&mut block, "z", zs)?;
 
     if let Some(vel) = velocity_flat {
-        let arr = Array2::from_shape_vec((n_atoms, 3), vel)
-            .map_err(invalid_data)?
-            .into_dyn();
-        block.insert("vel", arr, None).map_err(invalid_data)?;
+        // AMBER's velocities are Å per its internal time unit; Å/ps here.
+        for (axis, key) in ["vx", "vy", "vz"].into_iter().enumerate() {
+            let column: Vec<F> = (0..n_atoms)
+                .map(|i| vel[i * 3 + axis] * AMBER_VELOCITY_TO_ANGSTROM_PER_PS)
+                .collect();
+            insert_column(&mut block, key, column)?;
+        }
     }
 
     let mut frame = Frame::new();
     frame.meta.insert("title", title);
     if let Some(t) = time {
-        frame.meta.insert("timestep", t as i64);
+        // The simulation time, ps.
+        frame.meta.insert("time", t);
     }
     frame.insert("atoms", block);
 
-    if let Some(lens) = box_lengths {
-        let origin = [0.0 as F, 0.0, 0.0];
-        let simbox = SimBox::new(
-            Cell::Lengths([lens[0], lens[1], lens[2]]),
-            origin,
-            [true; 3],
-        )
-        .map_err(|e| invalid_data(format!("{:?}", e)))?;
+    if let Some(cell) = cell {
+        let simbox = SimBox::new(cell, [0.0 as F, 0.0, 0.0], [true; 3])
+            .map_err(|e| invalid_data(format!("inpcrd box: {e:?}")))?;
         frame.simbox = Some(simbox);
     }
 
@@ -381,10 +392,8 @@ Test with time
   1.0         2.0         3.0         4.0         5.0         6.0
 ";
         let frame = frame_from(text);
-        assert_eq!(
-            frame.meta.get("timestep").and_then(|v| v.as_i64()),
-            Some(100)
-        );
+        assert_eq!(frame.meta.get("time").and_then(|v| v.as_f64()), Some(100.5));
+        assert!(!frame.meta.contains_key("timestep"));
     }
 
     #[test]
@@ -397,13 +406,25 @@ Test with velocities
 ";
         let frame = frame_from(text);
         let atoms = frame.get("atoms").unwrap();
-        let vel = atoms
-            .get("vel")
-            .and_then(|c| c.get::<f64>())
-            .expect("vel column");
-        assert_eq!(vel.shape(), &[2, 3]);
-        assert!((vel[[0, 0]] - 0.1).abs() < 1e-9);
-        assert!((vel[[1, 2]] - 0.6).abs() < 1e-9);
+        assert!(!atoms.contains_key("vel"));
+        // Å per AMBER time unit → Å/ps: × 20.455.
+        let column = |key: &str| {
+            atoms
+                .get(key)
+                .and_then(|c| c.get::<f64>())
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        let close = |got: Vec<f64>, want: [f64; 2]| {
+            got.iter()
+                .zip(want)
+                .all(|(g, w)| (g - w * 20.455).abs() < 1e-12)
+        };
+        assert!(close(column("vx"), [0.1, 0.4]));
+        assert!(close(column("vy"), [0.2, 0.5]));
+        assert!(close(column("vz"), [0.3, 0.6]));
     }
 
     #[test]
@@ -420,6 +441,31 @@ Test with box
         assert!((lens[0] - 10.0).abs() < 1e-9);
         assert!((lens[1] - 20.0).abs() < 1e-9);
         assert!((lens[2] - 30.0).abs() < 1e-9);
+    }
+
+    /// A truncated octahedron states its angles: the cell is triclinic, not
+    /// the orthorhombic box of its three lengths.
+    #[test]
+    fn a_box_line_with_angles_is_triclinic() {
+        let text = "\
+Octahedron
+  1
+  1.0         2.0         3.0
+ 40.0        40.0        40.0       109.4712206 109.4712206 109.4712206
+";
+        let sb = frame_from(text).simbox.expect("box");
+        let angles = sb.angles();
+        for a in angles.iter() {
+            assert!((a - 109.4712206).abs() < 1e-6, "{angles:?}");
+        }
+        assert!((sb.lengths()[0] - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_box_line_of_another_length_is_refused() {
+        let text = "Bad box\n  1\n  1.0 2.0 3.0\n 40.0 40.0 40.0 90.0\n";
+        let err = read_frame_from(Cursor::new(text.as_bytes())).unwrap_err();
+        assert!(err.to_string().contains("box line has 4 numbers"), "{err}");
     }
 
     #[test]

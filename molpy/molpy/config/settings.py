@@ -127,8 +127,8 @@ class _EngineTool(_EngineShared):
 
 class _Top:
     conda: _Conda | None
-    engine: dict | None
-    ambertools: dict | None
+    engine: dict[str, object] | None
+    ambertools: dict[str, object] | None
 
 
 #: Group → (its shared keys, a tool table's keys).

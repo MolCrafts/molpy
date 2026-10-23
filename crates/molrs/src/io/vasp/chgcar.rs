@@ -77,10 +77,12 @@ use molrs::op::F;
 /// [`InvalidData`](std::io::ErrorKind::InvalidData) for a file that is not a
 /// CHGCAR, its message naming why.
 pub fn read_chgcar<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
-    read_frame_from(src.into().reader()?).map_err(|e| match e {
+    let frame = read_frame_from(src.into().reader()?).map_err(|e| match e {
         MolRsError::Io(e) => e,
         other => crate::io::invalid_data(other),
-    })
+    })?;
+    crate::io::reader::check_read_frame(&frame)?;
+    Ok(frame)
 }
 
 /// Read a CHGCAR from any [`BufRead`] source.

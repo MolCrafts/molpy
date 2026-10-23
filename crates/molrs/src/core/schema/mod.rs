@@ -177,7 +177,8 @@ columns! {
     FX: "fx", Float, Scalar, Of(Force), "x-component of the force on an atom.";
     FY: "fy", Float, Scalar, Of(Force), "y-component of the force on an atom.";
     FZ: "fz", Float, Scalar, Of(Force), "z-component of the force on an atom.";
-    H_COUNT: "h_count", Uint, Scalar, NotAQuantity, "Exact number of hydrogens a line-notation bracket atom states (SMILES `[CH3]`).";
+    H_COUNT: "h_count", Uint, Scalar, NotAQuantity, "Hydrogens an atom carries that the graph does not draw — the exact count a line-notation bracket atom states (SMILES `[CH3]`); drawing them (`add_hydrogens`) leaves 0.";
+    HETERO: "hetero", DType::Bool, Scalar, NotAQuantity, "Whether a site belongs to a hetero group: a ligand, ion or solvent (PDB HETATM, mmCIF group_PDB).";
     IBEAD: "ibead", Uint, Scalar, NotAQuantity, "`members`: the bead's row in `atoms`, 0-indexed.";
     ICODE: "icode", Str, Scalar, NotAQuantity, "Residue insertion code (PDB iCode, mmCIF pdbx_PDB_ins_code); \"\" for none.";
     ID: "id", Uint, Scalar, NotAQuantity, "Identifier carried by the source file. Never an index — endpoints are 0-based row indices and a reader that must map labels to rows does so locally.";
@@ -198,6 +199,7 @@ columns! {
     QUATJ: "quatj", Float, Scalar, Dimensionless, "Second imaginary component of a per-atom orientation quaternion.";
     QUATK: "quatk", Float, Scalar, Dimensionless, "Third imaginary component of a per-atom orientation quaternion.";
     QUATW: "quatw", Float, Scalar, Dimensionless, "Real part of a per-atom orientation quaternion.";
+    REACT_ID: "react_id", Uint, Scalar, NotAQuantity, "Identifier pairing an atom of a LAMMPS `fix bond/react` pre-reaction template with the same atom of the post-reaction one.";
     RES_ID: "res_id", Uint, Scalar, NotAQuantity, "Residue identifier. Unsigned like every other id in the vocabulary; a file with negative residue numbers is renumbered at the reader boundary, not accommodated by the schema.";
     RES_NAME: "res_name", Str, Scalar, NotAQuantity, "Residue name (e.g. \"ALA\").";
     STEREO: "stereo", Str, Scalar, NotAQuantity, "Stereo marker. On an atom: tetrahedral chirality `\"CW\"` / `\"CCW\"` (`\"unspecified\"` from perception). On a bond: a line notation's direction `\"up\"` / `\"down\"`, or perceived double-bond geometry `\"E\"` / `\"Z\"` / `\"either\"` / `\"none\"`.";
@@ -278,7 +280,7 @@ blocks! {
     RowKind::Node,
     None,
     &[],
-    &[consts::X, consts::Y, consts::Z, consts::VX, consts::VY, consts::VZ, consts::FX, consts::FY, consts::FZ, consts::IX, consts::IY, consts::IZ, consts::ID, consts::ATOMIC_NUMBER, consts::ELEMENT, consts::TYPE, consts::TYPE_ID, consts::NAME, consts::CHARGE, consts::FORMAL_CHARGE, consts::ATOM_MAP, consts::IS_AROMATIC, consts::H_COUNT, consts::ISOTOPE, consts::STEREO, consts::MASS, consts::MOL_ID, consts::RES_ID, consts::RES_NAME, consts::CHAIN, consts::ICODE, consts::ALTLOC, consts::OCCUPANCY, consts::B_FACTOR, consts::BEAD_TYPE, consts::FREE, consts::QUATW, consts::QUATI, consts::QUATJ, consts::QUATK, consts::MUX, consts::MUY, consts::MUZ, consts::AXIS_X, consts::AXIS_Y, consts::AXIS_Z],
+    &[consts::X, consts::Y, consts::Z, consts::VX, consts::VY, consts::VZ, consts::FX, consts::FY, consts::FZ, consts::IX, consts::IY, consts::IZ, consts::ID, consts::ATOMIC_NUMBER, consts::ELEMENT, consts::TYPE, consts::TYPE_ID, consts::NAME, consts::CHARGE, consts::FORMAL_CHARGE, consts::ATOM_MAP, consts::IS_AROMATIC, consts::H_COUNT, consts::ISOTOPE, consts::STEREO, consts::MASS, consts::MOL_ID, consts::REACT_ID, consts::RES_ID, consts::RES_NAME, consts::CHAIN, consts::ICODE, consts::ALTLOC, consts::HETERO, consts::OCCUPANCY, consts::B_FACTOR, consts::BEAD_TYPE, consts::FREE, consts::QUATW, consts::QUATI, consts::QUATJ, consts::QUATK, consts::MUX, consts::MUY, consts::MUZ, consts::AXIS_X, consts::AXIS_Y, consts::AXIS_Z],
     "Per-atom properties. The node table relation blocks index into.";
     BONDS = "bonds",
     RowKind::Relation { arity: 2 },

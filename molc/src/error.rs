@@ -69,26 +69,26 @@ pub enum MolcStatus {
 ///
 /// Each column in a [`Block`](molrs::core::Block) stores a
 /// homogeneously-typed ndarray.  This enum is the stored variant, not a
-/// width bucket: an `i64` column is [`I64`](Self::I64), not [`Int`](Self::Int).
+/// width bucket: an `i64` column is [`I64`](Self::I64), not [`I32`](Self::I32).
 /// Discriminants 0–4 stay where they were; later variants are appended.
 ///
 /// Each variant is named after the core dtype name (`DType::name()`), so the
-/// C constant is `MOLC_D_TYPE_` + that name upper-cased: `MOLC_D_TYPE_FLOAT`,
-/// `MOLC_D_TYPE_UINT`, `MOLC_D_TYPE_I64`, `MOLC_D_TYPE_C128`, ….
+/// C constant is `MOLC_D_TYPE_` + that name upper-cased: `MOLC_D_TYPE_F64`,
+/// `MOLC_D_TYPE_U64`, `MOLC_D_TYPE_I64`, `MOLC_D_TYPE_C128`, ….
 ///
 /// A string column has no flat scalar buffer. [`molc_block_get`](crate::molc_block_get)
 /// reports that as `TypeMismatch`, not as a missing key.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MolcDType {
-    /// `float`: `f64` column.
-    Float = 0,
-    /// `int`: `i32` column.
-    Int = 1,
+    /// `f64` column.
+    F64 = 0,
+    /// `i32` column.
+    I32 = 1,
     /// `bool`: one byte per element.
     Bool = 2,
-    /// `uint`: `u64` column (indices and identifiers).
-    Uint = 3,
+    /// `u64` column (indices and identifiers).
+    U64 = 3,
     /// `string`: no flat scalar buffer.
     String = 4,
     /// `i8` column.
@@ -109,13 +109,18 @@ pub enum MolcDType {
     C128 = 12,
 }
 
-impl From<DType> for MolcDType {
-    fn from(dt: DType) -> Self {
-        match dt {
-            DType::Float => Self::Float,
-            DType::Int => Self::Int,
+impl TryFrom<DType> for MolcDType {
+    type Error = String;
+
+    /// The C code of `dt`; a dtype this build of the C API has no code for
+    /// (molrs's `DType` is `non_exhaustive`) is an error naming it, never a
+    /// code standing in for it.
+    fn try_from(dt: DType) -> Result<Self, String> {
+        Ok(match dt {
+            DType::Float => Self::F64,
+            DType::Int => Self::I32,
             DType::Bool => Self::Bool,
-            DType::Uint => Self::Uint,
+            DType::Uint => Self::U64,
             DType::String => Self::String,
             DType::I8 => Self::I8,
             DType::I16 => Self::I16,
@@ -125,10 +130,8 @@ impl From<DType> for MolcDType {
             DType::U32 => Self::U32,
             DType::C64 => Self::C64,
             DType::C128 => Self::C128,
-            // `DType` is `non_exhaustive`. Every variant that exists today is
-            // named above; a future one must not be reported as `String`.
-            other => unreachable!("no C dtype for {other:?}"),
-        }
+            other => return Err(format!("the C API has no dtype code for {other:?}")),
+        })
     }
 }
 
@@ -180,11 +183,11 @@ mod tests {
 
     #[test]
     fn dtype_keeps_its_discriminants() {
-        assert_eq!(MolcDType::from(DType::Float) as u8, 0);
-        assert_eq!(MolcDType::from(DType::Int) as u8, 1);
-        assert_eq!(MolcDType::from(DType::Bool) as u8, 2);
-        assert_eq!(MolcDType::from(DType::Uint) as u8, 3);
-        assert_eq!(MolcDType::from(DType::String) as u8, 4);
+        assert_eq!(MolcDType::try_from(DType::Float).unwrap() as u8, 0);
+        assert_eq!(MolcDType::try_from(DType::Int).unwrap() as u8, 1);
+        assert_eq!(MolcDType::try_from(DType::Bool).unwrap() as u8, 2);
+        assert_eq!(MolcDType::try_from(DType::Uint).unwrap() as u8, 3);
+        assert_eq!(MolcDType::try_from(DType::String).unwrap() as u8, 4);
     }
 
     #[test]
@@ -192,7 +195,7 @@ mod tests {
         // The C constant is MOLC_D_TYPE_<name>: the variant's name must be
         // the core `DType::name()` for every dtype the core has.
         for dtype in DType::ALL {
-            let variant = format!("{:?}", MolcDType::from(dtype)).to_lowercase();
+            let variant = format!("{:?}", MolcDType::try_from(dtype).unwrap()).to_lowercase();
             assert_eq!(variant, dtype.name());
         }
     }

@@ -32,11 +32,11 @@
 //! in place. Every path- and byte-taking door needs the `filesystem` feature;
 //! the storage-taking doors do not.
 //!
-//! Closed **metrics** densify to Zarr series arrays; live append uses a
-//! write-ahead log (WAL) in JSON Lines form — one JSON document per line, so a
-//! record can be appended without rewriting the file
-//! (`metrics/metrics.jsonl`). See [`write_mrec`] and molrec
-//! `docs/spec/metrics.md`. This crate does not implement the WAL / densify path.
+//! Closed **metrics** are the catalog document plus `series/` (`f64`),
+//! `steps/` (`i64`) and `wall_time/` (`string`) arrays. The live JSONL WAL
+//! (`metrics/metrics.jsonl`) is stored and read back as text when the record
+//! carries it. See [`write_mrec`] and molrec `docs/spec/metrics.md`. This
+//! crate does not densify a WAL into those arrays.
 //!
 //! # Spike verdicts (zarrs 0.23.13)
 //!
@@ -50,7 +50,7 @@
 //! frame-aligned chunks on its own cadence and rewrites a partial tail only
 //! on an explicit `flush`; the shard index sits at the *start* of the shard
 //! so a whole-chunk append leaves no dead bytes, and no shard is ever
-//! re-encoded whole — see `sequence.rs`'s module doc.) Evidence: extending the trailing
+//! re-encoded whole — see `sequence/mod.rs`'s module doc.) Evidence: extending the trailing
 //! inner chunk of shard 1 from 500 to 800 rows left the completed shard 0 file
 //! **byte identical**, cost a **single** store write of 18 180 B against a
 //! 146 399 B shard (the codec read back only the 11 486 B straddling chunk),
@@ -95,7 +95,7 @@ mod frame_io;
 mod pack;
 #[cfg(feature = "filesystem")]
 mod positional_write;
-mod record_io;
+pub(crate) mod record_io;
 mod sequence;
 // Built where it is registered (no C `zstd`), and for the tests that hold it
 // to the C encoder's frames.
@@ -109,8 +109,8 @@ pub use record_io::write_mrec;
 // The store-taking record doors need no filesystem: an in-memory or host
 // store (wasm) writes a whole record through `write_mrec_storage` and reads it
 // back through `MrecFile::from_storage`.
-pub use record_io::{MrecFile, write_mrec_storage};
-pub use sequence::{Compression, MrecReader, MrecWriter, SequenceSchema, dtype_from_schema_tag};
+pub use record_io::{MrecFile, StoredMetrics, StoredObservable, write_mrec_storage};
+pub use sequence::{Compression, MrecReader, MrecWriter, SequenceSchema};
 
 /// Mechanics pins for `zarrs` 0.23.13 — the append fast path the
 /// `trajectory/` frame sequence is built on.

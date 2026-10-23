@@ -6,7 +6,8 @@ import molpy as mp
 import numpy as np
 import pytest
 from molpy.ff.potential import PairLjCut
-from molpy.md import MD, MaxwellBoltzmann, NeighborList, VelocityVerlet
+from molpy.core import NeighborList
+from molpy.md import MD, MaxwellBoltzmann, VelocityVerlet
 
 
 def _pair(edge: float = 10.0) -> mp.core.Frame:
@@ -28,7 +29,7 @@ class TestDriver:
         frame = _pair()
         sim = MD()
         sim.set_integrator(VelocityVerlet(0.001))
-        sim.set_neighbor(NeighborList(2.5, 0.5))
+        sim.set_neighbor(NeighborList(3.0), skin=0.5)
         sim.set_evaluator(PairLjCut(1.0, 1.0, 2.5))
         sim.run(frame, 1)
         energy = frame.meta["energy"]

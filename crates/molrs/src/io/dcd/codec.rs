@@ -840,6 +840,8 @@ fn parse_one_frame<R: Read>(
         frame.meta.insert("title".to_string(), header.title.clone());
     }
 
+    // Every door reads through here, so every door checks here.
+    crate::io::reader::check_read_frame(&frame)?;
     Ok(frame)
 }
 
@@ -957,9 +959,7 @@ impl<R: BufRead + Seek> FrameReader for DcdReader<R> {
         if frame.is_some() {
             self.cursor += 1;
         }
-        // Validate on the way out: a frame that violates the vocabulary is a
-        // malformed file or a reader bug, not a result to return.
-        crate::io::reader::check_read_frame(frame)
+        Ok(frame)
     }
 }
 
@@ -1030,9 +1030,6 @@ impl<W: Write + Seek> Writer for DcdWriter<W> {
 
 impl<W: Write + Seek> FrameWriter for DcdWriter<W> {
     fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         write_dcd_frame(self, frame)?;
         self.writer.flush()
     }
@@ -1042,6 +1039,8 @@ fn write_dcd_frame<W: Write + Seek>(
     state: &mut DcdWriter<W>,
     frame: &impl FrameAccess,
 ) -> std::io::Result<()> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     // Reject 4D / fixed-atom frames eagerly.
     let has_w = frame
         .visit_block("atoms", |a| {
@@ -1961,9 +1960,11 @@ pub fn read_dcd<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
 /// Write one frame as a complete one-frame DCD file. 4D-dynamics frames (a
 /// `w` column on `atoms`) are refused with `ErrorKind::Unsupported`.
 pub fn write_dcd<'a>(sink: impl Into<Sink<'a>>, frame: &impl FrameAccess) -> std::io::Result<()> {
-    let mut dcd = DcdWriter::new(sink.into().writer()?);
-    write_dcd_frame(&mut dcd, frame)?;
-    dcd.writer.flush()
+    sink.into().put_with(|w| {
+        let mut dcd = DcdWriter::new(w);
+        write_dcd_frame(&mut dcd, frame)?;
+        dcd.writer.flush()
+    })
 }
 
 impl DcdReader<Box<dyn ReadSeek>> {

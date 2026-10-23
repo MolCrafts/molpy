@@ -125,7 +125,11 @@ def run_process(
             exited non-zero.
     """
     argv = [str(part) for part in command]
-    where = {"command": argv, "cwd": str(cwd) if cwd is not None else None, **fields}
+    where: dict[str, Any] = {
+        "command": argv,
+        "cwd": str(cwd) if cwd is not None else None,
+        **fields,
+    }
     error = logger.debug if quiet else logger.error
     logger.debug("process started", **where)
     start = time.perf_counter()

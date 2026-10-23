@@ -1,11 +1,12 @@
 //! `molpy.io.read_clpol_alpha` — `molrs::io`'s door of the same name: a
 //! CL&Pol `alpha.ff` polarisation table read into rows.
 
+use crate::error::io_error_to_pyerr;
 use molrs::io::clpol::ClpolAlphaRow;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use super::{PySource, data_error};
+use super::PySource;
 
 /// One row's fields under the names :func:`molpy.ff.params.clpol_polarizability`
 /// uses, and its ``type_name``.
@@ -51,7 +52,7 @@ pub fn read_clpol_alpha<'py>(
 ) -> PyResult<Vec<Bound<'py, PyDict>>> {
     let rows = source
         .read(molrs::io::read_clpol_alpha)
-        .map_err(data_error)?;
+        .map_err(io_error_to_pyerr)?;
     rows.into_iter().map(|row| row_dict(py, row)).collect()
 }
 

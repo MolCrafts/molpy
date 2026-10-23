@@ -2,7 +2,7 @@
 //! subclassable [`PyTypifier`] base and the [`PyTypeAssignment`] its ``assign`` hook
 //! returns, the native typifiers — MMFF94 / MMFF94s, OPLS-AA, element, and
 //! the antechamber-derived [`atd`] and [`gaff`] — and `assign_cmaps`, which
-//! types a frame's CMAP crossterms from its dihedrals.
+//! types a molecule's CMAP crossterms from its dihedrals.
 //!
 //! A typifier's contract is `typify`: compiling potentials from what it
 //! defined is `molpy.ff.compile.PotentialCompiler`'s. There is deliberately
@@ -28,7 +28,6 @@ use molrs::ff::typifier::OplsAaTypifier;
 use molrs::ff::typifier::mmff::{Mmff94Typifier, Mmff94sTypifier};
 use molrs::ff::typifier::{Annotation, TypeAssignment, Typifier, Typing};
 
-use crate::core::frame::PyFrame;
 use crate::core::graph_views::RelationClass;
 use crate::core::molgraph::{PyAtomistic, py_to_prop};
 use crate::ff::forcefield::{PyForceField, params_from_dict};
@@ -60,7 +59,7 @@ fn unseeded_output() -> PyErr {
 /// ``OplsAaTypifier``, ``AtdTypifier``) extend this base and only construct:
 /// their ``assign`` runs the Rust matcher and their ``typify`` the Rust
 /// ``Typing::typify``.
-#[pyclass(module = "molpy.ff.typifier", name = "Typifier", subclass)]
+#[pyclass(module = "molpy.ff.typifier", name = "Typifier", subclass, generic)]
 pub struct PyTypifier {
     state: TypifierState,
 }
@@ -115,6 +114,11 @@ impl PyTypifier {
         }
         Ok(())
     }
+}
+
+/// A refused typing, as a ``ValueError`` carrying the core's message.
+fn typing_err(err: molrs::ff::typifier::TypingError) -> PyErr {
+    PyValueError::new_err(err.to_string())
 }
 
 #[pymethods]
@@ -200,7 +204,7 @@ impl PyTypifier {
                 let inner = typing
                     .typifier()
                     .assign(graph.borrow_mut().core_mut())
-                    .map_err(PyValueError::new_err)?;
+                    .map_err(typing_err)?;
                 Ok(PyTypeAssignment { inner })
             }
             TypifierState::Python(_) => Err(PyNotImplementedError::new_err(
@@ -233,11 +237,9 @@ impl PyTypifier {
     fn typify(slf: &Bound<'_, Self>, mol: &Bound<'_, PyAtomistic>) -> PyResult<Py<PyAtomistic>> {
         let py = slf.py();
         let native = match &mut slf.borrow_mut().state {
-            TypifierState::Native(typing) => Some(
-                typing
-                    .typify(mol.borrow().core())
-                    .map_err(PyValueError::new_err)?,
-            ),
+            TypifierState::Native(typing) => {
+                Some(typing.typify(mol.borrow().core()).map_err(typing_err)?)
+            }
             TypifierState::Python(_) => None,
         };
         if let Some(typed) = native {
@@ -642,27 +644,27 @@ impl PyElementTypifier {
     }
 }
 
-/// Build ``frame``'s ``cmaps`` block from its dihedrals and return the number
-/// of CMAP crossterms.
+/// Replace ``mol``'s ``cmaps`` terms, in place, by the CMAP crossterms its
+/// dihedrals and ``forcefield``'s ``cmap`` rows define; return their number.
 ///
 /// A crossterm is five atoms ``(a, b, c, d, e)`` whose dihedrals
-/// ``(a, b, c, d)`` and ``(b, c, d, e)`` are both rows of ``frame["dihedrals"]``
-/// (in either stored direction) and whose ``atoms`` ``type`` labels equal a
-/// ``cmap`` row's ``itom`` … ``mtom`` in that order — never reversed. The block
-/// (``atomi`` … ``atomm``, ``type`` = the row's name) replaces any ``cmaps``
-/// block ``frame`` had, and is removed when nothing matches.
+/// ``(a, b, c, d)`` and ``(b, c, d, e)`` are both dihedrals of ``mol`` (in
+/// either stored direction) and whose atom ``type`` labels equal a ``cmap``
+/// row's ``itom`` … ``mtom`` in that order — never reversed. Each is one
+/// ``cmaps`` term with ``type`` = the row's name; ``mol.to_frame()`` writes
+/// them as the ``cmaps`` block.
 ///
 /// Raises
 /// ------
 /// ValueError
 ///     Cmap rows in two styles, two rows on the same five types, a path that
-///     matches one row forward and another backward, or an untyped frame.
+///     matches one row forward and another backward, or an untyped dihedral
+///     atom. ``mol`` is unchanged.
 #[pyfunction]
 #[pyo3(name = "assign_cmaps")]
-pub fn assign_cmaps_py(frame: &PyFrame, forcefield: &PyForceField) -> PyResult<usize> {
-    frame
-        .with_frame_mut(|core| molrs::ff::typifier::cmap::assign_cmaps(core, &forcefield.inner))?
-        .map_err(pyo3::exceptions::PyValueError::new_err)
+pub fn assign_cmaps_py(mol: &Bound<'_, PyAtomistic>, forcefield: &PyForceField) -> PyResult<usize> {
+    molrs::ff::typifier::cmap::assign_cmaps(mol.try_borrow_mut()?.core_mut(), &forcefield.inner)
+        .map_err(typing_err)
 }
 
 /// Register `molpy.ff.typifier` (the base before its subclasses).

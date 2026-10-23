@@ -8,7 +8,7 @@
 //! | [`ForceField::declared_special_bonds`] | `document.special_bonds`; absent ⇔ `None` |
 //! | [`ForceField::styles`], in order | `document.styles`, in order |
 //! | [`Style::category`], [`Style::name`] | `category`, `style` |
-//! | a category no registry declares ([`StyleDefs::Relation`]), its arity | the same `category`, its arity the endpoint columns' count |
+//! | a category no registry declares ([`ForceField::def_style_with_arity`]), its arity | the same `category`, its arity the endpoint columns' count |
 //! | [`Style::params`] numeric / string | `params` numbers / strings |
 //! | the string style params `expression`, `endpoint_key` | the entry fields of those names, `expression` byte for byte |
 //! | a style the force-field IR registry holds as a **custom** style, with no `expression` of its own | the registry's `expression`, so a process that registered nothing prices it (a built-in style writes none) |
@@ -29,9 +29,7 @@
 //! [`Style::name`]: crate::ff::forcefield::Style::name
 //! [`Style::params`]: crate::ff::forcefield::Style::params
 //! [`Style::type_rows`]: crate::ff::forcefield::Style::type_rows
-//! [`StyleDefs::Relation`]: crate::ff::forcefield::StyleDefs::Relation
 
-use crate::ff::forcefield::Category;
 use std::collections::{BTreeMap, BTreeSet};
 
 use indexmap::IndexMap;
@@ -39,7 +37,7 @@ use ndarray::{ArrayD, Axis};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::forcefield_section::{
-    EndpointKey, ForceFieldSection, SECTION_PRESETS, UNIT_QUANTITIES, style_block_name, unit_preset,
+    EndpointKey, ForceFieldSection, UNIT_QUANTITIES, style_block_name, unit_preset,
 };
 use crate::core::{Block, Column, DType};
 use crate::ff::forcefield::{ForceField, Style};
@@ -363,7 +361,7 @@ fn molrs_units(units: &JsonMap<String, JsonValue>) -> Result<String, String> {
         .collect();
     let states = |q: &str| stated.iter().any(|(i, _)| UNIT_QUANTITIES[*i] == q);
     if states("length") && states("energy") {
-        let matching: Vec<&str> = SECTION_PRESETS
+        let matching: Vec<&str> = crate::core::UnitPreset::BUILTIN
             .into_iter()
             .filter(|&name| name != "lj")
             .filter(|name| {
@@ -452,6 +450,7 @@ impl ForceFieldSection {
     /// use molrs::io::mrec::ForceFieldSection;
     ///
     /// let mut ff = ForceField::new("example");
+    /// ff.set_units("real");
     /// ff.def_style("bond", "harmonic", Params::new())
     ///     .unwrap()
     ///     .def_type("A-B", &["A", "B"], Params::from_iter([("k", 300.0), ("r0", 1.5)]))
@@ -459,7 +458,7 @@ impl ForceFieldSection {
     /// let section = ForceFieldSection::from_forcefield(&ff).unwrap();
     /// assert!(section.table("bond", "harmonic").is_some());
     /// let back = section.to_forcefield().unwrap();
-    /// assert_eq!(back.get_bondtypes()[0].params.get("k").and_then(|v| v.as_num()), Some(300.0));
+    /// assert_eq!(back.get_types("bond")[0].params.get("k").and_then(|v| v.as_num()), Some(300.0));
     /// ```
     pub fn from_forcefield(ff: &ForceField) -> Result<ForceFieldSection, String> {
         ff.read_registry(|registry| Self::section_of(ff, registry))
@@ -470,8 +469,8 @@ impl ForceFieldSection {
     fn section_of(ff: &ForceField, registry: &Registry) -> Result<ForceFieldSection, String> {
         let mut document = JsonMap::new();
         document.insert("name".into(), ff.name.clone().into());
-        document.insert("units".into(), units_document(ff.units())?);
-        if let Some(sb) = ff.declared_special_bonds() {
+        document.insert("units".into(), units_document(ff.required_units()?)?);
+        if let Some(sb) = ff.special_bonds() {
             document.insert(
                 "special_bonds".into(),
                 json!({"lj": sb.lj.to_vec(), "coul": sb.coul.to_vec()}),
@@ -501,10 +500,10 @@ impl ForceFieldSection {
     /// they stay with the section.
     ///
     /// A style's `expression` is kept byte for byte, whether or not anything
-    /// registered the style. A category beyond molrs's seven is kept as a
-    /// [`StyleDefs::Relation`](crate::ff::forcefield::StyleDefs::Relation): with the arity
-    /// the force-field IR registry declares for it, or — a category nothing
-    /// declares — the count of its table's endpoint columns. Reading never
+    /// registered the style. Every category is kept with the arity its
+    /// declaration gives it, or — a category nothing declares — the count of
+    /// its table's endpoint columns
+    /// ([`ForceField::def_style_with_arity`]). Reading never
     /// evaluates an `expression`; compiling a style nothing can price is
     /// where it is refused.
     ///
@@ -579,11 +578,7 @@ impl ForceFieldSection {
                 .filter_map(|c| table.get(c).and_then(Column::get::<String>))
                 .collect();
             let style = ff
-                .def_style(
-                    Category::new(entry.category).arity(endpoint_columns.len()),
-                    entry.style,
-                    params,
-                )
+                .def_style_with_arity(entry.category, endpoint_columns.len(), entry.style, params)
                 .map_err(|e| format!("{what}: {e}"))?;
             let names = table
                 .get("name")
@@ -606,19 +601,10 @@ impl ForceFieldSection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::Category;
     use crate::ff::forcefield::tests::assert_same_definitions;
     use crate::ff::potential::fixtures::OneShot;
     use crate::ff::typifier::Typifier;
     use crate::io::reader::ForceFieldReader;
-
-    /// `ff` with its units declared: what `from_forcefield(ff).to_forcefield()`
-    /// gives back.
-    fn declared(ff: &ForceField) -> ForceField {
-        let mut out = ff.clone();
-        out.set_units(ff.units());
-        out
-    }
 
     fn same_section(a: &ForceFieldSection, b: &ForceFieldSection, what: &str) {
         assert_eq!(a.document, b.document, "{what}: document");
@@ -650,7 +636,7 @@ mod tests {
     }
 
     /// The round-trip property, both ways: `to_forcefield ∘ from_forcefield` is
-    /// the identity up to declared units, and `from_forcefield ∘ to_forcefield` the
+    /// the identity, and `from_forcefield ∘ to_forcefield` the
     /// identity on the section. Through a `*.mrec` store too, where it can be
     /// written.
     fn round_trips(ff: &ForceField, what: &str) {
@@ -659,7 +645,7 @@ mod tests {
         let back = section
             .to_forcefield()
             .unwrap_or_else(|e| panic!("{what}: to_forcefield: {e}"));
-        assert_same_definitions(&declared(ff), &back);
+        assert_same_definitions(ff, &back);
         let again = ForceFieldSection::from_forcefield(&back).unwrap();
         same_section(&section, &again, what);
 
@@ -678,7 +664,7 @@ mod tests {
             let from_store = stored
                 .to_forcefield()
                 .unwrap_or_else(|e| panic!("{what}: from the store: {e}"));
-            assert_same_definitions(&declared(ff), &from_store);
+            assert_same_definitions(ff, &from_store);
         }
     }
 
@@ -870,6 +856,7 @@ mod tests {
     #[test]
     fn lj_charmm_one_four_round_trips_and_an_unknown_value_is_refused() {
         let mut ff = ForceField::new("x");
+        ff.set_units("real");
         let mut sp = Params::from_iter([("inner", 8.0), ("cutoff", 10.0)]);
         sp.set("one_four", "epsilon14");
         ff.def_style("pair", "lj/charmm", sp)
@@ -915,6 +902,7 @@ mod tests {
     #[test]
     fn style_level_strings_become_entry_fields_and_mixing_a_param() {
         let mut ff = ForceField::new("custom");
+        ff.set_units("real");
         let mut lj = Params::from_iter([("cutoff", 10.0)]);
         lj.set("mixing", "geometric");
         ff.def_style("pair", "lj/cut", lj).unwrap();
@@ -946,6 +934,7 @@ mod tests {
     #[test]
     fn a_section_stating_radians_beside_a_preset_is_refused() {
         let mut ff = ForceField::new("t");
+        ff.set_units("real");
         ff.def_style("bond", "harmonic", Params::new()).unwrap();
         let mut section = ForceFieldSection::from_forcefield(&ff).unwrap();
         section.document["units"] = json!({"preset": "real", "length": "angstrom",
@@ -956,6 +945,7 @@ mod tests {
     #[test]
     fn a_section_molrs_cannot_hold_is_refused_not_approximated() {
         let mut base = ForceField::new("t");
+        base.set_units("real");
         base.def_style("bond", "harmonic", Params::new()).unwrap();
         let section = ForceFieldSection::from_forcefield(&base).unwrap();
 
@@ -965,11 +955,11 @@ mod tests {
 
         let mut openmm = section.clone();
         openmm.document["units"] = json!({"length": "nm", "energy": "kJ/mol"});
-        assert_eq!(openmm.to_forcefield().unwrap().units(), "openmm");
+        assert_eq!(openmm.to_forcefield().unwrap().units(), Some("openmm"));
 
         let mut stated = section.clone();
         stated.document["units"] = json!({"length": "angstrom", "energy": "eV"});
-        assert_eq!(stated.to_forcefield().unwrap().units(), "metal");
+        assert_eq!(stated.to_forcefield().unwrap().units(), Some("metal"));
 
         let mut smirks = section;
         smirks.document["styles"][0]["endpoint_key"] = json!("smirks");
@@ -988,6 +978,7 @@ mod tests {
 
     fn cmap_ff(grids: &[Option<ArrayD<f64>>]) -> ForceField {
         let mut ff = ForceField::new("charmm");
+        ff.set_units("real");
         let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
         for (i, g) in grids.iter().enumerate() {
             let mut params = Params::from_iter([("id", i as f64)]);
@@ -1017,7 +1008,7 @@ mod tests {
         );
         round_trips(&ff, "cmap");
         let back = section.to_forcefield().unwrap();
-        let rows = back.get_cmaptypes();
+        let rows = back.get_types("cmap");
         assert_eq!(
             rows[2].params.get("grid").and_then(|v| v.as_array()),
             Some(&grid(24, -1.0 / 3.0))
@@ -1044,6 +1035,7 @@ mod tests {
         let mut params = Params::new();
         params.set("grid", grid(2, 1.0));
         let mut ff = ForceField::new("t");
+        ff.set_units("real");
         ff.def_style("cmap", "charmm", params).unwrap();
         let err = ForceFieldSection::from_forcefield(&ff).unwrap_err();
         assert!(err.contains("style param"), "{err}");
@@ -1051,6 +1043,7 @@ mod tests {
         let mut scalar = Params::new();
         scalar.set("grid", ArrayD::from_elem(vec![], 1.0));
         let mut ff = ForceField::new("t");
+        ff.set_units("real");
         ff.def_style("cmap", "charmm", Params::new())
             .unwrap()
             .def_type("c", &["A", "B", "C", "D", "E"], scalar)
@@ -1065,6 +1058,7 @@ mod tests {
     #[test]
     fn any_type_param_may_be_an_array() {
         let mut ff = ForceField::new("t");
+        ff.set_units("real");
         let style = ff
             .def_style("dihedral", "table/linear", Params::new())
             .unwrap();
@@ -1093,11 +1087,12 @@ mod tests {
     #[test]
     fn a_category_beyond_the_seven_round_trips() {
         let mut ff = ForceField::new("t");
+        ff.set_units("real");
         ff.def_style("virtual_site", "tip4p", Params::new())
             .unwrap()
             .def_type("M", &[], Params::from_iter([("d", 0.15)]))
             .unwrap();
-        ff.def_style(Category::new("bespoke").arity(4), "x", Params::new())
+        ff.def_style_with_arity("bespoke", 4, "x", Params::new())
             .unwrap()
             .def_type("q", &["A", "B", "C", "D"], Params::from_iter([("k", 1.5)]))
             .unwrap();
@@ -1108,12 +1103,13 @@ mod tests {
         let back = section.to_forcefield().unwrap();
         assert_eq!(back.get_style("bespoke", "x").unwrap().arity(), 4);
         assert_eq!(back.get_style("virtual_site", "tip4p").unwrap().arity(), 0);
-        assert_eq!(back.get_relationtypes("bespoke")[0].endpoints.len(), 4);
+        assert_eq!(back.get_types("bespoke")[0].endpoints.len(), 4);
     }
 
     #[test]
     fn a_force_field_without_a_section_form_is_refused_by_name() {
         let mut ff = ForceField::new("t");
+        ff.set_units("real");
         let mut odd = Params::new();
         odd.set("w", "x");
         ff.def_style("bond", "harmonic", Params::new())
@@ -1143,11 +1139,12 @@ mod tests {
     #[test]
     fn a_populated_cmap_round_trips_and_prices_the_same() {
         use crate::ff::compile::PotentialCompiler;
-        use crate::ff::potential::cmap::charmm::tests::{alanine, chain};
+        use crate::ff::potential::cmap::charmm::fixtures::{alanine, chain};
         use molrs::core::Block;
         use ndarray::Array1;
 
         let mut ff = ForceField::new("charmm");
+        ff.set_units("real");
         let mut params = Params::new();
         params.set("grid", alanine());
         ff.def_style("cmap", "charmm", Params::new())

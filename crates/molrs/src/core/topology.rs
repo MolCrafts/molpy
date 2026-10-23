@@ -4,7 +4,7 @@
 //! automated detection of angles, dihedrals, and impropers via neighbor
 //! traversal.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::core::BondDistanceWeights;
 use crate::core::MolRsError;
@@ -225,8 +225,8 @@ impl Topology {
     /// `exclusions(&self, depth)` entry point; write
     /// `BondDistanceWeights::from_exclusion_depth(3)` instead.
     ///
-    /// `molrs::ff::potential::intramolecular_pairs` derives 1-2/1-3 skip pairs
-    /// from declared angles/dihedrals blocks and is a different authority.
+    /// `molrs::ff::potential::intramolecular_pairs` classifies its pairs by
+    /// the same bond distance ([`close_pairs`](Self::close_pairs)).
     pub fn exclusions(&self, weights: &BondDistanceWeights) -> Vec<Vec<usize>> {
         let tail_zero = weights.as_slice().last() == Some(&0.0);
         let cap = if tail_zero {
@@ -242,16 +242,8 @@ impl Topology {
         };
         (0..self.n)
             .map(|root| {
-                let dist = self.distances(root);
                 let mut list = Vec::new();
-                for (p, &hop) in dist.iter().enumerate() {
-                    if hop < 0 {
-                        continue;
-                    }
-                    let d = hop as usize;
-                    if cap.is_some_and(|c| d > c) {
-                        continue;
-                    }
+                for (p, d) in self.hops_within(root, cap) {
                     if weights.weight(d) == 0.0 {
                         list.push(p);
                     }
@@ -296,16 +288,8 @@ impl Topology {
         };
         (0..self.n)
             .map(|root| {
-                let dist = self.distances(root);
                 let mut list = Vec::new();
-                for (p, &hop) in dist.iter().enumerate() {
-                    if hop < 0 {
-                        continue;
-                    }
-                    let d = hop as usize;
-                    if cap.is_some_and(|c| d > c) {
-                        continue;
-                    }
+                for (p, d) in self.hops_within(root, cap) {
                     let w = weights.weight(d);
                     if w != 1.0 {
                         list.push((p, w));
@@ -397,38 +381,12 @@ impl Topology {
         result
     }
 
-    /// All unique improper dihedral quartets `[center, i, j, k]`, deduplicated.
-    ///
-    /// For each atom with degree >= 3, iterate all sorted 3-combinations
-    /// of its neighbors.
-    pub fn impropers(&self) -> Vec<[usize; 4]> {
-        let mut result = Vec::new();
-        for center in 0..self.n {
-            let mut neighbors: Vec<usize> = self.adj[center].clone();
-            if neighbors.len() < 3 {
-                continue;
-            }
-            neighbors.sort_unstable();
-            let n = neighbors.len();
-            for a in 0..n {
-                for b in (a + 1)..n {
-                    for c in (b + 1)..n {
-                        result.push([center, neighbors[a], neighbors[b], neighbors[c]]);
-                    }
-                }
-            }
-        }
-        result
-    }
-
     /// One improper quartet `[centre, i, j, k]` per atom with **exactly three**
     /// neighbours, the peripherals sorted.
     ///
     /// This is the molecular-mechanics reading of an improper: a trivalent
-    /// centre carries one out-of-plane term. [`impropers`](Self::impropers) is
-    /// the geometric enumeration instead — every 3-combination at every centre
-    /// of degree >= 3 — which hands an sp3 carbon four quartets where a force
-    /// field wants none.
+    /// centre carries one out-of-plane term, and a four-neighbour (sp3)
+    /// centre carries none.
     ///
     /// Planarity is **not** judged here. Whether a trivalent centre actually
     /// carries an improper is force-field data (GAFF reads the `improper_flag`
@@ -440,7 +398,7 @@ impl Topology {
     /// AMBER's slot order, with the centre third (the order whose dihedral is
     /// AMBER's improper angle, and the one `improper periodic` is stored in),
     /// is a re-ordering performed by the force field that wants it.
-    pub fn trivalent_impropers(&self) -> Vec<[usize; 4]> {
+    pub fn impropers(&self) -> Vec<[usize; 4]> {
         let mut result = Vec::new();
         for center in 0..self.n {
             let mut neighbors: Vec<usize> = self.adj[center].clone();
@@ -515,24 +473,60 @@ impl Topology {
     /// connected component). `source` itself has distance 0. An out-of-range
     /// `source` yields an all-`-1` vector.
     pub fn distances(&self, source: usize) -> Vec<i64> {
-        let n = self.n;
-        let mut dist = vec![-1i64; n];
-        if source >= n {
-            return dist;
+        let mut dist = vec![-1i64; self.n];
+        for (atom, hops) in self.hops_within(source, None) {
+            dist[atom] = hops as i64;
         }
-        dist[source] = 0;
-        let mut queue = VecDeque::new();
-        queue.push_back(source);
-        while let Some(current) = queue.pop_front() {
-            let d = dist[current];
+        dist
+    }
+
+    /// Every atom within `cap` bonds of `source` (`None`: its whole connected
+    /// component) with its hop count, in BFS order, `source` first at 0; empty
+    /// for an out-of-range `source`.
+    ///
+    /// The one breadth-first walk of index space — [`distances`](Self::distances),
+    /// [`exclusions`](Self::exclusions), [`special_weights`](Self::special_weights)
+    /// and [`close_pairs`](Self::close_pairs) all read it — and a bounded walk
+    /// costs its ball, not the molecule.
+    fn hops_within(&self, source: usize, cap: Option<usize>) -> Vec<(usize, usize)> {
+        if source >= self.n {
+            return Vec::new();
+        }
+        let mut seen: HashSet<usize> = HashSet::from([source]);
+        let mut order = vec![(source, 0)];
+        let mut next = 0;
+        while let Some(&(current, d)) = order.get(next) {
+            next += 1;
+            if cap.is_some_and(|c| d >= c) {
+                continue;
+            }
             for &ni in &self.adj[current] {
-                if dist[ni] < 0 {
-                    dist[ni] = d + 1;
-                    queue.push_back(ni);
+                if seen.insert(ni) {
+                    order.push((ni, d + 1));
                 }
             }
         }
-        dist
+        order
+    }
+
+    /// Every pair `(i, j)`, `i < j`, at most `max_hops` bonds apart, with its
+    /// bond distance — the **shortest** path, so the diagonal of a four-ring
+    /// is a 1-3 pair, not a 1-4 one.
+    ///
+    /// The one answer to "is this pair 1-2, 1-3 or 1-4": the compiled pair
+    /// list, the neighbour-driven weights and the 1-4 exceptions all read
+    /// bond-graph distance from here, so no two of them can classify a pair
+    /// differently.
+    pub fn close_pairs(&self, max_hops: usize) -> HashMap<(usize, usize), usize> {
+        let mut out = HashMap::new();
+        for i in 0..self.n {
+            for (j, d) in self.hops_within(i, Some(max_hops)) {
+                if j > i {
+                    out.insert((i, j), d);
+                }
+            }
+        }
+        out
     }
 
     /// Number of connected components.
@@ -921,30 +915,27 @@ mod tests {
         assert_eq!(topo.n_bonds(), 4);
         assert_eq!(topo.n_angles(), 6);
         assert_eq!(topo.n_dihedrals(), 0);
-        assert_eq!(topo.impropers().len(), 4);
+        assert!(topo.impropers().is_empty(), "an sp3 centre has no improper");
     }
 
     #[test]
-    fn trivalent_impropers_is_one_per_three_neighbour_centre() {
+    fn impropers_is_one_per_three_neighbour_centre() {
         // Formaldehyde-shaped: centre 0 bonded to 1, 2, 3.
         let topo = bonded(4, &[[0, 1], [0, 2], [0, 3]]);
-        assert_eq!(topo.trivalent_impropers(), vec![[0, 1, 2, 3]]);
+        assert_eq!(topo.impropers(), vec![[0, 1, 2, 3]]);
     }
 
     #[test]
-    fn trivalent_impropers_skips_a_four_neighbour_centre() {
-        // Methane-shaped: the geometric enumeration gives C(4,3) = 4 quartets,
-        // the molecular-mechanics one gives none — an sp3 centre carries no
-        // out-of-plane term.
+    fn impropers_skips_a_four_neighbour_centre() {
+        // Methane-shaped: an sp3 centre carries no out-of-plane term.
         let topo = bonded(5, &[[0, 1], [0, 2], [0, 3], [0, 4]]);
-        assert_eq!(topo.impropers().len(), 4);
-        assert!(topo.trivalent_impropers().is_empty());
+        assert!(topo.impropers().is_empty());
     }
 
     #[test]
-    fn trivalent_impropers_puts_the_centre_first_and_sorts_the_legs() {
+    fn impropers_puts_the_centre_first_and_sorts_the_legs() {
         let topo = bonded(4, &[[0, 3], [0, 1], [0, 2]]);
-        let quartets = topo.trivalent_impropers();
+        let quartets = topo.impropers();
         assert_eq!(quartets.len(), 1);
         assert_eq!(quartets[0][0], 0, "centre first");
         assert_eq!(&quartets[0][1..], &[1, 2, 3], "legs sorted");

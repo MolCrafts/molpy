@@ -54,6 +54,34 @@ fn blocked_frame(buffer: &[f64], components: usize) -> Result<Array2<f64>, Compu
 /// [`ComputeError::DimensionMismatch`] unless `h` holds exactly 9 values;
 /// [`ComputeError::BadShape`] for a singular H.
 fn simbox_of(h: &[f64]) -> Result<SimBox, ComputeError> {
+    simbox_with(h, &[true; 3])
+}
+
+/// The box of cell matrix `h` (9 row-major values), periodic on the axes
+/// `pbc` (3 flags) names.
+///
+/// # Errors
+/// As [`simbox_of`], and [`ComputeError::DimensionMismatch`] unless `pbc`
+/// holds exactly 3 flags.
+fn simbox_with(h: &[f64], pbc: &[bool]) -> Result<SimBox, ComputeError> {
+    let pbc: [bool; 3] = pbc
+        .try_into()
+        .map_err(|_| ComputeError::DimensionMismatch {
+            expected: 3,
+            got: pbc.len(),
+            what: "periodic flags (x, y, z)",
+        })?;
+    let periodic = simbox_cell(h)?;
+    SimBox::new(molrs::core::Cell::Matrix(periodic.matrix()), [0.0; 3], pbc).map_err(|e| {
+        ComputeError::BadShape {
+            expected: "a non-singular row-major 3×3 cell matrix H".into(),
+            got: format!("{e:?}"),
+        }
+    })
+}
+
+/// The periodic box of `h`, validated.
+fn simbox_cell(h: &[f64]) -> Result<SimBox, ComputeError> {
     if h.len() != CELL {
         return Err(ComputeError::DimensionMismatch {
             expected: CELL,
@@ -303,6 +331,23 @@ impl LinearFit {
 
 // ── Radial distribution ─────────────────────────────────────────────────────
 
+/// The `x`, `y`, `z` columns of a blocked `x|y|z` buffer.
+///
+/// # Errors
+/// [`ComputeError::BadShape`] unless the buffer holds 3 values per point.
+fn blocked_columns(positions: &[f64]) -> Result<[&[f64]; 3], ComputeError> {
+    if !positions.len().is_multiple_of(SPATIAL) {
+        return Err(ComputeError::BadShape {
+            expected: "blocked x|y|z positions, 3 values per atom".into(),
+            got: format!("{} values", positions.len()),
+        });
+    }
+    let n = positions.len() / SPATIAL;
+    let (x, rest) = positions.split_at(n);
+    let (y, z) = rest.split_at(n);
+    Ok([x, y, z])
+}
+
 fn rdf_result(result: mc::RdfResult) -> bridge::ffi::RdfResult {
     bridge::ffi::RdfResult {
         bin_edges: result.bin_edges.to_vec(),
@@ -320,7 +365,9 @@ fn rdf_result(result: mc::RdfResult) -> bridge::ffi::RdfResult {
 }
 
 /// Radial distribution function g(r) — molrs `compute::Rdf`. Each frame's
-/// pairs come from a periodic cell-list self-query with cutoff `r_max`.
+/// pairs come from a cell-list search with cutoff `r_max` in the frame's box,
+/// periodic on the axes the caller names: a self-query of one point set, or
+/// the cross query of a second set against a reference set.
 pub struct Rdf {
     inner: mc::Rdf,
 }
@@ -354,28 +401,45 @@ pub struct RdfAccumulator {
 }
 
 impl RdfAccumulator {
-    /// Fold one blocked `x|y|z` position frame searched in the box `h`
-    /// (9 row-major values).
+    /// Fold one blocked `x|y|z` position frame, self-queried in the box `h`
+    /// (9 row-major values) periodic on the axes `pbc` (3 flags) names.
     ///
     /// # Errors
     /// The molrs `RdfAccumulator::push` error, or a buffer that does not fit;
     /// a rejected frame leaves the state unchanged.
-    pub fn push(&mut self, positions: &[f64], h: &[f64]) -> Result<(), ComputeError> {
-        if !positions.len().is_multiple_of(SPATIAL) {
-            return Err(ComputeError::BadShape {
-                expected: "blocked x|y|z positions, 3 values per atom".into(),
-                got: format!("{} values", positions.len()),
-            });
-        }
-        let simbox = simbox_of(h)?;
-        let n = positions.len() / SPATIAL;
-        let (x, rest) = positions.split_at(n);
-        let (y, z) = rest.split_at(n);
-        // A periodic cell-list self-query, which streams its pairs to the RDF
-        // without materializing them.
-        let mut list = NeighborList::new(self.cutoff);
+    pub fn push(&mut self, positions: &[f64], h: &[f64], pbc: &[bool]) -> Result<(), ComputeError> {
+        let simbox = simbox_with(h, pbc)?;
+        let [x, y, z] = blocked_columns(positions)?;
+        let mut list = NeighborList::new(self.cutoff).map_err(|e| ComputeError::OutOfRange {
+            field: "r_max",
+            value: e.cutoff.to_string(),
+        })?;
         list.build(Points::Columns([x, y, z]), &simbox);
         self.inner.push(&list)
+    }
+
+    /// Fold one frame of the A–B g(r): the blocked `x|y|z` `query` points
+    /// against the `reference` points, in the box `h` periodic on `pbc`.
+    ///
+    /// # Errors
+    /// As [`push`](Self::push).
+    pub fn push_cross(
+        &mut self,
+        reference: &[f64],
+        query: &[f64],
+        h: &[f64],
+        pbc: &[bool],
+    ) -> Result<(), ComputeError> {
+        let simbox = simbox_with(h, pbc)?;
+        let reference = blocked_columns(reference)?;
+        let query = blocked_columns(query)?;
+        let index =
+            molrs::core::NeighborQuery::new(&simbox, Points::Columns(reference), self.cutoff)
+                .map_err(|e| ComputeError::OutOfRange {
+                    field: "r_max",
+                    value: e.cutoff.to_string(),
+                })?;
+        self.inner.push(&index.query(Points::Columns(query)))
     }
 
     /// Number of frames folded so far.
@@ -579,7 +643,7 @@ mod tests {
         let rdf = rdf_new(20, 4.0, 0.0).unwrap();
         let mut acc = rdf.accumulator();
         for _ in 0..2 {
-            acc.push(&lattice(), &cube(10.0)).unwrap();
+            acc.push(&lattice(), &cube(10.0), &[true; 3]).unwrap();
         }
         assert_eq!(acc.n_frames(), 2);
         let result = acc.finish().unwrap();
@@ -609,18 +673,47 @@ mod tests {
         let mut acc = rdf.accumulator();
         assert!(acc.finish().is_err());
         assert!(matches!(
-            acc.push(&lattice(), &[1.0; 4]),
+            acc.push(&lattice(), &[1.0; 4], &[true; 3]),
             Err(ComputeError::DimensionMismatch { .. })
         ));
         assert!(matches!(
-            acc.push(&lattice(), &[0.0; 9]),
+            acc.push(&lattice(), &[0.0; 9], &[true; 3]),
             Err(ComputeError::BadShape { .. })
         ));
         assert!(matches!(
-            acc.push(&[0.0; 4], &cube(10.0)),
+            acc.push(&[0.0; 4], &cube(10.0), &[true; 3]),
             Err(ComputeError::BadShape { .. })
         ));
+        assert!(matches!(
+            acc.push(&lattice(), &cube(10.0), &[true; 2]),
+            Err(ComputeError::DimensionMismatch { .. })
+        ));
         assert_eq!(acc.n_frames(), 0);
+    }
+
+    /// The caller's periodicity decides which pairs exist: two atoms 1.5 Å
+    /// apart through the x face are a pair in a periodic box and not in a
+    /// free one; the cross query counts the A–B pairs only.
+    #[test]
+    fn rdf_honours_the_periodicity_and_queries_across_sets() {
+        // Blocked x|y|z of atoms at x = 0.5 and x = 9.0.
+        let two = [0.5, 9.0, 5.0, 5.0, 5.0, 5.0];
+        let pairs = |pbc: [bool; 3]| {
+            let rdf = rdf_new(8, 4.0, 0.0).unwrap();
+            let mut acc = rdf.accumulator();
+            acc.push(&two, &cube(10.0), &pbc).unwrap();
+            acc.finish().unwrap().rdf.iter().sum::<f64>()
+        };
+        assert!(pairs([true; 3]) > 0.0);
+        assert_eq!(pairs([false; 3]), 0.0);
+
+        let rdf = rdf_new(8, 4.0, 0.0).unwrap();
+        let mut acc = rdf.accumulator();
+        acc.push_cross(&[0.5, 5.0, 5.0], &[9.0, 5.0, 5.0], &cube(10.0), &[true; 3])
+            .unwrap();
+        let result = acc.finish().unwrap();
+        assert!(!result.self_query);
+        assert!(result.rdf.iter().sum::<f64>() > 0.0);
     }
 
     #[test]

@@ -3,8 +3,9 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use crate::core::NeighborKinds;
 use crate::line_notation::ast::*;
-use crate::line_notation::atom_keys::{self, H_COUNT};
+use crate::line_notation::atom_keys;
 use crate::line_notation::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::perceive::perceive_rings;
 use molrs::core::Atomistic;
@@ -42,7 +43,7 @@ pub(crate) fn environment_ir(
         if d >= opts.reach {
             continue;
         }
-        for (nb, _) in mol.neighbor_bonds(cur) {
+        for (nb, _) in mol.neighbors(cur, NeighborKinds::BONDS) {
             if !opts.include_explicit_h_atoms && is_h(mol, nb) {
                 continue;
             }
@@ -135,12 +136,12 @@ fn center_query(
     }
 
     if opts.include_degree {
-        let d = mol.neighbor_bonds(id).count() as u8;
+        let d = mol.neighbors(id, NeighborKinds::BONDS).count() as u8;
         prims.push(AtomQuery::Primitive(AtomPrimitive::Degree(d)));
     }
 
     if opts.include_h_count {
-        let h = count_h(&atom, mol, id)?;
+        let h = count_h(mol, id)?;
         prims.push(AtomQuery::Primitive(AtomPrimitive::HCount(h)));
     }
 
@@ -175,27 +176,18 @@ fn center_query(
     })
 }
 
-/// The hydrogen count of atom `id`: the `h_count` a bracket atom declared,
-/// otherwise the number of bonded hydrogen atoms.
+/// The hydrogen count of atom `id`: drawn and implicit
+/// ([`n_hydrogens`](crate::perceive::n_hydrogens)), the count the SMARTS
+/// `H<n>` primitive matches.
 ///
 /// # Errors
 ///
-/// An emit error when a declared `h_count` is not an integer in `0..=255`.
-fn count_h(atom: &Props, mol: &Atomistic, id: NodeId) -> Result<u8, SmilesError> {
-    if let Some(declared) = atom.get(H_COUNT) {
-        return atom
-            .get_int(H_COUNT)
-            .and_then(|h| u8::try_from(h).ok())
-            .ok_or_else(|| {
-                emit_err(format!(
-                    "atom {id:?}: '{H_COUNT}' = {declared:?} is not a hydrogen count"
-                ))
-            });
-    }
-    Ok(mol
-        .neighbor_bonds(id)
-        .filter(|(nb, _)| is_h(mol, *nb))
-        .count() as u8)
+/// An emit error when the count does not fit the `0..=255` a bracket atom
+/// can write.
+fn count_h(mol: &Atomistic, id: NodeId) -> Result<u8, SmilesError> {
+    let h = crate::perceive::n_hydrogens(mol, id);
+    u8::try_from(h)
+        .map_err(|_| emit_err(format!("atom {id:?}: {h} hydrogens is not a bracket count")))
 }
 
 fn bond_query(
@@ -207,11 +199,11 @@ fn bond_query(
     if !opts.include_bond_orders {
         return None;
     }
-    let bid = mol.neighbor_bonds(a).find(|(nb, _)| *nb == b)?.1;
-    match mol
-        .bond_type(bid)
-        .expect("neighbor_bonds yields live bonds")
-    {
+    let bid = mol
+        .neighbors(a, NeighborKinds::BONDS)
+        .find(|(nb, _)| *nb == b)?
+        .1;
+    match mol.bond_type(bid).expect("neighbors yields live bonds") {
         BondOrder::Double => Some(BondQuery::Kind(BondKind::Double)),
         BondOrder::Triple => Some(BondQuery::Kind(BondKind::Triple)),
         BondOrder::Aromatic => Some(BondQuery::Kind(BondKind::Aromatic)),
@@ -228,7 +220,7 @@ fn ordered_neighbors(
 ) -> Vec<NodeId> {
     let d0 = depth[&id];
     let mut nbs: Vec<NodeId> = mol
-        .neighbor_bonds(id)
+        .neighbors(id, NeighborKinds::BONDS)
         .map(|(nb, _)| nb)
         .filter(|nb| Some(*nb) != parent)
         .filter(|nb| depth.get(nb).is_some_and(|d| *d == d0 + 1))
@@ -345,7 +337,7 @@ fn build_recursive_env(
                 if d >= max_d {
                     continue;
                 }
-                for (n2, _) in mol.neighbor_bonds(cur) {
+                for (n2, _) in mol.neighbors(cur, NeighborKinds::BONDS) {
                     if n2 == center {
                         continue;
                     }

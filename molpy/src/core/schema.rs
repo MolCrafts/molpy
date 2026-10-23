@@ -102,7 +102,7 @@ pub struct PyColumnSpec {
     pub key: String,
     /// Constant name, also exported as `molpy.core.keys.<const_name>`.
     pub const_name: String,
-    /// The storage dtype's name: `"float"`, `"int"`, `"i64"`, `"uint"`,
+    /// The storage dtype's name: `"f64"`, `"i32"`, `"i64"`, `"u64"`,
     /// `"bool"`, `"string"`, … (Rust `DType::name`).
     pub dtype: String,
     /// `"scalar"` or `"vec(n)"`.

@@ -5,7 +5,8 @@
 //! `molrs::io::lammps` struct; nested values are handed out as the
 //! matching Python class, thermo tables as NumPy arrays.
 
-use super::{PySource, data_error};
+use super::PySource;
+use crate::error::io_error_to_pyerr;
 use molrs::io::lammps::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
     LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
@@ -16,7 +17,7 @@ use numpy::{PyArray1, PyArray2};
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
 
-use super::json_to_py::json_object_to_pydict;
+use crate::core::frame::json_map_to_plain_dict;
 use pyo3::types::PyDict;
 use serde_json::Value as JsonValue;
 
@@ -750,7 +751,7 @@ impl PyLammpsLog {
 pub fn read_lammps_log(source: PySource<'_>, style: &str) -> PyResult<PyLammpsLog> {
     let log = source
         .read(|s| read_lammps_log_rs(s, style))
-        .map_err(data_error)?;
+        .map_err(io_error_to_pyerr)?;
     Ok(PyLammpsLog::new(log))
 }
 
@@ -781,7 +782,7 @@ pub(crate) fn lammps_log_to_pydict<'py>(
     let value = serde_json::to_value(log)
         .map_err(|e| PyValueError::new_err(format!("failed to serialize LAMMPS log: {e}")))?;
     match value {
-        JsonValue::Object(map) => json_object_to_pydict(py, &map),
+        JsonValue::Object(map) => json_map_to_plain_dict(py, &map),
         _ => Err(PyValueError::new_err(
             "internal error: LAMMPS log did not serialize to an object",
         )),

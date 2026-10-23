@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from molpy.conformer import Conformer
-from molpy.core import Atomistic, Element
+from molpy.core import Atom, Atomistic, Element
 from molpy.io.smiles import read_smiles
 
 from molpy.builder.polymer.ambertools.cut import AmberCut
@@ -39,7 +39,7 @@ class AmberPieces:
         atoms = list(mol.atoms)
         seen: dict[str, int] = {}
         for atom in atoms:
-            element = Element.by_number(atom["atomic_number"]).symbol
+            element = Element.by_number(int(atom["atomic_number"])).symbol
             seen[element] = seen.get(element, 0) + 1
             # antechamber's ac writer has a 3-character name column.
             name = f"{element}{seen[element]}"
@@ -116,7 +116,7 @@ def _neighbors(mol: Atomistic) -> list[list[int]]:
 
 
 def _with_hydrogens(
-    atoms: list, neighbors: list[list[int]], heavy: tuple[int, ...]
+    atoms: list[Atom], neighbors: list[list[int]], heavy: tuple[int, ...]
 ) -> set[int]:
     keep = set(heavy)
     for i, atom in enumerate(atoms):

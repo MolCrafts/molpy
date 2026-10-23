@@ -16,41 +16,42 @@ coarse-grained one.
 import molpy as mp
 
 cg = mp.CoarseGrain(name="lipid")
-b1 = cg.def_bead(type="P4", x=0.0, y=0.0, z=0.0)
-b2 = cg.def_bead(type="C1", x=4.7, y=0.0, z=0.0)
-cg.def_cgbond(b1, b2, k=120.0)
+b1 = cg.add_bead(bead_type="P4", x=0.0, y=0.0, z=0.0)
+b2 = cg.add_bead(bead_type="C1", x=4.7, y=0.0, z=0.0)
+cg.add_bond(b1, b2, k=120.0)
 
-cg.translate([1, 0, 0])  # in place; returns cg, so calls chain
+cg.translate([1, 0, 0])  # in place; returns None
 print(b1["x"])  # -> 1.0
 ```
 
 ## Beads carry the fields you choose
 
-`Bead` is dict-like, like `Atom`: position, mass, charge, type, provenance —
-set or omit what your workflow needs. There is no force-field schema baked into
-the type.
+`Bead` is dict-like, like `Atom`: position, mass, charge, provenance — set or
+omit what your workflow needs. The one required field is a string `bead_type`;
+beyond that there is no force-field schema baked into the type.
 
 This deliberate absence of structure is the design point. A Martini 3 bead uses the geometric centre of its constituent heavy atoms (with hydrogens). A Martini 2 bead uses the mass-weighted centre. A VOTCA-style bead uses arbitrary per-atom weights. A DPD bead has no atoms at all and stores its position directly. MolPy refuses to pick one of these conventions for you, because each is correct in its own context.
 
 ```python
 # A Martini-flavoured bead: type label + position
-cg.def_bead(type="P4", x=1.0, y=2.0, z=3.0)
+cg.add_bead(bead_type="P4", x=1.0, y=2.0, z=3.0)
 
 # A bead that remembers which atoms it represents
 ato = mp.Atomistic()
 c1 = ato.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
 c2 = ato.add_atom(atomic_number=6, x=1.5, y=0.0, z=0.0)
-cg.def_bead(atoms=(c1, c2), type="CG_C2")
+bead_c2 = cg.add_bead(bead_type="CG_C2")
+cg.set_bead_members(bead_c2, (c1, c2))
 
 # A bead that uses a vermouth-style residue template key
-cg.def_bead(template="ALA_BB", residue_id=12)
+cg.add_bead(bead_type="BB", template="ALA_BB", residue_id=12)
 ```
 
 None of these layouts is "correct" or "preferred". The data structure simply records what you put into it.
 
-## One convention key gets first-class support
+## Membership gets first-class support
 
-There is one and only one convention key the core data structure recognises: `bead["atoms"]`. When present, it is interpreted as a tuple of `Atom` references that the bead represents. This convention exists for the same reason `entity["x/y/z"]` exists — to give the spatial mixin something to operate on. Where `translate(delta)` requires `x/y/z`, the reverse-lookup method `beads_of_atom(handle)` requires `atoms`. The lookup takes and returns integer handles (`atom.handle`, `bead.handle`).
+There is one and only one bead-to-atom convention the core data structure recognises: **membership**, the atoms a bead represents. It is not a property key but its own record: `set_bead_members(bead, atoms)` sets it, `bead_members(bead)` reads it back, and every membership of one `CoarseGrain` names atoms of one atomistic world. It exists for the same reason `x/y/z` exist — to give the graph operations something to work on. Where `translate(delta)` requires `x/y/z`, the reverse-lookup method `beads_of_atom(atom)` requires membership. The lookup takes an atom view and returns bead views.
 
 ```python
 ato = mp.Atomistic()
@@ -61,12 +62,14 @@ c = ato.add_atom(atomic_number=8)
 # Membership names atoms of *one* atomistic world, so a mapping onto a new
 # world is a new coarse-grained graph, not more beads on the previous one.
 mapped = mp.CoarseGrain(name="mapping")
-bead_ab = mapped.def_bead(atoms=(a, b), type="CC")
-bead_c = mapped.def_bead(atoms=(c,), type="O")
+bead_ab = mapped.add_bead(bead_type="CC")
+mapped.set_bead_members(bead_ab, (a, b))
+bead_c = mapped.add_bead(bead_type="O")
+mapped.set_bead_members(bead_c, (c,))
 
-assert mapped.beads_of_atom(a.handle) == [bead_ab.handle]
-assert mapped.beads_of_atom(c.handle) == [bead_c.handle]
-assert mapped.beads_of_atom(b.handle) == [bead_ab.handle]
+assert mapped.beads_of_atom(a) == [bead_ab]
+assert mapped.beads_of_atom(c) == [bead_c]
+assert mapped.beads_of_atom(b) == [bead_ab]
 ```
 
 The lookup is a linear scan; for hot loops over many atoms, the user is expected to build a private `atom handle → list[bead handle]` index. The data structure deliberately does not cache, because cache invalidation would introduce coupling with every factory method on `CoarseGrain`.
@@ -74,8 +77,9 @@ The lookup is a linear scan; for hot loops over many atoms, the user is expected
 `beads_of_atom` returns multiple beads (in handle order) if the mapping has overlap, and an empty list if the atom is not referenced by any bead.
 
 ```python
-shared = mapped.def_bead(atoms=(a,), type="virtual")
-assert mapped.beads_of_atom(a.handle) == [bead_ab.handle, shared.handle]
+shared = mapped.add_bead(bead_type="virtual")
+mapped.set_bead_members(shared, (a,))
+assert mapped.beads_of_atom(a) == [bead_ab, shared]
 ```
 
 Shared atoms are real in production force fields. Martini uses them in fused aromatic rings; AdResS-style hybrid resolution uses them at the AA/CG boundary. The data structure does not need to know any of that — it only needs to permit the user to express it.
@@ -84,7 +88,7 @@ Shared atoms are real in production force fields. Martini uses them in fused aro
 
 There is no `from_atomistic` factory and no `to_atomistic` method on `CoarseGrain`. Projecting an atomistic system onto a coarse-grained one bundles several independent decisions: how to partition atoms into beads, how to compute each bead's position, whether to infer CG bonds from crossing atomistic bonds or to declare them explicitly, and what additional properties to copy. Every one of those decisions has more than one defensible answer.
 
-The partition is always yours. `Coarsener` covers the common remaining choices — one site per atom group at the group's mass-weighted centre, carrying the summed `mass`, `bead_type` from the names you pass, the group as its members, and one CG bond wherever an atomistic bond crosses two groups:
+The partition is always yours. `mp.builder.Coarsener` covers the common remaining choices — one site per atom group at the group's mass-weighted centre, carrying the summed `mass`, `bead_type` from the names you pass, the group as its members, and one CG bond wherever an atomistic bond crosses two groups:
 
 ```python
 ethanol = mp.Atomistic(name="ethanol")
@@ -95,13 +99,13 @@ ethanol.add_bond(ca, cb)
 ethanol.add_bond(cb, oh)
 
 projected = mp.builder.Coarsener(ethanol).coarsen(
-    [[ca.handle, cb.handle], [oh.handle]], ["C2", "OH"]
+    [[ca, cb], [oh]], ["C2", "OH"]
 )
-print(projected.n_beads, len(projected.cgbonds))  # -> 2 1
-print(projected.bead_types(list(projected.entities())))  # -> ['C2', 'OH']
+print(projected.n_beads, len(projected.bonds))  # -> 2 1
+print(projected.bead_types(projected.beads))  # -> ['C2', 'OH']
 ```
 
-Switching to geometric centres, explicit ITP-declared bonds, or per-bead virtual sites is a matter of building the `CoarseGrain` yourself with `def_bead(atoms=..., x=..., ...)` and `def_cgbond` — not of fighting the framework's choices.
+Switching to geometric centres, explicit ITP-declared bonds, or per-bead virtual sites is a matter of building the `CoarseGrain` yourself with `add_bead(bead_type=..., x=..., ...)`, `set_bead_members` and `add_bond` — not of fighting the framework's choices.
 
 ## Round-tripping is the builder's job, not the data structure's
 
@@ -114,22 +118,26 @@ For the present page, the takeaway is simpler: `CoarseGrain` is a place to put b
 Because `CoarseGrain` mirrors `Atomistic`'s public surface, `copy`, `translate`, and `merge` behave identically.
 
 ```python
-cg2 = cg.copy()
+from copy import copy
+
+cg2 = copy(cg)
 cg2.translate([10, 0, 0])
-combined = cg.copy()
-combined.merge(cg2)  # in place; returns the old-to-new handle map
+combined = copy(cg)
+combined.merge(cg2)  # in place; returns the merged beads, now in combined
 
 row = mp.CoarseGrain(name="row")
 for i in range(4):
-    row.merge(cg.copy().translate([i * 5, 0, 0]))
+    piece = copy(cg)
+    piece.translate([i * 5, 0, 0])
+    row.merge(piece)
 ```
 
 Selecting beads by predicate, renaming bead types in bulk, or tagging a region are plain loops over the live bead views:
 
 ```python
-p4 = [b for b in cg.beads if b.get("type") == "P4"]
+p4 = [b for b in cg.beads if b["bead_type"] == "P4"]
 for b in p4:
-    b["type"] = "Q4"
+    b["bead_type"] = "Q4"
 # Use .get so beads without an "x" coordinate (e.g. mapping-only beads) are
 # simply not tagged, rather than raising KeyError.
 for b in cg.beads:

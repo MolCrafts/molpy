@@ -20,6 +20,7 @@ from molpy.io import read_ac, read_inpcrd, read_prmtop
 
 from molpy.tool.ambertools import (
     AmberSteps,
+    ChargeMethod,
     ParameterSet,
     PrmtopTypifier,
     digest,
@@ -115,7 +116,7 @@ class AmberPolymerBuilder:
         cuts: Mapping[str, Mapping[str, AmberCut]],
         *,
         parameter_set: ParameterSet,
-        charge_method: str = "bcc",
+        charge_method: ChargeMethod = "bcc",
         work_dir: Path | str = "amber_work",
         config: Config | None = None,
         net_charges: Mapping[str, int] | None = None,
@@ -399,11 +400,12 @@ def _linear_path(sites: CoarseGrain) -> list[Bead]:
             "type one molecule natively (AtdTypifier, GaffTypifier)"
         )
     bonds = list(sites.bonds)
+    by_handle = {bead.handle: bead for bead in beads}
     adjacent: dict[int, list[Bead]] = defaultdict(list)
     for bond in bonds:
         left, right = bond.endpoints
-        adjacent[left.handle].append(right)
-        adjacent[right.handle].append(left)
+        adjacent[left.handle].append(by_handle[right.handle])
+        adjacent[right.handle].append(by_handle[left.handle])
     degrees = [len(adjacent[bead.handle]) for bead in beads]
     if (
         len(bonds) != len(beads) - 1

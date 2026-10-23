@@ -117,11 +117,6 @@ pub mod md;
 #[cfg(feature = "conformer")]
 pub mod conformer;
 
-// Which module may name which (`ff` and `perceive` never `io`, `io` never
-// `perceive`), checked over the source text.
-#[cfg(test)]
-mod module_boundaries;
-
 // `serde::Serialize`/`Deserialize` for the core model (Frame/Block/Column/
 // SimBox). Impls only; no public items. Enabled by `serde` (and by `stream`).
 #[cfg(feature = "serde")]

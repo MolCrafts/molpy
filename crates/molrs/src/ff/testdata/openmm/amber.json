@@ -1,5 +1,4 @@
 {
- "source": "scripts/openmm_xml_check.py, OpenMM 8.6.1, Reference platform, NoCutoff",
  "types": [
   "protein-CT",
   "protein-C",
@@ -750,14 +749,5 @@
    18
   ]
  ],
- "cmaps": [],
- "openmm_kcal": {
-  "bond": 32.27593176355788,
-  "dihedral": 13.096829168247133,
-  "improper": 1.030690929439921,
-  "vdw": 2.995530281438277,
-  "coul": -36.45693850206638,
-  "angle": 15.661664106340247,
-  "total": 28.603707746957078
- }
+ "cmaps": []
 }

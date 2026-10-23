@@ -151,7 +151,7 @@ impl NDArray {
         self.data.as_ptr()
     }
 
-    /// The element dtype, `"float"` (core `DType::Float.name()`; stored as
+    /// The element dtype, `"f64"` (core `DType::Float.name()`; stored as
     /// `f64`), as `Block.dtype` names a float column.
     pub fn dtype(&self) -> String {
         molrs::core::DType::Float.name().to_string()

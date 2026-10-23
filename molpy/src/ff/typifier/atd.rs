@@ -34,11 +34,9 @@ use super::PyTypifier;
 /// ``bcc_bond_type`` on every bond; the caller's handles still address their
 /// atoms on it, and ``mol`` is left untouched — the standard AM1-BCC workflow
 /// needs the caller's force-field types *and* these at once. It raises
-/// ``ValueError`` if the molecule's facts cannot be derived.
-///
-/// An atom no rule matches comes back labelled ``"DU"``, the table's own
-/// catch-all row; that is antechamber's answer, not a fallback the engine
-/// invents. Refusing ``DU`` is the *charge* model's job.
+/// ``ValueError`` if the molecule's facts cannot be derived, or if an atom
+/// matches no rule of the table — including one the table's catch-all row
+/// would label ``"DU"``, which names no type.
 ///
 /// Parameters
 /// ----------

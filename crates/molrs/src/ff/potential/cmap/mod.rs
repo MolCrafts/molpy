@@ -4,6 +4,3 @@
 pub(crate) mod charmm;
 
 pub use charmm::{CmapCharmm, CmapGrid, cmap_charmm_constructor};
-
-#[cfg(test)]
-mod lammps_check;

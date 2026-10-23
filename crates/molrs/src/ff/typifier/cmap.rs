@@ -1,74 +1,73 @@
-//! CMAP crossterms from a frame's dihedrals: [`assign_cmaps`].
+//! CMAP crossterms of a typed molecule, from its dihedrals: [`assign_cmaps`].
 
 use std::collections::{BTreeSet, HashMap};
 
-use ndarray::Array1;
+use crate::ff::forcefield::ForceField;
+use crate::ff::typifier::{TypingError, name_atoms};
+use crate::props;
+use molrs::core::keys::TYPE;
+use molrs::core::schema::block_names::CMAPS;
+use molrs::core::{Atomistic, NodeId};
 
-use crate::ff::forcefield::{ForceField, StyleDefs};
-use molrs::core::Block;
-use molrs::core::Frame;
-use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
-use molrs::core::schema::block_names::{ATOMS, CMAPS, DIHEDRALS};
-use molrs::op::Idx;
-
-/// Build `frame`'s `cmaps` block from its dihedrals and `ff`'s `cmap` rows,
-/// and return the number of crossterms.
+/// Replace `graph`'s `cmaps` terms by the crossterms its dihedrals and `ff`'s
+/// `cmap` rows define, and return their number.
 ///
 /// A crossterm is five atoms `(a, b, c, d, e)` whose two dihedrals
-/// `(a, b, c, d)` and `(b, c, d, e)` are both rows of the `dihedrals` block
-/// (a dihedral row is a path, matched in either stored direction), and whose
-/// atom types — the `atoms` block's `type` labels — equal a cmap row's
+/// `(a, b, c, d)` and `(b, c, d, e)` are both dihedrals of `graph` (a
+/// dihedral is a path, matched in either stored direction), and whose atom
+/// types — each atom's `type` — equal a cmap row's
 /// `(itom, jtom, ktom, ltom, mtom)` **in that order**. A row is never matched
 /// reversed: CMAP prices φ = dihedral(a, b, c, d) on the grid's first axis
 /// and ψ = dihedral(b, c, d, e) on its second, so reading the five atoms the
 /// other way is a different term (CHARMM's C-NH1-CT1-C-NH1 backbone types
 /// are not a palindrome, so a peptide's φ/ψ pairs are found once each).
 ///
-/// The block holds `atomi` … `atomm` and `type` (the matched row's name),
-/// one row per crossterm sorted by atom indices; it replaces any `cmaps`
-/// block `frame` had, and is removed when nothing matches.
+/// Each crossterm is one `cmaps` term carrying `type` = the matched row's
+/// name, added in atom order; every `cmaps` term `graph` had is deleted
+/// first.
 ///
 /// # Errors
 ///
-/// - `ff` holds cmap rows in more than one style (a kernel prices a whole
-///   `cmaps` block, so its rows must belong to one style);
-/// - two rows name the same five atom types;
-/// - a path matches a row read forward and a row read backward (two terms
-///   for one pair of dihedrals, neither of which is the other's mistake);
-/// - `atoms` lacks a string `type` column while there are dihedrals, or a
-///   `dihedrals` endpoint is missing or out of range.
-pub fn assign_cmaps(frame: &mut Frame, ff: &ForceField) -> Result<usize, String> {
+/// - [`TypingError::Malformed`]: `ff` holds cmap rows in more than one style
+///   (a kernel prices a whole `cmaps` block, so its rows must belong to one
+///   style), or two rows name the same five atom types;
+/// - [`TypingError::Conflict`]: a path matches a row read forward and a row
+///   read backward (two terms for one pair of dihedrals, neither of which is
+///   the other's mistake);
+/// - [`TypingError::MissingAtomType`]: an atom of a dihedral has no `type`
+///   while `ff` has cmap rows.
+///
+/// On an error `graph` is unchanged.
+pub fn assign_cmaps(graph: &mut Atomistic, ff: &ForceField) -> Result<usize, TypingError> {
     let mut by_types: HashMap<[&str; 5], &str> = HashMap::new();
     let mut style_of_rows: Option<&str> = None;
     for style in ff.get_styles("cmap") {
-        let StyleDefs::Cmap(rows) = style.defs() else {
-            continue;
-        };
+        let rows = style.defs().types();
         if rows.is_empty() {
             continue;
         }
         if let Some(other) = style_of_rows {
-            return Err(format!(
+            return Err(TypingError::malformed(format!(
                 "cmap rows in two styles (`{other}`, `{}`): a kernel prices a whole \
                  cmaps block, so they must be one style",
                 style.name()
-            ));
+            )));
         }
         style_of_rows = Some(style.name());
         for row in rows {
             let key = [
-                row.itom.as_str(),
-                row.jtom.as_str(),
-                row.ktom.as_str(),
-                row.ltom.as_str(),
-                row.mtom.as_str(),
+                row.endpoints[0].as_str(),
+                row.endpoints[1].as_str(),
+                row.endpoints[2].as_str(),
+                row.endpoints[3].as_str(),
+                row.endpoints[4].as_str(),
             ];
             if let Some(first) = by_types.insert(key, row.name.as_str()) {
-                return Err(format!(
+                return Err(TypingError::malformed(format!(
                     "cmap rows `{first}` and `{}` both name the atom types {}",
                     row.name,
                     key.join("-")
-                ));
+                )));
             }
         }
     }
@@ -76,78 +75,68 @@ pub fn assign_cmaps(frame: &mut Frame, ff: &ForceField) -> Result<usize, String>
     let chains = if by_types.is_empty() {
         Vec::new()
     } else {
-        match_chains(frame, &by_types)?
+        match_chains(graph, &by_types)?
     };
-    if chains.is_empty() {
-        frame.remove(CMAPS);
-        return Ok(0);
-    }
+    let stale: Vec<_> = graph
+        .term_ids(CMAPS)
+        .map_err(TypingError::malformed)?
+        .collect();
+    graph
+        .del_terms(CMAPS, &stale)
+        .map_err(TypingError::malformed)?;
     let n = chains.len();
-    let mut block = Block::new();
-    for (p, key) in [ATOMI, ATOMJ, ATOMK, ATOML, ATOMM].into_iter().enumerate() {
-        let col: Vec<Idx> = chains.iter().map(|(atoms, _)| atoms[p] as Idx).collect();
-        block
-            .insert(key, Array1::from_vec(col).into_dyn(), None)
-            .map_err(|e| e.to_string())?;
+    for (atoms, name) in chains {
+        graph
+            .add_term(CMAPS, &atoms, props! { TYPE => name })
+            .map_err(TypingError::malformed)?;
     }
-    let labels: Vec<String> = chains.into_iter().map(|(_, name)| name).collect();
-    block
-        .insert(TYPE, Array1::from_vec(labels).into_dyn(), None)
-        .map_err(|e| e.to_string())?;
-    frame.insert(CMAPS, block);
     Ok(n)
 }
 
 /// Every five-atom path of two dihedrals whose types match a row forward,
-/// with the row's name, sorted.
+/// with the row's name, in atom order.
 fn match_chains(
-    frame: &Frame,
+    graph: &Atomistic,
     by_types: &HashMap<[&str; 5], &str>,
-) -> Result<Vec<([usize; 5], String)>, String> {
-    let Some(dihedrals) = frame.get(DIHEDRALS) else {
-        return Ok(Vec::new());
-    };
-    let n_dihedrals = dihedrals.n_rows().unwrap_or(0);
-    if n_dihedrals == 0 {
-        return Ok(Vec::new());
-    }
-    let types = frame
-        .get(ATOMS)
-        .and_then(|b| b.get(TYPE))
-        .and_then(|c| c.get::<String>())
-        .ok_or("assign_cmaps: atoms block missing string column \"type\"")?;
-    let n_atoms = types.len();
-    let column = |key: &str| {
-        dihedrals
-            .get(key)
-            .and_then(|c| c.get::<u64>())
-            .ok_or_else(|| format!("assign_cmaps: dihedrals block missing u64 column {key:?}"))
-    };
-    let cols = [
-        column(ATOMI)?,
-        column(ATOMJ)?,
-        column(ATOMK)?,
-        column(ATOML)?,
-    ];
+) -> Result<Vec<([NodeId; 5], String)>, TypingError> {
+    let table = graph.atom_table();
+    let row = |id: NodeId| table.row(id).expect("a dihedral names live atoms");
 
-    // Every dihedral in both directions, indexed by its first three atoms.
+    // Every dihedral in both directions, as atom rows, indexed by its first
+    // three atoms.
     let mut paths: BTreeSet<[usize; 4]> = BTreeSet::new();
-    for r in 0..n_dihedrals {
-        let d: [usize; 4] = std::array::from_fn(|p| cols[p][[r]] as usize);
-        if let Some(&bad) = d.iter().find(|&&a| a >= n_atoms) {
-            return Err(format!(
-                "assign_cmaps: dihedral {r} names atom {bad} of {n_atoms}"
-            ));
-        }
+    for (_, d) in graph.dihedrals() {
+        let d: [usize; 4] = std::array::from_fn(|p| row(d.nodes[p]));
         paths.insert(d);
         paths.insert([d[3], d[2], d[1], d[0]]);
     }
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let handles: Vec<NodeId> = table.handles().collect();
+    let types: Vec<Option<&str>> = handles
+        .iter()
+        .map(|&id| table.get::<String>(id, TYPE).ok())
+        .collect();
+    let untyped: BTreeSet<usize> = paths
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|&a| types[a].is_none())
+        .collect();
+    if !untyped.is_empty() {
+        let ids: Vec<NodeId> = untyped.iter().map(|&a| handles[a]).collect();
+        return Err(TypingError::MissingAtomType {
+            table: "cmap".to_owned(),
+            detail: name_atoms(graph, &ids),
+        });
+    }
+    let type_of = |a: usize| types[a].expect("every dihedral atom is typed");
+
     let mut next: HashMap<[usize; 3], Vec<usize>> = HashMap::new();
     for d in &paths {
         next.entry([d[0], d[1], d[2]]).or_default().push(d[3]);
     }
-
-    let type_of = |a: usize| types[[a]].as_str();
     let mut found: HashMap<[usize; 5], String> = HashMap::new();
     for d in &paths {
         let Some(tails) = next.get(&[d[1], d[2], d[3]]) else {
@@ -170,43 +159,43 @@ fn match_chains(
         if back < *chain
             && let Some((_, other)) = chains.iter().find(|(c, _)| *c == back)
         {
-            return Err(format!(
-                "assign_cmaps: atoms {chain:?} match cmap row `{name}` read one way and \
-                 `{other}` read the other"
-            ));
+            return Err(TypingError::Conflict {
+                detail: format!(
+                    "atoms {chain:?} match cmap row `{name}` read one way and `{other}` read \
+                     the other"
+                ),
+            });
         }
     }
-    Ok(chains)
+    Ok(chains
+        .into_iter()
+        .map(|(chain, name)| (chain.map(|a| handles[a]), name))
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ff::ir::Params;
+    use molrs::core::Element;
+    use molrs::core::keys::ATOMIC_NUMBER;
     use ndarray::ArrayD;
 
     /// Atoms of `types`, and the dihedrals `rows` (any direction).
-    fn frame(types: &[&str], rows: &[[Idx; 4]]) -> Frame {
-        let mut atoms = Block::new();
-        atoms
-            .insert(
-                TYPE,
-                Array1::from_vec(types.iter().map(|t| t.to_string()).collect::<Vec<_>>())
-                    .into_dyn(),
-                None,
-            )
-            .unwrap();
-        let mut frame = Frame::new();
-        frame.insert(ATOMS, atoms);
-        let mut dihedrals = Block::new();
-        for (p, key) in [ATOMI, ATOMJ, ATOMK, ATOML].into_iter().enumerate() {
-            let col: Vec<Idx> = rows.iter().map(|r| r[p]).collect();
-            dihedrals
-                .insert(key, Array1::from_vec(col).into_dyn(), None)
+    fn graph(types: &[&str], rows: &[[usize; 4]]) -> Atomistic {
+        let mut g = Atomistic::new();
+        let ids: Vec<NodeId> = types
+            .iter()
+            .map(|t| {
+                g.add_atom(props! { ATOMIC_NUMBER => Element::C, TYPE => *t })
+                    .unwrap()
+            })
+            .collect();
+        for r in rows {
+            g.add_dihedral(ids[r[0]], ids[r[1]], ids[r[2]], ids[r[3]], props! {})
                 .unwrap();
         }
-        frame.insert(DIHEDRALS, dihedrals);
-        frame
+        g
     }
 
     fn ff(rows: &[(&str, [&str; 5])]) -> ForceField {
@@ -220,14 +209,15 @@ mod tests {
         ff
     }
 
-    fn rows(frame: &Frame) -> Vec<([u64; 5], String)> {
-        let b = &frame[CMAPS];
-        let types = b.get(TYPE).unwrap().get::<String>().unwrap();
-        (0..b.n_rows().unwrap())
-            .map(|r| {
-                let atoms = [ATOMI, ATOMJ, ATOMK, ATOML, ATOMM]
-                    .map(|k| b.get(k).unwrap().get::<u64>().unwrap()[[r]]);
-                (atoms, types[[r]].clone())
+    /// The `cmaps` terms as atom rows and type.
+    fn rows(g: &Atomistic) -> Vec<([usize; 5], String)> {
+        let table = g.atom_table();
+        g.term_ids(CMAPS)
+            .unwrap()
+            .map(|id| {
+                let t = g.get_term(CMAPS, id).unwrap();
+                let atoms = std::array::from_fn(|p| table.row(t.nodes[p]).unwrap());
+                (atoms, t.props.get_str(TYPE).unwrap().to_owned())
             })
             .collect()
     }
@@ -248,52 +238,70 @@ mod tests {
             [7, 6, 5, 4], // stored backwards
             [8, 2, 3, 4],
         ];
-        let mut f = frame(&types, &dihedrals);
-        let n = assign_cmaps(&mut f, &ff(&[("ala", ALA)])).unwrap();
+        let mut g = graph(&types, &dihedrals);
+        let n = assign_cmaps(&mut g, &ff(&[("ala", ALA)])).unwrap();
         assert_eq!(n, 2);
         assert_eq!(
-            rows(&f),
+            rows(&g),
             vec![
                 ([0, 1, 2, 3, 4], "ala".to_owned()),
                 ([3, 4, 5, 6, 7], "ala".to_owned())
             ]
         );
+        let frame = g.to_frame().unwrap();
+        assert_eq!(frame[CMAPS].n_rows(), Some(2));
     }
 
     /// Only the forward reading matches: the reversed types are another row.
     #[test]
     fn a_row_is_not_matched_reversed() {
-        let mut f = frame(
+        let mut g = graph(
             &["NH1", "C", "CT1", "NH1", "C"],
             &[[0, 1, 2, 3], [1, 2, 3, 4]],
         );
-        assert_eq!(assign_cmaps(&mut f, &ff(&[("ala", ALA)])).unwrap(), 1);
-        assert_eq!(rows(&f), vec![([4, 3, 2, 1, 0], "ala".to_owned())]);
+        assert_eq!(assign_cmaps(&mut g, &ff(&[("ala", ALA)])).unwrap(), 1);
+        assert_eq!(rows(&g), vec![([4, 3, 2, 1, 0], "ala".to_owned())]);
 
-        let mut f = frame(
+        let mut g = graph(
             &["X", "C", "CT1", "NH1", "C"],
             &[[0, 1, 2, 3], [1, 2, 3, 4]],
         );
-        assert_eq!(assign_cmaps(&mut f, &ff(&[("ala", ALA)])).unwrap(), 0);
-        assert!(f.get(CMAPS).is_none());
+        assert_eq!(assign_cmaps(&mut g, &ff(&[("ala", ALA)])).unwrap(), 0);
+        assert_eq!(g.n_terms(CMAPS).unwrap(), 0);
     }
 
-    /// A stale block is replaced, and removed when nothing matches.
+    /// Stale terms are replaced, and removed when nothing matches.
     #[test]
-    fn the_block_is_rebuilt() {
-        let mut f = frame(&ALA, &[[0, 1, 2, 3], [1, 2, 3, 4]]);
-        assign_cmaps(&mut f, &ff(&[("ala", ALA)])).unwrap();
-        assert_eq!(assign_cmaps(&mut f, &ff(&[("x", ["A"; 5])])).unwrap(), 0);
-        assert!(f.get(CMAPS).is_none());
+    fn the_terms_are_rebuilt() {
+        let mut g = graph(&ALA, &[[0, 1, 2, 3], [1, 2, 3, 4]]);
+        assign_cmaps(&mut g, &ff(&[("ala", ALA)])).unwrap();
+        assert_eq!(g.n_terms(CMAPS).unwrap(), 1);
+        assert_eq!(assign_cmaps(&mut g, &ff(&[("x", ["A"; 5])])).unwrap(), 0);
+        assert_eq!(g.n_terms(CMAPS).unwrap(), 0);
+    }
+
+    /// An untyped dihedral atom is named; the graph keeps its terms.
+    #[test]
+    fn an_untyped_dihedral_atom_is_refused() {
+        let mut g = graph(&ALA, &[[0, 1, 2, 3], [1, 2, 3, 4]]);
+        assign_cmaps(&mut g, &ff(&[("ala", ALA)])).unwrap();
+        let last = g.atom_table().handles().last().unwrap();
+        g.clear_atom(last, TYPE).unwrap();
+        let err = assign_cmaps(&mut g, &ff(&[("ala", ALA)])).unwrap_err();
+        assert!(
+            matches!(&err, TypingError::MissingAtomType { detail, .. } if detail == "atom 4 (C)"),
+            "{err}"
+        );
+        assert_eq!(g.n_terms(CMAPS).unwrap(), 1);
     }
 
     #[test]
     fn ambiguity_is_refused() {
         // A palindromic path matching a row both ways.
         let pal = ["A", "B", "C", "B", "A"];
-        let mut f = frame(&pal, &[[0, 1, 2, 3], [1, 2, 3, 4]]);
-        let err = assign_cmaps(&mut f, &ff(&[("p", pal)])).unwrap_err();
-        assert!(err.contains("read the other"), "{err}");
+        let mut g = graph(&pal, &[[0, 1, 2, 3], [1, 2, 3, 4]]);
+        let err = assign_cmaps(&mut g, &ff(&[("p", pal)])).unwrap_err();
+        assert!(matches!(err, TypingError::Conflict { .. }), "{err}");
 
         // Two rows of one style on the same types are refused by the force
         // field itself; across two styles they are refused here.
@@ -304,8 +312,8 @@ mod tests {
             .unwrap()
             .def_type("b", &ALA, params)
             .unwrap();
-        let mut f = frame(&ALA, &[[0, 1, 2, 3], [1, 2, 3, 4]]);
-        let err = assign_cmaps(&mut f, &two).unwrap_err();
-        assert!(err.contains("two styles"), "{err}");
+        let mut g = graph(&ALA, &[[0, 1, 2, 3], [1, 2, 3, 4]]);
+        let err = assign_cmaps(&mut g, &two).unwrap_err();
+        assert!(err.to_string().contains("two styles"), "{err}");
     }
 }

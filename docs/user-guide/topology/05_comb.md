@@ -10,7 +10,7 @@ from eo_kit import library
 
 graft = "[#GR][#EO]"
 sites = mp.io.cgsmiles.read_cgsmiles(f"{{[#EO][#BR]({graft})[#EO][#BR]({graft})[#EO]}}").to_coarsegrain()
-comb = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+comb = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
 ```
 
 **Check:** 9 units, 71 atoms, 4 open ports (two backbone ends, two graft ends).

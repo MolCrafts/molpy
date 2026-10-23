@@ -91,8 +91,8 @@ pub(crate) struct TorParams {
 // vdW is deliberately absent from this resolver. MMFF's van der Waals
 // parameters are a genuine 95-row per-atom-type table, so `pair/mmff_vdw` is a
 // real `ParamSource::TypeRows` style: the rows live in the parameter XML and
-// `pair_mmff_vdw_constructor` (`ff/potential/pair/mmff.rs`) applies the combining rules to
-// them. Resolving them a second time here would be the duplication this module's
+// the `MmffVdw` form (`ff/potential/pair/mmff.rs`) applies the combining rules
+// to them. Resolving them a second time here would be the duplication this module's
 // own history is a warning about.
 
 // --- periodic-table rows (AtomTyper.cpp) ---------------------------------

@@ -166,7 +166,7 @@ def test_conformer_keeps_the_ports_of_an_atomistic() -> None:
     fragment.add_bond(head, hydrogen)
     fragment.add_port(head, hydrogen, "$")
 
-    embedded, report = mp.conformer.Conformer(speed="fast", seed=42).generate(fragment)
+    embedded, report = mp.conformer.Conformer(seed=42).generate(fragment)
 
     assert type(embedded) is mp.core.Atomistic
     assert isinstance(report, mp.conformer.ConformerReport)
@@ -178,7 +178,7 @@ def test_conformer_keeps_the_ports_of_an_atomistic() -> None:
 
 def test_conformer_rejects_a_non_graph() -> None:
     with pytest.raises(TypeError) as excinfo:
-        mp.conformer.Conformer(speed="fast", seed=42).generate(object())
+        mp.conformer.Conformer(seed=42).generate(object())
 
     message = str(excinfo.value)
     assert "Atomistic" in message

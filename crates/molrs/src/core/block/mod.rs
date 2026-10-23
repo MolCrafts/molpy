@@ -782,7 +782,7 @@ impl Block {
     /// - **Shrink** (`new_nrows` < current): slices each column to keep the first `new_nrows` rows.
     /// - **Grow** (`new_nrows` > current): extends each column with default values
     ///   (0.0 for Float, 0 for Int/UInt/U8, false for Bool, empty string for String).
-    /// - **Same size**: no-op, returns `Ok(())`.
+    /// - **Same size**: no-op.
     /// - **Empty block** (no columns): sets `n_rows` without touching columns.
     ///
     /// Multi-dimensional columns (e.g. Nx3 positions) are resized only along
@@ -790,9 +790,6 @@ impl Block {
     ///
     /// # Arguments
     /// * `new_nrows` - The desired number of rows after resize.
-    ///
-    /// # Returns
-    /// * `Ok(())` on success.
     ///
     /// # Examples
     ///
@@ -804,23 +801,23 @@ impl Block {
     /// let mut block = Block::new();
     /// block.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn(), None).unwrap();
     ///
-    /// block.resize(4).unwrap();
+    /// block.resize(4);
     /// assert_eq!(block.n_rows(), Some(4));
     /// let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
     /// assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 0.0, 0.0]);
     /// ```
-    pub fn resize(&mut self, new_nrows: usize) -> Result<(), crate::core::MolRsError> {
+    pub fn resize(&mut self, new_nrows: usize) {
         if self.is_empty() {
             if self.n_rows != Some(new_nrows) {
                 self.shape = None;
             }
             self.n_rows = Some(new_nrows);
-            return Ok(());
+            return;
         }
 
         let current = self.n_rows.unwrap_or(0);
         if new_nrows == current {
-            return Ok(());
+            return;
         }
 
         for col in self.map.values_mut() {
@@ -840,7 +837,6 @@ impl Block {
         // by a 1D resize. Callers that want to preserve a grid shape must
         // re-declare it via `set_shape` after resizing.
         self.shape = None;
-        Ok(())
     }
 
     /// Merge another block into this one by concatenating columns along axis-0.
@@ -1054,8 +1050,9 @@ impl Block {
     /// # Errors
     ///
     /// [`BlockError::MissingColumn`] naming the first of `x`, `y`, `z` the
-    /// block lacks, and [`BlockError::SchemaDtype`] for one not stored as
-    /// [`F`](crate::op::F).
+    /// block lacks, [`BlockError::SchemaDtype`] for one not stored as
+    /// [`F`](crate::op::F), and [`BlockError::NullRow`] for the first null
+    /// row of one: a null coordinate has no position to read.
     ///
     /// # Examples
     ///
@@ -1081,6 +1078,15 @@ impl Block {
                 expected: DType::Float,
                 got: col.dtype(),
             })?;
+            if let Some(row) = self
+                .validity(key)
+                .and_then(|mask| mask.iter().position(|&valid| !valid))
+            {
+                return Err(BlockError::NullRow {
+                    key: key.to_owned(),
+                    row,
+                });
+            }
             out.column_mut(axis)
                 .iter_mut()
                 .zip(values.iter())
@@ -1965,7 +1971,7 @@ mod tests {
             )
             .unwrap();
 
-        block.resize(2).unwrap();
+        block.resize(2);
 
         assert_eq!(block.n_rows(), Some(2));
         let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
@@ -1984,7 +1990,7 @@ mod tests {
             .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn(), None)
             .unwrap();
 
-        block.resize(4).unwrap();
+        block.resize(4);
 
         assert_eq!(block.n_rows(), Some(4));
         let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
@@ -2006,7 +2012,7 @@ mod tests {
             )
             .unwrap();
 
-        block.resize(3).unwrap();
+        block.resize(3);
 
         assert_eq!(block.n_rows(), Some(3));
         let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
@@ -2017,7 +2023,7 @@ mod tests {
     fn test_resize_empty() {
         let mut block = Block::new();
 
-        block.resize(5).unwrap();
+        block.resize(5);
         assert_eq!(block.n_rows(), Some(5));
         assert!(block.is_empty());
     }
@@ -2039,7 +2045,7 @@ mod tests {
         block.insert("pos", pos, None).unwrap();
 
         // Shrink 4x3 -> 2x3
-        block.resize(2).unwrap();
+        block.resize(2);
         assert_eq!(block.n_rows(), Some(2));
         let pos = block.get("pos").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(pos.shape(), &[2, 3]);
@@ -2049,7 +2055,7 @@ mod tests {
         );
 
         // Grow 2x3 -> 5x3
-        block.resize(5).unwrap();
+        block.resize(5);
         assert_eq!(block.n_rows(), Some(5));
         let pos = block.get("pos").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(pos.shape(), &[5, 3]);
@@ -2096,7 +2102,7 @@ mod tests {
             .unwrap();
 
         // Grow from 3 to 5
-        block.resize(5).unwrap();
+        block.resize(5);
         assert_eq!(block.n_rows(), Some(5));
 
         let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
@@ -2119,7 +2125,7 @@ mod tests {
         assert_eq!(name[[4]], "");
 
         // Shrink from 5 to 2
-        block.resize(2).unwrap();
+        block.resize(2);
         assert_eq!(block.n_rows(), Some(2));
 
         let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
@@ -2272,7 +2278,7 @@ mod tests {
     #[test]
     fn stack_counts_the_rows_of_a_columnless_part() {
         let mut empty = Block::new();
-        empty.resize(2).unwrap();
+        empty.resize(2);
         let mut b = Block::new();
         b.insert("x", floats(&[5.0]), None).unwrap();
         let s = Block::stack([&empty, &b]).unwrap();
@@ -2350,6 +2356,24 @@ mod tests {
         assert_eq!(
             block.coords().unwrap_err(),
             BlockError::MissingColumn { key: "y".into() }
+        );
+    }
+
+    /// A masked coordinate is not a position: `coords` names its row
+    /// instead of reading the stored placeholder.
+    #[test]
+    fn coords_refuses_a_null_row() {
+        let mut block = Block::new();
+        block
+            .set_coords(ndarray::array![[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]].view())
+            .unwrap();
+        block.set_validity("y", vec![true, false]).unwrap();
+        assert_eq!(
+            block.coords().unwrap_err(),
+            BlockError::NullRow {
+                key: "y".into(),
+                row: 1
+            }
         );
     }
 

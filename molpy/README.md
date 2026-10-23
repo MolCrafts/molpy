@@ -15,4 +15,5 @@ import molpy as mp
 mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 ```
 
-Documentation: <https://docs.molcrafts.org/molpy/>
+The manual opens on molpy and continues in molrs:
+<https://docs.molcrafts.org/molpy/>

@@ -76,7 +76,7 @@ class TestReadMol2:
             .replace("3.1080", "three"),
             encoding="utf-8",
         )
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError):
             _read(bad)
 
 

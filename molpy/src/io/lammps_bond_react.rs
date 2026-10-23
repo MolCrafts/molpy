@@ -2,7 +2,7 @@
 //! `molpy.io.write_lammps_bond_react_map` and
 //! `write_lammps_bond_react_system`, over `molrs::io::lammps`.
 
-use std::path::PathBuf;
+use crate::io::source::PyPath;
 
 use molrs::core::Frame;
 use molrs::core::keys::REACT_ID;
@@ -15,7 +15,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use super::{PySink, data_error};
+use super::PySink;
 use crate::core::frame::PyFrame;
 use crate::error::io_error_to_pyerr;
 use crate::ff::forcefield::PyForceField;
@@ -173,7 +173,7 @@ pub fn write_lammps_bond_react_map(
     template: PyRef<'_, PyBondReactTemplate>,
 ) -> PyResult<()> {
     let rust = template.to_rust(py)?;
-    sink.put(|s| write_map_rs(s, &rust), data_error)
+    sink.put(|s| write_map_rs(s, &rust), io_error_to_pyerr)
 }
 
 /// Write the whole file set of a ``fix bond/react`` run into ``workdir``.
@@ -191,7 +191,7 @@ pub fn write_lammps_bond_react_map(
 ///
 /// Parameters
 /// ----------
-/// workdir : str | os.PathLike
+/// workdir : os.PathLike
 ///     Output directory (created if missing).
 /// frame : Frame
 ///     The system.
@@ -208,7 +208,7 @@ pub fn write_lammps_bond_react_map(
 #[pyfunction]
 pub fn write_lammps_bond_react_system(
     py: Python<'_>,
-    workdir: PathBuf,
+    workdir: PyPath,
     frame: &PyFrame,
     forcefield: PyRef<'_, PyForceField>,
     templates: &Bound<'_, PyAny>,
@@ -230,7 +230,7 @@ pub fn write_lammps_bond_react_system(
         .map(|(name, t)| Ok((name.clone(), t.borrow(py).to_rust(py)?)))
         .collect::<PyResult<_>>()?;
     let system = frame.clone_core_frame()?;
-    let written = write_system_rs(&workdir, &system, &forcefield.inner, &rust).map_err(|e| {
+    let written = write_system_rs(&workdir.0, &system, &forcefield.inner, &rust).map_err(|e| {
         if let Some(refusal) = e
             .get_ref()
             .and_then(|inner| inner.downcast_ref::<ForceFieldWriteError>())

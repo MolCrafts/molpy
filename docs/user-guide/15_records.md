@@ -199,7 +199,7 @@ schema = SequenceSchema.from_frames(frames[:1])
 for key in ("x", "y", "z"):
     schema.declare_precision("atoms", key, 1e-3)
 
-with MrecWriter("stream.mrec", schema, meta={"producer": "quickstart"}) as writer:
+with MrecWriter(Path("stream.mrec"), schema, meta={"producer": "quickstart"}) as writer:
     for i, f in enumerate(frames):
         writer.append(f, step=100 * i, time=0.2 * i)
 
@@ -223,7 +223,7 @@ returns its path; `MrecReader` and the WASM readers open the archive directly.
 ```python
 from molpy.io.mrec import pack_mrec_zip
 
-zipped = pack_mrec_zip("stream.mrec")
+zipped = pack_mrec_zip(Path("stream.mrec"))
 print(zipped)
 
 with MrecReader(Path(zipped)) as reader:

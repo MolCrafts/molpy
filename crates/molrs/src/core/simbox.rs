@@ -47,7 +47,7 @@ pub struct SimBox {
 }
 
 /// Error type for simulation box construction.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BoxError {
     /// The cell matrix H is singular (determinant ≈ 0).
     SingularCell,
@@ -74,6 +74,9 @@ pub enum BoxError {
     /// The [`Points::Columns`] slices (or a [`Points::Rows`] view's column
     /// count) do not describe `N` three-dimensional points.
     PointsShape { lens: [usize; 3] },
+    /// A [`Cell::Undefined`] box was given a periodic axis: an undefined cell
+    /// has no lattice to repeat along, so it is periodic on no axis.
+    PeriodicWithoutCell { pbc: Pbc3 },
 }
 
 impl std::fmt::Display for BoxError {
@@ -114,6 +117,10 @@ impl std::fmt::Display for BoxError {
                 f,
                 "the bounding box has zero extent along axis {axis}; pass a positive \
                  padding for that axis"
+            ),
+            BoxError::PeriodicWithoutCell { pbc } => write!(
+                f,
+                "an undefined cell is periodic on no axis, but this box carries boundary {pbc:?}"
             ),
             BoxError::PointsShape { lens } => write!(
                 f,
@@ -320,7 +327,9 @@ impl SimBox {
     /// # Errors
     /// [`BoxError::SingularCell`] for a singular [`Cell::Matrix`],
     /// [`BoxError::NonPositiveLength`] for a non-positive or non-finite edge,
-    /// [`BoxError::InvalidAngles`] for lengths/angles that describe no cell.
+    /// [`BoxError::InvalidAngles`] for lengths/angles that describe no cell,
+    /// [`BoxError::PeriodicWithoutCell`] for a [`Cell::Undefined`] with a
+    /// periodic axis.
     pub fn new(cell: Cell, origin: [F; 3], pbc: Pbc3) -> Result<Self, BoxError> {
         let h = cell.resolve()?;
         Self::from_parts(h, ndarray::arr1(&origin), pbc)
@@ -329,6 +338,9 @@ impl SimBox {
     /// The box over cell matrix `h` (`None`: no cell), origin and pbc.
     fn from_parts(h: Option<Fnx3>, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
         let cell_defined = h.is_some();
+        if !cell_defined && pbc.iter().any(|&periodic| periodic) {
+            return Err(BoxError::PeriodicWithoutCell { pbc });
+        }
         let (h, inv) = match h {
             Some(h) => {
                 let inv = inv3(&to_mat3(h.view())).ok_or(BoxError::SingularCell)?;
@@ -523,12 +535,10 @@ impl SimBox {
         self.pbc.iter().all(|&p| !p)
     }
 
-    /// Geometry style label: `"free"` (no periodic axis, or no cell at all),
-    /// `"orthogonal"` (diagonal H), or `"triclinic"`. A no-cell box is
-    /// `"free"` whatever its pbc flags: its placeholder identity cell is not a
-    /// geometry, so calling it orthogonal would be a claim about nothing.
+    /// Geometry style label: `"free"` (no periodic axis — every no-cell box
+    /// is one), `"orthogonal"` (diagonal H), or `"triclinic"`.
     pub fn style(&self) -> &'static str {
-        if self.is_free() || !self.cell_defined {
+        if self.is_free() {
             "free"
         } else {
             match self.kind {
@@ -1238,7 +1248,7 @@ mod tests {
     /// never inverted, and the origin is kept.
     #[test]
     fn an_undefined_cell_carries_the_identity() {
-        let nocell = SimBox::new(Cell::Undefined, [1.0, 2.0, 3.0], [true, true, true]).unwrap();
+        let nocell = SimBox::new(Cell::Undefined, [1.0, 2.0, 3.0], [false; 3]).unwrap();
         assert!(!nocell.is_cell_defined());
         assert_eq!(
             nocell.matrix(),
@@ -1994,13 +2004,23 @@ mod tests {
         assert!(!a.approx_eq(&shifted, 5e-4));
     }
 
+    /// An undefined cell has no lattice to repeat along: a periodic flag on
+    /// it is refused, whichever axis carries it.
+    #[test]
+    fn an_undefined_cell_refuses_a_periodic_axis() {
+        for pbc in [[true, false, false], [false, true, false], [true; 3]] {
+            let err = SimBox::new(Cell::Undefined, [0.0; 3], pbc).unwrap_err();
+            assert!(matches!(err, BoxError::PeriodicWithoutCell { pbc: got } if got == pbc));
+        }
+    }
+
     #[test]
     fn approx_eq_compares_periodicity_and_cell_definition_exactly() {
         let h = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let o = [0.0, 0.0, 0.0];
         let a = SimBox::new(Cell::Matrix(h), o, [true; 3]).unwrap();
         let other_pbc = SimBox::new(Cell::Matrix(h), o, [true, true, false]).unwrap();
-        let no_cell = SimBox::new(Cell::Undefined, o, [true; 3]).unwrap();
+        let no_cell = SimBox::new(Cell::Undefined, o, [false; 3]).unwrap();
         assert_eq!(no_cell.volume(), 0.0);
         assert_eq!(no_cell.style(), "free");
         assert!(!a.approx_eq(&other_pbc, 1.0));

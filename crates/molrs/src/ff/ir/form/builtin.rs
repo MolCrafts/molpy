@@ -114,8 +114,18 @@ fn class2_sigma_scale() -> f64 {
 /// `σ' = (2/3)^⅓ σ`. Every mixing rule is homogeneous in σ (degree 1 for σ,
 /// 0 for ε), so the unlike pairs map as the self rows do.
 fn lj() -> Vec<(&'static str, &'static str, FormCodec)> {
-    // `lj/cut`'s own style params, its defaults stated (n 12, m 6, shift 0).
-    let lj_cut_style = |style: &Params| -> Params {
+    // `lj/cut`'s own style params, its exponents and shift stated: the
+    // spec's declared defaults where the style states none.
+    let spec =
+        crate::ff::ir::builtin_style("pair", "lj/cut").expect("pair lj/cut is a built-in style");
+    let default = |k: &str| {
+        spec.style_param(k)
+            .and_then(|p| p.default.as_ref())
+            .and_then(crate::ff::ir::ParamValue::as_num)
+            .expect("pair lj/cut declares n, m and shift defaults")
+    };
+    let (n0, m0, shift0) = (default("n"), default("m"), default("shift"));
+    let lj_cut_style = move |style: &Params| -> Params {
         let mut out = Params::new();
         if let Some(c) = style.get("cutoff").and_then(|v| v.as_num()) {
             out.set("cutoff", c);
@@ -123,12 +133,10 @@ fn lj() -> Vec<(&'static str, &'static str, FormCodec)> {
         if let Some(m) = style.get("mixing").and_then(|v| v.as_text()) {
             out.set("mixing", m);
         }
-        out.set("n", style.get("n").and_then(|v| v.as_num()).unwrap_or(12.0));
-        out.set("m", style.get("m").and_then(|v| v.as_num()).unwrap_or(6.0));
-        out.set(
-            "shift",
-            style.get("shift").and_then(|v| v.as_num()).unwrap_or(0.0),
-        );
+        let num = |k: &str, d: f64| style.get(k).and_then(|v| v.as_num()).unwrap_or(d);
+        out.set("n", num("n", n0));
+        out.set("m", num("m", m0));
+        out.set("shift", num("shift", shift0));
         out
     };
     let scale_sigma = |row: &Params, by: f64| -> Params {

@@ -44,11 +44,11 @@ release_date = version.release_date
 # (molpack) at their import time.
 from molpy._core import _ffi_abi_token  # noqa: F401
 
-from importlib import import_module as _import_module
-from types import ModuleType as _ModuleType
-from typing import TYPE_CHECKING as _TYPE_CHECKING
+import importlib
+import types
+import typing
 
-if _TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from molpy import (
         builder,
         compute,
@@ -92,9 +92,9 @@ _LAZY_SUBMODULES = frozenset(
 )
 
 
-def __getattr__(name: str) -> _ModuleType:
+def __getattr__(name: str) -> types.ModuleType:
     if name in _LAZY_SUBMODULES:
-        return _import_module(f".{name}", __name__)
+        return importlib.import_module(f".{name}", __name__)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

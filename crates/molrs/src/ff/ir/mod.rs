@@ -37,6 +37,7 @@ mod error;
 pub mod expression;
 pub(crate) mod form;
 mod one_four;
+mod pair_role;
 mod param_dimension;
 mod param_source;
 mod params;
@@ -58,6 +59,7 @@ pub use form::torsion;
 pub use form::{FormCodec, FormFn, FormRefusal, TypeParams};
 pub(crate) use one_four::has_own_one_four;
 pub use one_four::{ONE_FOUR, ONE_FOUR_EPSILON14, ONE_FOUR_REGULAR, ONE_FOUR_VALUES, OneFour};
+pub use pair_role::{CoulombRange, PairRole};
 pub use param_dimension::ParamDimension;
 pub use param_source::ParamSource;
 pub use params::{Params, pair_key};
@@ -65,8 +67,8 @@ pub use spec::{
     ConformanceSample, ParamCombination, ParamKind, ParamSpec, ParamValue, StyleSpec,
     builtin_styles,
 };
-pub(crate) use special_bonds::DEFAULT_SPECIAL_BONDS;
-pub use special_bonds::SpecialBonds;
+pub(crate) use spec::{builtin_style, lj_charmm_one_four};
+pub use special_bonds::{COULOMB_14_SCALE, LJ_14_SCALE, SpecialBonds};
 pub use special_class::SpecialClass;
 pub use style_table::{
     ANNOTATION_COLUMNS, CMAP_GRID, ENDPOINT_COLUMNS, PROVENANCE_COLUMNS, is_parameter_column,

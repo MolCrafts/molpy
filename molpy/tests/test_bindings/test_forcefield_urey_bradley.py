@@ -40,6 +40,7 @@ XYZ = np.array([[1.53, 0.0, 0.0], [0.0, 0.0, 0.0], [-0.30, 1.05, 0.10]])
 
 def _ub_ff() -> mp.ff.forcefield.ForceField:
     ff = mp.ff.forcefield.ForceField("charmm", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     atoms = ff.def_style("atom", "full")
     ct = atoms.def_type("CT", mass=12.011)
     ha = atoms.def_type("HA", mass=1.008)

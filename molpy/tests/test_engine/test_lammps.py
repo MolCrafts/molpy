@@ -49,6 +49,7 @@ def _ct_dimer() -> mp.Frame:
 
 def _ct_forcefield(*pair_styles: tuple[str, dict]) -> mp.ff.forcefield.ForceField:
     ff = mp.ff.forcefield.ForceField("t", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     ct = ff.def_style("atom", "full").def_type("CT", mass=12.011)
     ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=1.0, r0=1.5)
     for name, params in pair_styles:
@@ -116,6 +117,7 @@ def test_relaxation_styles_come_from_the_molrs_include(tmp_path, monkeypatch):
     ``read_data``, so any style molrs can write (``hybrid`` included) reaches
     LAMMPS."""
     ff = mp.ff.forcefield.ForceField("t", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     ct = ff.def_style("atom", "full").def_type("CT", mass=12.011)
     ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=1.0, r0=1.5)
     ff.def_style("pair", "lj/cut", {"cutoff": 10.0}).def_type(

@@ -10,6 +10,7 @@ use std::fmt;
 use crate::builder::orient::direction_fit;
 use crate::builder::{OrientError, Orienter, SiteLink, SiteView};
 use crate::builder::{ParentJoin, PlaceError, PlaceSite, Placer};
+use crate::core::CenterError;
 use crate::core::CoarseGrain;
 use crate::core::LinkManyError;
 use crate::core::MolGraph;
@@ -291,7 +292,7 @@ enum PortChoice {
 /// ports of all its bonds are chosen together, one distinct port per bond, a
 /// bond whose partner already chose requiring a port that accepts the
 /// partner's. When several choices remain, the one whose port directions
-/// (centre of mass → handle) best fit the bond directions (site → partner)
+/// (centroid → handle) best fit the bond directions (site → partner)
 /// is taken — the first in port order on a tie or without positions. When a
 /// walk fails, it is retried from the first site's next choice (a chain
 /// entered from its wrong end), and the first failure is reported once every
@@ -303,7 +304,7 @@ enum PortChoice {
 /// The optional orienter turns each copy about its template's centre of
 /// mass (it needs positions); the placer then gives each copy its pose,
 /// sites visited in walk order so a copy's parent is placed first.
-/// [`SitePlacer`] puts the centre of mass on the site; [`GrowthPlacer`]
+/// [`SitePlacer`] puts the centroid on the site; [`GrowthPlacer`]
 /// joins each copy to its parent's port and needs no position. Relax the
 /// result before use.
 ///
@@ -421,6 +422,11 @@ impl<G: Graph> Assembler<G> {
     /// and joined along the site bonds; returns the world as a `G`, the
     /// library's graph type. See the type docs for the rules. An empty site
     /// graph gives an empty world.
+    ///
+    /// Each unit is a rigid copy of its template, so a [`CoarseGrain`]
+    /// template's bead membership is not copied: it names atoms of a
+    /// separate all-atom world that the copies do not own (as
+    /// [`CoarseGrain::replicate`] states).
     ///
     /// # Errors
     ///
@@ -586,6 +592,10 @@ impl<G: Graph> Assembler<G> {
         }
 
         // ---- replicate and stamp mol_id: one pass per name ----
+        // Each copy is a `MolGraph::replicate` of its template, so a
+        // `CoarseGrain` template's bead membership is not carried: the
+        // membership names foreign atoms the copies do not own (as
+        // `CoarseGrain::replicate` states).
         let mut world = MolGraph::new();
         let mut copies: Vec<Vec<NodeId>> = Vec::with_capacity(groups.len());
         for group in &groups {
@@ -852,7 +862,7 @@ impl<G: Graph> Assembler<G> {
     }
 
     /// Every port of `template`, with its anchor and handle rows and
-    /// positions and its direction from the centre of mass.
+    /// positions and its direction from the centroid.
     fn template_ports(name: &str, template: &MolGraph) -> Result<Vec<TemplatePort>, AssembleError> {
         let refuse = |source| AssembleError::Template {
             name: name.to_owned(),
@@ -866,9 +876,14 @@ impl<G: Graph> Assembler<G> {
             })
         };
         let position = |atom: NodeId| template.get_node(atom).ok().and_then(|a| a.position());
-        let center = template
-            .center(&template.node_ids().collect::<Vec<_>>())
-            .ok();
+        // A template without coordinates has no geometry, so no centre.
+        let center = match template.centroid(&template.node_ids().collect::<Vec<_>>()) {
+            Ok(c) => Some(c),
+            Err(CenterError::Empty | CenterError::BadPosition { .. }) => None,
+            Err(e) => {
+                return Err(refuse(MolRsError::validation(format!("its centroid: {e}"))));
+            }
+        };
         let mut out = Vec::new();
         for id in template.port_ids() {
             let port = template.get_port(id).map_err(refuse)?;
@@ -1107,6 +1122,31 @@ mod tests {
             .collect()
     }
 
+    /// Placement reads geometry and topology only: a template carrying a
+    /// mass — even a nonsensical one — assembles the world it assembles
+    /// without one.
+    #[test]
+    fn a_templates_mass_plays_no_part() {
+        let world_of = |mass: Option<f64>| {
+            let mut m = monomer_labelled("", "");
+            if let Some(mass) = mass {
+                let first = m.atoms().next().expect("an atom").0;
+                m.set_atom(first, keys::MASS, mass).expect("stamp mass");
+            }
+            let mut lib = library();
+            lib.insert("M".to_owned(), m);
+            let assembler =
+                Assembler::new(lib, Box::new(SitePlacer::new()), Some(Box::new(Unturned)));
+            let sites = graph(&[("M", [0.0; 3]), ("M", [5.0, 0.0, 0.0])], &[(0, 1)], None);
+            let world = assembler.assemble(&sites).expect("assembled");
+            world
+                .atoms()
+                .map(|(_, a)| a.position().expect("placed"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(world_of(Some(-1.0)), world_of(None));
+    }
+
     // ---- builds --------------------------------------------------------------
 
     #[test]
@@ -1219,7 +1259,7 @@ mod tests {
             .map(|(_, a)| a.position().expect("xyz"))
             .collect();
         assert_eq!(kept.len(), 1, "one hydrogen of X stays");
-        // The placer moves X's centre of mass (x = 0) onto the site, so the
+        // The placer moves X's centroid (x = 0) onto the site, so the
         // kept hydrogen stays at x = −1.
         assert!((kept[0][0] + 1.0).abs() < TOL, "{kept:?}");
     }
@@ -1358,7 +1398,7 @@ mod tests {
         assert_eq!(world.n_ports(), 3);
     }
 
-    /// A quarter turn about +z around the template's centre of mass.
+    /// A quarter turn about +z around the template's centroid.
     struct QuarterTurn;
 
     impl Orienter<Atomistic> for QuarterTurn {
@@ -1367,8 +1407,8 @@ mod tests {
             template: &Atomistic,
             sites: &[SiteView<'_>],
         ) -> Result<Vec<Rigid>, OrientError> {
-            let c = template
-                .center(&template.atom_ids().collect::<Vec<_>>())
+            let c = crate::core::GraphAccess::graph(template)
+                .centroid(&template.atom_ids().collect::<Vec<_>>())
                 .map_err(OrientError::Center)?;
             let rz = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
             Ok(vec![rotation_about(rz, c); sites.len()])

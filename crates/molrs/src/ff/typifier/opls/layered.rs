@@ -164,7 +164,7 @@ impl LayeredTypingEngine {
     /// an overrides cycle.
     pub fn build(meta: &OplsTypingMetadata) -> Result<Self, String> {
         let dominance = Dominance::new(meta)?;
-        let analyzer = OplsDependencyAnalyzer::new(meta);
+        let analyzer = OplsDependencyAnalyzer::new(meta)?;
 
         // Deterministic definition order: sort by type name.
         let mut named: Vec<(&String, &super::typing_metadata::OplsTypeRow)> = meta.iter().collect();
@@ -311,7 +311,7 @@ impl LayeredTypingEngine {
 
 /// Compile a single SMARTS `def`, reading a bare element symbol (`Li`, which
 /// SMARTS only admits in brackets) as its bracket atom (`[Li]`) for XML inputs.
-fn compile_def(def: &str) -> Result<SmartsPattern, molrs::core::MolRsError> {
+pub(super) fn compile_def(def: &str) -> Result<SmartsPattern, molrs::core::MolRsError> {
     match SmartsPattern::parse(def) {
         Ok(p) => Ok(p),
         Err(e) => {

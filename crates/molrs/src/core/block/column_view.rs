@@ -125,25 +125,6 @@ impl<'a> ColumnView<'a> {
         T::view_of(self)
     }
 
-    /// Format one row as EXTXYZ property tokens.
-    pub fn xyz_tokens(&self, row: usize) -> Vec<String> {
-        use ndarray::Axis;
-        match self {
-            ColumnView::Bool(a) => a
-                .index_axis(Axis(0), row)
-                .iter()
-                .map(|v| if *v { "T" } else { "F" }.to_string())
-                .collect(),
-            ColumnView::String(a) => a.index_axis(Axis(0), row).iter().cloned().collect(),
-            _ => map_view!(self, a => {
-                a.index_axis(Axis(0), row)
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect()
-            }),
-        }
-    }
-
     /// Creates an owned [`Column`] by cloning the viewed data.
     pub fn to_owned(&self) -> Column {
         map_view!(self, a => Column::from(a.to_owned()))

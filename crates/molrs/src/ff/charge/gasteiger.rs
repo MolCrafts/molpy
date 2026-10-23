@@ -1,13 +1,13 @@
 //! [`GasteigerModel`] — Gasteiger/PEOE, aligned with `antechamber -c gas`.
 
-use molrs::core::{Atomistic, NodeId};
+use molrs::core::Atomistic;
 
 use crate::ff::params::{GASTEIGER_PARAMS, GasteigerRow};
 use crate::ff::typifier::{AtdParameterSet, AtdTypifier};
 
 use super::error::ChargeError;
 use super::model::{
-    ChargeModel, atom_ids, atomic_number_of, charge_error, reject_dummy_types, without_type_columns,
+    ChargeModel, atomic_number_of, charge_error, reject_dummy_types, without_type_columns,
 };
 
 /// antechamber's `CONVERG`: the loop stops when the RMS charge change of a sweep
@@ -239,16 +239,10 @@ fn parameter_rows(
 ///
 /// [`ChargeError::Malformed`] when a bond's endpoint is not an atom of the molecule.
 fn bond_pairs(mol: &Atomistic) -> Result<Vec<(usize, usize)>, ChargeError> {
-    let index: std::collections::HashMap<NodeId, usize> = atom_ids(mol)
-        .into_iter()
-        .enumerate()
-        .map(|(i, aid)| (aid, i))
-        .collect();
-
+    let rows = mol.atom_table();
     mol.bonds()
         .map(|(bid, bond)| {
-            let (Some(&i), Some(&j)) = (index.get(&bond.nodes[0]), index.get(&bond.nodes[1]))
-            else {
+            let (Some(i), Some(j)) = (rows.row(bond.nodes[0]), rows.row(bond.nodes[1])) else {
                 return Err(ChargeError::Malformed {
                     detail: format!("bond {bid:?} has an endpoint that is not an atom"),
                 });

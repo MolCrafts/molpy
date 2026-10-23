@@ -82,7 +82,7 @@ class TestOneFrame:
         )
         assert sorted(f.keys()) == ["atoms", "bonds"]
         np.testing.assert_array_equal(f["atoms"]["x"], [1.0, 2.0])
-        assert f["bonds"].dtype("atomi") == "uint"
+        assert f["bonds"].dtype("atomi") == "u64"
         assert f.meta["title"] == "t"
         assert f.box.volume() == pytest.approx(125.0)
 
@@ -95,7 +95,7 @@ class TestOneFrame:
         f = Frame()
         f["atoms"] = {"x": [1.0, 2.0], "id": np.array([1, 2], dtype=np.int64)}
         assert f["atoms"].n_rows == 2
-        assert f["atoms"].dtype("id") == "uint"
+        assert f["atoms"].dtype("id") == "u64"
 
     def test_setitem_refuses_anything_else(self):
         with pytest.raises(TypeError):
@@ -360,7 +360,7 @@ class TestFrameMeta:
             "raise SystemExit('a self-referencing list was accepted')\n"
         )
         child = subprocess.run(
-            [sys.executable, "-c", script],
+            [sys.executable, "-I", "-c", script],
             capture_output=True,
             text=True,
             timeout=120,

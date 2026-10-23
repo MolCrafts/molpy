@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .lj import LennardJonesMd, Trajectory
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCS_SERIES = REPO_ROOT / "docs" / "series"
 
 #: State point: liquid argon just above the triple point (Rahman 1964).

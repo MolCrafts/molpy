@@ -10,18 +10,17 @@ use crate::ff::ir::SpecialBonds;
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::Neighbors;
-use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
-use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
+use molrs::core::keys::{ATOMI, ATOMJ, IS_14};
+use molrs::core::schema::block_names::ATOMS;
 use molrs::op::Idx;
 
-use super::{carried_overrides, end_pairs};
+use super::{bond_classes, carried_overrides};
 
 /// Build the intramolecular non-bonded `pairs` block (`atomi`, `atomj`,
 /// `is_14`) from the pairs of `neighbors` — a cutoff-bounded neighbour table —
 /// by the rules of [`intramolecular_pairs`](super::intramolecular_pairs): a
-/// 1-2 / 1-3 pair is dropped unless `special` keeps its class, and a
-/// dihedral's end pair is flagged 1-4 unless it is also a 1-2 or 1-3 pair (a
-/// ring closes it).
+/// 1-2 / 1-3 pair (by bond distance) is dropped unless `special` keeps its
+/// class, and a pair three bonds apart is flagged 1-4.
 ///
 /// Each unordered pair appears once, as `(lo, hi)`, in the order the table
 /// first reports it, so a full (both-direction) table and a half-shell one
@@ -39,12 +38,8 @@ pub(super) fn over_neighbors(
     neighbors: &Neighbors,
 ) -> Result<Block, String> {
     let [keep_12, keep_13] = special.compiled_inclusion()?;
-    let ends = |block, a, b| -> HashSet<(usize, usize)> {
-        end_pairs(frame, block, a, b).into_iter().collect()
-    };
-    let pairs_12 = ends(BONDS, ATOMI, ATOMJ);
-    let pairs_13 = ends(ANGLES, ATOMI, ATOMK);
-    let set_14 = ends(DIHEDRALS, ATOMI, ATOML);
+    let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
+    let classes = bond_classes(frame, n_atoms)?;
 
     let mut pi: Vec<Idx> = Vec::new();
     let mut pj: Vec<Idx> = Vec::new();
@@ -59,14 +54,13 @@ pub(super) fn over_neighbors(
         if lo == hi || !seen.insert((lo, hi)) {
             continue;
         }
-        let key = (lo, hi);
-        let (is_12, is_13) = (pairs_12.contains(&key), pairs_13.contains(&key));
-        if (!keep_12 && is_12) || (!keep_13 && is_13) {
+        let class = classes.get(&(lo, hi)).copied();
+        if (!keep_12 && class == Some(1)) || (!keep_13 && class == Some(2)) {
             continue;
         }
         pi.push(lo as Idx);
         pj.push(hi as Idx);
-        p14.push(set_14.contains(&key) && !is_12 && !is_13);
+        p14.push(class == Some(3));
     }
 
     let mut pairs = Block::new();
@@ -94,6 +88,8 @@ pub(super) fn over_neighbors(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use molrs::core::keys::{ATOMK, ATOML};
+    use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
     use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
     /// A four-atom chain 0-1-2-3 with its bonds, angles and dihedral.
@@ -164,7 +160,7 @@ mod tests {
             .collect();
         let pairs = crate::ff::potential::intramolecular_pairs(
             &chain(),
-            &SpecialBonds::default(),
+            &SpecialBonds::EXCLUDE_12_13,
             Some(&table(&all)),
         )
         .unwrap();
@@ -200,7 +196,7 @@ mod tests {
         let all: Vec<(u32, u32)> = (0..4u32)
             .flat_map(|i| ((i + 1)..4u32).map(move |j| (i, j)))
             .collect();
-        let special = SpecialBonds::default();
+        let special = SpecialBonds::EXCLUDE_12_13;
         let from_table =
             crate::ff::potential::intramolecular_pairs(&chain(), &special, Some(&table(&all)))
                 .unwrap();

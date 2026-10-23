@@ -10,29 +10,29 @@ the native module exports. Adding one in Rust adds it here with no edit.
 rows point into.
 """
 
-from molpy._core import schema as _schema
+from molpy import _core
 
-ColumnSpec = _schema.ColumnSpec
+ColumnSpec = _core.schema.ColumnSpec
 
-BlockSpec = _schema.BlockSpec
+BlockSpec = _core.schema.BlockSpec
 
-columns = _schema.columns
+columns = _core.schema.columns
 
-blocks = _schema.blocks
+blocks = _core.schema.blocks
 
-column = _schema.column
+column = _core.schema.column
 
-block = _schema.block
+block = _core.schema.block
 
-relation_endpoints = _schema.relation_endpoints
+relation_endpoints = _core.schema.relation_endpoints
 
-to_json = _schema.to_json
+to_json = _core.schema.to_json
 
-to_markdown = _schema.to_markdown
+to_markdown = _core.schema.to_markdown
 
-_CONSTS = [name for name in dir(_schema) if name.isupper()]
+_CONSTS = [name for name in dir(_core.schema) if name.isupper()]
 
-globals().update({name: getattr(_schema, name) for name in _CONSTS})
+globals().update({name: getattr(_core.schema, name) for name in _CONSTS})
 
 __all__ = [
     "BlockSpec",

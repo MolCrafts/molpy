@@ -57,7 +57,7 @@ Every box carries a `pbc` array — three booleans controlling which axes are pe
 
 ```python
 slab = mp.Box.ortho(np.array([20.0, 20.0, 50.0]), pbc=np.array([True, True, False]))
-print(slab.pbc) # [ True True False]
+print(slab.pbc) # [ True  True False]
 ```
 
 ## Derived properties
@@ -73,7 +73,7 @@ print(f"style: {box.style}")
 
 ## Wrapping coordinates into the primary cell
 
-Atoms that have drifted outside the box during a simulation can be mapped back with `wrap`. This produces wrapped positions in the primary image.
+Atoms that have drifted outside the box during a simulation can be mapped back with `wrap`. It returns the wrapped positions in the primary image together with the integer image shift applied to each point.
 
 ```python
 box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
@@ -83,7 +83,7 @@ points = np.array([
  [25.0, 8.0, -3.0],
 ])
 
-wrapped = box.wrap(points)
+wrapped, images = box.wrap(points)
 print(wrapped)
 # Points are now inside [0, 10) on each axis
 ```
@@ -91,7 +91,7 @@ print(wrapped)
 If you need to reconstruct the unwrapped trajectory later, `images` tells you how many box lengths each coordinate was shifted, and `unwrap` reverses the operation.
 
 ```python
-images = box.images(points)
+print(images)
 unwrapped = box.unwrap(wrapped, images)
 print(np.allclose(unwrapped, points)) # True
 ```
@@ -105,7 +105,7 @@ absolute = np.array([[5.0, 3.0, 7.0]])
 fractional = box.to_frac(absolute)
 restored = box.to_cart(fractional)
 
-print(fractional) # [[0.5, 0.3, 0.7]]
+print(fractional) # [[0.5 0.3 0.7]]
 print(np.allclose(restored, absolute)) # True
 ```
 
@@ -145,15 +145,18 @@ print(distances)
 A box is attached to a Frame as `frame.box`, not stored in metadata. This is the standard way to associate a simulation cell with molecular data.
 
 ```python
-# docs: skip — reads system.data offline artifact; I/O unit-tested with fixtures
+from pathlib import Path
+
 frame = mp.Frame(blocks={
- "atoms": {"x": [1.0, 9.5], "y": [1.0, 9.5], "z": [1.0, 9.5]},
+ "atoms": {"x": [1.0, 9.5], "y": [1.0, 9.5], "z": [1.0, 9.5], "type": ["Ar", "Ar"],
+            "mass": [39.95, 39.95]},
 })
 frame.box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
+mp.io.write_lammps_data(Path("system.data"), frame)
 
 # I/O readers set frame.box automatically
-frame = mp.io.read_lammps_data("system.data", atom_style="full")
-print(frame.box.lengths) # from the data file header
+frame = mp.io.read_lammps_data(Path("system.data"), atom_style="atomic")
+print(frame.box.lengths) # [10. 10. 10.], from the data file header
 ```
 
 All compute operators (MSD, RDF, etc.) read the box from `frame.box`.

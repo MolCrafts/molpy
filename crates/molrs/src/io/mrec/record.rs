@@ -92,11 +92,19 @@ pub struct MolRec {
     /// Append-only run measurements (run surface): the catalog / summary
     /// document, stored as `metrics/` group attributes.
     pub metrics: JsonMap<String, JsonValue>,
-    /// Closed (densified) metric curves, keyed by series name. Each series is
-    /// one float64 array at `metrics/series/<name>`; the live JSONL WAL
-    /// (`metrics/metrics.jsonl`) is owned by run hosts and is not modeled
-    /// here — the doors merely tolerate it in a store.
+    /// Closed metric curves, keyed by the logical series name (`train/loss`).
+    /// Each series is one float64 array at `metrics/series/<safe name>`.
     pub metrics_series: BTreeMap<String, Vec<f64>>,
+    /// The point's step (`i64`) for each series that has steps, aligned index
+    /// for index with [`metrics_series`](Self::metrics_series). A series with
+    /// no steps has no entry. Stored at `metrics/steps/<safe name>`.
+    pub metrics_steps: BTreeMap<String, Vec<i64>>,
+    /// The point's RFC 3339 time for each series that has one, aligned with
+    /// the series. Stored at `metrics/wall_time/<safe name>`.
+    pub metrics_wall_time: BTreeMap<String, Vec<String>>,
+    /// The live JSONL WAL (`metrics/metrics.jsonl`) as stored, when the
+    /// record carries one. The doors keep the bytes; they do not densify.
+    pub metrics_wal: Option<String>,
     /// System definition — topology and types, without instantaneous state.
     pub system: Option<Frame>,
     /// Instantaneous snapshot.

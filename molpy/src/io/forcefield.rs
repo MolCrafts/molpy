@@ -15,7 +15,8 @@
 //! | `OpenmmXmlReader` / `OpenmmXmlWriter` | `molpy.io.openmm_xml` |
 //! | `XmlForcefieldReader` / `XmlForcefieldWriter` | `molpy.io` |
 
-use std::path::PathBuf;
+use crate::error::io_error_to_pyerr;
+use crate::io::source::PyPath;
 
 use molrs::core::TypeLabels;
 use molrs::io::reader::ForceFieldReader;
@@ -23,7 +24,7 @@ use molrs::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 
-use super::{PySink, PySource, data_error};
+use super::{PySink, PySource};
 use crate::core::frame::PyFrame;
 use crate::ff::forcefield::PyForceField;
 
@@ -43,14 +44,15 @@ fn write_error(e: ForceFieldWriteError) -> PyErr {
 
 /// A read force field as its Python object.
 fn read_into(read: std::io::Result<molrs::ff::forcefield::ForceField>) -> PyResult<PyForceField> {
-    read.map(|inner| PyForceField { inner }).map_err(data_error)
+    read.map(|inner| PyForceField { inner })
+        .map_err(io_error_to_pyerr)
 }
 
 /// A read `(force field, frame)` pair as its Python objects.
 fn system_into(
     read: std::io::Result<(molrs::ff::forcefield::ForceField, molrs::core::Frame)>,
 ) -> PyResult<(PyForceField, PyFrame)> {
-    let (inner, frame) = read.map_err(data_error)?;
+    let (inner, frame) = read.map_err(io_error_to_pyerr)?;
     Ok((PyForceField { inner }, PyFrame::from_core_frame(frame)?))
 }
 
@@ -396,10 +398,10 @@ pub struct PyGromacsTopForcefieldReader {
 impl PyGromacsTopForcefieldReader {
     #[new]
     #[pyo3(signature = (*, include = false, include_dirs = Vec::new(), skip_directives = Vec::new()))]
-    fn new(include: bool, include_dirs: Vec<PathBuf>, skip_directives: Vec<String>) -> Self {
+    fn new(include: bool, include_dirs: Vec<PyPath>, skip_directives: Vec<String>) -> Self {
         let mut inner = molrs::io::gromacs::GromacsTopForcefieldReader::new().with_include(include);
         for dir in include_dirs {
-            inner = inner.with_include_dir(dir);
+            inner = inner.with_include_dir(dir.0);
         }
         for name in &skip_directives {
             inner = inner.with_skipped_directive(name);

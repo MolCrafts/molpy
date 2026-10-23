@@ -559,7 +559,7 @@ mod tests {
             ("triclinic", tilted_bx()),
         ] {
             for &cutoff in &[1.5_f64, 3.0, 4.5] {
-                let mut want = NeighborList::brute_force(cutoff);
+                let mut want = NeighborList::brute_force(cutoff).unwrap();
                 want.build(pts.view(), &bx);
                 let mut want_pairs: Vec<(u32, u32)> = want
                     .neighbors(NeighborColumns::INDICES_ONLY)
@@ -575,7 +575,7 @@ mod tests {
                     .collect();
                 want_pairs.sort_unstable();
 
-                let mut got = NeighborList::aabb(cutoff);
+                let mut got = NeighborList::aabb(cutoff).unwrap();
                 got.build(pts.view(), &bx);
                 let got_tbl = got.neighbors(NeighborColumns::FULL);
                 let mut got_pairs: Vec<(u32, u32)> = got_tbl

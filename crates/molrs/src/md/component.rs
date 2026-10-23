@@ -48,14 +48,8 @@ pub trait TimestepProvider {
 /// `final_integrate`. Does not evaluate a potential.
 pub trait Integrator: Component + TimestepProvider {}
 
-/// Adds energy and force during `force`.
-pub trait Evaluator: Component {}
-
 /// Modifies the force or the velocities to control temperature.
 pub trait Thermostat: Component + TimestepProvider {}
-
-/// Modifies the cell.
-pub trait Barostat: Component {}
 
 /// What the driver recorded at registration, so a later scan does not need
 /// the concrete type.
@@ -85,9 +79,6 @@ pub(crate) enum Kind {
     Integrator,
     Evaluator,
     Thermostat,
-    /// Reserved for `set_barostat`. Nothing registers it yet.
-    #[allow(dead_code)]
-    Barostat,
     Neighbor,
     /// Infrastructure and user `on(phase).add` components.
     Other,

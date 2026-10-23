@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::core::Atomistic;
 use crate::core::MolRsError;
 
+use crate::core::NeighborKinds;
 use crate::core::Topology;
 use crate::core::{NodeId, RelationId};
 
@@ -202,36 +203,12 @@ pub fn small_ring_closure(
         return Vec::new();
     }
 
-    // Seed atoms: the plain radius ball. `extract_ball` re-derives the same set;
-    // recomputing it here keeps this function self-contained.
-    //
-    // Deliberately not `Atomistic::topo_distances`: that keys its BFS by a
-    // slot-indexed `SecondaryMap`, so it allocates and drains one slot per atom
-    // of the *parent* even when `max_hops` stops the search after nine. A
-    // hash-keyed BFS costs the ball, which is what this function promises.
-    let mut ball: Vec<NodeId> = Vec::new();
-    let mut hops: HashMap<NodeId, i64> = HashMap::new();
-    let mut queue: VecDeque<NodeId> = VecDeque::new();
-    for &center in centers {
-        if hops.insert(center, 0).is_none() {
-            ball.push(center);
-            queue.push_back(center);
-        }
-    }
-    while let Some(atom) = queue.pop_front() {
-        let hop = hops[&atom];
-        if hop >= radius {
-            continue;
-        }
-        let neighbors: Vec<NodeId> = mol.neighbor_bonds(atom).map(|(other, _)| other).collect();
-        for other in neighbors {
-            if let std::collections::hash_map::Entry::Vacant(slot) = hops.entry(other) {
-                slot.insert(hop + 1);
-                ball.push(other);
-                queue.push_back(other);
-            }
-        }
-    }
+    // Seed atoms: the plain radius ball, in discovery order.
+    let ball: Vec<NodeId> = mol
+        .topo_distances(centers, Some(radius))
+        .into_iter()
+        .map(|(atom, _)| atom)
+        .collect();
 
     // One flood per ring system, so an atom is emitted in exactly one group.
     let mut assigned: HashSet<NodeId> = HashSet::new();
@@ -246,7 +223,10 @@ pub fn small_ring_closure(
         let mut frontier = vec![start];
         let mut in_system: HashSet<NodeId> = HashSet::from([start]);
         while let Some(atom) = frontier.pop() {
-            let neighbors: Vec<NodeId> = mol.neighbor_bonds(atom).map(|(other, _)| other).collect();
+            let neighbors: Vec<NodeId> = mol
+                .neighbors(atom, NeighborKinds::BONDS)
+                .map(|(other, _)| other)
+                .collect();
             for other in neighbors {
                 if in_system.contains(&other) {
                     continue;
@@ -294,7 +274,7 @@ fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usiz
         if hops >= max_hops {
             continue;
         }
-        for (other, _) in mol.neighbor_bonds(atom) {
+        for (other, _) in mol.neighbors(atom, NeighborKinds::BONDS) {
             // The bond under test is not a route around itself.
             if atom == a && other == b {
                 continue;
@@ -328,31 +308,21 @@ fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usiz
 /// Rings come back smallest-first.
 pub fn perceive_rings(mol: &Atomistic) -> RingSet {
     // ---- 1. Project onto the core index space ------------------------------
-    // Atom index `i` == the `i`-th atom of `mol.atoms()`; ring edges are lifted
+    // Atom index `i` == the `i`-th of `mol.atom_ids()`; ring edges are lifted
     // back onto bonds by their endpoint pair (`bond_map`), never by position.
-    let atom_vec: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
-    let atom_to_idx: HashMap<NodeId, usize> = atom_vec
-        .iter()
-        .enumerate()
-        .map(|(i, &id)| (id, i))
-        .collect();
+    let atom_vec: Vec<NodeId> = mol.atom_ids().collect();
+    let topo = mol.topology();
 
-    let bond_vec: Vec<RelationId> = mol.bonds().map(|(id, _)| id).collect();
-
-    let mut edges: Vec<[usize; 2]> = Vec::with_capacity(bond_vec.len());
     // Fast (NodeId, NodeId) → RelationId lookup, used to lift ring edges back.
     let mut bond_map: HashMap<(NodeId, NodeId), RelationId> = HashMap::new();
-    for &bid in &bond_vec {
+    for bid in mol.bond_ids() {
         let ends = mol.get_bond(bid).expect("bond must exist").nodes;
         let (n0, n1) = (ends[0], ends[1]);
-        edges.push([atom_to_idx[&n0], atom_to_idx[&n1]]);
         bond_map.insert((n0, n1), bid);
         bond_map.insert((n1, n0), bid);
     }
 
     // ---- 2. The one and only SSSR in the tree -------------------------------
-    let mut topo = Topology::with_atoms(atom_vec.len());
-    topo.add_bonds(&edges);
     let cycles = sssr(&topo);
 
     // ---- 3. Lift node-index cycles → NodeId rings ---------------------------

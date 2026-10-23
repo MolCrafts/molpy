@@ -1,5 +1,4 @@
 {
- "source": "scripts/openmm_xml_check.py, OpenMM 8.6.1, Reference platform, NoCutoff",
  "types": [
   "opls_135",
   "opls_136",
@@ -390,13 +389,5 @@
   ]
  ],
  "impropers": [],
- "cmaps": [],
- "openmm_kcal": {
-  "bond": 25.068019234759834,
-  "dihedral": -0.26085298030739323,
-  "vdw": 0.10191738393823163,
-  "coul": 0.9415611810268669,
-  "angle": 3.651654362069225,
-  "total": 29.502299181486762
- }
+ "cmaps": []
 }

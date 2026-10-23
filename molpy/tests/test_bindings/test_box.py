@@ -81,10 +81,12 @@ class TestBoxConstruction:
         assert b.volume() == 0.0
         np.testing.assert_array_equal(b.matrix, np.eye(3))
 
-    def test_an_undefined_cell_may_still_say_which_axes_wrap(self):
-        b = Box(Cell.undefined(), pbc=np.array([True, False, False]))
+    def test_an_undefined_cell_is_periodic_on_no_axis(self):
+        b = Box(Cell.undefined())
         assert not b.is_cell_defined
-        assert list(b.pbc) == [True, False, False]
+        assert list(b.pbc) == [False, False, False]
+        with pytest.raises(ValueError, match="periodic on no axis"):
+            Box(Cell.undefined(), pbc=np.array([True, False, False]))
 
     def test_the_defaults_are_the_origin_and_full_periodicity(self):
         b = Box(Cell.lengths([10.0, 20.0, 30.0]))

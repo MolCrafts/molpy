@@ -132,29 +132,10 @@ python-version = "3.14"
 root = ["."]
 
 [tool.ty.rules]
-all = "warn"
-# ty 0.0.65 is stricter; keep release gate green while types catch up.
+# Every rule is an error (the `python` gate's `ty check` fails on any), except
+# one style rule: `@override` on overriding methods.
+all = "error"
 missing-override-decorator = "ignore"
-missing-type-argument = "ignore"
-unresolved-import = "ignore"
-invalid-argument-type = "ignore"
-invalid-assignment = "ignore"
-invalid-method-override = "ignore"
-invalid-return-type = "ignore"
-unsupported-operator = "ignore"
-not-iterable = "ignore"
-unknown-argument = "ignore"
-invalid-type-arguments = "ignore"
-not-subscriptable = "ignore"
-index-out-of-bounds = "ignore"
-no-matching-overload = "ignore"
-missing-argument = "ignore"
-division-by-zero = "ignore"
-invalid-parameter-default = "ignore"
-too-many-positional-arguments = "ignore"
-invalid-type-form = "ignore"
-call-non-callable = "ignore"
-redundant-cast = "ignore"
 
 [tool.ty.terminal]
 output-format = "full"

@@ -124,7 +124,7 @@ fn region_capsule<'py>(py: Python<'py>, region: DynRegion) -> PyResult<Bound<'py
 }
 
 /// Extract the shared region behind any supported Python region object.
-fn extract_region(obj: &Bound<'_, PyAny>) -> PyResult<DynRegion> {
+pub(crate) fn extract_region(obj: &Bound<'_, PyAny>) -> PyResult<DynRegion> {
     if let Ok(r) = obj.extract::<PySphere>() {
         return Ok(r.inner);
     }
@@ -538,7 +538,7 @@ impl PyParallelepiped {
     fn new(cell: PyCell, origin: Vec<f64>) -> PyResult<Self> {
         let o = vec3(origin, "origin")?;
         let inner = Parallelepiped::new(cell.inner, Array1::from_vec(o.to_vec()))
-            .map_err(PyValueError::new_err)?;
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self {
             inner: Arc::new(inner),
         })
@@ -624,7 +624,7 @@ impl PyHalfSpace {
     fn new(normal: Vec<f64>, point: Vec<f64>) -> PyResult<Self> {
         let n = vec3(normal, "normal")?;
         let p = vec3(point, "point")?;
-        let inner = HalfSpace::new(n, p).map_err(PyValueError::new_err)?;
+        let inner = HalfSpace::new(n, p).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self {
             inner: Arc::new(inner),
         })
@@ -693,7 +693,8 @@ impl PyCylinder {
     fn new(base: Vec<f64>, axis: Vec<f64>, radius: f64, length: f64) -> PyResult<Self> {
         let b = vec3(base, "base")?;
         let a = vec3(axis, "axis")?;
-        let inner = Cylinder::new(b, a, radius, length).map_err(PyValueError::new_err)?;
+        let inner = Cylinder::new(b, a, radius, length)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self {
             inner: Arc::new(inner),
         })
@@ -755,7 +756,7 @@ impl PyEllipsoid {
     fn new(center: Vec<f64>, semi_axes: Vec<f64>) -> PyResult<Self> {
         let c = vec3(center, "center")?;
         let a = vec3(semi_axes, "semi_axes")?;
-        let inner = Ellipsoid::new(c, a).map_err(PyValueError::new_err)?;
+        let inner = Ellipsoid::new(c, a).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self {
             inner: Arc::new(inner),
         })

@@ -70,7 +70,7 @@ def test_a_force_field_subclass_pickles_as_itself():
 
 def test_special_bonds_reads_the_declared_triples():
     ff = mp.ff.forcefield.ForceField("sb")
-    assert ff.special_bonds == ([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
+    assert ff.special_bonds is None
     ff.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 0.8333])
     assert ff.special_bonds == ([0.0, 0.0, 0.5], [0.0, 0.0, 0.8333])
 
@@ -235,8 +235,8 @@ def test_conflicting_merge_raises_value_error():
 # ---- units ----
 
 
-def test_units_default_to_real():
-    assert mp.ff.forcefield.ForceField("plain").units == "real"
+def test_units_are_none_until_declared():
+    assert mp.ff.forcefield.ForceField("plain").units is None
 
 
 def test_units_ctor_arg_declares_units():
@@ -437,6 +437,7 @@ def _lj_ab(cross: bool) -> mp.ff.forcefield.ForceField:
     """Self rows A (0.1, 3.0) and B (0.4, 3.6), geometric mixing, and with
     ``cross`` an explicit A-B row (0.9, 2.0)."""
     ff = mp.ff.forcefield.ForceField("nbfix")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     a, b = _atoms(ff, "A", "B")
     lj = ff.def_style("pair", "lj/cut", {"cutoff": 10.0, "mixing": "geometric"})
     lj.def_type("A", a, epsilon=0.1, sigma=3.0)

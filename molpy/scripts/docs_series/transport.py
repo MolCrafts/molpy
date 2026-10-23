@@ -55,10 +55,19 @@ def _vacf(trajectory: Trajectory, mean: str) -> TimeCorrelation:
     that mean is the atom's net displacement divided by the run length, so it
     lowers the running integral; it is computed only to quote how much.
     """
-    n_frames = trajectory.velocities.shape[0]
-    velocities = trajectory.velocities.reshape(n_frames, -1)
-    vacf = Vacf(VACF_MAX_LAG, mean=mean)
-    return vacf.compute(velocities=velocities, dt=trajectory.dt)
+    # One (n_dof, 1) column per frame: every degree of freedom is its own item.
+    accumulator = Vacf(VACF_MAX_LAG, mean=mean).accumulator()
+    for velocities in trajectory.velocities:
+        accumulator.push(velocities.reshape(-1, 1), dt=trajectory.dt)
+    return accumulator.finish()
+
+
+def _msd(unwrapped: np.ndarray, dt: float, max_lag: int) -> TimeCorrelation:
+    """MSD(tau) of one unwrapped (T, N, 3) trajectory, frame by frame."""
+    accumulator = Msd(max_lag).accumulator()
+    for positions in unwrapped:
+        accumulator.push(positions, dt=dt)
+    return accumulator.finish()
 
 
 def _green_kubo(correlation: TimeCorrelation) -> np.ndarray:
@@ -90,9 +99,7 @@ def _summary(prefix: str, spread: dict[str, float]) -> dict[str, float]:
 def mean_squared_displacement(trajectories: Sequence[Trajectory]) -> dict[str, float]:
     """Ensemble-mean MSD(tau) and the Einstein diffusion coefficient per seed."""
     max_lag = trajectories[0].unwrapped.shape[0] - 1
-    results = [
-        Msd(max_lag).compute(positions=t.unwrapped, dt=t.dt) for t in trajectories
-    ]
+    results = [_msd(t.unwrapped, t.dt, max_lag) for t in trajectories]
     curves = np.array([r.channel(0) for r in results])
     lag = results[0].lag_times
     msd = curves.mean(axis=0)

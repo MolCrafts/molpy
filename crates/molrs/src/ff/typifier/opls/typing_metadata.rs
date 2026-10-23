@@ -39,8 +39,7 @@ pub struct OplsTypeRow {
 /// drives energy evaluation.
 ///
 /// This is the typing-metadata half of an OPLS-AA force field, kept separate
-/// from the potential parameters (mirroring
-/// [`MmffAtomProperties`](crate::ff::typifier::mmff::MmffAtomProperties) versus the
+/// from the potential parameters (the
 /// [`ForceField`](crate::ff::forcefield::ForceField)). The shipped table is
 /// joined from the molrs-owned rules of
 /// [`OPLSAA_TYPING`](crate::ff::params::OPLSAA_TYPING); for a caller's own OPLS / CL&P XML, the

@@ -56,7 +56,7 @@ ff = typifier.forcefield()  # the parameters of the assigned types
 ```python
 # 3. Inspect results
 for atom in typed_mol.atoms:
- element = atom.get("element", "?")
+ element = mp.Element.by_number(atom.get("atomic_number")).symbol
  atype = atom.get("type", "untyped")
  charge = atom.get("charge") or 0.0
  print(f" {element:2s} -> {atype:15s} q={charge:+.4f}")
@@ -103,8 +103,8 @@ After typification, you can iterate over bonds, angles, and dihedrals to see the
 ```python
 # Bond types
 for bond in typed_mol.bonds[:3]:
- i_sym = bond.itom.get("element")
- j_sym = bond.jtom.get("element")
+ i_sym = mp.Element.by_number(bond.itom.get("atomic_number")).symbol
+ j_sym = mp.Element.by_number(bond.jtom.get("atomic_number")).symbol
  btype = bond.get("type", "untyped")
  print(f" {i_sym}-{j_sym} -> {btype}")
 
@@ -147,7 +147,7 @@ ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
 
 mp.io.write_lammps_data(outdir / "ethanol.data", frame)
-mp.io.write_lammps_forcefield(outdir / "ethanol.ff", ff, frame)
+mp.io.lammps.LammpsForcefieldWriter(frame).write(outdir / "ethanol.ff", ff)
 
 print(f"exported to {outdir}")
 ```
@@ -157,7 +157,7 @@ exported to 06_output
 ```
 
 
-The structure and the coefficients are two files and two calls. `write_lammps_forcefield` looks up every type label the frame uses and writes only those coefficients. OPLS-AA defines no cutoff — a cutoff belongs to the run, not to the force field — so it is declared on the two pair styles before writing. The data writer refuses a bonded frame without `mol_id`: which atoms form a molecule is your decision, and the bond graph's connected components are the usual answer.
+The structure and the coefficients are two files and two calls. `mp.io.lammps.LammpsForcefieldWriter(frame)` looks up every type label the frame uses and writes only those coefficients. OPLS-AA defines no cutoff — a cutoff belongs to the run, not to the force field — so it is declared on the two pair styles before writing. The data writer refuses a bonded frame without `mol_id`: which atoms form a molecule is your decision, and the bond graph's connected components are the usual answer.
 
 ## Typing an assembled polymer
 
@@ -175,7 +175,7 @@ library = {
 }
 
 sites = mp.io.cgsmiles.read_cgsmiles("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
-chain = mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+chain = mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites)
 
 typed_chain = OplsAaTypifier(strict=True).typify(chain)
 print(f"atoms: {typed_chain.n_atoms}, open ports: {typed_chain.n_ports}")
@@ -227,7 +227,7 @@ for atom, charge in zip(labelled.atoms, charges):
 gaff_mol = GaffTypifier(parameter_set="gaff2").typify(labelled)
 ```
 
-The native route assigns the types and parameter values tleap does for the same `parameter_set`, and its force field merges with one read from tleap's prmtop, so a small molecule mixed with an `AmberPolymerBuilder` chain is typed this way too — see [AmberTools Integration](13_ambertools_integration.md). The AmberTools typifiers remain for what only that pipeline does: `TleapTypifier` loads parameters of your own on top of the leaprc, and `AntechamberTypifier` runs an antechamber charge method other than AM1-BCC / ABCG2. molrs 0.18.0's LAMMPS and GROMACS writers do not yet write a term `GaffTypifier` estimated (it carries an `estimated` parameter); such a molecule is exported through `AntechamberTypifier`, as that guide shows. Both take the same required `parameter_set`.
+The native route assigns the types and parameter values tleap does for the same `parameter_set`, and its force field merges with one read from tleap's prmtop, so a small molecule mixed with an `AmberPolymerBuilder` chain is typed this way too — see [AmberTools Integration](13_ambertools_integration.md). The AmberTools typifiers remain for what only that pipeline does: `TleapTypifier` loads parameters of your own on top of the leaprc, and `AntechamberTypifier` runs an antechamber charge method other than AM1-BCC / ABCG2. A term `GaffTypifier` estimated carries its provenance (`estimated`, `estimate_penalty`, `estimate_method`, `estimate_analog`); those keys price nothing, so the LAMMPS, GROMACS and OpenMM writers pass them over and write the term like any other. Both AmberTools typifiers take the same required `parameter_set`.
 
 ## When standard force fields are not enough
 

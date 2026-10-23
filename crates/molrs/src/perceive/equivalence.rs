@@ -349,18 +349,12 @@ impl Flat {
                 atom.get_f64(keys::Z).unwrap_or(0.0),
             ]);
         }
-        let index: HashMap<NodeId, usize> = ids
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(i, id)| (id, i))
-            .collect();
+        let rows = mol.atom_table();
 
         let mut adj = vec![Vec::new(); ids.len()];
         let mut bonds = Vec::new();
         for (_, bond) in mol.bonds() {
-            let (Some(&i), Some(&j)) = (index.get(&bond.nodes[0]), index.get(&bond.nodes[1]))
-            else {
+            let (Some(i), Some(j)) = (rows.row(bond.nodes[0]), rows.row(bond.nodes[1])) else {
                 continue;
             };
             adj[i].push(j);

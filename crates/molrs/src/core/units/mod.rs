@@ -19,7 +19,7 @@
 //! [`UnitRegistry::factor`] or [`Quantity::to`]. No module writes a factor
 //! by hand (`* 4.184`, `/ 10.0`), and [`constants`](crate::core::constants)
 //! holds physical constants and the constants engines define, never a
-//! unit-conversion factor. `module_boundaries` checks both.
+//! unit-conversion factor.
 //!
 //! Reference: design follows pint (Python),
 //! <https://pint.readthedocs.io/en/stable/>.

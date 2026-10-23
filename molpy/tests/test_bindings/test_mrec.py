@@ -3,9 +3,7 @@
 
 Frame and Trajectory are the in-memory objects; the writer is flat on
 ``mp.io``, the per-section reads and the store machinery in
-``mp.io.mrec``. Schema checks
-live in ``molrs::io::mrec::validation`` and are bound, not reimplemented, at
-``mp.io.mrec.validation``.
+``mp.io.mrec``.
 """
 
 from __future__ import annotations
@@ -166,9 +164,6 @@ class TestSchema:
             mp.io.write_mrec(path, frame=_coords_frame(), meta=meta)
             assert _record(path).meta() == meta
             _assert_coords(_frame_of(path))
-
-    def test_empty_frame_passes(self) -> None:
-        mp.io.mrec.validation.validate_frame(mp.core.Frame())
 
 
 class TestMrecSurface:

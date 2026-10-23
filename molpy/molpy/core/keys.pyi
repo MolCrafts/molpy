@@ -1,11 +1,100 @@
 """Type stub of :mod:`molpy.core.keys`, whose names the module copies from
-``molpy._core.keys`` at import time. ``tests/test_stub_parity.py`` holds
+``molpy._core.keys`` at import time. The ``types`` gate's stubtest holds
 this list to the runtime's, so a key added in Rust fails there until it is
 declared here."""
 
-from molpy._core import keys as _keys
+from molpy import _core
 
-Key = _keys.Key
+__all__ = [
+    "ALTLOC",
+    "ANGLE_TYPE_LABELS",
+    "ATOMI",
+    "ATOMIC_NUMBER",
+    "ATOMJ",
+    "ATOMK",
+    "ATOML",
+    "ATOMM",
+    "ATOM_MAP",
+    "ATOM_TYPE_LABELS",
+    "AXIS",
+    "AXIS_X",
+    "AXIS_Y",
+    "AXIS_Z",
+    "BCC_BOND_TYPE",
+    "BEAD_ATOMS",
+    "BEAD_TYPE",
+    "BOND_NUMBER",
+    "BOND_TYPE",
+    "BOND_TYPE_LABELS",
+    "B_FACTOR",
+    "CHAIN",
+    "CHARGE",
+    "CMAP_TYPE_LABELS",
+    "COORDS",
+    "DIHEDRAL_TYPE_LABELS",
+    "DIPOLE",
+    "ELEMENT",
+    "ENDPOINTS",
+    "EQUIV_CLASS",
+    "EXCLUDE_14",
+    "FORCES",
+    "FORMAL_CHARGE",
+    "FRAG_ID",
+    "FREE",
+    "FX",
+    "FY",
+    "FZ",
+    "HETERO",
+    "H_COUNT",
+    "IBEAD",
+    "ICODE",
+    "ID",
+    "IMAGES",
+    "IMPROPER_TYPE_LABELS",
+    "ISOTOPE",
+    "IS_14",
+    "IS_AROMATIC",
+    "IX",
+    "IY",
+    "IZ",
+    "Key",
+    "LAMMPS_COEFFS_TEXT",
+    "LAMMPS_TYPE_MASSES",
+    "LAMMPS_UNITS",
+    "MASS",
+    "MOL_ID",
+    "MUX",
+    "MUY",
+    "MUZ",
+    "NAME",
+    "OCCUPANCY",
+    "PORTS",
+    "QUAT",
+    "QUATI",
+    "QUATJ",
+    "QUATK",
+    "QUATW",
+    "REACT_ID",
+    "RES_ID",
+    "RES_NAME",
+    "SPACE_GROUP",
+    "STEREO",
+    "STYLE",
+    "SYMOPS",
+    "TYPE",
+    "TYPE_ID",
+    "UNITS",
+    "VELOCITIES",
+    "VSITE",
+    "VX",
+    "VY",
+    "VZ",
+    "X",
+    "Y",
+    "Z",
+]
+
+Key = _core.keys.Key
 
 ALTLOC: Key
 ANGLE_TYPE_LABELS: Key
@@ -45,6 +134,7 @@ FREE: Key
 FX: Key
 FY: Key
 FZ: Key
+HETERO: Key
 IBEAD: Key
 ICODE: Key
 ID: Key

@@ -32,9 +32,9 @@ use pyo3::{PyTraverseError, PyVisit};
 use molrs::core::keys;
 use molrs::core::keys::VSITE;
 use molrs::core::{
-    Atomistic, BondNumber, BondOrder, CenterError, CoarseGrain, EntityCell, ExtractedAtomistic,
-    ExtractedCoarseGrain, KindId, LinkError, MolGraph, NodeId, PortKind, PropValue, Props,
-    RelationId,
+    Adjacent, Atomistic, BondNumber, BondOrder, CenterError, CoarseGrain, EntityCell,
+    ExtractedAtomistic, ExtractedCoarseGrain, KindId, LinkError, MolGraph, NeighborKinds, NodeId,
+    PortKind, PropValue, Props, RelationId,
 };
 
 use super::bond_order::{PyBondNumber, PyBondOrder};
@@ -112,7 +112,7 @@ pub(crate) fn prop_to_py(py: Python<'_>, value: &PropValue) -> PyResult<Py<PyAny
 }
 
 /// A property bag as a Python ``dict``.
-fn props_to_py<'py>(py: Python<'py>, props: &Props) -> PyResult<Bound<'py, PyDict>> {
+pub(crate) fn props_to_py<'py>(py: Python<'py>, props: &Props) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     for (key, value) in props.iter() {
         dict.set_item(key, prop_to_py(py, value)?)?;
@@ -533,6 +533,14 @@ type LeafContent<'py> = (
     Vec<(String, Vec<(Vec<usize>, Bound<'py, PyDict>)>)>,
 );
 
+/// An `Atomistic`'s pickled content: [`LeafContent`] plus the term blocks'
+/// declared arities.
+type AtomisticContent<'py> = (
+    Vec<Bound<'py, PyDict>>,
+    Vec<(String, Vec<(Vec<usize>, Bound<'py, PyDict>)>)>,
+    Vec<(String, usize)>,
+);
+
 /// Re-add a pickled port through the typed `add_port`.
 fn port_args(fields: &Props) -> PyResult<(PortKind, String, BondNumber)> {
     let missing = |key: &str| PyValueError::new_err(format!("pickled port lacks '{key}'"));
@@ -564,25 +572,11 @@ fn end(nodes: &[NodeId], i: usize, kind: &str) -> PyResult<NodeId> {
 /// without a valid ``atomic_number``.
 fn load_atomistic(content: &Bound<'_, PyAny>) -> PyResult<Atomistic> {
     let mut mol = Atomistic::new();
-    // New state carries declarations separately; the two-field legacy content
-    // remains readable for existing standard-kind pickles.
-    let legacy;
-    let input = if let Ok(tuple) = content.cast::<PyTuple>() {
-        if tuple.len() == 3 {
-            let declarations: Vec<(String, usize)> = tuple.get_item(2)?.extract()?;
-            for (name, arity) in declarations {
-                mol.declare_term(&name, arity)
-                    .map_err(molrs_error_to_pyerr)?;
-            }
-            legacy = PyTuple::new(content.py(), [tuple.get_item(0)?, tuple.get_item(1)?])?;
-            legacy.as_any()
-        } else {
-            content
-        }
-    } else {
-        content
-    };
-    let (nodes, kinds): LeafContent<'_> = input.extract()?;
+    let (nodes, kinds, declarations): AtomisticContent<'_> = content.extract()?;
+    for (name, arity) in declarations {
+        mol.declare_term(&name, arity)
+            .map_err(molrs_error_to_pyerr)?;
+    }
     let mut ids = Vec::with_capacity(nodes.len());
     for fields in nodes {
         ids.push(
@@ -1223,24 +1217,68 @@ macro_rules! leaf_impl {
                 self.inner.n_bonds()
             }
 
-            #[doc = concat!("The bonds of ``", $noun, "``, as ``(neighbour, bond)`` pairs.")]
-            fn neighbor_bonds<'py>(
+            /// Bonds incident to ``node``, as ``(neighbour, bond)`` pairs.
+            ///
+            /// ``ports=True`` also yields ports. ``terms=True`` also yields
+            /// every other two-atom term (constraints, pairs, exclusions,
+            /// drudes, virtual sites). Either flag changes each item to
+            /// ``(block, neighbour, relation)``. Angles and dihedrals are
+            /// not neighbors.
+            #[pyo3(signature = (node, *, ports=false, terms=false))]
+            fn neighbors<'py>(
                 slf: &Bound<'py, Self>,
                 node: &Bound<'py, PyAny>,
-            ) -> PyResult<Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>> {
+                ports: bool,
+                terms: bool,
+            ) -> PyResult<Bound<'py, PyList>> {
+                let py = slf.py();
                 let leaf = Leaf::of(slf.as_any())?;
                 let id = own_node(&leaf, node)?;
-                let pairs: Vec<(NodeId, RelationId)> =
-                    slf.try_borrow()?.inner.neighbor_bonds(id).collect();
-                pairs
-                    .into_iter()
-                    .map(|(other, bond)| {
-                        Ok((
-                            leaf.node(u64::from(other))?,
-                            leaf.relation("bonds", u64::from(bond))?,
-                        ))
-                    })
-                    .collect()
+                let rows = {
+                    let graph = slf.try_borrow()?;
+                    let wide = if ports && terms {
+                        Some(NeighborKinds::BONDS.with_ports().with_terms())
+                    } else if ports {
+                        Some(NeighborKinds::BONDS.with_ports())
+                    } else if terms {
+                        Some(NeighborKinds::BONDS.with_terms())
+                    } else {
+                        None
+                    };
+                    match wide {
+                        None => graph
+                            .inner
+                            .neighbors(id, NeighborKinds::BONDS)
+                            .map(|(other, bond)| ("bonds".to_string(), other, bond, false))
+                            .collect::<Vec<_>>(),
+                        Some(which) => graph
+                            .inner
+                            .neighbors(id, which)
+                            .map(|item| match item {
+                                Adjacent::Bond { other, id } => {
+                                    ("bonds".to_string(), other, id, true)
+                                }
+                                Adjacent::Port { other, id } => {
+                                    ("ports".to_string(), other, id, true)
+                                }
+                                Adjacent::Term { block, other, id } => {
+                                    (block.to_string(), other, id, true)
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    }
+                };
+                let list = PyList::empty(py);
+                for (block, other, rel, tagged) in rows {
+                    let node = leaf.node(u64::from(other))?;
+                    let relation = leaf.relation(&block, u64::from(rel))?;
+                    if tagged {
+                        list.append((block, node, relation))?;
+                    } else {
+                        list.append((node, relation))?;
+                    }
+                }
+                Ok(list)
             }
 
             // ---- ports ----
@@ -1838,7 +1876,7 @@ impl PyAtomistic {
     ) -> PyResult<Vec<(Bound<'py, PyAny>, i64)>> {
         let leaf = Leaf::of(slf.as_any())?;
         let id = own_node(&leaf, atom)?;
-        let distances = slf.try_borrow()?.inner.topo_distances(id, max_hops);
+        let distances = slf.try_borrow()?.inner.topo_distances(&[id], max_hops);
         distances
             .into_iter()
             .map(|(node, hops)| Ok((leaf.node(u64::from(node))?, hops)))

@@ -41,7 +41,7 @@ use super::{
     Charges, Endpoints, KCAL_TO_KJ, NM_TO_ANGSTROM, NO_CHARGES, OpenmmXmlWriter, Out, centre_first,
     either_way, esc,
 };
-use crate::ff::forcefield::{ForceField, Style, StyleDefs};
+use crate::ff::forcefield::{ForceField, Style};
 use crate::ff::ir::CombiningRule;
 use crate::ff::ir::Params;
 use crate::ff::ir::expression::{self, BinOp, Definition, Expr, Func, Parsed};
@@ -71,25 +71,9 @@ struct Custom {
 /// spec (with the instance's own expression when it carries one), else the
 /// compile fallback's spec of an unregistered style's instance expression.
 fn custom_of(reg: &Registry, style: &Style) -> Result<Custom, ForceFieldWriteError> {
-    let cat = match (reg.category(style.category()), style.defs()) {
-        (Some(c), _) => c.clone(),
-        (
-            None,
-            StyleDefs::Relation {
-                category, arity, ..
-            },
-        ) => CategorySpec::custom(
-            category.to_string(),
-            *arity,
-            if *arity >= 2 {
-                Coordinate::Compound
-            } else {
-                Coordinate::None
-            },
-            EndpointOrder::Reversible,
-        ),
-        (None, _) => return Err(refuse(style, "its category is not registered")),
-    };
+    let cat = crate::ff::compile::category_of(reg, style)
+        .map_err(|_| refuse(style, "its category is not registered"))?
+        .into_owned();
     let instance = style.params().get("expression").and_then(|v| v.as_text());
     let no_expression = || {
         refuse(
@@ -529,10 +513,8 @@ pub(super) fn pair(
 ) -> Result<String, ForceFieldWriteError> {
     let c = custom_of(reg, style)?;
     let used = identifiers(&c.parsed);
-    let StyleDefs::Pair(types) = style.defs() else {
-        unreachable!("a pair style holds pair types")
-    };
-    if let Some(t) = types.iter().find(|t| t.itom != t.jtom) {
+    let types = style.defs().types();
+    if let Some(t) = types.iter().find(|t| t.endpoints[0] != t.endpoints[1]) {
         return Err(refuse(
             style,
             format!(
@@ -637,7 +619,7 @@ pub(super) fn pair(
     let energy = in_openmm_units(&c.parsed, &f);
 
     // Excluded whole neighbours: weights [0, …, 0, 1, …, 1].
-    let sb = ff.special_bonds();
+    let sb = ff.required_special_bonds()?;
     let weights = match c.spec.special_class() {
         SpecialClass::Vdw => sb.lj,
         SpecialClass::Coulomb => sb.coul,
@@ -670,7 +652,7 @@ pub(super) fn pair(
         ));
     }
     let atoms: Vec<_> = ff
-        .get_atomtypes()
+        .get_types("atom")
         .into_iter()
         .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) != Some("*"))
         .collect();
@@ -689,16 +671,19 @@ pub(super) fn pair(
     let mut sorted = atoms;
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
     for t in sorted {
-        let row = types.iter().find(|p| p.itom == t.name).ok_or_else(|| {
-            refuse(
-                style,
-                format!(
-                    "atom type '{}' has no row, and a CustomNonbondedForce needs one for \
+        let row = types
+            .iter()
+            .find(|p| p.endpoints[0] == t.name)
+            .ok_or_else(|| {
+                refuse(
+                    style,
+                    format!(
+                        "atom type '{}' has no row, and a CustomNonbondedForce needs one for \
                          every type",
-                    t.name
-                ),
-            )
-        })?;
+                        t.name
+                    ),
+                )
+            })?;
         let mut attrs = format!("    <Atom type=\"{}\"", esc(&t.name));
         for n in &per_particle {
             let v = row_value(style, &c.spec, &row.name, &row.params, n)?;

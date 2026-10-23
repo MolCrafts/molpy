@@ -442,6 +442,9 @@ pub enum AtomPrimitive {
     RingSizeRange { lo: u8, hi: Option<u8> },
     /// `x<n>` — number of incident ring bonds (ring connectivity).
     RingBondCount(u8),
+    /// `^<n>` — hybridization (the RDKit extension): `0` s, `1` sp, `2` sp²,
+    /// `3` sp³, `4` sp³d, `5` sp³d².
+    Hybridization(u8),
     /// `v<n>` — total valence.
     Valence(u8),
     /// Formal charge.

@@ -237,7 +237,10 @@ fn read_one_record<R: BufRead>(
         )));
     }
 
-    Ok(Some(build_frame(name, atoms, bonds)?))
+    let frame = build_frame(name, atoms, bonds)?;
+    // Every door reads through here, so every door checks here.
+    crate::io::reader::check_read_frame(&frame)?;
+    Ok(Some(frame))
 }
 
 fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Result<Frame> {
@@ -452,7 +455,7 @@ impl<R: BufRead> FrameReader for Mol2Reader<R> {
     fn read(&mut self) -> Result<Option<Frame>> {
         // Validate on the way out: a frame that violates the vocabulary
         // is a malformed file or a reader bug, not a result to return.
-        crate::io::reader::check_read_frame(read_one_record(&mut self.reader, &mut self.pending)?)
+        read_one_record(&mut self.reader, &mut self.pending)
     }
 }
 
@@ -466,13 +469,13 @@ impl<R: BufRead> FrameReader for Mol2Reader<R> {
 /// canonical `bond_type` / `bond_number` codes mapped back (`4` → `ar`), so a
 /// frame read from MOL2 keeps its aromatic and double bonds without `type`.
 pub fn write_mol2<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
-    let mut w = sink.into().writer()?;
-    write_frame_to(&mut w, frame)?;
-    w.flush()
+    sink.into().put_with(|w| write_frame_to(w, frame))
 }
 
 /// Emit one frame in MOL2 format.
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("MOL2 write: frame has no atoms block"))?;
@@ -657,9 +660,6 @@ impl<W: Write> Writer for Mol2Writer<W> {
 
 impl<W: Write> FrameWriter for Mol2Writer<W> {
     fn write(&mut self, frame: &Frame) -> Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         write_frame_to(&mut self.writer, frame)?;
         self.writer.flush()
     }

@@ -108,7 +108,7 @@ pub struct ParamSpec { name, dim: ParamDimension, kind: ParamKind, default: Opti
 |---|---|---|---|
 | 1 | `Kernel::Expression`, or `register_style(spec, None)` with `spec.expression` | `expression=` | the expression, compiled with exact (dual-number) derivatives |
 | 2 | `Kernel::Scalar(Arc<dyn ScalarForm>)`, `Kernel::Compound(Arc<dyn CompoundForm>)` | `kernel=` (a numpy callable; `compound=True` for positions) | a batch function of the coordinate, or of the atoms' positions |
-| 3 | `Kernel::Constructor { compiled, typed, rows }` | – | a constructor that builds the whole kernel (every native built-in) |
+| 3 | `Kernel::Constructor { compiled, typed, rows }` | – | a constructor that builds the whole kernel (`pair coul/long/pme`, `cmap charmm`: no form carries them) |
 
 The kernel contract, every tier:
 
@@ -119,17 +119,43 @@ The kernel contract, every tier:
 - Parameters arrive **exactly as stored**: IR units, angle values in
   degrees. A Tier-2 form reads each per-type parameter as an `n_terms`
   column (`ParamColumns::get`), arrays with a leading `n_terms` axis, text per
-  term, numeric style parameters broadcast to a column; a pair form reads
-  the resolved pair value of each parameter (cross row, else its mixing
-  rule), and `q1`, `q2` when the frame has `atoms.charge`.
+  term, numeric style parameters broadcast to a column and as the one value
+  they are (`ParamColumns::style_num`, so a form hoists what depends on
+  them alone); a pair form reads the resolved pair value of each parameter
+  it reads by name (cross row, else its mixing rule), `q1`, `q2` when the
+  frame has `atoms.charge`, and the self-row values `<x>1`, `<x>2` it asks
+  for — each atom's type row, or a `PerInstance` style's own atoms column
+  of that name; a parameter read only that way needs no mixing rule. A
+  bonded form's per-instance value is its block's column of that name
+  (float or integer) before a type row. An indexed family has one length
+  per table; a row of fewer terms reads its absent ones as 0. A
+  table-driven style's row stating a number its spec does not declare is
+  `BadValue`.
 - A form **writes** the **unweighted** energy of each term and its
-  derivative `de_dq` (a compound form: `∂E/∂x`, not the force). The generic
-  kernels (`ff::potential::form_kernel`: `ScalarBonded`, `ScalarPair`,
+  derivative `de_dq` (a compound form: `∂E/∂x`, not the force; a style whose
+  spec says its force is not its gradient — `coul/charmm` — the derivative
+  its force is built from). It states what it reads (`inputs`, refused at
+  build when not supplied) and refuses a style parameter outside its domain
+  once, at build (`check_style`, `BadValue`). The generic kernels
+  (`ff::potential::form_kernel`: `ScalarBonded`, `ScalarPair`,
   `CompoundTerms`) apply the pair special-bonds weight, `r < cutoff` at
   both compile doors (the style's `cutoff`, ∞ when it states none — LAMMPS
   truncates every pair style, 1-4 pairs included, and so does every
-  built-in; a form is never called past the cutoff), the chain rule onto
-  Cartesian forces and the virial.
+  built-in; a form is never called past the cutoff; at the neighbour door a
+  declared `cutoff` must be finite, and a style declaring none prices every
+  pair the search turns up), the chain rule onto Cartesian forces and the
+  virial. A pair below 10⁻¹² Å has no direction: no force, and its energy
+  where the form's is finite (a bonded term at zero length alike).
+- A form may also state its force law **per term**: `ScalarForm::pointwise`
+  (`(e, dE/dq)` of one term from its per-term inputs, the style parameters
+  hoisted once) and, for a pair, `ScalarForm::pair_law` (`(e, −(dE/dr)/r)`
+  from `r²`; default: `pointwise` at `√r²`), with `eval_by_term` its batch
+  `eval`. Both default to none, the batch path. A kernel monomorphized on
+  the form's type (`ScalarPair<Fm>::fused`, which every built-in pair style
+  is built as) evaluates the law inside its own per-pair loop — selection,
+  gather, law and scatter in one pass — where a kernel over
+  `dyn ScalarForm` (a registered third-party form) calls `eval` a batch at a
+  time.
 
 LAMMPS's `pair_style lj/smooth/linear` as a Tier-2 form, written as a crate
 outside molrs would write it (its `pub` API only):
@@ -218,9 +244,14 @@ registry.register_style(
 ```
 
 ```python
+import molpy as mp
+
 style_registry.register_category("urey_bradley", 3)          # block "urey_bradleys", coordinate compound
 style_registry.register_style("urey_bradley", "spring", params={"k_ub": "E/L^2", "r_ub": "L"},
                               expression="k_ub*(distance(p1,p3)-r_ub)^2")
+ff = mp.ff.forcefield.ForceField(name="ub-demo", units="real")
+atom_style = ff.def_style("atom", "full")
+a, b = atom_style.def_type("A", mass=12.0), atom_style.def_type("B", mass=16.0)
 ff.def_style("urey_bradley", "spring").def_type("A-B-A", a, b, a, k_ub=20.0, r_ub=2.4)
 ```
 
@@ -377,16 +408,15 @@ it.
 
 ## How this is checked
 
-**The Python proof** — `molpy/tests/test_bindings/test_ff_ir_extension.py`, LAMMPS
-numbers pinned in `ff_ir_extension_lammps.tsv` by the same script:
+**The Python proof** — `molpy/tests/test_bindings/test_ff_ir_extension.py`:
 
 | Row | Criterion | Measured worst |
 |---|---|---|
 | `fene` by expression = the analytic formula | rel ≤ 1e-12 | 2.1·10⁻¹⁶ |
 | a numpy kernel = the expression | E rel ≤ 1e-12, F rel ≤ 1e-10 | 1.1·10⁻¹⁶, 2.1·10⁻¹⁶ |
-| both = LAMMPS `bond_style fene` (deck by `LammpsForcefieldWriter`, `lj` units) | rel ≤ 1e-10 | 7.0·10⁻¹⁶ (expression), 5.2·10⁻¹⁶ (numpy) |
-| `urey_bradley` from Python = LAMMPS (`angle_style charmm`, K = 0) | rel ≤ 1e-10 | 1.6·10⁻¹⁶ |
-| `pair lj/smooth/linear` by expression and by a numpy kernel = LAMMPS, its 5 Å cutoff straddling the pairs; `compile_typed` (an integrator's first force call) = `compile` | rel ≤ 1e-10; doors rel ≤ 1e-12 | 2.5·10⁻¹⁵ (expression), 2.9·10⁻¹⁵ (numpy); doors bit for bit |
+| `fene` written as LAMMPS `bond_style fene` (`LammpsForcefieldWriter`, `lj` units) | the deck's style and coefficients | as stated |
+| `urey_bradley` from Python | arity 3, block `urey_bradleys`, not built in | as stated |
+| `pair lj/smooth/linear` by expression and by a numpy kernel, written as LAMMPS `lj/smooth/linear`, its 5 Å cutoff straddling the pairs; `compile_typed` (an integrator's first force call) = `compile` | the deck's style; doors rel ≤ 1e-12 | doors bit for bit |
 | `.mrec` round trip; a subprocess that registered nothing | bit for bit, expression byte for byte | bit for bit |
 | a callable-only style in a fresh process | `NoKernel` naming the style and `mp.ff.style_registry.register_style` | as stated |
 | refusals: unknown function, unbound variable, sealed `bond harmonic`, wrong `def_type` arity, kernel of the wrong shape, kernel raising, `GromacsTopForcefieldWriter.write`, missing parameter | each its `IrError` subclass naming the item | as stated |
@@ -406,12 +436,11 @@ the largest, and a fresh process that registered nothing prices the saved
   compile doors; `dihedral periodic` with 1–3 terms and `nharmonic` of
   order 2–5 by their table-generated expressions; `dihedral rb`, priced by
   its expression alone, against `multi/harmonic`'s native kernel): energy
-  and forces to 1e-10 relative; measured worst 1.5·10⁻¹⁵ (energy) and
-  3.6·10⁻¹⁵ (forces), over 24 styles.
-- Every built-in constructor's `ParamSource` is what it reads: 37
-  constructors; a `TypeRows` one prices another row differently and no row
-  not at all, a `PerInstance` one prices the same bits with or without a
-  row.
+  and forces to 1e-10 relative; measured worst 2.1·10⁻¹⁵ (energy) and
+  3.2·10⁻¹⁵ (forces), over 24 styles.
+- Every built-in kernel's `ParamSource` is what it reads: 37 kernels; a
+  `TypeRows` one prices another row differently and no row not at all, a
+  `PerInstance` one prices the same bits with or without a row.
 - Every positional LAMMPS codec writes the pinned includes
   (`ff/testdata/builtin_conformance/`) for the LAMMPS-read hand molecule, the
   five cross-engine sources (`ff14sb`, `gaff2`, `chamber`, `charmm36`,
@@ -419,11 +448,9 @@ the largest, and a fresh process that registered nothing prices the saved
   of 22 files byte for byte, the rest to ≤ 2 ulps (the pinned includes were
   converted through LAMMPS's `lj` units by a unit expression, `real` → `real`
   included; the codec multiplies by one exact factor per dimension).
-  `bond class2`, `pair
-  buck` and `pair morse` have no pinned include; LAMMPS prices them in
-  `ff::engine_codec_check`.
+  `bond class2`, `pair buck` and `pair morse` have no pinned include; their
+  codecs are held by read → write → read in `ff::engine_codec_check`.
 
-The engine codecs of extension styles against LAMMPS and OpenMM (`fene`,
-`lj/smooth/linear`, a compound `urey_bradley` as OpenMM's
-`CustomCompoundBondForce`) are [Checked against the
-engines](forcefield-ir.md#checked-against-the-engines).
+The engine codecs of extension styles (`fene`, `lj/smooth/linear`, a
+compound `urey_bradley` as OpenMM's `CustomCompoundBondForce`) are written,
+read back and priced by molrs in `ff::engine_codec_check`.

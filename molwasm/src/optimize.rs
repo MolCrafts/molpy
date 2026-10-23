@@ -133,8 +133,11 @@ impl Lbfgs {
             .inner
             .with_mut(
                 |rs| -> Result<molrs::optimize::OptimizationReport, String> {
-                    let pairs =
-                        intramolecular_pairs(rs, self.ff.special_bonds(), Some(&self.neighbors))?;
+                    let pairs = intramolecular_pairs(
+                        rs,
+                        self.ff.required_special_bonds()?,
+                        Some(&self.neighbors),
+                    )?;
                     rs.insert("pairs", pairs);
                     let compiled = PotentialCompiler::new(&self.ff)
                         .compile(rs)
@@ -146,7 +149,9 @@ impl Lbfgs {
                     }
 
                     let pot: Arc<dyn Potential> = Arc::clone(&self.pots) as Arc<dyn Potential>;
-                    let report = RsLbfgs::new(pot, settings).minimize(rs)?;
+                    let report = RsLbfgs::new(pot, settings)
+                        .minimize(rs)
+                        .map_err(|e| e.to_string())?;
 
                     if fixed.is_some()
                         && let Some(atoms) = rs.get_mut("atoms")
@@ -212,5 +217,5 @@ fn apply_fixed_mask(frame: &mut RsFrame, fixed: &Uint32Array) -> Result<(), Stri
         })?;
         *slot = false;
     }
-    set_free_mask(frame, &free)
+    set_free_mask(frame, &free).map_err(|e| e.to_string())
 }

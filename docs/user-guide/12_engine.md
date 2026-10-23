@@ -48,7 +48,7 @@ water = mp.Frame(
     blocks={
         "atoms": {
             "type": ["OW", "HW", "HW"],
-            "element": ["O", "H", "H"],
+            "atomic_number": [8, 1, 1],
             "charge": [-0.834, 0.417, 0.417],
             "mol_id": [1, 1, 1],
             "x": [0.0, 0.9572, -0.24],
@@ -62,6 +62,8 @@ water = mp.Frame(
 water.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 
 ff = mp.ff.forcefield.ForceField("tip3p", units="real")
+# A rigid water has no 1-4 pairs: every 1-2 / 1-3 pair is excluded.
+ff.set_special_bonds([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
 atoms = ff.def_style("atom", "full")
 ow = atoms.def_type("OW", mass=15.999, charge=-0.834, element="O")
 hw = atoms.def_type("HW", mass=1.008, charge=0.417, element="H")
@@ -86,7 +88,7 @@ files = gmx.generate_inputs(water, ff, "./gromacs_run", temperature=300.0)
 print(sorted(files))  # ['gro', 'input', 'nvt', 'top']
 ```
 
-The `.top` is the whole topology `mp.io.write_top_system`
+The `.top` is the whole topology `mp.io.gromacs.GromacsTopForcefieldWriter().write_system`
 writes: the force field's directives, one `[ moleculetype ]` per molecule
 (by the atoms' `mol_id`) with each row's parameters, `[ system ]` and
 `[ molecules ]` — what `grompp -p` reads. GROMACS excludes every pair within
@@ -182,7 +184,7 @@ script.save("./submit/input.lmp")
 # -> ./submit/input.lmp written
 ```
 
-The include written by `mp.io.write_lammps_forcefield` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, write the include with `skip_pair_style=True` and declare the pair style in the script before `include`). Because the script states `units` before `read_data`, write the include with `skip_units=True`: LAMMPS refuses a `units` line once the box exists. The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
+The include written by `mp.io.lammps.LammpsForcefieldWriter` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, build the writer with `skip_pair_style=True` and declare the pair style in the script before `include`). Because the script states `units` before `read_data`, build the writer with `skip_units=True`: LAMMPS refuses a `units` line once the box exists. The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.lammps.LammpsForcefieldWriter` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
 
 `Script.from_path` is the mirror image — it reads an existing file as is, to save elsewhere or pass to `run()`.
 
@@ -192,7 +194,7 @@ script = Script.from_path("./submit/input.lmp")
 
 ### OpenMM: letting the engine build the files
 
-OpenMM's workflow is more tightly integrated because the three required files are interdependent: the Python driver script embeds the filenames of the PDB and XML force field, and `createSystem` matches every residue of the PDB against a `<Residue>` template of the XML by its atom names. Rather than assembling these by hand, `OpenmmEngine.generate_inputs()` accepts MolPy's own data objects and writes all three files consistently: the PDB with `mp.io.write_pdb`, the XML with `mp.io.write_openmm_system` (the force field plus the PDB's residue templates).
+OpenMM's workflow is more tightly integrated because the three required files are interdependent: the Python driver script embeds the filenames of the PDB and XML force field, and `createSystem` matches every residue of the PDB against a `<Residue>` template of the XML by its atom names. Rather than assembling these by hand, `OpenmmEngine.generate_inputs()` accepts MolPy's own data objects and writes all three files consistently: the PDB with `mp.io.write_pdb`, the XML with `mp.io.openmm_xml.OpenmmXmlWriter().write_system` (the force field plus the PDB's residue templates).
 
 The simulation is a dataclass — `OpenmmSimulationConfig`, passed as the keyword-only `simulation=` — whose fields document their units explicitly. It is validated when it is built (an unknown `ensemble`, `nonbonded_method` or `constraints`, such as `"nvt"` or `"EWALD"`, raises `ValueError`, from `from_json` too) and round-trips through JSON, which makes it easy to store alongside the generated files for reproducibility. `NVE` runs a `VerletIntegrator` from velocities drawn at `temperature`; `minimize` writes the minimised coordinates to `output_pdb`.
 

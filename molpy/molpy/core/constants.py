@@ -13,8 +13,8 @@ Unit conversions are not constants: use the unit registry,
 ``UnitRegistry().quantity(x, "nm").to(...)``.
 """
 
-from molpy._core import constants as _constants
+from molpy import _core
 
-__all__ = sorted(name for name in dir(_constants) if name.isupper())
+__all__ = sorted(name for name in dir(_core.constants) if name.isupper())
 
-globals().update({name: getattr(_constants, name) for name in __all__})
+globals().update({name: getattr(_core.constants, name) for name in __all__})

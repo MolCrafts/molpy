@@ -162,14 +162,14 @@ class TestXsfCore:
     def test_error_handling(self, tmp_path):
         """Test basic error handling."""
         # Test reading non-existent file
-        with pytest.raises(OSError):
+        with pytest.raises(FileNotFoundError):
             mp.io.read_xsf(Path("nonexistent.xsf"))
 
         # Test reading empty file
         tmp_file = tmp_path / "empty.xsf"
         tmp_file.write_text("", encoding="utf-8")  # Empty file
 
-        with pytest.raises(OSError, match="Empty XSF file"):
+        with pytest.raises(ValueError, match="Empty XSF file"):
             mp.io.read_xsf(tmp_file)
 
         # Test malformed PRIMCOORD section
@@ -179,5 +179,5 @@ class TestXsfCore:
             encoding="utf-8",
         )
 
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError):
             mp.io.read_xsf(tmp_file2)

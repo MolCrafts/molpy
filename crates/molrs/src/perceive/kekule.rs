@@ -215,13 +215,9 @@ impl BondGraph {
     /// Flatten a molecule. A wildcard atom (`z = 0`) matches no rule; its bonds
     /// fall through to their plain bond order.
     pub(super) fn new(mol: &Atomistic) -> Self {
-        let atom_ids: Vec<NodeId> = mol.atoms().map(|(aid, _)| aid).collect();
-        let index: HashMap<NodeId, usize> = atom_ids
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(i, aid)| (aid, i))
-            .collect();
+        // Atom index = the atom table's row, the order `atom_ids` yields.
+        let atom_ids: Vec<NodeId> = mol.atom_ids().collect();
+        let rows = mol.atom_table();
 
         let z: Vec<u8> = mol.atoms().map(|(_, atom)| atomic_number(&atom)).collect();
 
@@ -266,8 +262,7 @@ impl BondGraph {
         let mut aromatic_atom = vec![false; n];
 
         for (bid, bond) in mol.bonds() {
-            let (Some(&i), Some(&j)) = (index.get(&bond.nodes[0]), index.get(&bond.nodes[1]))
-            else {
+            let (Some(i), Some(j)) = (rows.row(bond.nodes[0]), rows.row(bond.nodes[1])) else {
                 continue;
             };
             let is_aromatic = aromatic_marking(&bond.props);
@@ -294,11 +289,7 @@ impl BondGraph {
         let rings = ring_set
             .rings()
             .iter()
-            .map(|ring| {
-                ring.iter()
-                    .filter_map(|aid| index.get(aid).copied())
-                    .collect()
-            })
+            .map(|ring| ring.iter().filter_map(|aid| rows.row(*aid)).collect())
             .collect();
 
         let bond_index = bond_ids.iter().enumerate().map(|(k, b)| (*b, k)).collect();
@@ -559,17 +550,13 @@ mod tests {
 
     /// Ring bonds as `((i, j), is_double)`, endpoints low-high, sorted.
     fn ring_doubles(mol: &Atomistic) -> Vec<((usize, usize), bool)> {
-        let index: HashMap<NodeId, usize> = mol
-            .atoms()
-            .enumerate()
-            .map(|(position, (id, _))| (id, position))
-            .collect();
+        let rows = mol.atom_table();
         let mut out: Vec<((usize, usize), bool)> = mol
             .bonds()
             .map(|(id, _)| {
                 let ends = mol.get_bond(id).expect("endpoints").nodes;
                 let (a, b) = (ends[0], ends[1]);
-                let (a, b) = (index[&a], index[&b]);
+                let (a, b) = (rows.row(a).unwrap(), rows.row(b).unwrap());
                 (
                     (a.min(b), a.max(b)),
                     mol.bond_number(id).unwrap() == BondNumber::Double,

@@ -21,7 +21,7 @@ class TestWritePdb:
         frame = mp.Frame()
         frame["atoms"] = mp.Block(columns)
 
-        with pytest.raises(OSError, match=f"Missing '{missing}' column"):
+        with pytest.raises(ValueError, match=f"Missing '{missing}' column"):
             mp.io.write_pdb(tmp_path / "test.pdb", frame)
 
     def test_valid_minimal_frame(self, tmp_path):
@@ -70,7 +70,7 @@ class TestWritePdb:
             }
         )
         frame.meta = {"elements": mp.core.MetaValue("string", "C O")}
-        with pytest.raises(OSError, match="no string 'element' column"):
+        with pytest.raises(ValueError, match="no string 'element' column"):
             mp.io.write_pdb(tmp_path / "test.pdb", frame)
 
     def test_elements_from_atom_data(self, tmp_path):

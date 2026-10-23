@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 
+use crate::core::NeighborKinds;
 use molrs::core::Atomistic;
 use molrs::core::Element;
 use molrs::core::MolRsError;
@@ -93,25 +94,30 @@ fn element_of(mol: &Atomistic, id: NodeId) -> Result<Element, MolRsError> {
 /// [`assign_aromaticity`](molrs::perceive::assign_aromaticity) when a flag
 /// cannot be written.
 pub fn perceive_dg_features(mol: &Atomistic) -> Result<DgFeatures, MolRsError> {
-    let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
-    let id_to_idx: HashMap<NodeId, usize> = atom_ids
-        .iter()
-        .enumerate()
-        .map(|(i, &id)| (id, i))
-        .collect();
+    let atom_ids: Vec<NodeId> = mol.atom_ids().collect();
+    let rows = mol.atom_table();
     let n = atom_ids.len();
+
+    // Aromaticity: the shared RDKit-aligned model in `perceive`
+    // (`assign_aromaticity`), not re-derived here. It keeps the aromaticity
+    // the input declares (a SMILES `c1ccccc1`) and perceives it from scratch
+    // only when the input declares none; either way it marks the aromatic
+    // atoms and bonds. It annotates a clone — same ids, same atom order — so
+    // the caller's graph is untouched and the flags read back by id.
+    let mut probe = mol.clone();
+    molrs::perceive::assign_aromaticity(&mut probe)?;
 
     let mut adj = vec![Vec::new(); n];
     let mut order: HashMap<(usize, usize), f64> = HashMap::new();
     for (i, &aid) in atom_ids.iter().enumerate() {
         let mut nbrs: Vec<usize> = Vec::new();
-        for (nid, bid) in mol.neighbor_bonds(aid) {
-            if let Some(&j) = id_to_idx.get(&nid) {
+        for (nid, bid) in mol.neighbors(aid, NeighborKinds::BONDS) {
+            if let Some(j) = rows.row(nid) {
                 nbrs.push(j);
                 let key = if i < j { (i, j) } else { (j, i) };
                 // Distance geometry wants a bond-length proxy, so an aromatic
                 // bond is the partial order its geometry actually has.
-                let ord = if mol.bond_type(bid)?.is_aromatic() {
+                let ord = if probe.bond_type(bid)?.is_aromatic() {
                     1.5
                 } else {
                     mol.bond_number(bid)?.count().max(1) as f64
@@ -128,33 +134,13 @@ pub fn perceive_dg_features(mol: &Atomistic) -> Result<DgFeatures, MolRsError> {
     let ring_idx: Vec<Vec<usize>> = rings
         .rings()
         .iter()
-        .map(|r| {
-            r.iter()
-                .filter_map(|aid| id_to_idx.get(aid).copied())
-                .collect()
-        })
+        .map(|r| r.iter().filter_map(|aid| rows.row(*aid)).collect())
         .collect();
 
-    // Aromaticity: delegate to the shared RDKit-aligned model in `perceive`
-    // (`molrs::perceive::assign_aromaticity`) instead of re-deriving it here.
-    // It keeps the aromaticity the input declares (a SMILES `c1ccccc1`, whose
-    // aromatic bonds state no Kekulé number) and perceives it from scratch
-    // (a port of `setAromaticity(AROMATICITY_RDKIT)`) only when the input
-    // declares none. Either way every aromatic atom ends with
-    // `is_aromatic = true`; we read those flags back, index-aligned.
-    //
-    // It annotates a *clone*, which keeps the caller's graph untouched (the
-    // embed pipeline relies on that); the clone preserves atom-insertion
-    // order, so `probe.atoms()` enumerates in the same sequence as `atom_ids`
-    // and we can zip them index-by-index.
     let mut aromatic_atom = vec![false; n];
-    {
-        let mut probe = mol.clone();
-        molrs::perceive::assign_aromaticity(&mut probe)?;
-        for (i, (_, atom)) in probe.atoms().enumerate().take(n) {
-            if atom.get(keys::IS_AROMATIC) == Some(&PropValue::Bool(true)) {
-                aromatic_atom[i] = true;
-            }
+    for (i, (_, atom)) in probe.atoms().enumerate().take(n) {
+        if atom.get(keys::IS_AROMATIC) == Some(&PropValue::Bool(true)) {
+            aromatic_atom[i] = true;
         }
     }
 
@@ -177,20 +163,16 @@ pub fn perceive_dg_features(mol: &Atomistic) -> Result<DgFeatures, MolRsError> {
         })
         .collect::<Result<_, MolRsError>>()?;
 
-    // Aromatic bond flags.
+    // Aromatic bond flags: the perceived bond class, not a guess from the
+    // atoms — two aromatic atoms in one ring need not share an aromatic bond
+    // (fluorene's five-membered ring, biphenylene's four-membered one).
     let mut aromatic_bond: HashMap<(usize, usize), bool> = HashMap::new();
-    for i in 0..n {
-        for &j in &adj[i] {
-            if j <= i {
-                continue;
-            }
-            let arom = aromatic_atom[i]
-                && aromatic_atom[j]
-                && rings.is_atom_in_ring(atom_ids[i])
-                && rings.is_atom_in_ring(atom_ids[j])
-                && bond_shares_ring(&ring_idx, i, j);
-            aromatic_bond.insert((i, j), arom);
-        }
+    for (bid, bond) in probe.bonds() {
+        let (Some(i), Some(j)) = (rows.row(bond.nodes[0]), rows.row(bond.nodes[1])) else {
+            continue;
+        };
+        let key = if i < j { (i, j) } else { (j, i) };
+        aromatic_bond.insert(key, probe.bond_type(bid)?.is_aromatic());
     }
 
     Ok(DgFeatures {
@@ -207,21 +189,6 @@ pub fn perceive_dg_features(mol: &Atomistic) -> Result<DgFeatures, MolRsError> {
 /// The graph bond order between atoms `i` and `j` (1 when unrecorded).
 fn bond_order_of(order: &HashMap<(usize, usize), f64>, i: usize, j: usize) -> f64 {
     order.get(&(i.min(j), i.max(j))).copied().unwrap_or(1.0)
-}
-
-/// Whether atoms `i` and `j` are adjacent within some common ring.
-fn bond_shares_ring(ring_idx: &[Vec<usize>], i: usize, j: usize) -> bool {
-    for ring in ring_idx {
-        let rsize = ring.len();
-        for w in 0..rsize {
-            let a = ring[w];
-            let b = ring[(w + 1) % rsize];
-            if (a == i && b == j) || (a == j && b == i) {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 #[cfg(all(test, feature = "smiles"))]
@@ -259,6 +226,15 @@ mod tests {
     #[test]
     fn a_kekule_benzene_is_perceived_aromatic() {
         assert_eq!(aromatic_counts("C1=CC=CC=C1"), (6, 6));
+    }
+
+    /// Fluorene's biaryl bond joins two aromatic atoms inside its
+    /// five-membered ring and is not aromatic: the flag is the perceived bond
+    /// class, not "both ends aromatic, one ring shared".
+    #[test]
+    fn fluorene_keeps_its_biaryl_bond_single() {
+        assert_eq!(aromatic_counts("c1ccc2c(c1)Cc1ccccc1-2"), (12, 12));
+        assert_eq!(aromatic_counts("C1=CC=C2C(=C1)CC1=CC=CC=C12"), (12, 12));
     }
 
     #[test]

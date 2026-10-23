@@ -885,8 +885,10 @@ impl PyStyleSpec {
     }
 
     /// What prices it: ``"expression"``, ``"scalar"`` / ``"compound"`` (a
-    /// form kernel: Rust or a Python callable), ``"constructor"`` (a native
-    /// kernel), or ``None`` (a category that prices nothing).
+    /// form kernel: Rust — every built-in that is a function of its
+    /// coordinate or positions — or a Python callable), ``"constructor"`` (a
+    /// native whole-frame kernel: PME, CMAP), or ``None`` (a category that
+    /// prices nothing).
     #[getter]
     fn kernel(&self) -> Option<&'static str> {
         self.kernel

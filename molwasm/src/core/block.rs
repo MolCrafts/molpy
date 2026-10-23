@@ -25,9 +25,9 @@
 //!
 //! | `dtype(key)` | `copy` / `view` returns | `set` infers it from |
 //! |--------------|------------------------|----------------------|
-//! | `"float"` | `Float64Array` | `Float64Array` |
-//! | `"i8"` / `"i16"` / `"int"` / `"i64"` | `Int8Array` / `Int16Array` / `Int32Array` / `BigInt64Array` | same |
-//! | `"u8"` / `"u16"` / `"u32"` / `"uint"` | `Uint8Array` / `Uint16Array` / `Uint32Array` / `BigUint64Array` | same |
+//! | `"f64"` | `Float64Array` | `Float64Array` |
+//! | `"i8"` / `"i16"` / `"i32"` / `"i64"` | `Int8Array` / `Int16Array` / `Int32Array` / `BigInt64Array` | same |
+//! | `"u8"` / `"u16"` / `"u32"` / `"u64"` | `Uint8Array` / `Uint16Array` / `Uint32Array` / `BigUint64Array` | same |
 //! | `"bool"` | `boolean[]` (`copy`; `view` throws) | `boolean[]` |
 //! | `"string"` | `string[]` (`copy`; `view` throws) | `string[]` (also the empty `[]`) |
 //! | `"c64"` / `"c128"` | `{ real, imag, shape, dtype }` (`copy`; `view` throws) | never |
@@ -64,13 +64,12 @@ use super::js_err;
 const COLUMN_TYPES: &'static str = r#"
 /**
  * Column dtype as `Block.dtype` reports it: molrs core's dtype name, the one
- * the Frame schema and every binding use. `float` is `f64`
- * (`Float64Array`), `int` is `i32` (`Int32Array`), `uint` is `u64`
- * (`BigUint64Array`).
+ * the Frame schema, a `.mrec` store and every binding use — molrec's
+ * concrete-width names (`f64` is a `Float64Array`, `u64` a `BigUint64Array`).
  */
 export type DType =
-    | "float" | "i8" | "i16" | "int" | "i64"
-    | "u8" | "u16" | "u32" | "uint"
+    | "f64" | "i8" | "i16" | "i32" | "i64"
+    | "u8" | "u16" | "u32" | "u64"
     | "bool" | "string" | "c64" | "c128";
 
 /** A numeric column as a typed array, in the column's own dtype. */
@@ -130,7 +129,7 @@ extern "C" {
 /// atoms.set("element", ["C", "C", "O"]);
 /// atoms.set("id", new BigUint64Array([0n, 1n, 2n]));
 /// atoms.nRows;            // 3
-/// atoms.dtype("id");      // "uint"
+/// atoms.dtype("id");      // "u64"
 /// const x = atoms.view("x"); // zero-copy Float64Array; copy("x") to keep it
 /// ```
 #[wasm_bindgen]
@@ -267,7 +266,7 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// if (bonds.has("bond_type") && bonds.dtype("bond_type") === "uint") { … }
+    /// if (bonds.has("bond_type") && bonds.dtype("bond_type") === "u64") { … }
     /// ```
     #[wasm_bindgen(js_name = has)]
     pub fn has(&self, key: &str) -> bool {
@@ -284,7 +283,7 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// atoms.dtype("x");       // "float"
+    /// atoms.dtype("x");       // "f64"
     /// atoms.dtype("element"); // "string"
     /// ```
     #[wasm_bindgen(js_name = dtype)]
@@ -451,12 +450,14 @@ impl Block {
     /// ```
     #[wasm_bindgen(js_name = copy)]
     pub fn copy(&self, key: &str, fallback: Option<JsColumn>) -> Result<JsColumn, JsValue> {
-        match self.with_col(key, |col| column_to_js(key, col)) {
-            Ok(value) => Ok(value.unchecked_into()),
-            Err(err) => match fallback {
-                Some(fallback) if is_missing_column(&err, key) => Ok(fallback),
-                _ => Err(err),
-            },
+        // The fallback answers an absent column only: presence is read off
+        // the block (a dead handle throws here), never off an error's text.
+        let present = self.with(|b| b.get(key).is_some())?;
+        match (present, fallback) {
+            (false, Some(fallback)) => Ok(fallback),
+            _ => Ok(self
+                .with_col(key, |col| column_to_js(key, col))?
+                .unchecked_into()),
         }
     }
 
@@ -541,11 +542,6 @@ impl Default for Block {
 
 fn missing_column(key: &str) -> JsValue {
     JsValue::from_str(&format!("column '{key}' not found"))
-}
-
-fn is_missing_column(err: &JsValue, key: &str) -> bool {
-    err.as_string()
-        .is_some_and(|text| text == format!("column '{key}' not found"))
 }
 
 /// Attach the column's `shape` and `dtype` without wrapping the value,
@@ -914,16 +910,10 @@ mod tests {
         };
     }
 
-    round_trip!(
-        round_trip_f64,
-        Float64Array,
-        f64,
-        "float",
-        [1.5, -2.0, 3.25]
-    );
+    round_trip!(round_trip_f64, Float64Array, f64, "f64", [1.5, -2.0, 3.25]);
     round_trip!(round_trip_i8, Int8Array, i8, "i8", [-1, 0, 7]);
     round_trip!(round_trip_i16, Int16Array, i16, "i16", [-300, 0, 300]);
-    round_trip!(round_trip_i32, Int32Array, i32, "int", [1, -2, 3]);
+    round_trip!(round_trip_i32, Int32Array, i32, "i32", [1, -2, 3]);
     round_trip!(round_trip_i64, BigInt64Array, i64, "i64", [-5, 0, 1 << 40]);
     round_trip!(round_trip_u8, Uint8Array, u8, "u8", [0, 128, 255]);
     round_trip!(round_trip_u16, Uint16Array, u16, "u16", [0, 1, 65535]);
@@ -934,7 +924,7 @@ mod tests {
         "u32",
         [0, 1, 4_000_000_000]
     );
-    round_trip!(round_trip_u64, BigUint64Array, u64, "uint", [0, 7, 1 << 50]);
+    round_trip!(round_trip_u64, BigUint64Array, u64, "u64", [0, 7, 1 << 50]);
 
     #[wasm_bindgen_test]
     fn round_trip_string() {
@@ -994,7 +984,7 @@ mod tests {
         b.set("c", col(Float64Array::from(&[1.0][..])), None)
             .unwrap();
         b.set("c", col(Int32Array::from(&[1][..])), None).unwrap();
-        assert_eq!(b.dtype("c").unwrap().as_string().unwrap(), "int");
+        assert_eq!(b.dtype("c").unwrap().as_string().unwrap(), "i32");
         assert_eq!(b.keys().unwrap(), vec!["c".to_string()]);
     }
 

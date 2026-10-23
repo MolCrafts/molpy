@@ -7,17 +7,17 @@ rotations as ``(3, 3)`` row-major matrices. All computation is in Rust; this
 module is a thin re-export of ``_core.op``.
 """
 
-from molpy._core import op as _op
+from molpy import _core
 
-DEFAULT_GAP_TOL = _op.DEFAULT_GAP_TOL
+DEFAULT_GAP_TOL = _core.op.DEFAULT_GAP_TOL
 
-Superposition = _op.Superposition
+Superposition = _core.op.Superposition
 
-superpose = _op.superpose
+superpose = _core.op.superpose
 
-centroid = _op.centroid
+centroid = _core.op.centroid
 
-place_from_internal_coords = _op.place_from_internal_coords
+place_from_internal_coords = _core.op.place_from_internal_coords
 
 __all__ = [
     "DEFAULT_GAP_TOL",

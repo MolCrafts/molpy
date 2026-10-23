@@ -17,18 +17,18 @@ use molrs::op::F;
 ///
 /// Per evaluation it gathers every term's positions, makes **one** call to
 /// the form, and adds `−∂E/∂x` onto the atoms.
-pub struct CompoundTerms {
-    form: Arc<dyn CompoundForm>,
+pub struct CompoundTerms<Fm: ?Sized = dyn CompoundForm> {
+    form: Arc<Fm>,
     /// One column per position of a term: `atoms[a][t]`.
     atoms: Vec<Vec<usize>>,
     params: TermParams,
 }
 
-impl CompoundTerms {
+impl<Fm: CompoundForm + ?Sized> CompoundTerms<Fm> {
     /// The kernel of `spec` over `category`'s block in `frame`, `arity`
     /// atoms per term.
     pub fn build(
-        form: Arc<dyn CompoundForm>,
+        form: Arc<Fm>,
         category: &CategorySpec,
         spec: &StyleSpec,
         style: &Params,
@@ -53,6 +53,9 @@ impl CompoundTerms {
             frame,
         )?;
         params.require(spec, &form.inputs())?;
+        params
+            .style_cols(|p| form.check_style(p))
+            .map_err(|r| TermParams::refused(spec, r))?;
         Ok(Self {
             form,
             atoms,
@@ -115,14 +118,14 @@ impl CompoundTerms {
     }
 }
 
-impl Potential for CompoundTerms {
+impl<Fm: CompoundForm + ?Sized> Potential for CompoundTerms<Fm> {
     fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
         let energy = self.fold(coords, acc.forces_without_virial(), |t, p| self.atoms[p][t]);
         acc.add_energy(energy);
     }
 }
 
-impl IndexedTerms for CompoundTerms {
+impl<Fm: CompoundForm + ?Sized> IndexedTerms for CompoundTerms<Fm> {
     fn terms(&self) -> Array2<u32> {
         let cols: Vec<&[usize]> = self.atoms.iter().map(Vec::as_slice).collect();
         term_table(&cols)

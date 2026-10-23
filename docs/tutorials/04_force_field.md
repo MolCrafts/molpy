@@ -60,6 +60,8 @@ Parameters are keywords: numbers go to the numeric parameters, strings
 import molpy as mp
 
 ff = mp.ff.forcefield.ForceField(name="tutorial", units="real")
+# The 1-2 / 1-3 / 1-4 pair weights (LJ, then Coulomb) are stated, never assumed.
+ff.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 0.8333])
 
 # "full" corresponds to LAMMPS atom_style full (charge + molecule ID per atom)
 atom_style = ff.def_style("atom", "full")
@@ -160,8 +162,7 @@ frame = mp.Frame(
 )
 
 pots = mp.ff.compile.PotentialCompiler(ff).compile(frame)
-energy = pots.calc_energy(frame)
-forces = pots.calc_forces(frame)
+energy, forces = pots.evaluate(frame)
 print(f"energy = {energy}")
 print(f"forces =\n{forces}")
 ```
@@ -177,13 +178,15 @@ Once the model is internally consistent, serialization becomes an interface prob
 ### GROMACS
 
 ```python
-mp.io.write_top_forcefield("system.itp", ff, precision=4)
+from pathlib import Path
+
+mp.io.gromacs.GromacsTopForcefieldWriter(precision=4).write(Path("system.itp"), ff)
 ```
 
 ### XML
 
 ```python
-mp.io.write_openmm_forcefield("system.xml", ff, precision=6)
+mp.io.openmm_xml.OpenmmXmlWriter(precision=6).write(Path("system.xml"), ff)
 ```
 
 ### LAMMPS
@@ -200,7 +203,9 @@ into the `.mdp` instead.)
 ```python
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-print(mp.io.write_lammps_forcefield_str(ff, frame, precision=4))
+buf = bytearray()
+mp.io.lammps.LammpsForcefieldWriter(frame, precision=4).write(buf, ff)
+print(buf.decode())
 ```
 
 

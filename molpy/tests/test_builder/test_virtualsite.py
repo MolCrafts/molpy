@@ -1,4 +1,4 @@
-"""VirtualSiteBuilder / DrudeBuilder / Tip4pBuilder.
+"""DrudeBuilder / Tip4pBuilder.
 
 Drude tests read a hand-typed CL&P [C4C1im]+ (``mol2/c4c1im_clp_typed.mol2``);
 Tip4p uses plain water.
@@ -50,27 +50,6 @@ def _rows(struct, block):
     cols = {k: blk[k].tolist() for k in blk.keys()}
     n = len(next(iter(cols.values())))
     return [{k: v[i] for k, v in cols.items()} for i in range(n)]
-
-
-class TestVirtualSiteBuilder:
-    def test_builder_is_an_abstract_transform(self):
-        with pytest.raises(TypeError):
-            mp.builder.VirtualSiteBuilder()
-
-
-class TestDrudeBuilder:
-    def test_is_a_virtual_site_transform(self):
-        assert issubclass(mp.builder.DrudeBuilder, mp.builder.VirtualSiteBuilder)
-
-
-class TestTip4pBuilder:
-    def test_is_a_virtual_site_transform(self):
-        assert issubclass(mp.builder.Tip4pBuilder, mp.builder.VirtualSiteBuilder)
-
-
-def test_builders_are_subclasses():
-    assert issubclass(mp.builder.DrudeBuilder, mp.builder.VirtualSiteBuilder)
-    assert issubclass(mp.builder.Tip4pBuilder, mp.builder.VirtualSiteBuilder)
 
 
 def test_the_clpol_table_is_molrs_s():

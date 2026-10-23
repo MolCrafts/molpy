@@ -22,7 +22,7 @@ Every analysis follows the same three beats: **configure an object, call
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import Rdf
+from molpy.compute import LocalDensity
 
 rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(200, 3))
@@ -33,17 +33,35 @@ frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 nl = mp.core.NeighborList(10.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
-result = Rdf(n_bins=100, r_max=10.0, r_min=0.0).compute(pairs=[nlist])
-print(result.rdf.shape, result.bin_centers.shape)  # -> (100,) (100,)
+local = LocalDensity(r_max=10.0).compute(pairs=nlist)
+print(local.density.shape)                         # -> (200,)
 ```
 
-The parameters that define the measurement (`n_bins`, `r_max`, `r_min`) go
-into the constructor, and nothing else does. The data goes into
-`.compute(...)`, always by keyword: here one pair table per frame. That
-separation is deliberate — one configured analyzer can be applied to many
-trajectories and the measurement stays identical. Every optional setting has
-its default in the native core; `Rdf.spec()` lists them, and an instance
-reports its own through `.tunables()`.
+The parameters that define the measurement (here `r_max`) go into the
+constructor, and nothing else does. The data goes into `.compute(...)`, always
+by keyword: here the pair table of one frame. That separation is deliberate —
+one configured analyzer can be applied to many trajectories and the
+measurement stays identical. Every optional setting has its default in the
+native core; `LocalDensity.spec()` lists them, and an instance reports its own
+through `.tunables()`.
+
+### Three computes are streams
+
+`Msd`, `Vacf` and `Rdf` average over a whole trajectory, so they have no
+`.compute(...)`. Their second beat is a stream: `.accumulator()` hands out an
+accumulator, you `push` one frame at a time, and `finish()` reads the result
+over every frame pushed so far — without consuming the accumulator, so a run
+can be inspected and continued. Memory stays bounded however long the
+trajectory is:
+
+```python
+from molpy.compute import Rdf
+
+accumulator = Rdf(n_bins=100, r_max=10.0, r_min=0.0).accumulator()
+accumulator.push(nlist)                            # one pair table per frame
+result = accumulator.finish()
+print(result.rdf.shape, result.bin_centers.shape)  # -> (100,) (100,)
+```
 
 ### What comes back is a typed result
 
@@ -52,10 +70,7 @@ or tuple. `Rdf` gives `.rdf`, `.bin_centers`, `.n_frames`; `LocalDensity`
 gives one `.density` and one `.n_neighbors` entry per particle:
 
 ```python
-from molpy.compute import LocalDensity
-
-local = LocalDensity(r_max=10.0).compute(pairs=nlist)
-print(local.density.shape)                         # -> (200,)
+print(result.n_frames, local.n_neighbors.shape)    # -> 1 (200,)
 ```
 
 The per-page "Computing it" section always names the fields a result carries.
@@ -70,7 +85,8 @@ A compute never touches a `Frame`. Which columns feed an analysis — unwrapped
 or wrapped coordinates, which charges, which molecules — is a decision only
 you can make, so you make it with the Frame/Block API (`frame.coords`,
 `frame["atoms"]["q"]`, `frame.box`) and hand the arrays over. A trajectory is
-one `np.stack` of per-frame coordinates into a `(T, N, 3)` array.
+one `np.stack` of per-frame coordinates into a `(T, N, 3)` array — or, for
+the three streams, one `push` per frame.
 
 Transport and dielectric analyses take those time series and follow an
 explicit **compose** pattern: a series is built, a raw correlation comes out of
@@ -89,7 +105,10 @@ charges = np.array([1.0, -1.0, 1.0, -1.0])
 dipole = DipoleMoment().compute(positions=positions, charges=charges)
 print(dipole.moments.shape)                        # -> (80, 1, 3)
 
-raw = Msd(max_lag=20).compute(positions=dipole.moments, dt=10.0)
+accumulator = Msd(max_lag=20).accumulator()
+for moment in dipole.moments:                      # one (1, 3) "particle" per frame
+    accumulator.push(moment, dt=10.0)
+raw = accumulator.finish()
 print(raw.values.shape)                            # -> (21, 1)
 ```
 
@@ -98,8 +117,8 @@ Two details in those lines regularly trip people up.
 **A conductivity is an MSD.** The Einstein route to conductivity is the mean
 squared displacement of the collective charge dipole — the same mathematics as
 a [particle MSD](msd.md), applied to one "particle" whose position is
-$\mathbf{M}(t)$. That is why `DipoleMoment` returns a `(T, 1, 3)` series: it
-feeds `Msd` as it is. See [PMSD](pmsd.md). Every time correlation runs on one
+$\mathbf{M}(t)$. That is why `DipoleMoment` returns a `(T, 1, 3)` series: each
+frame of it is a `(1, 3)` "position" that `Msd` takes as it is. See [PMSD](pmsd.md). Every time correlation runs on one
 engine, `Correlator`, and returns the same `TimeCorrelation`: `.values[lag,
 channel]` is the curve, `.lag_times` the time axis, and nothing is derived.
 Integrals, slopes, fits and spectra are computes of their own that read it.
@@ -131,7 +150,8 @@ your script where a reviewer can see it — not buried in a library default.
     - **Displacement kernels need unwrapped coordinates.** Dynamics dumps are
       normally written that way already (`xu yu zu`, no-jump, …). Wrapped
       `x y z` without images turns a diffusion curve into box-sized jumps;
-      pass the per-frame `boxes` and `Msd` refuses such a trajectory. See
+      push each frame with its box (`simbox=`) and `Msd` refuses such a
+      trajectory. See
       [MSD](msd.md).
     - **Structural kernels need a periodic box.** The neighbour search and
       every kernel that needs a volume read the box the pair table was
@@ -151,36 +171,34 @@ For a LAMMPS dump of unwrapped coordinates:
 
 ```python
 # docs: skip — needs a trajectory file of your own
-import numpy as np
+from pathlib import Path
 import molpy as mp
 from molpy.compute import Msd, Rdf
 
-reader = mp.io.read_lammps_dump_trajectory("run.lammpstrj")
-frames = reader.read_all()   # list[Frame]; frame.box from BOX BOUNDS
+reader = mp.io.lammps.LammpsDumpReader(Path("run.lammpstrj"))
 
 nl = mp.core.NeighborList(8.0)
-tables = []
-for f in frames:
-    nl.build(f.coords, f.box)
-    tables.append(nl.neighbors())
-gr = Rdf(n_bins=160, r_max=8.0, r_min=0.0).compute(pairs=tables)
-
-positions = np.stack([f.coords for f in frames])   # (T, N, 3), unwrapped
-msd = Msd(max_lag=500).compute(
-    positions=positions, dt=10.0, boxes=[f.box for f in frames]
-)
+gr = Rdf(n_bins=160, r_max=8.0, r_min=0.0).accumulator()
+msd = Msd(max_lag=500).accumulator()
+for f in reader:                                   # frame.box from BOX BOUNDS
+    unwrapped = f["atoms"]["xu", "yu", "zu"]       # (N, 3)
+    nl.build(unwrapped, f.box)                     # the search wraps them itself
+    gr.push(nl)
+    msd.push(unwrapped, dt=10.0, simbox=f.box)
+g_of_r, msd_curve = gr.finish(), msd.finish()
 ```
 
 Prefer dumps that already store continuous paths (`xu yu zu`, or `x y z` plus
-`ix iy iz` unwrapped on read). Given the per-frame `boxes`, `Msd` checks that
-no atom jumps by more than half a box between frames and refuses a wrapped
+`ix iy iz` unwrapped on read). Given each frame's box, `Msd` checks that no
+atom jumps by more than half a box between frames and refuses a wrapped
 trajectory instead of returning a curve of box-sized jumps; `Unwrap` turns
 wrapped coordinates (with image flags, or by continuity) into the continuous
 path.
 
-Use `reader.read_frame(i)`, `read_range`, or `read_frames` instead of
-`read_all()` when the trajectory does not fit in memory. Other formats live in
-[`molpy.io`](../user-guide/11_io.md) (`read_gro`, `read_dcd_trajectory`, …).
+The reader parses frames on demand, so the loop above never holds more than
+one frame; `reader[i]` reads a single frame by random access. Other formats
+live in [`molpy.io`](../user-guide/11_io.md) (`read_gro`, `read_dcd`,
+`read_xtc`, …).
 
 ### Partial (species-resolved) distributions
 
@@ -218,7 +236,9 @@ a_xyz = mixture.coords[species == 1]
 b_xyz = mixture.coords[species == 2]
 
 cross = mp.core.NeighborQuery(mixture.box, b_xyz, 8.0).query(a_xyz)
-g_ab = Rdf(n_bins=40, r_max=8.0, r_min=0.0).compute(pairs=[cross])
+partial = Rdf(n_bins=40, r_max=8.0, r_min=0.0).accumulator()
+partial.push(cross)
+g_ab = partial.finish()
 print(g_ab.n_query_points, g_ab.n_points, g_ab.self_query)  # -> 143 157 False
 ```
 

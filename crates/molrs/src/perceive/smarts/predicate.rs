@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 
 use crate::core::Atomistic;
-use crate::core::Element;
+use crate::core::NeighborKinds;
 use crate::core::NodeId;
 use crate::line_notation::atom_keys;
 use crate::perceive::{RingSet, perceive_rings};
@@ -49,12 +49,20 @@ pub struct SmartsTarget<'m> {
     atomic_number: HashMap<NodeId, u8>,
     /// atom → is-aromatic (perceived once, up front).
     aromatic_atom: HashMap<NodeId, bool>,
-    /// atom → total H count (explicit H neighbours; see module note).
+    /// atom → total H count, drawn and implicit
+    /// ([`n_hydrogens`](crate::perceive::n_hydrogens)).
     h_count: HashMap<NodeId, u32>,
     /// atom → explicit degree (number of bonded neighbours).
     degree: HashMap<NodeId, u32>,
+    /// atom → hydrogens the graph does not draw
+    /// ([`n_implicit_hydrogens`](crate::perceive::n_implicit_hydrogens)).
+    implicit_h: HashMap<NodeId, u32>,
     /// atom → number of incident ring bonds (RDKit `x<n>`).
     ring_bond_count: HashMap<NodeId, u32>,
+    /// Each atom's hybridization in atom-row order
+    /// ([`perceive_hybridizations`](crate::perceive::perceive_hybridizations)),
+    /// perceived on the first `^<n>` a pattern asks.
+    hybridization: std::sync::OnceLock<Vec<crate::perceive::Hybridization>>,
     /// External "current label" map for the `%LABEL` context predicate.
     /// Borrowed from the caller; empty for the label-free match path.
     labels: &'m HashMap<NodeId, String>,
@@ -90,17 +98,19 @@ impl<'m> SmartsTarget<'m> {
             // silent source of truth.
             aromatic_atom.insert(id, atom_keys::is_aromatic(&atom));
 
-            degree.insert(id, mol.neighbor_bonds(id).count() as u32);
+            degree.insert(id, mol.neighbors(id, NeighborKinds::BONDS).count() as u32);
         }
 
-        // Total H count = number of bonded neighbour atoms that are hydrogen,
-        // Z = 1 (bonds only: a port is not a bond).
-        for (id, _) in mol.atoms() {
-            let h = mol
-                .neighbor_bonds(id)
-                .filter(|(nb, _)| atomic_number.get(nb) == Some(&Element::H.z()))
-                .count() as u32;
-            h_count.insert(id, h);
+        // Total H count = bonded hydrogen atoms plus the implicit ones the
+        // valence model (or a bracket atom's declared count) adds — RDKit's
+        // `getTotalNumHs`, so `[OH]` matches ethanol drawn either way.
+        let mut implicit_h = HashMap::new();
+        for id in mol.atom_ids() {
+            h_count.insert(id, crate::perceive::n_hydrogens(mol, id));
+            implicit_h.insert(
+                id,
+                crate::perceive::n_implicit_hydrogens(mol, id).unwrap_or(0),
+            );
         }
 
         // Ring-bond connectivity (`x<n>`): for each ring bond, both endpoints
@@ -123,7 +133,9 @@ impl<'m> SmartsTarget<'m> {
             aromatic_atom,
             h_count,
             degree,
+            implicit_h,
             ring_bond_count,
+            hybridization: std::sync::OnceLock::new(),
             labels: &EMPTY_LABELS,
         }
     }
@@ -157,8 +169,32 @@ impl<'m> SmartsTarget<'m> {
         self.degree.get(&id).copied().unwrap_or(0)
     }
 
+    /// Degree plus implicit hydrogens (RDKit `getTotalDegree`).
+    fn total_connections(&self, id: NodeId) -> u32 {
+        self.degree(id) + self.implicit_h.get(&id).copied().unwrap_or(0)
+    }
+
     fn ring_bond_count(&self, id: NodeId) -> u32 {
         self.ring_bond_count.get(&id).copied().unwrap_or(0)
+    }
+
+    /// RDKit's `^<n>` number of atom `id`'s hybridization; `None` for an atom
+    /// no orbital count applies to.
+    fn hybridization(&self, id: NodeId) -> Option<u8> {
+        use crate::perceive::Hybridization as H;
+        let all = self
+            .hybridization
+            .get_or_init(|| crate::perceive::perceive_hybridizations(self.mol));
+        let row = self.mol.atom_table().row(id)?;
+        match all.get(row)? {
+            H::S => Some(0),
+            H::Sp => Some(1),
+            H::Sp2 => Some(2),
+            H::Sp3 => Some(3),
+            H::Sp3d => Some(4),
+            H::Sp3d2 => Some(5),
+            H::Other => None,
+        }
     }
 }
 
@@ -183,7 +219,7 @@ pub enum AtomPredicate {
     AtomicNum(u8),
     /// `H<n>` — total hydrogen count.
     TotalH(u32),
-    /// `X<n>` — total connections (degree incl. implicit H; here = degree).
+    /// `X<n>` — total connections: degree plus implicit hydrogens.
     TotalConnections(u32),
     /// `D<n>` — explicit degree.
     Degree(u32),
@@ -199,6 +235,8 @@ pub enum AtomPredicate {
     /// `x<n>` — ring-bond connectivity: the atom is incident to exactly `n`
     /// ring bonds.
     RingBondCount(u32),
+    /// `^<n>` — the atom's hybridization is RDKit's number `n`.
+    Hybridization(u8),
     /// `+`/`-`/`+n`/`-n` — formal charge.
     Charge(i32),
     /// `%LABEL` — context-label predicate (a general molrs extension, not part
@@ -236,7 +274,7 @@ impl AtomPredicate {
             }
             AtomPredicate::AtomicNum(z) => ctx.has_atomic_number(id, *z),
             AtomPredicate::TotalH(n) => ctx.h_count(id) == *n,
-            AtomPredicate::TotalConnections(n) => ctx.degree(id) == *n,
+            AtomPredicate::TotalConnections(n) => ctx.total_connections(id) == *n,
             AtomPredicate::Degree(n) => ctx.degree(id) == *n,
             AtomPredicate::RingMembership(None) => ctx.rings.is_atom_in_ring(id),
             AtomPredicate::RingMembership(Some(n)) => ctx.rings.n_atom_rings(id) as u32 == *n,
@@ -259,6 +297,7 @@ impl AtomPredicate {
                 size >= *lo && hi.is_none_or(|h| size <= h)
             }
             AtomPredicate::RingBondCount(n) => ctx.ring_bond_count(id) == *n,
+            AtomPredicate::Hybridization(n) => ctx.hybridization(id) == Some(*n),
             AtomPredicate::Charge(c) => mol.get_atom(id).map_or(0, |a| a.formal_charge()) == *c,
             AtomPredicate::HasContextLabel(label) => ctx.has_label(id, label),
         }

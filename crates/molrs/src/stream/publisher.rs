@@ -604,6 +604,31 @@ async fn handle_client(
     pump(write, read, bcast_rx, cmd_tx, format).await;
 }
 
+/// Close the socket on a control message that is no command: the peer reads
+/// why in the close frame (1007, invalid payload), rather than the message
+/// vanishing. WebSocket caps a close reason at 123 bytes.
+async fn refuse_command<S>(
+    write: &mut futures_util::stream::SplitSink<WebSocketStream<S>, Message>,
+    error: &StreamError,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let mut reason = error.to_string();
+    if reason.len() > 123 {
+        let mut cut = 123;
+        while !reason.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        reason.truncate(cut);
+    }
+    let _ = write
+        .send(Message::Close(Some(CloseFrame {
+            code: CloseCode::Invalid,
+            reason: reason.into(),
+        })))
+        .await;
+}
+
 /// Frames out, control commands in, until either side goes away.
 ///
 /// Identical whichever end dialed: once the socket is open a WebSocket is
@@ -625,12 +650,11 @@ async fn pump<S>(
                     Ok(payload) => {
                         let msg = match format {
                             FrameEncoding::MessagePack => Message::Binary(payload),
-                            FrameEncoding::Json => {
-                                match String::from_utf8(payload.to_vec()) {
-                                    Ok(s) => Message::Text(s.into()),
-                                    Err(_) => continue,
-                                }
-                            }
+                            FrameEncoding::Json => Message::Text(
+                                String::from_utf8(payload.to_vec())
+                                    .expect("a JSON publisher broadcasts the UTF-8 text encode_frame made")
+                                    .into(),
+                            ),
                         };
                         if write.send(msg).await.is_err() {
                             break;
@@ -643,13 +667,25 @@ async fn pump<S>(
             incoming = read.next() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(cmd) = serde_json::from_str::<ControlCommand>(text.as_ref()) {
-                            let _ = cmd_tx.try_send(cmd);
+                        match ControlCommand::from_bytes(text.as_bytes(), FrameEncoding::Json) {
+                            Ok(cmd) => {
+                                let _ = cmd_tx.try_send(cmd);
+                            }
+                            Err(e) => {
+                                refuse_command(&mut write, &e).await;
+                                break;
+                            }
                         }
                     }
                     Some(Ok(Message::Binary(bin))) => {
-                        if let Ok(cmd) = rmp_serde::from_slice::<ControlCommand>(bin.as_ref()) {
-                            let _ = cmd_tx.try_send(cmd);
+                        match ControlCommand::from_bytes(bin.as_ref(), FrameEncoding::MessagePack) {
+                            Ok(cmd) => {
+                                let _ = cmd_tx.try_send(cmd);
+                            }
+                            Err(e) => {
+                                refuse_command(&mut write, &e).await;
+                                break;
+                            }
                         }
                     }
                     Some(Ok(Message::Ping(p))) => {
@@ -810,6 +846,29 @@ mod tests {
         };
         let (accepted, ()) = tokio::join!(client, collector);
         assert!(!accepted);
+    }
+
+    /// A control message that is no command closes the socket with the
+    /// decode error as its reason, instead of vanishing.
+    #[tokio::test]
+    async fn a_malformed_command_closes_the_socket_with_its_reason() {
+        let server = Publisher::bind("127.0.0.1:0", PublisherConfig::default()).expect("bind");
+        let url = format!("ws://{}", server.local_addr().expect("bound"));
+        let (mut ws, _) = connect_async(&url).await.expect("connect");
+        wait_clients(&server, 1).await;
+        ws.send(Message::Text(r#"{"type":"jump"}"#.into()))
+            .await
+            .unwrap();
+        let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
+            .await
+            .expect("timeout")
+            .expect("stream closed")
+            .expect("ws error");
+        let Message::Close(Some(frame)) = msg else {
+            panic!("expected a close frame, got {msg:?}");
+        };
+        assert_eq!(frame.code, CloseCode::Invalid);
+        assert!(frame.reason.contains("decode"), "{}", frame.reason);
     }
 
     #[tokio::test]

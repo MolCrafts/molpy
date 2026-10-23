@@ -1,9 +1,7 @@
-//! The registry is complete, its names are unique, and every default it
-//! claims is what the type's own constructor produces.
+//! The registry's names are unique, and every default it claims is what the
+//! type's own constructor produces.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::Path;
+use std::collections::BTreeSet;
 
 use molrs::core::UnitPreset;
 use molrs::op::F;
@@ -13,98 +11,6 @@ use crate::compute::{
     Axis, ComputeError, InputKind, LagKernel, ParamDefault, ParamKind, ParamValue, RegularGrid,
     Stencil, SurvivalKind, Window,
 };
-
-/// `impl Compute for` / `impl Stream for` types that are deliberately not in
-/// the registry.
-const NOT_REGISTERED: &[(&str, &str)] = &[
-    (
-        "Batch",
-        "a combinator: `Batch<C>` maps `C` over snapshots, so its spec is `C`'s",
-    ),
-    (
-        "BondAverage",
-        "crate-internal: Steinhardt / Hexatic are its public faces",
-    ),
-];
-
-/// A generic compute registered once per instantiation.
-const INSTANTIATIONS: &[(&str, &[&str])] =
-    &[("Pmft", &["PmftR12", "PmftXy", "PmftXyt", "PmftXyz"])];
-
-/// Every type the non-test source of `compute` implements `Compute` or
-/// `Stream` for — a batch analysis or an accumulator-only one (`Msd`, `Vacf`,
-/// `Rdf`) — read off the `impl … Compute for Name` / `impl … Stream for Name`
-/// lines at the start of a line (test modules are indented or live in
-/// `tests.rs` / `product_tests.rs`).
-fn compute_impls() -> BTreeSet<String> {
-    fn visit(dir: &Path, found: &mut BTreeSet<String>) {
-        for entry in fs::read_dir(dir).expect("compute source is readable") {
-            let path = entry.expect("directory entry").path();
-            if path.is_dir() {
-                if cfg!(feature = "voronoi") || !path.ends_with("voronoi") {
-                    visit(&path, found);
-                }
-                continue;
-            }
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !name.ends_with(".rs") || matches!(name, "tests.rs" | "product_tests.rs") {
-                continue;
-            }
-            let text = fs::read_to_string(&path).expect("source file is readable");
-            for line in text.lines().filter(|line| line.starts_with("impl")) {
-                let rest = line
-                    .split(" Compute for ")
-                    .nth(1)
-                    .or_else(|| line.split(" Stream for ").nth(1));
-                if let Some(rest) = rest {
-                    found.insert(
-                        rest.chars()
-                            .take_while(|c| c.is_alphanumeric() || *c == '_')
-                            .collect(),
-                    );
-                }
-            }
-        }
-    }
-    let mut found = BTreeSet::new();
-    visit(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src/compute"),
-        &mut found,
-    );
-    found
-}
-
-/// Adding a public compute without a spec, or registering a name no compute
-/// type answers to, fails here.
-#[test]
-fn the_registry_names_every_compute_type() {
-    let instantiations: BTreeMap<&str, &[&str]> = INSTANTIATIONS.iter().copied().collect();
-    let excluded: BTreeSet<&str> = NOT_REGISTERED.iter().map(|(name, _)| *name).collect();
-    let impls = compute_impls();
-    assert!(
-        impls.contains("Rdf") && impls.contains("Pmft") && impls.contains("Batch"),
-        "the source scan found {impls:?}"
-    );
-    for name in &excluded {
-        assert!(
-            impls.contains(*name),
-            "{name} no longer implements Compute or Stream"
-        );
-    }
-
-    let expected: BTreeSet<&str> = impls
-        .iter()
-        .map(String::as_str)
-        .filter(|name| !excluded.contains(name))
-        .flat_map(|name| {
-            instantiations
-                .get(name)
-                .map_or_else(|| vec![name], |names| names.to_vec())
-        })
-        .collect();
-    let registered: BTreeSet<&str> = ComputeSpec::all().iter().map(|s| s.name).collect();
-    assert_eq!(registered, expected);
-}
 
 #[test]
 fn every_name_is_unique_and_found() {

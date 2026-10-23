@@ -218,7 +218,7 @@ impl PyGrapheneBuilder {
 
 /// The translation-only placer — ``molpy.builder.SitePlacer``.
 ///
-/// Each copy's centre of mass (Å, weights ``mass``) lands on its site;
+/// Each copy's centroid (the mean of its atom positions, Å) lands on its site;
 /// rotation is the orienter's job. Takes no arguments.
 ///
 /// Examples
@@ -244,7 +244,7 @@ impl PySitePlacer {
 /// The growth placer — ``molpy.builder.GrowthPlacer``.
 ///
 /// Grows each molecule copy by copy in the assembler's walk order: the first
-/// copy keeps its template pose (its centre of mass on the site when the
+/// copy keeps its template pose (its centroid on the site when the
 /// site graph has positions), and every later copy is rotated and moved so
 /// the anchor of its port toward its parent lands on the parent's leaving
 /// handle, pointing back along that bond. Needs no site positions; bond
@@ -267,7 +267,7 @@ impl PyGrowthPlacer {
 
 /// The axis orienter — ``molpy.builder.AxisOrienter``.
 ///
-/// Turns each copy about its template's centre of mass. A chain site (only
+/// Turns each copy about its template's centroid. A chain site (only
 /// ``<`` / ``>`` ports, a two-port template) matches the template's
 /// backbone-to-centre direction to the site axis (``CoarseGrain.axes``) and
 /// its two joining atoms to the site's bond line. Any other bonded site fits
@@ -306,11 +306,11 @@ impl PyAxisOrienter {
 ///     where a site bonds. A template without ports can only fill an
 ///     unbonded site.
 /// placer : SitePlacer | GrowthPlacer
-///     ``SitePlacer`` moves each copy's centre of mass onto its site;
+///     ``SitePlacer`` moves each copy's centroid onto its site;
 ///     ``GrowthPlacer`` grows each molecule onto its parents' ports and needs
 ///     no site positions.
 /// orienter : AxisOrienter, optional
-///     Turns each copy about its centre of mass before it is placed; needs
+///     Turns each copy about its centroid before it is placed; needs
 ///     site positions.
 ///
 /// Raises
@@ -536,7 +536,7 @@ fn assemble_error_message(e: AssembleError) -> String {
         AssembleError::Place { name, site, source } => {
             let reason = match source {
                 PlaceError::Template(center) => format!(
-                    "the template has no centre of mass: {}",
+                    "the template has no centroid: {}",
                     center_error_message(center)
                 ),
                 other @ (PlaceError::NoPosition
@@ -548,7 +548,7 @@ fn assemble_error_message(e: AssembleError) -> String {
         AssembleError::Orient { name, site, source } => {
             let reason = match source {
                 OrientError::Center(center) => format!(
-                    "the template has no centre of mass: {}",
+                    "the template has no centroid: {}",
                     center_error_message(center)
                 ),
                 other @ (OrientError::Template(_)
@@ -730,5 +730,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAxisOrienter>()?;
     m.add_class::<PyAssembler>()?;
     m.add_class::<PyCoarsener>()?;
-    Ok(())
+    crate::symmetry::register(m)?;
+    crate::lattice::register(m)?;
+    crate::virtual_sites::register(m)
 }

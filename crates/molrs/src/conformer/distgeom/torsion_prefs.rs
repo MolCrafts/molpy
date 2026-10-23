@@ -3,8 +3,8 @@
 //! Data and selection semantics ported from RDKit (BSD-3, Copyright (C)
 //! 2017-2023 Sereina Riniker and other RDKit contributors):
 //!   * `$RDBASE/Code/GraphMol/ForceFieldHelpers/CrystalFF/`
-//!     `torsionPreferences_{v2,smallrings,macrocycles}.in` — the full
-//!     ETKDGv2/v3 SMARTS → `(signs, V)` parameter tables (embedded verbatim in
+//!     `torsionPreferences_{v2,macrocycles}.in` — the ETKDGv3 SMARTS →
+//!     `(signs, V)` parameter tables (embedded verbatim in
 //!     [`super::torsion_tables`], extracted by `gen_torsion_tables.py`),
 //!   * `.../TorsionPreferences.cpp` (`getExperimentalTorsions`) — pattern
 //!     matching + first-match-wins dedup per rotatable bond,
@@ -13,23 +13,23 @@
 //!
 //! ## Faithful port
 //!
-//! Every torsion assignment flows through the **full** three-table data
-//! set and the project SMARTS engine ([`molrs::perceive::smarts::SmartsPattern`]). For
-//! each rotatable bond we reproduce RDKit's exact selection:
+//! Every torsion assignment flows through the ETKDGv3 data set and the project
+//! SMARTS engine ([`molrs::perceive::smarts::SmartsPattern`]). For each
+//! rotatable bond we reproduce RDKit's exact selection:
 //!
-//! 1. The three tables are matched in RDKit concatenation order — v2, then
-//!    small-rings, then macrocycles ([`super::torsion_tables`]). The first
-//!    pattern (in that global order) that matches a bond wins; a bond receives
-//!    at most one experimental torsion.
+//! 1. The two tables are matched in RDKit's ETKDGv3 concatenation order — v2,
+//!    then macrocycles ([`super::torsion_tables`]); ETKDGv3 sets
+//!    `useSmallRingTorsions = false`, so the small-ring table is not part of
+//!    it. The first pattern (in that global order) that matches a bond wins;
+//!    a bond receives at most one experimental torsion.
 //! 2. Ring-size gating is *intrinsic to the SMARTS* (macrocycle patterns carry
-//!    `r{9-}`, small-ring patterns `r{-8}` / `r{5-6}` / …), so there is no
-//!    separate ring-membership dispatch: the right table simply fails to match
-//!    bonds of the wrong ring class. This is exactly how RDKit layers them.
+//!    `r{9-}`), so there is no separate ring-membership dispatch: a table
+//!    simply fails to match bonds of the wrong ring class. This is exactly how
+//!    RDKit layers them.
 //!
 //! The patterns are passed verbatim to the core SMARTS engine, which parses and
 //! evaluates RDKit's **ring-size range** `r{lo-hi}` / `r{-hi}` / `r{lo-}` and
-//! **ring connectivity** `x<n>` natively (validated against RDKit
-//! `GetExperimentalTorsions` in `tests/embed/torsions.rs`).
+//! **ring connectivity** `x<n>` natively.
 
 use std::collections::HashMap;
 
@@ -68,10 +68,10 @@ struct CompiledPattern {
 /// The SMARTS is parsed verbatim by the core engine, which natively supports
 /// every primitive these tables use (including `r{lo-hi}` ring-size ranges and
 /// `x<n>` ring connectivity).
-fn compile_row(row: &TorsionRow) -> Option<CompiledPattern> {
+fn compile_row(row: &TorsionRow) -> Result<CompiledPattern, String> {
     let (smarts, signs, v) = (row.0, row.1, row.2);
-    let pattern = SmartsPattern::parse(smarts).ok()?;
-    Some(CompiledPattern { pattern, signs, v })
+    let pattern = SmartsPattern::parse(smarts).map_err(|e| format!("{smarts}: {e}"))?;
+    Ok(CompiledPattern { pattern, signs, v })
 }
 
 /// Compile the tables for ETKDGv3 in RDKit concatenation order.
@@ -79,22 +79,24 @@ fn compile_row(row: &TorsionRow) -> Option<CompiledPattern> {
 /// RDKit's `ETKDGv3()` sets `useSmallRingTorsions = false` and
 /// `useMacrocycleTorsions = true`, so the concatenated parameter set is
 /// **v2 ++ macrocycles** (the small-ring table is *not* included). We mirror
-/// that exactly: matching v2 first, then macrocycles, first-match-wins. Rows
-/// whose residue fails to parse are skipped (none in the validated set).
-fn compile_all() -> Vec<CompiledPattern> {
-    let mut out = Vec::new();
-    for row in torsion_tables::V2 {
-        if let Some(p) = compile_row(row) {
-            out.push(p);
-        }
-    }
-    for row in torsion_tables::MACROCYCLES {
-        if let Some(p) = compile_row(row) {
-            out.push(p);
-        }
-    }
-    out
+/// that exactly: matching v2 first, then macrocycles, first-match-wins.
+fn try_compile_all() -> Result<Vec<CompiledPattern>, String> {
+    torsion_tables::V2
+        .iter()
+        .chain(torsion_tables::MACROCYCLES)
+        .map(compile_row)
+        .collect()
 }
+
+/// The compiled tables, once per process. Every row parses —
+/// `tests::every_torsion_row_compiles` proves it — so a row that did not would
+/// be a defect in the committed tables, not a pattern to skip.
+static PATTERNS: std::sync::LazyLock<Vec<CompiledPattern>> = std::sync::LazyLock::new(|| {
+    try_compile_all().expect(
+        "every ETKDGv3 torsion row compiles — proved by \
+         conformer::distgeom::torsion_prefs::tests::every_torsion_row_compiles",
+    )
+});
 
 // ---------------------------------------------------------------------------
 // Matching molecule (aromaticity transplanted from perception)
@@ -143,8 +145,8 @@ fn aromatic_working_copy(mol: &Atomistic, p: &DgFeatures) -> Atomistic {
 // Assignment
 // ---------------------------------------------------------------------------
 
-/// Assign experimental torsions to `mol` by matching the full ETKDGv3 tables
-/// (v2 ++ small-rings ++ macrocycles) through the SMARTS engine, reproducing
+/// Assign experimental torsions to `mol` by matching the ETKDGv3 tables
+/// (v2 ++ macrocycles) through the SMARTS engine, reproducing
 /// RDKit `getExperimentalTorsions`: the first matching pattern (global table
 /// order) wins per rotatable bond; one torsion per bond.
 ///
@@ -153,7 +155,7 @@ fn aromatic_working_copy(mol: &Atomistic, p: &DgFeatures) -> Atomistic {
 /// `x<n>` ring primitives are evaluated by the core SMARTS engine directly.
 pub fn assign_experimental_torsions(mol: &Atomistic, p: &DgFeatures) -> Vec<TorsionConstraint> {
     let work = aromatic_working_copy(mol, p);
-    let patterns = compile_all();
+    let patterns = &*PATTERNS;
 
     let idx_of: HashMap<NodeId, usize> = p
         .atom_ids
@@ -167,7 +169,7 @@ pub fn assign_experimental_torsions(mol: &Atomistic, p: &DgFeatures) -> Vec<Tors
     let mut done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
     let mut out: Vec<TorsionConstraint> = Vec::new();
 
-    for cp in &patterns {
+    for cp in patterns {
         for m in cp.pattern.find(&work, MatchOptions::default()) {
             // Resolve atom-map labels :1..:4 to mol-atom indices.
             let mut idx = [usize::MAX; 4];
@@ -207,4 +209,26 @@ pub fn assign_experimental_torsions(mol: &Atomistic, p: &DgFeatures) -> Vec<Tors
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every row of the committed tables parses: [`PATTERNS`] `expect`s this
+    /// and names this test.
+    #[test]
+    fn every_torsion_row_compiles() {
+        let failures: Vec<String> = torsion_tables::V2
+            .iter()
+            .chain(torsion_tables::MACROCYCLES)
+            .filter_map(|row| compile_row(row).err())
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "{} rows fail:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
 }

@@ -337,6 +337,42 @@ pub unsafe extern "C" fn molc_forcefield_def_style(
     })
 }
 
+/// Declare the unit system the force field's numbers are in (`"real"`,
+/// `"metal"`, …, as LAMMPS names them). A force field states its units
+/// before it is serialized ([`molc_forcefield_to_json`]); they are never
+/// assumed.
+///
+/// # C signature
+///
+/// ```c
+/// MolcStatus molc_forcefield_set_units(MolcForceFieldHandle ff, const char* units);
+/// ```
+///
+/// # Returns
+///
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `units` is null.
+/// * `MolcStatus::Utf8Error` if `units` is not valid UTF-8.
+/// * `MolcStatus::InvalidForceFieldHandle` if `ff` is stale.
+///
+/// # Safety
+///
+/// * `ff` must be a live ForceField handle.
+/// * `units` must be a valid, null-terminated C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn molc_forcefield_set_units(
+    ff: MolcForceFieldHandle,
+    units: *const c_char,
+) -> MolcStatus {
+    ffi_try!({
+        let units = or_return!(unsafe { arg_str(units, "units") });
+        let mut registry = lock_registry();
+        let ff = get_forcefield_mut!(registry, ff);
+        ff.set_units(units);
+        MolcStatus::Ok
+    })
+}
+
 /// Define a type on an existing style: its name and its endpoints.
 ///
 /// The style `(style_category, style_name)` must already exist (see
@@ -699,6 +735,7 @@ mod tests {
         let mut params: Params = [("cutoff", 10.0)].into_iter().collect();
         params.set("mixing", "geometric");
         let mut ff = ForceField::new("rt");
+        ff.set_units("real");
         ff.def_style("pair", "lj/cut", params).unwrap();
 
         let back = round_trip(&ff);
@@ -712,6 +749,7 @@ mod tests {
     #[test]
     fn json_round_trip_keeps_bond_style_params() {
         let mut ff = ForceField::new("rt");
+        ff.set_units("real");
         ff.def_style("bond", "harmonic", [("scale", 0.5)].into_iter().collect())
             .unwrap();
 
@@ -728,6 +766,7 @@ mod tests {
     #[test]
     fn json_round_trip_keeps_the_given_endpoints() {
         let mut ff = ForceField::new("rt");
+        ff.set_units("real");
         ff.def_style("bond", "mmff", Params::new())
             .unwrap()
             .def_type("0_1_5", &["1", "5"], [("kb", 4.258)].into_iter().collect())
@@ -750,18 +789,19 @@ mod tests {
         let mut params = Params::new();
         params.set("grid", grid.clone());
         let mut ff = ForceField::new("rt");
+        ff.set_units("real");
         ff.def_style("cmap", "charmm", Params::new())
             .unwrap()
             .def_type("c", &["C", "N", "CA", "C", "N"], params)
             .unwrap();
 
         let back = round_trip(&ff);
-        let cmap = back.get_cmaptypes()[0];
+        let cmap = back.get_types("cmap")[0];
         assert_eq!(
             cmap.params.get("grid").and_then(ParamValue::as_array),
             Some(&grid)
         );
-        assert_eq!(cmap.mtom, "N");
+        assert_eq!(cmap.endpoints[4], "N");
     }
 
     #[test]
@@ -771,19 +811,21 @@ mod tests {
             coul: [0.0, 0.0, 0.8333],
         };
         let mut ff = ForceField::new("rt");
+        ff.set_units("real");
         ff.set_special_bonds(special);
 
         let back = round_trip(&ff);
-        assert_eq!(*back.special_bonds(), special);
+        assert_eq!(back.special_bonds(), Some(&special));
     }
 
     #[test]
-    fn json_round_trip_keeps_declared_units() {
+    fn json_round_trip_keeps_units() {
         let mut ff = ForceField::new("rt");
+        ff.set_units("real");
         ff.set_units("lj");
 
         let back = round_trip(&ff);
-        assert_eq!(back.declared_units(), Some("lj"));
+        assert_eq!(back.units(), Some("lj"));
     }
 
     /// Seam only: the Rust conflict rule is unit-tested in molrs; here a
@@ -854,6 +896,7 @@ mod tests {
     #[test]
     fn json_is_the_core_forcefield_section() {
         let mut ff = ForceField::new("rt");
+        ff.set_units("real");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type(
@@ -873,6 +916,7 @@ mod tests {
     #[test]
     fn json_that_is_no_section_is_refused() {
         let mut ff = ForceField::new("rt");
+        ff.set_units("real");
         ff.set_units("real");
         let mut doc: serde_json::Value =
             serde_json::from_str(&ff_to_json_string(&ff).unwrap()).unwrap();

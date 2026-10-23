@@ -52,6 +52,7 @@ from molpy.tool.ambertools import (
     UNIT,
     AmberSteps,
     AmberTypifier,
+    ChargeMethod,
     ParameterSet,
     Prmtop,
     input_mol2,
@@ -146,7 +147,7 @@ class Am1BccModel:
 
         atoms = read_ac(ac)["atoms"]
         expected = [
-            f"{Element.by_number(atom['atomic_number']).symbol}{row}"
+            f"{Element.by_number(int(atom['atomic_number'])).symbol}{row}"
             for row, atom in enumerate(mol.atoms, 1)
         ]
         found = [str(name) for name in atoms["name"]]
@@ -215,7 +216,7 @@ class AntechamberTypifier(AmberTypifier):
         self,
         *,
         parameter_set: ParameterSet,
-        charge_method: str = "bcc",
+        charge_method: ChargeMethod = "bcc",
         work_dir: str | Path = "amber_work",
         config: Config | None = None,
     ) -> None:
@@ -329,14 +330,17 @@ class TleapTypifier(AmberTypifier):
                 "Cut the chain with AmberPolymerBuilder (prepgen), "
                 "which is what spreads the omitted charge."
             )
-        types = [atom.get("type") for atom in graph.atoms]
-        charges = [atom.get("charge") for atom in graph.atoms]
-        for index, (name, charge) in enumerate(zip(types, charges, strict=True)):
-            if not isinstance(name, str) or charge is None:
+        types: list[str] = []
+        charges: list[float] = []
+        for index, atom in enumerate(graph.atoms):
+            name, charge = atom.get("type"), atom.get("charge")
+            if not isinstance(name, str) or not isinstance(charge, (int, float)):
                 raise ValueError(
                     f"atom {index} carries type {name!r} and charge {charge!r}; "
                     "TleapTypifier needs AMBER types and charges on every atom"
                 )
+            types.append(name)
+            charges.append(float(charge))
         text = input_mol2(graph, rename=True)
         buffer = bytearray()
         if self.parameters is not None:

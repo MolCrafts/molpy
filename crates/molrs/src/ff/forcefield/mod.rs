@@ -3,7 +3,8 @@
 //!
 //! Provides a declarative layer for defining atom types, bond types, pair types,
 //! etc. with their parameters. A [`ForceField`] holds [`Style`]s, each of which
-//! holds typed parameter sets via [`StyleDefs`]. The forcefield is compiled
+//! holds its [`TypeDef`] rows — one row shape for every category — in its
+//! [`StyleDefs`]. The forcefield is compiled
 //! into computational [`Potential`](super::potential::Potential) objects by
 //! [`PotentialCompiler`](super::compile::PotentialCompiler).
 //!
@@ -17,143 +18,53 @@ use std::sync::Arc;
 
 use smallvec::SmallVec;
 
-use crate::ff::ir::{Arity, DEFAULT_SPECIAL_BONDS, Params, SpecialBonds, pair_key};
+use molrs::op::F;
+
+use crate::ff::ir::{Arity, Params, SpecialBonds, builtin_categories, pair_key};
+use crate::ff::style_registry::conformance::is_category_name;
 use crate::ff::style_registry::{Registry, RegistryRef};
 
 // ---------------------------------------------------------------------------
 // Type definitions
 // ---------------------------------------------------------------------------
 
-/// Atom type definition.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AtomType {
-    pub name: String,
-    pub params: Params,
-}
-
-/// Bond type definition (references two atom type names).
-#[derive(Debug, Clone, PartialEq)]
-pub struct BondType {
-    pub name: String,
-    pub itom: String,
-    pub jtom: String,
-    pub params: Params,
-}
-
-/// Angle type definition (references three atom type names).
-#[derive(Debug, Clone, PartialEq)]
-pub struct AngleType {
-    pub name: String,
-    pub itom: String,
-    pub jtom: String,
-    pub ktom: String,
-    pub params: Params,
-}
-
-/// Dihedral type definition (references four atom type names).
-#[derive(Debug, Clone, PartialEq)]
-pub struct DihedralType {
-    pub name: String,
-    pub itom: String,
-    pub jtom: String,
-    pub ktom: String,
-    pub ltom: String,
-    pub params: Params,
-}
-
-/// Improper type definition (references four atom type names).
-#[derive(Debug, Clone, PartialEq)]
-pub struct ImproperType {
-    pub name: String,
-    pub itom: String,
-    pub jtom: String,
-    pub ktom: String,
-    pub ltom: String,
-    pub params: Params,
-}
-
-/// Pair type definition (one or two atom type names).
-#[derive(Debug, Clone, PartialEq)]
-pub struct PairType {
-    pub name: String,
-    pub itom: String,
-    pub jtom: String,
-    pub params: Params,
-}
-
-/// CMAP type definition (references five atom type names: the two
+/// One type of a style — the one row shape of every category: its name, the
+/// atom types it is defined on, and its parameters.
+///
+/// `endpoints` are as many atom-type names as the category's arity, in order
+/// (`itom`, `jtom`, …): none for an atom type, two for a pair type (a self
+/// pair names its one atom type twice), five for a CMAP type (the two
 /// consecutive backbone dihedrals `itom-jtom-ktom-ltom` and
-/// `jtom-ktom-ltom-mtom`). Its correction table is the array param `grid`.
+/// `jtom-ktom-ltom-mtom`, its correction table the array param `grid`).
 #[derive(Debug, Clone, PartialEq)]
-pub struct CmapType {
+pub struct TypeDef {
     pub name: String,
-    pub itom: String,
-    pub jtom: String,
-    pub ktom: String,
-    pub ltom: String,
-    pub mtom: String,
+    pub endpoints: SmallVec<[String; MAX_ARITY]>,
     pub params: Params,
 }
 
-/// A type of a category beyond the seven built-in ones — a registered
-/// custom category of the force-field IR (`urey_bradley`, …), molrec's
-/// `constraint` / `drude` / `virtual_site`, or a category read from a record
-/// that no registry declares. Its endpoints are as many atom-type names as
-/// the category's arity, in order (`itom`, `jtom`, …).
+/// The type definitions of one style, under its category: the category's
+/// name, its [`Arity`] and the [`TypeDef`] rows in definition order.
+///
+/// The arity is the category's declaration's
+/// ([`CategorySpec`](crate::ff::ir::CategorySpec), in the force field's
+/// registry or among the IR's
+/// [built-in categories](crate::ff::ir::builtin_categories)), or the one
+/// stated for a category nothing declares
+/// ([`ForceField::def_style_with_arity`]). A pair category
+/// ([`Arity::SelfOrPair`]) is the one whose rows are identified by their
+/// unordered endpoints (see [`Style`]).
 #[derive(Debug, Clone, PartialEq)]
-pub struct RelationType {
-    pub name: String,
-    pub endpoints: SmallVec<[String; 5]>,
-    pub params: Params,
-}
-
-/// Each variant IS the category and holds only the relevant type definitions.
-///
-/// The seven categories molrs has always priced have a variant each;
-/// every other category — anything the force-field IR registry declares
-/// ([`crate::ff::style_registry::register_category`]), or a category read from a
-/// record that nothing declares — is a [`StyleDefs::Relation`], which
-/// carries its category name and arity.
-///
-/// Non-exhaustive: a category may be added in a minor release, so a match
-/// outside this crate keeps a wildcard arm.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum StyleDefs {
-    Atom(Vec<AtomType>),
-    Bond(Vec<BondType>),
-    Angle(Vec<AngleType>),
-    Dihedral(Vec<DihedralType>),
-    Improper(Vec<ImproperType>),
-    Pair(Vec<PairType>),
-    Cmap(Vec<CmapType>),
-    /// Any other category: `arity` endpoints per type (0 ..= 5).
-    Relation {
-        category: Arc<str>,
-        arity: u8,
-        types: Vec<RelationType>,
-    },
+pub struct StyleDefs {
+    category: Arc<str>,
+    arity: Arity,
+    types: Vec<TypeDef>,
 }
 
 impl StyleDefs {
-    /// No definitions, under one of the seven categories with a variant of
-    /// its own; `None` for any other.
-    fn builtin(category: &str) -> Option<Self> {
-        Some(match category {
-            "atom" => Self::Atom(Vec::new()),
-            "bond" => Self::Bond(Vec::new()),
-            "angle" => Self::Angle(Vec::new()),
-            "dihedral" => Self::Dihedral(Vec::new()),
-            "improper" => Self::Improper(Vec::new()),
-            "pair" => Self::Pair(Vec::new()),
-            "cmap" => Self::Cmap(Vec::new()),
-            _ => return None,
-        })
-    }
-
-    /// No definitions, under `category` of `arity` endpoints.
-    fn relation(category: &str, arity: u8) -> Self {
-        Self::Relation {
+    /// No definitions, under `category` of `arity`.
+    fn new(category: &str, arity: Arity) -> Self {
+        Self {
             category: Arc::from(category),
             arity,
             types: Vec::new(),
@@ -162,68 +73,43 @@ impl StyleDefs {
 
     /// No definitions, under the same category as `self`.
     fn empty_like(&self) -> Self {
-        match self {
-            Self::Relation {
-                category, arity, ..
-            } => Self::Relation {
-                category: category.clone(),
-                arity: *arity,
-                types: Vec::new(),
-            },
-            other => Self::builtin(other.category()).expect("a built-in variant"),
+        Self {
+            category: self.category.clone(),
+            arity: self.arity,
+            types: Vec::new(),
         }
     }
 
     /// Category string for registry lookups.
     pub fn category(&self) -> &str {
-        match self {
-            Self::Atom(_) => "atom",
-            Self::Bond(_) => "bond",
-            Self::Angle(_) => "angle",
-            Self::Dihedral(_) => "dihedral",
-            Self::Improper(_) => "improper",
-            Self::Pair(_) => "pair",
-            Self::Cmap(_) => "cmap",
-            Self::Relation { category, .. } => category,
-        }
+        &self.category
     }
 
     /// How many endpoint columns a type row of the category carries in a
     /// record (a pair two, a self pair restating its one atom type).
     pub fn arity(&self) -> usize {
-        match self {
-            Self::Atom(_) => 0,
-            Self::Bond(_) | Self::Pair(_) => 2,
-            Self::Angle(_) => 3,
-            Self::Dihedral(_) | Self::Improper(_) => 4,
-            Self::Cmap(_) => 5,
-            Self::Relation { arity, .. } => usize::from(*arity),
-        }
+        self.arity.endpoints()
+    }
+
+    /// The type rows, in definition order.
+    pub fn types(&self) -> &[TypeDef] {
+        &self.types
+    }
+
+    /// Whether the category is a non-bonded pair: a row is found by its
+    /// unordered endpoints, and a self pair is defined on one.
+    fn is_pair(&self) -> bool {
+        self.arity == Arity::SelfOrPair
     }
 
     /// Collect `(type_name, params)` pairs for kernel construction.
     pub fn collect_type_params(&self) -> Vec<(String, Params)> {
-        macro_rules! collect {
-            ($v:expr) => {
-                $v.iter()
-                    .map(|t| (t.name.clone(), t.params.clone()))
-                    .collect()
-            };
-        }
-        match self {
-            Self::Atom(types) => collect!(types),
-            Self::Bond(types) => collect!(types),
-            Self::Angle(types) => collect!(types),
-            Self::Dihedral(types) => collect!(types),
-            Self::Improper(types) => collect!(types),
-            Self::Pair(types) => collect!(types),
-            Self::Cmap(types) => collect!(types),
-            Self::Relation { types, .. } => collect!(types),
-        }
+        self.types
+            .iter()
+            .map(|t| (t.name.clone(), t.params.clone()))
+            .collect()
     }
-}
 
-impl StyleDefs {
     /// The rows a kernel resolves parameters from: a bonded or atom type by its
     /// name (the label a frame row carries), a pair type by the atom types it
     /// was defined between. A pair kernel meets an atom-type pair, never a
@@ -232,13 +118,18 @@ impl StyleDefs {
     /// found through them. A style holds at most one row per unordered pair
     /// (the conflict rule, see [`Style`]), so the keys are distinct.
     pub fn kernel_type_params(&self) -> Result<Vec<(String, Params)>, String> {
-        match self {
-            Self::Pair(types) => types
-                .iter()
-                .map(|t| Ok((pair_key(&t.itom, &t.jtom)?, t.params.clone())))
-                .collect(),
-            _ => Ok(self.collect_type_params()),
+        if !self.is_pair() {
+            return Ok(self.collect_type_params());
         }
+        self.types
+            .iter()
+            .map(|t| {
+                Ok((
+                    pair_key(&t.endpoints[0], &t.endpoints[1])?,
+                    t.params.clone(),
+                ))
+            })
+            .collect()
     }
 }
 
@@ -299,7 +190,7 @@ impl Style {
         &self.defs
     }
 
-    /// Category string derived from the `StyleDefs` variant.
+    /// The category of the style's definitions.
     pub fn category(&self) -> &str {
         self.defs.category()
     }
@@ -310,29 +201,36 @@ impl Style {
         self.defs.arity()
     }
 
-    pub fn get_atomtype(&self, name: &str) -> Option<&AtomType> {
-        let StyleDefs::Atom(types) = &self.defs else {
+    /// The atom type named `name`, when this is an atom style.
+    pub fn get_atomtype(&self, name: &str) -> Option<&TypeDef> {
+        if self.category() != "atom" {
             return None;
-        };
-        types.iter().find(|t| t.name == name)
+        }
+        self.defs.types.iter().find(|t| t.name == name)
     }
 
-    pub fn get_bondtype(&self, itom: &str, jtom: &str) -> Option<&BondType> {
-        let StyleDefs::Bond(types) = &self.defs else {
+    /// The bond type defined on `itom`, `jtom` in either order, when this is
+    /// a bond style.
+    pub fn get_bondtype(&self, itom: &str, jtom: &str) -> Option<&TypeDef> {
+        if self.category() != "bond" {
             return None;
-        };
-        types
-            .iter()
-            .find(|t| (t.itom == itom && t.jtom == jtom) || (t.itom == jtom && t.jtom == itom))
+        }
+        self.defs.types.iter().find(|t| {
+            let e = &t.endpoints;
+            (e[0] == itom && e[1] == jtom) || (e[0] == jtom && e[1] == itom)
+        })
     }
 
-    pub fn get_pairtype(&self, itom: &str, jtom: Option<&str>) -> Option<&PairType> {
-        let StyleDefs::Pair(types) = &self.defs else {
+    /// The pair type defined on `{itom, jtom}` in either order (`jtom`
+    /// `None`: the self pair of `itom`), when this is a pair style.
+    pub fn get_pairtype(&self, itom: &str, jtom: Option<&str>) -> Option<&TypeDef> {
+        if !self.defs.is_pair() {
             return None;
-        };
-        let jtom_str = jtom.unwrap_or(itom);
-        types.iter().find(|t| {
-            (t.itom == itom && t.jtom == jtom_str) || (t.itom == jtom_str && t.jtom == itom)
+        }
+        let jtom = jtom.unwrap_or(itom);
+        self.defs.types.iter().find(|t| {
+            let e = &t.endpoints;
+            (e[0] == itom && e[1] == jtom) || (e[0] == jtom && e[1] == itom)
         })
     }
 
@@ -380,18 +278,19 @@ impl Style {
     }
 
     fn accepts_endpoint_count(&self, n: usize) -> bool {
-        match self.defs {
-            StyleDefs::Pair(_) => n == 1 || n == 2,
-            _ => n == self.arity(),
+        if self.defs.is_pair() {
+            n == 1 || n == 2
+        } else {
+            n == self.arity()
         }
     }
 
     /// The `def_type` endpoint count this category expects.
     fn endpoint_arity(&self) -> String {
-        match (&self.defs, self.arity()) {
-            (StyleDefs::Pair(_), _) => "1 or 2 endpoints".to_owned(),
-            (_, 0) => "no endpoints".to_owned(),
-            (_, n) => format!("{n} endpoints"),
+        match self.arity() {
+            _ if self.defs.is_pair() => "1 or 2 endpoints".to_owned(),
+            0 => "no endpoints".to_owned(),
+            n => format!("{n} endpoints"),
         }
     }
 
@@ -439,24 +338,23 @@ impl Style {
         same_type: impl Fn(&Params, &Params) -> bool,
         same_pair_params: impl Fn(&Params, &Params) -> bool,
     ) -> Result<bool, DefError> {
-        let pair = match (&self.defs, endpoints) {
-            (StyleDefs::Pair(_), [only]) => Some((*only, *only)),
-            (StyleDefs::Pair(_), [i, j]) => Some((*i, *j)),
+        let pair = match endpoints {
+            [only] if self.defs.is_pair() => Some((*only, *only)),
+            [i, j] if self.defs.is_pair() => Some((*i, *j)),
             _ => None,
         };
         let same_pair =
             |i: &str, j: &str| pair.is_some_and(|(a, b)| (i, j) == (a, b) || (i, j) == (b, a));
-        if let Some((stored, stored_params)) = self
-            .type_rows()
-            .into_iter()
-            .find(|(n, _, _)| *n == name)
-            .map(|(_, e, p)| (e, p))
-        {
+        if let Some(stored) = self.defs.types.iter().find(|t| t.name == name) {
             let same_endpoints = match pair {
-                Some(_) => same_pair(stored[0], stored[1]),
-                None => stored == endpoints,
+                Some(_) => same_pair(&stored.endpoints[0], &stored.endpoints[1]),
+                None => stored
+                    .endpoints
+                    .iter()
+                    .map(String::as_str)
+                    .eq(endpoints.iter().copied()),
             };
-            return if same_endpoints && same_type(stored_params, params) {
+            return if same_endpoints && same_type(&stored.params, params) {
                 Ok(true)
             } else {
                 Err(DefError::TypeConflict {
@@ -466,10 +364,15 @@ impl Style {
                 })
             };
         }
-        let StyleDefs::Pair(types) = &self.defs else {
+        if pair.is_none() {
             return Ok(false);
-        };
-        let Some(stated) = types.iter().find(|t| same_pair(&t.itom, &t.jtom)) else {
+        }
+        let Some(stated) = self
+            .defs
+            .types
+            .iter()
+            .find(|t| same_pair(&t.endpoints[0], &t.endpoints[1]))
+        else {
             return Ok(false);
         };
         if same_pair_params(&stated.params, params) {
@@ -479,8 +382,8 @@ impl Style {
                 style: self.name.clone(),
                 name: name.to_owned(),
                 stated: stated.name.clone(),
-                itom: stated.itom.clone(),
-                jtom: stated.jtom.clone(),
+                itom: stated.endpoints[0].clone(),
+                jtom: stated.endpoints[1].clone(),
             })
         }
     }
@@ -492,123 +395,38 @@ impl Style {
     /// style; [`type_params`](Self::type_params) and
     /// [`type_endpoints`](Self::type_endpoints) answer for one type.
     pub fn type_rows(&self) -> Vec<(&str, Vec<&str>, &Params)> {
-        match &self.defs {
-            StyleDefs::Atom(v) => v
-                .iter()
-                .map(|t| (t.name.as_str(), Vec::new(), &t.params))
-                .collect(),
-            StyleDefs::Bond(v) => v
-                .iter()
-                .map(|t| (t.name.as_str(), vec![&*t.itom, &*t.jtom], &t.params))
-                .collect(),
-            StyleDefs::Angle(v) => v
-                .iter()
-                .map(|t| {
-                    (
-                        t.name.as_str(),
-                        vec![&*t.itom, &*t.jtom, &*t.ktom],
-                        &t.params,
-                    )
-                })
-                .collect(),
-            StyleDefs::Dihedral(v) => v
-                .iter()
-                .map(|t| {
-                    let e = vec![&*t.itom, &*t.jtom, &*t.ktom, &*t.ltom];
-                    (t.name.as_str(), e, &t.params)
-                })
-                .collect(),
-            StyleDefs::Improper(v) => v
-                .iter()
-                .map(|t| {
-                    let e = vec![&*t.itom, &*t.jtom, &*t.ktom, &*t.ltom];
-                    (t.name.as_str(), e, &t.params)
-                })
-                .collect(),
-            StyleDefs::Pair(v) => v
-                .iter()
-                .map(|t| (t.name.as_str(), vec![&*t.itom, &*t.jtom], &t.params))
-                .collect(),
-            StyleDefs::Cmap(v) => v
-                .iter()
-                .map(|t| {
-                    let e = vec![&*t.itom, &*t.jtom, &*t.ktom, &*t.ltom, &*t.mtom];
-                    (t.name.as_str(), e, &t.params)
-                })
-                .collect(),
-            StyleDefs::Relation { types, .. } => types
-                .iter()
-                .map(|t| {
-                    let e = t.endpoints.iter().map(String::as_str).collect();
-                    (t.name.as_str(), e, &t.params)
-                })
-                .collect(),
-        }
+        self.defs
+            .types
+            .iter()
+            .map(|t| {
+                let e = t.endpoints.iter().map(String::as_str).collect();
+                (t.name.as_str(), e, &t.params)
+            })
+            .collect()
     }
 
     /// The one insert path: [`Style::check_type`] decides, then a name not
     /// yet defined is appended.
     ///
     /// The endpoint count has been checked against the category by the
-    /// caller; a one-endpoint pair is a self-pair. On
-    /// `Err(DefError::TypeConflict)` the stored definition is unchanged.
+    /// caller; a one-endpoint pair is a self-pair, stored as its one atom
+    /// type twice. On `Err(DefError::TypeConflict)` the stored definition is
+    /// unchanged.
     fn insert_type(&mut self, name: String, e: &[&str], params: Params) -> Result<(), DefError> {
         if self.check_type(&name, e, &params)? {
             return Ok(());
         }
-        let own = |i: usize| e[i].to_owned();
-        match &mut self.defs {
-            StyleDefs::Atom(types) => types.push(AtomType { name, params }),
-            StyleDefs::Bond(types) => types.push(BondType {
-                name,
-                itom: own(0),
-                jtom: own(1),
-                params,
-            }),
-            StyleDefs::Angle(types) => types.push(AngleType {
-                name,
-                itom: own(0),
-                jtom: own(1),
-                ktom: own(2),
-                params,
-            }),
-            StyleDefs::Dihedral(types) => types.push(DihedralType {
-                name,
-                itom: own(0),
-                jtom: own(1),
-                ktom: own(2),
-                ltom: own(3),
-                params,
-            }),
-            StyleDefs::Improper(types) => types.push(ImproperType {
-                name,
-                itom: own(0),
-                jtom: own(1),
-                ktom: own(2),
-                ltom: own(3),
-                params,
-            }),
-            StyleDefs::Pair(types) => types.push(PairType {
-                name,
-                itom: own(0),
-                jtom: own(e.len() - 1),
-                params,
-            }),
-            StyleDefs::Cmap(types) => types.push(CmapType {
-                name,
-                itom: own(0),
-                jtom: own(1),
-                ktom: own(2),
-                ltom: own(3),
-                mtom: own(4),
-                params,
-            }),
-            StyleDefs::Relation { types, .. } => types.push(RelationType {
-                name,
-                endpoints: e.iter().map(|&end| end.to_owned()).collect(),
-                params,
-            }),
-        }
+        let endpoints = match e {
+            [only] if self.defs.is_pair() => {
+                [*only, *only].map(str::to_owned).into_iter().collect()
+            }
+            _ => e.iter().map(|&end| end.to_owned()).collect(),
+        };
+        self.defs.types.push(TypeDef {
+            name,
+            endpoints,
+            params,
+        });
         Ok(())
     }
 }
@@ -627,9 +445,9 @@ pub enum DefError {
         name: String,
         got: usize,
     },
-    /// Unknown style category string: neither one of the seven built-in
-    /// ones, nor declared by the force-field IR registry, nor held by the
-    /// force field already.
+    /// Unknown style category string: neither declared by the force
+    /// field's registry nor one of the IR's built-in categories, nor held
+    /// by the force field already.
     UnknownCategory(String),
     /// A style of `category` declared with `got` endpoints per type, where
     /// the category (its registration, or the styles of it the force field
@@ -772,70 +590,21 @@ impl DefError {
 impl Style {
     /// The params of the type named `name`, or `None` if no such type.
     pub fn type_params(&self, name: &str) -> Option<&Params> {
-        macro_rules! find_in {
-            ($v:expr) => {
-                $v.iter().find(|t| t.name == name).map(|t| &t.params)
-            };
-        }
-        match &self.defs {
-            StyleDefs::Atom(v) => find_in!(v),
-            StyleDefs::Bond(v) => find_in!(v),
-            StyleDefs::Angle(v) => find_in!(v),
-            StyleDefs::Dihedral(v) => find_in!(v),
-            StyleDefs::Improper(v) => find_in!(v),
-            StyleDefs::Pair(v) => find_in!(v),
-            StyleDefs::Cmap(v) => find_in!(v),
-            StyleDefs::Relation { types, .. } => find_in!(types),
-        }
+        self.defs
+            .types
+            .iter()
+            .find(|t| t.name == name)
+            .map(|t| &t.params)
     }
 
     /// Endpoint atom-type names of the type named `name` (e.g. `["CT","CT"]`),
     /// or `None` if no such type. Atom styles return an empty vec.
     pub fn type_endpoints(&self, name: &str) -> Option<Vec<String>> {
-        match &self.defs {
-            StyleDefs::Atom(v) => v.iter().find(|t| t.name == name).map(|_| Vec::new()),
-            StyleDefs::Bond(v) => v
-                .iter()
-                .find(|t| t.name == name)
-                .map(|t| vec![t.itom.clone(), t.jtom.clone()]),
-            StyleDefs::Angle(v) => v
-                .iter()
-                .find(|t| t.name == name)
-                .map(|t| vec![t.itom.clone(), t.jtom.clone(), t.ktom.clone()]),
-            StyleDefs::Dihedral(v) => v.iter().find(|t| t.name == name).map(|t| {
-                vec![
-                    t.itom.clone(),
-                    t.jtom.clone(),
-                    t.ktom.clone(),
-                    t.ltom.clone(),
-                ]
-            }),
-            StyleDefs::Improper(v) => v.iter().find(|t| t.name == name).map(|t| {
-                vec![
-                    t.itom.clone(),
-                    t.jtom.clone(),
-                    t.ktom.clone(),
-                    t.ltom.clone(),
-                ]
-            }),
-            StyleDefs::Pair(v) => v
-                .iter()
-                .find(|t| t.name == name)
-                .map(|t| vec![t.itom.clone(), t.jtom.clone()]),
-            StyleDefs::Cmap(v) => v.iter().find(|t| t.name == name).map(|t| {
-                vec![
-                    t.itom.clone(),
-                    t.jtom.clone(),
-                    t.ktom.clone(),
-                    t.ltom.clone(),
-                    t.mtom.clone(),
-                ]
-            }),
-            StyleDefs::Relation { types, .. } => types
-                .iter()
-                .find(|t| t.name == name)
-                .map(|t| t.endpoints.to_vec()),
-        }
+        self.defs
+            .types
+            .iter()
+            .find(|t| t.name == name)
+            .map(|t| t.endpoints.to_vec())
     }
 
     /// Set (or add) a single param on the type named `name` — a number, a
@@ -851,26 +620,11 @@ impl Style {
         key: &str,
         value: impl Into<crate::ff::ir::ParamValue>,
     ) -> bool {
-        let value = value.into();
-        macro_rules! set_on {
-            ($v:expr) => {{
-                if let Some(t) = $v.iter_mut().find(|t| t.name == name) {
-                    t.params.set(key, value);
-                    return true;
-                }
-            }};
-        }
-        match &mut self.defs {
-            StyleDefs::Atom(v) => set_on!(v),
-            StyleDefs::Bond(v) => set_on!(v),
-            StyleDefs::Angle(v) => set_on!(v),
-            StyleDefs::Dihedral(v) => set_on!(v),
-            StyleDefs::Improper(v) => set_on!(v),
-            StyleDefs::Pair(v) => set_on!(v),
-            StyleDefs::Cmap(v) => set_on!(v),
-            StyleDefs::Relation { types, .. } => set_on!(types),
-        }
-        false
+        let Some(t) = self.defs.types.iter_mut().find(|t| t.name == name) else {
+            return false;
+        };
+        t.params.set(key, value.into());
+        true
     }
 
     /// Set (or add) one style-level param, e.g. a pair style's `cutoff` (a
@@ -892,44 +646,29 @@ impl Style {
     /// dropped (`Ok(true)`); if it is defined with anything else, the rename is
     /// `Err(DefError::TypeConflict)` and nothing changes.
     pub fn rename_type(&mut self, old: &str, new: &str) -> Result<bool, DefError> {
-        let category = self.defs.category().to_owned();
-        let style = &self.name;
-        macro_rules! rename_in {
-            ($v:expr) => {{
-                let Some(from) = $v.iter().position(|t| t.name == old) else {
-                    return Ok(false);
-                };
-                if old == new {
-                    return Ok(true);
-                }
-                let mut renamed = $v[from].clone();
-                renamed.name = new.to_owned();
-                match $v.iter().find(|t| t.name == new) {
-                    Some(existing) if *existing == renamed => {
-                        $v.remove(from);
-                    }
-                    Some(_) => {
-                        return Err(DefError::TypeConflict {
-                            category: category.clone(),
-                            style: style.clone(),
-                            name: new.to_owned(),
-                        });
-                    }
-                    None => $v[from] = renamed,
-                }
-                Ok(true)
-            }};
+        let types = &mut self.defs.types;
+        let Some(from) = types.iter().position(|t| t.name == old) else {
+            return Ok(false);
+        };
+        if old == new {
+            return Ok(true);
         }
-        match &mut self.defs {
-            StyleDefs::Atom(v) => rename_in!(v),
-            StyleDefs::Bond(v) => rename_in!(v),
-            StyleDefs::Angle(v) => rename_in!(v),
-            StyleDefs::Dihedral(v) => rename_in!(v),
-            StyleDefs::Improper(v) => rename_in!(v),
-            StyleDefs::Pair(v) => rename_in!(v),
-            StyleDefs::Cmap(v) => rename_in!(v),
-            StyleDefs::Relation { types, .. } => rename_in!(types),
+        let mut renamed = types[from].clone();
+        renamed.name = new.to_owned();
+        match types.iter().find(|t| t.name == new) {
+            Some(existing) if *existing == renamed => {
+                types.remove(from);
+            }
+            Some(_) => {
+                return Err(DefError::TypeConflict {
+                    category: self.defs.category().to_owned(),
+                    style: self.name.clone(),
+                    name: new.to_owned(),
+                });
+            }
+            None => types[from] = renamed,
         }
+        Ok(true)
     }
 
     /// Remove the type named `name`. Returns the count removed (`0` or `1`:
@@ -938,29 +677,28 @@ impl Style {
     /// An edit of an existing definition, not a definition: it is outside the
     /// conflict rule (see [`Style`]).
     pub fn del_type(&mut self, name: &str) -> usize {
-        macro_rules! remove_in {
-            ($v:expr) => {{
-                let before = $v.len();
-                $v.retain(|t| t.name != name);
-                before - $v.len()
-            }};
-        }
-        match &mut self.defs {
-            StyleDefs::Atom(v) => remove_in!(v),
-            StyleDefs::Bond(v) => remove_in!(v),
-            StyleDefs::Angle(v) => remove_in!(v),
-            StyleDefs::Dihedral(v) => remove_in!(v),
-            StyleDefs::Improper(v) => remove_in!(v),
-            StyleDefs::Pair(v) => remove_in!(v),
-            StyleDefs::Cmap(v) => remove_in!(v),
-            StyleDefs::Relation { types, .. } => remove_in!(types),
-        }
+        let types = &mut self.defs.types;
+        let before = types.len();
+        types.retain(|t| t.name != name);
+        before - types.len()
     }
 }
 
 // ---------------------------------------------------------------------------
 // ForceField
 // ---------------------------------------------------------------------------
+
+/// The nonbonded treatment a force field's pair styles state
+/// ([`ForceField::nonbonded`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Nonbonded {
+    /// How far its electrostatics reach; `None` when it has no Coulomb style.
+    pub coulomb: Option<crate::ff::ir::CoulombRange>,
+    /// The Coulomb styles' largest `cutoff`; `None` when none states one.
+    pub coulomb_cutoff: Option<F>,
+    /// The dispersion styles' largest `cutoff`; `None` when none states one.
+    pub vdw_cutoff: Option<F>,
+}
 
 /// Top-level forcefield container holding styles and their type definitions.
 ///
@@ -1001,86 +739,8 @@ pub struct ForceField {
     pub(crate) registry: RegistryRef,
 }
 
-/// The category a style is defined under — the first argument of
-/// [`ForceField::def_style`].
-///
-/// A name (`"bond"`, `"urey_bradley"`, …; a `&str` or `String` converts)
-/// names a **declared** category: a built-in one, one the force field's
-/// registry declares, or one the force field already holds a style of. Its
-/// arity comes from there. [`arity`](Self::arity) additionally states how
-/// many endpoints its types name — how a reader brings in a category that
-/// nothing declares, its arity taken from the endpoint columns of the record
-/// (molrec: an unknown category's arity is its endpoint prefix).
-///
-/// ```
-/// use molrs::ff::forcefield::{Category, ForceField};
-/// use molrs::ff::ir::Params;
-///
-/// let mut ff = ForceField::new("example");
-/// ff.def_style("bond", "harmonic", Params::new()).unwrap();
-/// ff.def_style(Category::new("bespoke").arity(4), "x", Params::new())
-///     .unwrap();
-/// assert_eq!(ff.get_style("bespoke", "x").unwrap().arity(), 4);
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Category {
-    name: String,
-    arity: Option<usize>,
-}
-
-impl Category {
-    /// The category `name`, with the arity its declaration gives it.
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            arity: None,
-        }
-    }
-
-    /// State that the category's types name `arity` endpoints.
-    ///
-    /// A declared category keeps its own arity, so `arity` must equal it; an
-    /// undeclared one becomes a [`StyleDefs::Relation`] of `arity` (0 ..= 5).
-    pub fn arity(mut self, arity: usize) -> Self {
-        self.arity = Some(arity);
-        self
-    }
-
-    /// The category name.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl From<&str> for Category {
-    fn from(name: &str) -> Self {
-        Category::new(name)
-    }
-}
-
-impl From<&String> for Category {
-    fn from(name: &String) -> Self {
-        Category::new(name.as_str())
-    }
-}
-
-impl From<String> for Category {
-    fn from(name: String) -> Self {
-        Category::new(name)
-    }
-}
-
 /// The most endpoints a type names (`itom` … `mtom`).
 const MAX_ARITY: usize = 5;
-
-/// Whether `name` is spelled like a category (`^[a-z][a-z0-9_]*$`, the
-/// force-field IR's rule): a reader's unknown category must be one to be
-/// held.
-fn is_category_name(name: &str) -> bool {
-    let mut bytes = name.bytes();
-    bytes.next().is_some_and(|b| b.is_ascii_lowercase())
-        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-}
 
 /// The relative difference within which [`ForceField::merge`] takes two
 /// numbers for one value.
@@ -1105,12 +765,10 @@ struct Pricing {
 }
 
 impl Pricing {
-    /// The pricing of the style `(category, name)`, from the process-wide
-    /// registry.
-    fn of(category: &str, name: &str) -> Self {
-        let spec = crate::ff::style_registry::with_global_registry(|r| {
-            r.style(category, name).map(|(spec, _)| spec.clone())
-        });
+    /// The pricing of the style `(category, name)`, from `registry` (the
+    /// merged force field's own, or the process-wide one).
+    fn of(registry: &RegistryRef, category: &str, name: &str) -> Self {
+        let spec = registry.with(|r| r.style(category, name).map(|(spec, _)| spec.clone()));
         Self { spec }
     }
 
@@ -1142,9 +800,6 @@ impl Pricing {
         }
     }
 }
-
-/// The unit system of a force field that declares none (LAMMPS `real`).
-const DEFAULT_UNITS: &str = "real";
 
 impl ForceField {
     pub fn new(name: &str) -> Self {
@@ -1182,14 +837,22 @@ impl ForceField {
     }
 
     /// The unit system the parameters are expressed in (a LAMMPS `units`
-    /// name: `real`, `metal`, `lj`, …). `"real"` when none is declared.
-    pub fn units(&self) -> &str {
-        self.units.as_deref().unwrap_or(DEFAULT_UNITS)
+    /// name: `real`, `metal`, `lj`, …), or `None` when none is declared.
+    pub fn units(&self) -> Option<&str> {
+        self.units.as_deref()
     }
 
-    /// The declared unit system, or `None` when the force field declares none.
-    pub fn declared_units(&self) -> Option<&str> {
-        self.units.as_deref()
+    /// The declared unit system, or the error naming the force field that a
+    /// reader of its numbers (a unit conversion, a record) needs: undeclared
+    /// units are never assumed.
+    pub fn required_units(&self) -> Result<&str, String> {
+        self.units.as_deref().ok_or_else(|| {
+            format!(
+                "force field '{}' declares no units: the unit system its numbers are in \
+                 must be stated (set_units), never assumed",
+                self.name
+            )
+        })
     }
 
     /// Declare the unit system the parameters are expressed in.
@@ -1197,19 +860,24 @@ impl ForceField {
         self.units = Some(units.to_owned());
     }
 
-    /// The force field's [`SpecialBonds`] 1-2 / 1-3 / 1-4 nonbonded scale
-    /// weights. Pair kernels apply the 1-4 weight to flagged (`is_14`) pairs.
-    /// [`SpecialBonds::default`] when none are declared.
-    pub fn special_bonds(&self) -> &SpecialBonds {
-        self.special_bonds
-            .as_ref()
-            .unwrap_or(&DEFAULT_SPECIAL_BONDS)
+    /// The force field's declared [`SpecialBonds`] 1-2 / 1-3 / 1-4
+    /// nonbonded scale weights, or `None` when it declares none. Pair kernels
+    /// apply the 1-4 weight to flagged (`is_14`) pairs; compiling a field with
+    /// a pair style and no weights is an error, never a default.
+    pub fn special_bonds(&self) -> Option<&SpecialBonds> {
+        self.special_bonds.as_ref()
     }
 
-    /// The declared [`SpecialBonds`], or `None` when the force field declares
-    /// none.
-    pub fn declared_special_bonds(&self) -> Option<&SpecialBonds> {
-        self.special_bonds.as_ref()
+    /// The declared [`SpecialBonds`], or the error naming the force field
+    /// that a reader of its pair weights (a compile, an engine writer) needs.
+    pub fn required_special_bonds(&self) -> Result<&SpecialBonds, String> {
+        self.special_bonds.as_ref().ok_or_else(|| {
+            format!(
+                "force field '{}' declares no special_bonds: its 1-2 / 1-3 / 1-4 pair weights \
+                 must be stated (set_special_bonds), never assumed",
+                self.name
+            )
+        })
     }
 
     /// Declare the [`SpecialBonds`] weights. Force-field readers set these per
@@ -1277,7 +945,7 @@ impl ForceField {
             _ => {}
         }
         for style in &other.styles {
-            let pricing = Pricing::of(style.category(), &style.name);
+            let pricing = Pricing::of(&out.registry, style.category(), &style.name);
             let target = out.merge_style(style, &pricing)?;
             for (name, endpoints, params) in style.type_rows() {
                 let alike = |a: &Params, b: &Params| pricing.rows_alike(name, a, b);
@@ -1310,16 +978,15 @@ impl ForceField {
 
     /// Define the `category` style named `name`, or return the existing one.
     ///
-    /// `category` names one of `atom`/`bond`/`angle`/`dihedral`/`improper`/
-    /// `pair`/`cmap`, a category this force field's registry declares
-    /// ([`crate::ff::style_registry::register_category`] for the process-wide
-    /// one; its arity comes from there), or a category this force field
-    /// already holds a style of (one read from a record that no registry
-    /// declares). A [`Category`] with a stated [`arity`](Category::arity)
-    /// must agree with a declared category's arity
-    /// (`Err(DefError::CategoryArity)`; a pair's is 2), and brings in an
-    /// undeclared one as a [`StyleDefs::Relation`] of that arity; any other
-    /// undeclared category is `Err(DefError::UnknownCategory)`.
+    /// `category` names a **declared** category, its arity taken from its
+    /// declaration: one this force field's registry declares (the built-in
+    /// ones, and [`crate::ff::style_registry::register_category`]'s for the
+    /// process-wide registry), one of the IR's
+    /// [built-in categories](crate::ff::ir::builtin_categories), or a
+    /// category this force field already holds a style of (one read from a
+    /// record that no registry declares). Any other category is
+    /// `Err(DefError::UnknownCategory)`;
+    /// [`def_style_with_arity`](Self::def_style_with_arity) brings one in.
     ///
     /// A style is identified by `(category, name)`: a repeated definition with
     /// exactly equal `params` returns the style already defined; with
@@ -1327,58 +994,82 @@ impl ForceField {
     /// definition is kept.
     pub fn def_style(
         &mut self,
-        category: impl Into<Category>,
+        category: &str,
         name: &str,
         params: Params,
     ) -> Result<&mut Style, DefError> {
-        let Category {
-            name: category,
-            arity,
-        } = category.into();
-        let declared = self.read_registry(|r| self.empty_defs(Some(r), &category));
-        let defs = match (declared, arity) {
-            (Ok(defs), None) => defs,
-            (Ok(defs), Some(arity)) if defs.arity() == arity => defs,
-            (Ok(defs), Some(arity)) => {
+        let defs = self.empty_defs(category)?;
+        self.define_style(defs, name, &params)
+    }
+
+    /// [`def_style`](Self::def_style), stating that the category's types
+    /// name `arity` endpoints — how a reader brings in a category that
+    /// nothing declares, its arity taken from the endpoint columns of the
+    /// record (molrec: an unknown category's arity is its endpoint prefix).
+    ///
+    /// A declared category keeps its own arity, so `arity` must equal it
+    /// (`Err(DefError::CategoryArity)`; a pair's is 2). An undeclared
+    /// category spelled like one (`^[a-z][a-z0-9_]*$`) is brought in with
+    /// `arity` (0 ..= 5, else `Err(DefError::CategoryArity)`); any other is
+    /// `Err(DefError::UnknownCategory)`.
+    ///
+    /// ```
+    /// use molrs::ff::forcefield::ForceField;
+    /// use molrs::ff::ir::Params;
+    ///
+    /// let mut ff = ForceField::new("example");
+    /// ff.def_style_with_arity("bond", 2, "harmonic", Params::new()).unwrap();
+    /// ff.def_style_with_arity("bespoke", 4, "x", Params::new()).unwrap();
+    /// assert_eq!(ff.get_style("bespoke", "x").unwrap().arity(), 4);
+    /// assert!(ff.def_style_with_arity("bond", 3, "other", Params::new()).is_err());
+    /// ```
+    pub fn def_style_with_arity(
+        &mut self,
+        category: &str,
+        arity: usize,
+        name: &str,
+        params: Params,
+    ) -> Result<&mut Style, DefError> {
+        let defs = match self.empty_defs(category) {
+            Ok(defs) if defs.arity() == arity => defs,
+            Ok(defs) => {
                 return Err(DefError::CategoryArity {
-                    category,
+                    category: category.to_owned(),
                     expected: defs.arity(),
                     got: arity,
                 });
             }
-            (Err(DefError::UnknownCategory(_)), Some(arity)) if is_category_name(&category) => {
+            Err(DefError::UnknownCategory(_)) if is_category_name(category) => {
                 let arity = u8::try_from(arity)
                     .ok()
                     .filter(|&n| usize::from(n) <= MAX_ARITY)
                     .ok_or_else(|| DefError::CategoryArity {
-                        category: category.clone(),
+                        category: category.to_owned(),
                         expected: MAX_ARITY,
                         got: arity,
                     })?;
-                StyleDefs::relation(&category, arity)
+                StyleDefs::new(category, Arity::Exact(arity))
             }
-            (Err(e), _) => return Err(e),
+            Err(e) => return Err(e),
         };
         self.define_style(defs, name, &params)
     }
 
-    /// No definitions under `category`: its built-in variant, else a
-    /// [`StyleDefs::Relation`] of the arity `registry` declares, else of the
-    /// arity of the styles of `category` this force field holds.
-    fn empty_defs(
-        &self,
-        registry: Option<&Registry>,
-        category: &str,
-    ) -> Result<StyleDefs, DefError> {
-        if let Some(defs) = StyleDefs::builtin(category) {
-            return Ok(defs);
-        }
-        if let Some(spec) = registry.and_then(|r| r.category(category)) {
-            return match spec.arity {
-                Arity::Exact(n) => Ok(StyleDefs::relation(category, n)),
-                // Only `pair` is neighbour-driven, and it has its variant.
-                Arity::SelfOrPair => Err(DefError::UnknownCategory(category.to_owned())),
-            };
+    /// No definitions under `category`, of the arity its declaration gives
+    /// it — in this force field's registry, else among the IR's built-in
+    /// categories — else of the arity of the styles of `category` this
+    /// force field holds.
+    fn empty_defs(&self, category: &str) -> Result<StyleDefs, DefError> {
+        let declared = self
+            .read_registry(|r| r.category(category).map(|spec| spec.arity))
+            .or_else(|| {
+                builtin_categories()
+                    .into_iter()
+                    .find(|spec| spec.name == category)
+                    .map(|spec| spec.arity)
+            });
+        if let Some(arity) = declared {
+            return Ok(StyleDefs::new(category, arity));
         }
         self.styles
             .iter()
@@ -1434,7 +1125,7 @@ impl ForceField {
         name: &str,
         params: &Params,
     ) -> Result<(), DefError> {
-        self.read_registry(|r| self.empty_defs(Some(r), category))?;
+        self.empty_defs(category)?;
         match self.get_style(category, name) {
             Some(existing) if existing.params != *params => Err(DefError::StyleConflict {
                 category: category.to_owned(),
@@ -1480,6 +1171,75 @@ impl ForceField {
             .find(|s| s.category() == category && s.name == name)
     }
 
+    /// The nonbonded treatment this force field's pair styles state, each
+    /// style read by its declared [`PairRole`](crate::ff::ir::PairRole): its
+    /// Coulomb range (long-range when any Coulomb style is), the Coulomb
+    /// styles' largest `cutoff` and the dispersion styles' largest `cutoff`.
+    /// Damping styles set neither.
+    ///
+    /// Cutoffs are in `length_unit` (a unit-registry name, `"nanometer"`),
+    /// converted from the length unit of the force field's declared unit
+    /// preset; `None` keeps them in the force field's own unit.
+    ///
+    /// # Errors
+    ///
+    /// A pair style the registry does not know, a `cutoff` that is no number,
+    /// or — when there is a cutoff to convert — undeclared units, a preset
+    /// the registry has no length unit for, or a `length_unit` it cannot
+    /// convert to.
+    pub fn nonbonded(&self, length_unit: Option<&str>) -> Result<Nonbonded, String> {
+        use crate::ff::ir::{CoulombRange, PairRole};
+        let mut coulomb: Option<CoulombRange> = None;
+        let (mut coulomb_cutoff, mut vdw_cutoff): (Option<F>, Option<F>) = (None, None);
+        for style in self.get_styles("pair") {
+            let name = style.name();
+            let role = self
+                .registry()
+                .with(|r| r.style("pair", name).map(|(spec, _)| spec.pair_role()))
+                .ok_or_else(|| format!("pair style '{name}' is not registered"))?;
+            let cutoff = match style.params().get("cutoff") {
+                None => None,
+                Some(v) => Some(
+                    v.as_num()
+                        .ok_or_else(|| format!("pair style '{name}': cutoff is not a number"))?,
+                ),
+            };
+            let widen = |held: Option<F>| match (held, cutoff) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            };
+            match role {
+                PairRole::Coulomb(range) => {
+                    coulomb = Some(match (coulomb, range) {
+                        (Some(CoulombRange::Long), _) | (_, CoulombRange::Long) => {
+                            CoulombRange::Long
+                        }
+                        _ => CoulombRange::Cut,
+                    });
+                    coulomb_cutoff = widen(coulomb_cutoff);
+                }
+                PairRole::Dispersion => vdw_cutoff = widen(vdw_cutoff),
+                PairRole::Damping => {}
+            }
+        }
+        let factor = match length_unit {
+            Some(target) if coulomb_cutoff.is_some() || vdw_cutoff.is_some() => {
+                let units = self.required_units()?;
+                let preset = crate::core::UnitPreset::builtin(units)
+                    .ok_or_else(|| format!("force field units '{units}' are no unit preset"))?;
+                crate::core::UnitRegistry::global()
+                    .factor(preset.length(), target)
+                    .map_err(|e| format!("cutoffs from {} to {target}: {e}", preset.length()))?
+            }
+            _ => 1.0,
+        };
+        Ok(Nonbonded {
+            coulomb,
+            coulomb_cutoff: coulomb_cutoff.map(|c| c * factor),
+            vdw_cutoff: vdw_cutoff.map(|c| c * factor),
+        })
+    }
+
     pub fn get_styles(&self, category: &str) -> Vec<&Style> {
         self.styles
             .iter()
@@ -1487,95 +1247,13 @@ impl ForceField {
             .collect()
     }
 
-    pub fn get_atomtypes(&self) -> Vec<&AtomType> {
+    /// The types of every style of `category`, style by style, each in
+    /// definition order.
+    pub fn get_types(&self, category: &str) -> Vec<&TypeDef> {
         self.styles
             .iter()
-            .filter_map(|s| match &s.defs {
-                StyleDefs::Atom(types) => Some(types.iter()),
-                _ => None,
-            })
-            .flatten()
-            .collect()
-    }
-
-    pub fn get_bondtypes(&self) -> Vec<&BondType> {
-        self.styles
-            .iter()
-            .filter_map(|s| match &s.defs {
-                StyleDefs::Bond(types) => Some(types.iter()),
-                _ => None,
-            })
-            .flatten()
-            .collect()
-    }
-
-    pub fn get_angletypes(&self) -> Vec<&AngleType> {
-        self.styles
-            .iter()
-            .filter_map(|s| match &s.defs {
-                StyleDefs::Angle(types) => Some(types.iter()),
-                _ => None,
-            })
-            .flatten()
-            .collect()
-    }
-
-    pub fn get_pairtypes(&self) -> Vec<&PairType> {
-        self.styles
-            .iter()
-            .filter_map(|s| match &s.defs {
-                StyleDefs::Pair(types) => Some(types.iter()),
-                _ => None,
-            })
-            .flatten()
-            .collect()
-    }
-
-    pub fn get_dihedraltypes(&self) -> Vec<&DihedralType> {
-        self.styles
-            .iter()
-            .filter_map(|s| match &s.defs {
-                StyleDefs::Dihedral(types) => Some(types.iter()),
-                _ => None,
-            })
-            .flatten()
-            .collect()
-    }
-
-    pub fn get_impropertypes(&self) -> Vec<&ImproperType> {
-        self.styles
-            .iter()
-            .filter_map(|s| match &s.defs {
-                StyleDefs::Improper(types) => Some(types.iter()),
-                _ => None,
-            })
-            .flatten()
-            .collect()
-    }
-
-    /// The types of every style of `category` that is a
-    /// [`StyleDefs::Relation`], style by style.
-    pub fn get_relationtypes(&self, category: &str) -> Vec<&RelationType> {
-        self.styles
-            .iter()
-            .filter_map(|s| match &s.defs {
-                StyleDefs::Relation {
-                    category: c, types, ..
-                } if &**c == category => Some(types.iter()),
-                _ => None,
-            })
-            .flatten()
-            .collect()
-    }
-
-    pub fn get_cmaptypes(&self) -> Vec<&CmapType> {
-        self.styles
-            .iter()
-            .filter_map(|s| match &s.defs {
-                StyleDefs::Cmap(types) => Some(types.iter()),
-                _ => None,
-            })
-            .flatten()
+            .filter(|s| s.category() == category)
+            .flat_map(|s| s.defs.types())
             .collect()
     }
 }
@@ -1589,6 +1267,30 @@ pub(crate) mod tests {
     use super::*;
     use molrs::core::TypeName;
     use ndarray::ArrayD;
+
+    /// Each pair style is read by its declared role: the Coulomb range and
+    /// cutoff from the Coulomb styles, the dispersion cutoff from the rest,
+    /// nothing from a damping; cutoffs converted through the units preset.
+    #[test]
+    fn nonbonded_reads_each_pair_style_by_its_role() {
+        let mut ff = ForceField::new("t");
+        ff.set_units("real");
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
+            .unwrap();
+        ff.def_style("pair", "coul/cut", Params::from_iter([("cutoff", 12.0)]))
+            .unwrap();
+        ff.def_style("pair", "thole", Params::from_iter([("cutoff", 99.0)]))
+            .unwrap();
+        let nb = ff.nonbonded(Some("nanometer")).unwrap();
+        assert_eq!(nb.coulomb, Some(crate::ff::ir::CoulombRange::Cut));
+        assert!((nb.coulomb_cutoff.unwrap() - 1.2).abs() < 1e-12, "{nb:?}");
+        assert!((nb.vdw_cutoff.unwrap() - 1.0).abs() < 1e-12, "{nb:?}");
+        assert_eq!(ff.nonbonded(None).unwrap().vdw_cutoff, Some(10.0));
+
+        ff.set_units("lj");
+        let err = ff.nonbonded(Some("nanometer")).unwrap_err();
+        assert!(err.contains("nanometer"), "{err}");
+    }
 
     #[test]
     fn test_params() {
@@ -1622,9 +1324,7 @@ pub(crate) mod tests {
 
         let styles = ff.get_styles("bond");
         assert_eq!(styles.len(), 1);
-        let StyleDefs::Bond(types) = styles[0].defs() else {
-            panic!("expected Bond defs");
-        };
+        let types = styles[0].defs().types();
         assert_eq!(types.len(), 2);
     }
 
@@ -1649,8 +1349,8 @@ pub(crate) mod tests {
         assert!(ff.styles().is_empty());
     }
 
-    /// A category beyond the seven is a [`StyleDefs::Relation`] of its
-    /// arity, and every edit reads and writes it like any other: its rows,
+    /// A category beyond the seven holds its rows under its declared arity,
+    /// and every edit reads and writes it like any other: its rows,
     /// params, renames, removals, the conflict rule and a merge.
     #[test]
     fn a_relation_style_is_edited_like_any_other() {
@@ -1689,7 +1389,7 @@ pub(crate) mod tests {
             style.type_rows(),
             vec![("core", vec!["C", "D"], style.type_params("core").unwrap())]
         );
-        assert_eq!(ff.get_relationtypes("drude").len(), 1);
+        assert_eq!(ff.get_types("drude").len(), 1);
 
         let mut other = ForceField::new("u");
         other
@@ -1759,9 +1459,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let style = ff.get_style("atom", "full").unwrap();
-        let StyleDefs::Atom(types) = style.defs() else {
-            panic!("expected Atom defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
         assert_eq!(types[0].name, "CT");
         assert_eq!(
@@ -1808,9 +1506,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let style = ff.get_style("atom", "full").unwrap();
-        let StyleDefs::Atom(types) = style.defs() else {
-            panic!("expected Atom defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 2);
 
         let ct = style.get_atomtype("CT").unwrap();
@@ -1834,8 +1530,8 @@ pub(crate) mod tests {
             .unwrap();
 
         let bt = style.get_bondtype("CT", "OH").unwrap();
-        assert_eq!(bt.itom, "CT");
-        assert_eq!(bt.jtom, "OH");
+        assert_eq!(bt.endpoints[0], "CT");
+        assert_eq!(bt.endpoints[1], "OH");
         assert_eq!(bt.params.get("k").and_then(|v| v.as_num()), Some(300.0));
         assert_eq!(bt.params.get("r0").and_then(|v| v.as_num()), Some(1.4));
     }
@@ -1868,13 +1564,11 @@ pub(crate) mod tests {
             )
             .unwrap();
 
-        let StyleDefs::Angle(types) = style.defs() else {
-            panic!("expected Angle defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0].itom, "HC");
-        assert_eq!(types[0].jtom, "CT");
-        assert_eq!(types[0].ktom, "HC");
+        assert_eq!(types[0].endpoints[0], "HC");
+        assert_eq!(types[0].endpoints[1], "CT");
+        assert_eq!(types[0].endpoints[2], "HC");
         assert_eq!(
             types[0].params.get("theta0").and_then(|v| v.as_num()),
             Some(107.8)
@@ -1893,12 +1587,10 @@ pub(crate) mod tests {
             )
             .unwrap();
 
-        let StyleDefs::Dihedral(types) = style.defs() else {
-            panic!("expected Dihedral defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0].itom, "HC");
-        assert_eq!(types[0].ltom, "HC");
+        assert_eq!(types[0].endpoints[0], "HC");
+        assert_eq!(types[0].endpoints[3], "HC");
     }
 
     #[test]
@@ -1916,8 +1608,8 @@ pub(crate) mod tests {
             .unwrap();
 
         let pt = style.get_pairtype("Ar", None).unwrap();
-        assert_eq!(pt.itom, "Ar");
-        assert_eq!(pt.jtom, "Ar");
+        assert_eq!(pt.endpoints[0], "Ar");
+        assert_eq!(pt.endpoints[1], "Ar");
         assert_eq!(pt.params.get("epsilon").and_then(|v| v.as_num()), Some(1.0));
     }
 
@@ -1936,8 +1628,8 @@ pub(crate) mod tests {
             .unwrap();
 
         let pt = style.get_pairtype("OH", Some("CT")).unwrap();
-        assert_eq!(pt.itom, "CT");
-        assert_eq!(pt.jtom, "OH");
+        assert_eq!(pt.endpoints[0], "CT");
+        assert_eq!(pt.endpoints[1], "OH");
         assert_eq!(pt.params.get("epsilon").and_then(|v| v.as_num()), Some(0.1));
     }
 
@@ -1974,9 +1666,7 @@ pub(crate) mod tests {
             )
             .unwrap();
 
-        let StyleDefs::Bond(types) = style.defs() else {
-            panic!("expected Bond defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 2);
     }
 
@@ -1996,13 +1686,11 @@ pub(crate) mod tests {
             )
             .unwrap();
 
-        let StyleDefs::Bond(types) = style.defs() else {
-            panic!("expected Bond defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
         assert_eq!(types[0].name, "anything");
-        assert_eq!(types[0].itom, "CT");
-        assert_eq!(types[0].jtom, "OH");
+        assert_eq!(types[0].endpoints[0], "CT");
+        assert_eq!(types[0].endpoints[1], "OH");
         assert_eq!(
             style.type_endpoints("anything"),
             Some(vec!["CT".to_string(), "OH".to_string()])
@@ -2056,12 +1744,13 @@ pub(crate) mod tests {
             .def_type("OH-CT", &["OH", "CT"], Params::new())
             .unwrap();
 
-        let StyleDefs::Bond(types) = style.defs() else {
-            panic!("expected Bond defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types[0].name, "OH-CT");
         assert_eq!(
-            (types[0].itom.as_str(), types[0].jtom.as_str()),
+            (
+                types[0].endpoints[0].as_str(),
+                types[0].endpoints[1].as_str()
+            ),
             ("OH", "CT")
         );
     }
@@ -2266,10 +1955,13 @@ pub(crate) mod tests {
             style.type_endpoints("C-NH1-CT1-C-NH1"),
             Some(["C", "NH1", "CT1", "C", "NH1"].map(String::from).to_vec())
         );
-        let cmaps = ff.get_cmaptypes();
+        let cmaps = ff.get_types("cmap");
         assert_eq!(cmaps.len(), 1);
         assert_eq!(
-            (cmaps[0].itom.as_str(), cmaps[0].mtom.as_str()),
+            (
+                cmaps[0].endpoints[0].as_str(),
+                cmaps[0].endpoints[4].as_str()
+            ),
             ("C", "NH1")
         );
         assert_eq!(
@@ -2327,9 +2019,9 @@ pub(crate) mod tests {
             .unwrap();
         let mut ff = ForceField::new("ff");
         ff.merge(&other).unwrap();
-        assert_eq!(ff.get_cmaptypes()[0].params, params);
+        assert_eq!(ff.get_types("cmap")[0].params, params);
         ff.merge(&other).unwrap();
-        assert_eq!(ff.get_cmaptypes().len(), 1, "an identical overlap");
+        assert_eq!(ff.get_types("cmap").len(), 1, "an identical overlap");
     }
 
     // -- the conflict rule: Style::def_type ---------------------------------------
@@ -2353,9 +2045,7 @@ pub(crate) mod tests {
             )
             .unwrap();
 
-        let StyleDefs::Bond(types) = style.defs() else {
-            panic!("expected Bond defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
     }
 
@@ -2383,9 +2073,7 @@ pub(crate) mod tests {
             matches!(second, Err(DefError::TypeConflict { .. })),
             "{second:?}"
         );
-        let StyleDefs::Bond(types) = style.defs() else {
-            panic!("expected Bond defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
         assert_eq!(
             types[0].params.get("k").and_then(|v| v.as_num()),
@@ -2411,9 +2099,7 @@ pub(crate) mod tests {
             matches!(second, Err(DefError::TypeConflict { .. })),
             "{second:?}"
         );
-        let StyleDefs::Atom(types) = style.defs() else {
-            panic!("expected Atom defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
         assert_eq!(
             types[0].params.get("element").and_then(|v| v.as_text()),
@@ -2463,9 +2149,7 @@ pub(crate) mod tests {
             matches!(&second, Err(DefError::PairConflict { stated, .. }) if stated == "A-B"),
             "{second:?}"
         );
-        let StyleDefs::Pair(types) = style.defs() else {
-            panic!("expected Pair defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
         assert_eq!(
             types[0].params.get("epsilon").and_then(|v| v.as_num()),
@@ -2521,9 +2205,7 @@ pub(crate) mod tests {
             })
             .unwrap();
 
-        let StyleDefs::Pair(types) = style.defs() else {
-            panic!("expected Pair defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
         assert_eq!(types[0].name, "A-B");
         assert_eq!(
@@ -2691,9 +2373,7 @@ pub(crate) mod tests {
         let changed: bool = style.set_type_param("CT-CT", "k", 310.0);
 
         assert!(changed);
-        let StyleDefs::Bond(types) = style.defs() else {
-            panic!("expected Bond defs");
-        };
+        let types = style.defs().types();
         assert_eq!(types.len(), 1);
         assert_eq!(
             types[0].params.get("k").and_then(|v| v.as_num()),
@@ -2721,9 +2401,9 @@ pub(crate) mod tests {
             )
             .unwrap();
 
-        assert_eq!(ff.get_atomtypes().len(), 2);
-        assert_eq!(ff.get_bondtypes().len(), 1);
-        assert_eq!(ff.get_pairtypes().len(), 0);
+        assert_eq!(ff.get_types("atom").len(), 2);
+        assert_eq!(ff.get_types("bond").len(), 1);
+        assert_eq!(ff.get_types("pair").len(), 0);
     }
 
     #[test]
@@ -2738,7 +2418,7 @@ pub(crate) mod tests {
             )
             .unwrap();
 
-        let types = ff.get_angletypes();
+        let types = ff.get_types("angle");
         assert_eq!(types.len(), 1);
         assert_eq!(
             types[0].params.get("theta0").and_then(|v| v.as_num()),
@@ -2752,7 +2432,7 @@ pub(crate) mod tests {
     fn a_compiled_pair_list_says_only_in_or_out() {
         // The default and every Amber-family reader: both classes excluded.
         assert_eq!(
-            SpecialBonds::default().compiled_inclusion(),
+            SpecialBonds::EXCLUDE_12_13.compiled_inclusion(),
             Ok([false, false])
         );
         // LAMMPS `special_bonds fene`: 1-3 stays, at full strength.
@@ -2801,35 +2481,44 @@ pub(crate) mod tests {
     };
 
     #[test]
-    fn declared_units_is_none_until_set_units() {
+    fn units_is_none_until_set_units() {
         let mut ff = ForceField::new("test");
-        assert_eq!(ff.declared_units(), None);
-        assert_eq!(ff.units(), "real");
+        assert_eq!(ff.units(), None);
+        assert!(
+            ff.required_units()
+                .unwrap_err()
+                .contains("declares no units")
+        );
 
         ff.set_units("lj");
 
-        assert_eq!(ff.declared_units(), Some("lj"));
-        assert_eq!(ff.units(), "lj");
+        assert_eq!(ff.units(), Some("lj"));
+        assert_eq!(ff.required_units(), Ok("lj"));
     }
 
     #[test]
-    fn declared_special_bonds_is_none_until_set_special_bonds() {
+    fn special_bonds_is_none_until_set_special_bonds() {
         let mut ff = ForceField::new("test");
-        assert_eq!(ff.declared_special_bonds(), None);
-        assert_eq!(*ff.special_bonds(), SpecialBonds::default());
+        assert_eq!(ff.special_bonds(), None);
+        assert!(
+            ff.required_special_bonds()
+                .unwrap_err()
+                .contains("declares no special_bonds")
+        );
 
         ff.set_special_bonds(AMBER_SB);
 
-        assert_eq!(ff.declared_special_bonds(), Some(&AMBER_SB));
-        assert_eq!(*ff.special_bonds(), AMBER_SB);
+        assert_eq!(ff.special_bonds(), Some(&AMBER_SB));
+        assert_eq!(ff.required_special_bonds(), Ok(&AMBER_SB));
     }
 
-    /// Declaring the default value is still a declaration.
+    /// Declaring the 1-2 / 1-3 exclusion weights is a declaration like any
+    /// other.
     #[test]
-    fn set_special_bonds_to_the_default_declares_it() {
+    fn set_special_bonds_to_exclude_12_13_declares_it() {
         let mut ff = ForceField::new("test");
-        ff.set_special_bonds(SpecialBonds::default());
-        assert_eq!(ff.declared_special_bonds(), Some(&SpecialBonds::default()));
+        ff.set_special_bonds(SpecialBonds::EXCLUDE_12_13);
+        assert_eq!(ff.special_bonds(), Some(&SpecialBonds::EXCLUDE_12_13));
     }
 
     // -- ForceField::empty_like ------------------------------------------------
@@ -2856,8 +2545,8 @@ pub(crate) mod tests {
         let empty = library.empty_like();
 
         assert_eq!(empty.name, "library");
-        assert_eq!(empty.declared_units(), Some("metal"));
-        assert_eq!(empty.declared_special_bonds(), Some(&AMBER_SB));
+        assert_eq!(empty.units(), Some("metal"));
+        assert_eq!(empty.special_bonds(), Some(&AMBER_SB));
         assert!(empty.styles().is_empty(), "{:?}", empty.styles());
     }
 
@@ -2869,8 +2558,8 @@ pub(crate) mod tests {
         let empty = library.empty_like();
 
         assert_eq!(empty.name, "bare");
-        assert_eq!(empty.declared_units(), None);
-        assert_eq!(empty.declared_special_bonds(), None);
+        assert_eq!(empty.units(), None);
+        assert_eq!(empty.special_bonds(), None);
         assert!(empty.styles().is_empty());
     }
 
@@ -2893,51 +2582,25 @@ pub(crate) mod tests {
 
     // -- ForceField::merge -----------------------------------------------------
 
-    fn same_defs(a: &StyleDefs, b: &StyleDefs) -> bool {
-        match (a, b) {
-            (StyleDefs::Atom(x), StyleDefs::Atom(y)) => x == y,
-            (StyleDefs::Bond(x), StyleDefs::Bond(y)) => x == y,
-            (StyleDefs::Angle(x), StyleDefs::Angle(y)) => x == y,
-            (StyleDefs::Dihedral(x), StyleDefs::Dihedral(y)) => x == y,
-            (StyleDefs::Improper(x), StyleDefs::Improper(y)) => x == y,
-            (StyleDefs::Pair(x), StyleDefs::Pair(y)) => x == y,
-            (StyleDefs::Cmap(x), StyleDefs::Cmap(y)) => x == y,
-            (
-                StyleDefs::Relation {
-                    category: c,
-                    arity: n,
-                    types: x,
-                },
-                StyleDefs::Relation {
-                    category: d,
-                    arity: m,
-                    types: y,
-                },
-            ) => (c, n, x) == (d, m, y),
-            _ => false,
-        }
-    }
-
     /// Every definition of `a` equals `b`'s, in order: name, declared state,
     /// and per style its category, name, params and types (endpoints and
     /// params included).
     pub(crate) fn assert_same_definitions(a: &ForceField, b: &ForceField) {
         assert_eq!(a.name, b.name);
-        assert_eq!(a.declared_units(), b.declared_units());
-        assert_eq!(a.declared_special_bonds(), b.declared_special_bonds());
+        assert_eq!(a.units(), b.units());
+        assert_eq!(a.special_bonds(), b.special_bonds());
         assert_eq!(a.styles().len(), b.styles().len(), "style count");
         for (x, y) in a.styles().iter().zip(b.styles()) {
             assert_eq!(
                 (x.category(), x.name(), x.params()),
                 (y.category(), y.name(), y.params())
             );
-            assert!(
-                same_defs(x.defs(), y.defs()),
-                "{}:{} types differ: {:?} vs {:?}",
-                x.category(),
-                x.name(),
+            assert_eq!(
                 x.defs(),
-                y.defs()
+                y.defs(),
+                "{}:{} types differ",
+                x.category(),
+                x.name()
             );
         }
     }
@@ -2950,9 +2613,7 @@ pub(crate) mod tests {
     }
 
     fn bond_names(style: &Style) -> Vec<&str> {
-        let StyleDefs::Bond(types) = style.defs() else {
-            panic!("expected Bond defs");
-        };
+        let types = style.defs().types();
         types.iter().map(|t| t.name.as_str()).collect()
     }
 
@@ -3290,9 +2951,13 @@ pub(crate) mod tests {
         };
         let mut ff = define(109.80, 20.0 / 3.0);
         ff.merge(&define(109.80004705760963, 6.66666667)).unwrap();
-        assert_eq!(ff.get_angletypes().len(), 1);
-        assert_eq!(ff.get_angletypes()[0].params, angle(109.80), "self's kept");
-        assert_eq!(ff.get_dihedraltypes().len(), 1);
+        assert_eq!(ff.get_types("angle").len(), 1);
+        assert_eq!(
+            ff.get_types("angle")[0].params,
+            angle(109.80),
+            "self's kept"
+        );
+        assert_eq!(ff.get_types("dihedral").len(), 1);
 
         let merged = ff.merge(&define(109.81, 20.0 / 3.0));
         assert!(
@@ -3346,8 +3011,8 @@ pub(crate) mod tests {
             .unwrap();
 
         ff.merge(&prmtop).unwrap();
-        assert_eq!(ff.get_atomtypes().len(), 1);
-        assert_eq!(ff.get_angletypes()[0].params, estimated, "self's kept");
+        assert_eq!(ff.get_types("atom").len(), 1);
+        assert_eq!(ff.get_types("angle")[0].params, estimated, "self's kept");
 
         let mut no_theta = ForceField::new("partial");
         no_theta
@@ -3374,7 +3039,7 @@ pub(crate) mod tests {
 
         ff.merge(&other).unwrap();
 
-        assert_eq!(ff.declared_special_bonds(), Some(&AMBER_SB));
+        assert_eq!(ff.special_bonds(), Some(&AMBER_SB));
     }
 
     #[test]
@@ -3385,8 +3050,8 @@ pub(crate) mod tests {
 
         ff.merge(&other).unwrap();
 
-        assert_eq!(ff.declared_units(), Some("lj"));
-        assert_eq!(ff.units(), "lj");
+        assert_eq!(ff.units(), Some("lj"));
+        assert_eq!(ff.units(), Some("lj"));
     }
 
     /// An undeclared `other` leaves `self`'s declarations alone, and an
@@ -3397,13 +3062,13 @@ pub(crate) mod tests {
         declared.set_units("metal");
         declared.set_special_bonds(OPLS_SB);
         declared.merge(&ForceField::new("source")).unwrap();
-        assert_eq!(declared.declared_units(), Some("metal"));
-        assert_eq!(declared.declared_special_bonds(), Some(&OPLS_SB));
+        assert_eq!(declared.units(), Some("metal"));
+        assert_eq!(declared.special_bonds(), Some(&OPLS_SB));
 
         let mut undeclared = ForceField::new("target");
         undeclared.merge(&ForceField::new("source")).unwrap();
-        assert_eq!(undeclared.declared_units(), None);
-        assert_eq!(undeclared.declared_special_bonds(), None);
+        assert_eq!(undeclared.units(), None);
+        assert_eq!(undeclared.special_bonds(), None);
     }
 
     /// MMFF-style and OPLS-style 1-4 rules must refuse to combine.

@@ -68,9 +68,8 @@ impl NeighborList {
     /// Throws if `cutoff` is not a positive length.
     #[wasm_bindgen(constructor)]
     pub fn new(cutoff: F) -> Result<NeighborList, JsValue> {
-        check_cutoff(cutoff)?;
         Ok(NeighborList {
-            inner: RsNeighborList::new(cutoff),
+            inner: RsNeighborList::new(cutoff).map_err(cutoff_err)?,
         })
     }
 
@@ -91,9 +90,8 @@ impl NeighborList {
     /// ```
     #[wasm_bindgen(js_name = bruteForce)]
     pub fn brute_force(cutoff: F) -> Result<NeighborList, JsValue> {
-        check_cutoff(cutoff)?;
         Ok(NeighborList {
-            inner: RsNeighborList::brute_force(cutoff),
+            inner: RsNeighborList::brute_force(cutoff).map_err(cutoff_err)?,
         })
     }
 
@@ -221,13 +219,9 @@ impl NeighborList {
     }
 }
 
-/// Reject a non-positive cutoff before the core asserts on it: a panic must not
-/// cross this seam.
-fn check_cutoff(cutoff: F) -> Result<(), JsValue> {
-    if cutoff.is_nan() || cutoff <= 0.0 {
-        return Err(JsValue::from_str("cutoff must be a positive length in Å"));
-    }
-    Ok(())
+/// The core's refusal of a cutoff, as a thrown JS error.
+fn cutoff_err(err: molrs::core::CutoffError) -> JsValue {
+    JsValue::from_str(&err.to_string())
 }
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -456,13 +450,13 @@ impl NeighborQuery {
     /// `atoms` block with `x` / `y` / `z` columns.
     #[wasm_bindgen(constructor)]
     pub fn new(frame: &Frame, cutoff: F) -> Result<NeighborQuery, JsValue> {
-        check_cutoff(cutoff)?;
         frame.with_frame(|rs_frame| {
             let pos = frame_coords(rs_frame)?;
             let inner = match rs_frame.simbox.as_ref() {
                 Some(sb) => RsNeighborQuery::new(sb, pos.view(), cutoff),
                 None => RsNeighborQuery::unbounded(pos.view(), cutoff),
-            };
+            }
+            .map_err(cutoff_err)?;
             Ok(NeighborQuery { inner })
         })
     }

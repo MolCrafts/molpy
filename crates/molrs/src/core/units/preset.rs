@@ -387,6 +387,12 @@ impl UnitPreset {
         )
     }
 
+    /// The names [`builtin`](Self::builtin) knows, in its order: the LAMMPS
+    /// `units` styles and `openmm`.
+    pub const BUILTIN: [&'static str; 9] = [
+        "real", "metal", "si", "cgs", "electron", "lj", "micro", "nano", "openmm",
+    ];
+
     /// The built-in preset `name` — a LAMMPS `units` style, or `openmm` —
     /// as its constructor builds it; `None` for any other name. Unlike
     /// [`lookup_unit_preset`], never a preset registered or replaced at run time.
@@ -570,6 +576,15 @@ pub fn unit_preset_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The listed names are exactly the ones `builtin` builds.
+    #[test]
+    fn every_listed_builtin_builds() {
+        for name in UnitPreset::BUILTIN {
+            assert!(UnitPreset::builtin(name).is_some(), "{name}");
+        }
+        assert!(UnitPreset::builtin("furlong").is_none());
+    }
 
     #[test]
     fn micro_and_nano_constants_are_lammps_boltz_and_qqr2e() {

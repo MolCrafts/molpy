@@ -197,12 +197,16 @@ pub unsafe extern "C" fn molc_block_column_dtype(
         let bh = resolve_block!(registry, &block);
         let col_key = resolve_col_key!(registry, col_key_id);
         let result = registry.frames.with_block(&bh, |b| {
-            b.get(&col_key).map(|col| MolcDType::from(col.dtype()))
+            b.get(&col_key).map(|col| MolcDType::try_from(col.dtype()))
         });
         match result {
-            Ok(Some(dt)) => {
+            Ok(Some(Ok(dt))) => {
                 unsafe { *out = dt };
                 MolcStatus::Ok
+            }
+            Ok(Some(Err(msg))) => {
+                error::set_last_error(msg);
+                MolcStatus::TypeMismatch
             }
             Ok(None) => {
                 error::set_last_error(format!("column '{}' not found", col_key));
@@ -294,6 +298,8 @@ enum ReadFail {
     String,
     NonContiguous,
     TooSmall,
+    /// A dtype the C API has no code for.
+    Dtype(String),
 }
 
 fn fail_status(fail: ReadFail, key: &str) -> MolcStatus {
@@ -308,6 +314,7 @@ fn fail_status(fail: ReadFail, key: &str) -> MolcStatus {
             format!("column '{key}' is not contiguous"),
         ),
         ReadFail::TooSmall => (MolcStatus::InvalidArgument, "buffer too small".to_string()),
+        ReadFail::Dtype(msg) => (MolcStatus::TypeMismatch, format!("column '{key}': {msg}")),
     };
     error::set_last_error(msg);
     status
@@ -319,10 +326,10 @@ fn fail_status(fail: ReadFail, key: &str) -> MolcStatus {
 macro_rules! dispatch_scalar {
     ($dtype:expr, $f:ident($($arg:expr),*), string => $string:expr) => {
         match $dtype {
-            MolcDType::Float => $f::<F>($($arg),*),
-            MolcDType::Int => $f::<I>($($arg),*),
+            MolcDType::F64 => $f::<F>($($arg),*),
+            MolcDType::I32 => $f::<I>($($arg),*),
             MolcDType::Bool => $f::<bool>($($arg),*),
-            MolcDType::Uint => $f::<Idx>($($arg),*),
+            MolcDType::U64 => $f::<Idx>($($arg),*),
             MolcDType::I8 => $f::<i8>($($arg),*),
             MolcDType::I16 => $f::<i16>($($arg),*),
             MolcDType::I64 => $f::<i64>($($arg),*),
@@ -343,7 +350,7 @@ fn scalar_view(col: &Column) -> Result<(*const u8, usize, MolcDType), ReadFail> 
         let slice = arr.as_slice_memory_order().ok_or(ReadFail::NonContiguous)?;
         Ok((slice.as_ptr().cast(), slice.len()))
     }
-    let dtype = MolcDType::from(col.dtype());
+    let dtype = MolcDType::try_from(col.dtype()).map_err(ReadFail::Dtype)?;
     let (ptr, len) = dispatch_scalar!(dtype, view(col), string => Err(ReadFail::String))?;
     Ok((ptr, len, dtype))
 }
@@ -356,7 +363,7 @@ fn scalar_view_mut(col: &mut Column) -> Result<(*mut u8, usize, MolcDType), Read
             .ok_or(ReadFail::NonContiguous)?;
         Ok((slice.as_mut_ptr().cast(), slice.len()))
     }
-    let dtype = MolcDType::from(col.dtype());
+    let dtype = MolcDType::try_from(col.dtype()).map_err(ReadFail::Dtype)?;
     let (ptr, len) = dispatch_scalar!(dtype, view_mut(col), string => Err(ReadFail::String))?;
     Ok((ptr, len, dtype))
 }
@@ -593,8 +600,8 @@ unsafe fn column_from_c<T: CScalar>(
 ///
 /// * `block` -- Pointer to the block handle; its `block_version` is updated.
 /// * `col_key_id` -- Interned column name.
-/// * `dtype` -- Element type of `data`: `MOLC_D_TYPE_FLOAT` (`F`),
-///   `MOLC_D_TYPE_INT` (`int32_t`), `MOLC_D_TYPE_UINT` (`uint64_t`),
+/// * `dtype` -- Element type of `data`: `MOLC_D_TYPE_F64` (`F`),
+///   `MOLC_D_TYPE_I32` (`int32_t`), `MOLC_D_TYPE_U64` (`uint64_t`),
 ///   `MOLC_D_TYPE_BOOL` (one byte, 0 or 1), `MOLC_D_TYPE_I8` … `U32`,
 ///   `MOLC_D_TYPE_C64` / `C128` (a `float` / `double` pair per element).
 ///   `MOLC_D_TYPE_STRING` has no flat buffer and is refused.

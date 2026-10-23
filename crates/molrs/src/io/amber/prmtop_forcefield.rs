@@ -163,10 +163,9 @@ fn read_lj_table(
         if nb == 0 {
             return Ok(None);
         }
-        let idx = (nb - 1) as usize;
         Ok(Some(lj_ab_to_sigma_epsilon(
-            acoef.get(idx).copied().unwrap_or(0.0),
-            bcoef.get(idx).copied().unwrap_or(0.0),
+            entry(acoef, "LENNARD_JONES_ACOEF", nb)?,
+            entry(bcoef, "LENNARD_JONES_BCOEF", nb)?,
         )))
     };
     let mut self_params = vec![(1.0, 0.0); n_types + 1];
@@ -227,14 +226,16 @@ fn lj_rows(
     type_index: &[i64],
     regular: &LjTable,
     one_four: Option<&LjTable>,
-) -> (Vec<(String, Lj, Lj)>, Vec<(String, String, Lj, Lj)>) {
+) -> Result<(Vec<(String, Lj, Lj)>, Vec<(String, String, Lj, Lj)>), String> {
     let n_types = regular.self_params.len() - 1;
-    let class = |i: usize| -> usize {
-        let t = type_index.get(i).copied().unwrap_or(0);
-        if t >= 1 && t as usize <= n_types {
-            t as usize
-        } else {
-            0
+    let class = |i: usize| -> Result<usize, String> {
+        match type_index.get(i).copied() {
+            Some(t) if t >= 1 && t as usize <= n_types => Ok(t as usize),
+            Some(t) => Err(format!(
+                "ATOM_TYPE_INDEX of atom {} is {t}, outside the {n_types} Lennard-Jones types",
+                i + 1
+            )),
+            None => Err(format!("ATOM_TYPE_INDEX has no entry for atom {}", i + 1)),
         }
     };
     let self14 = |t: usize| one_four.map_or(regular.self_params[t], |o| o.self_params[t]);
@@ -244,11 +245,7 @@ fn lj_rows(
         if name.is_empty() {
             continue;
         }
-        let t = class(i);
-        if t == 0 {
-            selves.push((name.clone(), (1.0, 0.0), (1.0, 0.0)));
-            continue;
-        }
+        let t = class(i)?;
         names_of[t].insert(name.as_str());
         selves.push((name.clone(), regular.self_params[t], self14(t)));
     }
@@ -270,7 +267,20 @@ fn lj_rows(
             }
         }
     }
-    (selves, cross)
+    Ok((selves, cross))
+}
+
+/// Entry `pointer` (1-based, as prmtop pointers are) of the section `name`.
+///
+/// # Errors
+///
+/// A pointer outside the section, named with the section: a parameter the
+/// file does not hold is never read as 0.
+fn entry(table: &[f64], name: &str, pointer: i64) -> Result<f64, String> {
+    usize::try_from(pointer - 1)
+        .ok()
+        .and_then(|i| table.get(i).copied())
+        .ok_or_else(|| format!("{name} has no entry {pointer} (it holds {})", table.len()))
 }
 
 /// Whether two A/B tables are the same numbers.
@@ -369,7 +379,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
                 .copied()
                 .ok_or_else(|| format!("ATOM_TYPE_INDEX has no entry for atom {}", i + 1))?
                 as f64;
-            let mass = masses.get(i).copied().unwrap_or(0.0);
+            let mass = entry(&masses, "MASS", i as i64 + 1)?;
             style
                 .def_type(name, &[], Params::from_iter([("id", id), ("mass", mass)]))
                 .map_err(|e| e.to_string())?;
@@ -393,10 +403,9 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             }
             let i = (a / 3) as usize;
             let j = (b / 3) as usize;
-            let tid = (chunk[2] - 1) as usize;
             let ends = TypeName::orient(&[type_name(i), type_name(j)]);
-            let k = bond_k.get(tid).copied().unwrap_or(0.0);
-            let r0 = bond_r0.get(tid).copied().unwrap_or(0.0);
+            let k = entry(&bond_k, "BOND_FORCE_CONSTANT", chunk[2])?;
+            let r0 = entry(&bond_r0, "BOND_EQUIL_VALUE", chunk[2])?;
             style
                 .def_type(
                     TypeName::join(&ends)?.as_str(),
@@ -438,10 +447,9 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             Params::new(),
         )?;
         for ((atoms, tid), ub) in angles.iter().zip(&urey_bradley) {
-            let tid = (tid - 1) as usize;
             let ends = TypeName::orient(&atoms.map(type_name));
-            let k = angle_k.get(tid).copied().unwrap_or(0.0);
-            let theta0 = angle_eq.get(tid).copied().unwrap_or(0.0).to_degrees();
+            let k = entry(&angle_k, "ANGLE_FORCE_CONSTANT", *tid)?;
+            let theta0 = entry(&angle_eq, "ANGLE_EQUIL_VALUE", *tid)?.to_degrees();
             let mut params = Params::from_iter([("k", k), ("theta0", theta0)]);
             if chamber {
                 let (k_ub, r_ub) = ub.unwrap_or((0.0, 0.0));
@@ -579,7 +587,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             ]),
         )?;
     } else {
-        let (selves, cross) = lj_rows(&atom_types, &type_index, &regular, None);
+        let (selves, cross) = lj_rows(&atom_types, &type_index, &regular, None)?;
         // The off-diagonal entries that are no row are Lorentz–Berthelot
         // mixes, so the style states that rule rather than lean on a default.
         let mut lj = Params::new();
@@ -1007,7 +1015,7 @@ fn def_lj_charmm(
     regular: &LjTable,
     one_four: Option<&LjTable>,
 ) -> Result<(), String> {
-    let (selves, cross) = lj_rows(atom_types, type_index, regular, one_four);
+    let (selves, cross) = lj_rows(atom_types, type_index, regular, one_four)?;
     let mut style_params = Params::new();
     style_params.set("mixing", CombiningRule::Arithmetic.name());
     if one_four.is_some() {
@@ -1364,6 +1372,27 @@ c3  c3  c3  hc
         (got - expected).abs() <= tol * expected.abs()
     }
 
+    /// A pointer past its parameter section, or a type index past the
+    /// Lennard-Jones types, is refused by name — never a zero bond or a
+    /// σ = 1, ε = 0 atom.
+    #[test]
+    fn a_pointer_outside_its_section_is_refused() {
+        let bond = GAFF_MINI.replace(
+            "%FORMAT(10I8)\n       6       9       2\n",
+            "%FORMAT(10I8)\n       6       9       3\n",
+        );
+        let err = read_err(&bond);
+        assert!(err.contains("BOND_FORCE_CONSTANT has no entry 3"), "{err}");
+
+        let lj = GAFF_MINI.replace(
+            "       1       1       1       2\n%FLAG NONBONDED_PARM_INDEX",
+            "       1       1       1       5\n%FLAG NONBONDED_PARM_INDEX",
+        );
+        assert_ne!(lj, GAFF_MINI);
+        let err = read_err(&lj);
+        assert!(err.contains("ATOM_TYPE_INDEX"), "{err}");
+    }
+
     #[test]
     fn pair_styles_are_registered_lj_cut_and_coul_cut() {
         let ff = read_ff(GAFF_MINI);
@@ -1431,7 +1460,7 @@ c3  c3  c3  hc
     #[test]
     fn special_bonds_are_reciprocal_divisors() {
         let ff = read_ff(GAFF_MINI);
-        let sb = ff.special_bonds();
+        let sb = ff.special_bonds().unwrap();
         assert!((sb.lj[2] - 0.5).abs() < 1e-12, "lj_14={}", sb.lj[2]);
         assert!(
             (sb.coul[2] - 1.0 / 1.2).abs() < 1e-12,
@@ -1447,7 +1476,7 @@ c3  c3  c3  hc
             "SCNB_SCALE_FACTOR",
         );
         let ff = read_ff(&text);
-        let sb = ff.special_bonds();
+        let sb = ff.special_bonds().unwrap();
         assert!((sb.lj[2] - 0.5).abs() < 1e-12, "lj_14={}", sb.lj[2]);
         assert!(
             (sb.coul[2] - 1.0 / 1.2).abs() < 1e-12,
@@ -1471,7 +1500,7 @@ c3  c3  c3  hc
                 "       0       3       6       9       1",
                 "       0       3       6       9       1       0       3       6       9       2",
             );
-        let sb = *read_ff(&text).special_bonds();
+        let sb = *read_ff(&text).special_bonds().unwrap();
         assert!((sb.coul[2] - 1.0 / 1.2).abs() < 1e-15, "{sb:?}");
         assert!((sb.lj[2] - 0.5).abs() < 1e-15, "{sb:?}");
     }
@@ -1488,7 +1517,7 @@ c3  c3  c3  hc
                 "       0       3       6       9       1       0       3      -6       9       2",
             );
         let ff = read_ff(&text);
-        let sb = ff.special_bonds();
+        let sb = ff.special_bonds().unwrap();
         assert!((sb.lj[2] - 0.5).abs() < 1e-12, "lj_14={}", sb.lj[2]);
         assert!(
             (sb.coul[2] - 1.0 / 1.2).abs() < 1e-12,
@@ -1654,7 +1683,10 @@ c3  c3  c3  hc
         let ff = read_ff(&nbfix);
         let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
         let cross = lj.get_pairtype("c3", Some("hc")).expect("c3-hc cross row");
-        assert_eq!((cross.itom.as_str(), cross.jtom.as_str()), ("c3", "hc"));
+        assert_eq!(
+            (cross.endpoints[0].as_str(), cross.endpoints[1].as_str()),
+            ("c3", "hc")
+        );
         // σ = (A/B)^{1/6}, ε = B²/(4A) of the off-diagonal entry.
         let (a, b) = (9.814251977796524e4_f64, 1.281883414413926e2_f64);
         let (sigma, eps) = ((a / b).powf(1.0 / 6.0), b * b / (4.0 * a));
@@ -1699,11 +1731,11 @@ c3  c3  c3  hc
         let ff = read_ff(GAFF_MINI);
         let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
         assert!(lj.get_pairtype("c3", Some("hc")).is_none());
-        for pt in ff.get_pairtypes() {
+        for pt in ff.get_types("pair") {
             assert_eq!(
-                pt.itom, pt.jtom,
+                pt.endpoints[0], pt.endpoints[1],
                 "unexpected cross pair type {}-{}",
-                pt.itom, pt.jtom
+                pt.endpoints[0], pt.endpoints[1]
             );
         }
     }
@@ -1743,7 +1775,7 @@ c3  c3  c3  hc
     fn two_bond_rows_with_equal_k_and_r0_under_one_name_define_one_type() {
         let ff = read_ff(&gaff_mini_with_equal_bond_rows_under_one_name());
         let c3c3: Vec<_> = ff
-            .get_bondtypes()
+            .get_types("bond")
             .into_iter()
             .filter(|t| t.name == "c3-c3")
             .collect();
@@ -1809,7 +1841,7 @@ c3  c3  c3  hc
     #[test]
     fn bond_types_carry_no_row_id() {
         let ff = read_ff(GAFF_MINI);
-        let bonds = ff.get_bondtypes();
+        let bonds = ff.get_types("bond");
         assert!(!bonds.is_empty());
         for bt in bonds {
             assert_eq!(
@@ -1825,7 +1857,7 @@ c3  c3  c3  hc
     #[test]
     fn angle_types_carry_no_row_id() {
         let ff = read_ff(GAFF_MINI);
-        let angles = ff.get_angletypes();
+        let angles = ff.get_types("angle");
         assert!(!angles.is_empty());
         for at in angles {
             assert_eq!(
@@ -1998,7 +2030,7 @@ c3  c3  c3  hc
             Some(332.0716)
         );
         assert!(ff.get_style("pair", "lj/cut").is_none());
-        let sb = ff.special_bonds();
+        let sb = ff.special_bonds().unwrap();
         assert_eq!((sb.lj, sb.coul), ([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]));
     }
 
@@ -2020,7 +2052,7 @@ c3  c3  c3  hc
         let ff = read_ff(&text);
         let lj = ff.get_style("pair", "lj/charmm").unwrap();
         assert_eq!(lj.params().get("one_four").and_then(|v| v.as_text()), None);
-        for pt in ff.get_pairtypes() {
+        for pt in ff.get_types("pair") {
             assert!(
                 pt.params
                     .get("epsilon14")

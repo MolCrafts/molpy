@@ -41,15 +41,6 @@ use crate::ff::typifier::TypeAssignment;
 use molrs::core::Atomistic;
 
 use super::assignment;
-use super::atom_properties::MmffAtomProperties;
-
-/// Typing metadata + potential parameters: what an MMFF typifier matches
-/// against. The shipped sets are built once per variant and shared
-/// ([`shipped_forcefield::library`](super::shipped_forcefield::library)).
-pub(super) struct MmffLibrary {
-    pub(super) params: MmffAtomProperties,
-    pub(super) ff: ForceField,
-}
 
 /// The library plus the variant it was read for.
 ///
@@ -58,24 +49,10 @@ pub(super) struct MmffLibrary {
 /// outside this module can construct an MMFF typifier with an arbitrary variant.
 pub(super) struct MmffEngine {
     variant: MmffVariant,
-    library: Arc<MmffLibrary>,
+    library: Arc<ForceField>,
 }
 
 impl MmffEngine {
-    /// A caller's library: typing metadata and the force field it prices with.
-    ///
-    /// `variant` is supplied by the front door, never by a user.
-    pub(super) fn from_parts(
-        variant: MmffVariant,
-        params: MmffAtomProperties,
-        ff: ForceField,
-    ) -> Self {
-        Self {
-            variant,
-            library: Arc::new(MmffLibrary { params, ff }),
-        }
-    }
-
     /// One of the **shipped** parameter sets, shared from the compiled table.
     ///
     /// Infallible and cheap: the library is built once per variant and
@@ -89,17 +66,16 @@ impl MmffEngine {
         }
     }
 
-    pub(super) fn params(&self) -> &MmffAtomProperties {
-        &self.library.params
-    }
-
     pub(super) fn source_forcefield(&self) -> &ForceField {
-        &self.library.ff
+        &self.library
     }
 
     /// Path 1: match the graph and resolve this variant's per-instance
     /// parameters.
-    pub(super) fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
-        assignment::annotate_mmff(graph, &self.library.params, &self.library.ff, self.variant)
+    pub(super) fn assign(
+        &self,
+        graph: &mut Atomistic,
+    ) -> Result<TypeAssignment, crate::ff::typifier::TypingError> {
+        assignment::annotate_mmff(graph, &self.library, self.variant)
     }
 }

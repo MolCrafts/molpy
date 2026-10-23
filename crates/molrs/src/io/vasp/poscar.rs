@@ -129,6 +129,8 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
     frame.simbox = Some(simbox);
 
     frame.insert("atoms", atoms);
+    // Every door reads through here, so every door checks here.
+    crate::io::reader::check_read_frame(&frame)?;
     Ok(frame)
 }
 
@@ -212,7 +214,7 @@ impl<R: BufRead> FrameReader for VaspPoscarReader<R> {
             return Ok(None);
         }
         self.consumed = true;
-        crate::io::reader::check_read_frame(Some(read_frame_from(&mut self.reader)?))
+        read_frame_from(&mut self.reader).map(Some)
     }
 }
 
@@ -222,9 +224,7 @@ impl<R: BufRead> FrameReader for VaspPoscarReader<R> {
 
 /// Write a frame as a POSCAR file.
 pub fn write_poscar<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
-    let mut w = sink.into().writer()?;
-    write_frame_to(&mut w, frame)?;
-    w.flush()
+    sink.into().put_with(|w| write_frame_to(w, frame))
 }
 
 /// Write a Frame in POSCAR format to any writer.
@@ -232,6 +232,8 @@ pub fn write_poscar<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> 
 /// The output mode (Direct / Cartesian) follows `frame.meta["poscar_mode"]`,
 /// defaulting to Cartesian when absent.
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("POSCAR write: frame has no atoms block"))?;
@@ -405,9 +407,6 @@ impl<W: Write> Writer for VaspPoscarWriter<W> {
 
 impl<W: Write> FrameWriter for VaspPoscarWriter<W> {
     fn write(&mut self, frame: &Frame) -> Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         write_frame_to(&mut self.writer, frame)
     }
 }

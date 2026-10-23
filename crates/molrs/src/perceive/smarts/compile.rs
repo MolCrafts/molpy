@@ -320,6 +320,7 @@ impl Compiler<'_> {
                 hi: hi.map(u32::from),
             },
             AtomPrimitive::RingBondCount(n) => AtomPredicate::RingBondCount(u32::from(*n)),
+            AtomPrimitive::Hybridization(n) => AtomPredicate::Hybridization(*n),
             AtomPrimitive::Charge(c) => AtomPredicate::Charge(i32::from(*c)),
             AtomPrimitive::ContextLabel(label) => AtomPredicate::HasContextLabel(label.clone()),
             AtomPrimitive::AtomClass(n) => {

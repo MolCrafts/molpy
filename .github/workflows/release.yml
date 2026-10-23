@@ -65,6 +65,7 @@ jobs:
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
+          python3 scripts/versions.py
       # The commit's test.yml run, instead of running it again. A tag waits
       # for `test / result` (every job of the full tier) to have succeeded on
       # this SHA (pushed to master first); a dispatch, for whatever `test / *` runs the commit
@@ -311,7 +312,7 @@ jobs:
           skip-existing: true
 
   # The C ABI deliverable for external C / C++ / HPC consumers: libmolc
-  # (cdylib + staticlib) and the cbindgen header (docs/bindings/interop.md, "Path C").
+  # (cdylib + staticlib) and the cbindgen header molc/include/molc.h.
   capi:
     if: needs.context.outputs.skip-pr != 'true'
     name: release / capi (${{ matrix.artifact }})

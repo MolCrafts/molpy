@@ -11,13 +11,14 @@ use crate::op::{F, I, Idx};
 
 /// Supported data types for Block columns.
 ///
-/// Each variant is named after its [`name`](Self::name) — `Float`, `Int`,
-/// `Uint`, `I8`, `I16`, `I64`, `U8`, `U16`, `U32`, `C64`, `C128`, `Bool`,
-/// `String` — the one dtype family of every binding (C
-/// `MOLRS_D_TYPE_<NAME>`, JS / Python the name strings).
+/// [`name`](Self::name) is the one spelling of a dtype everywhere it is
+/// written down — the serde wire, a `.mrec` schema, every binding (C
+/// `MOLC_D_TYPE_<NAME>`, JS / Python the name strings): molrec's
+/// concrete-width names `f64`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`,
+/// `u32`, `u64`, `bool`, `string`, `c64`, `c128`.
 ///
-/// Domain aliases [`F`] / [`I`] / [`Idx`] stay on [`DType::Float`] /
-/// [`DType::Int`] / [`DType::Uint`]. Floats are always the compute scalar [`F`]
+/// The variants for the domain aliases [`F`] / [`I`] / [`Idx`] are named
+/// [`DType::Float`] / [`DType::Int`] / [`DType::Uint`]. Floats are always the compute scalar [`F`]
 /// (`f64`): there is no `f16`/`f32` variant, and a narrow float on disk is
 /// **refused**, not promoted. Every other variant is a storage width: a column
 /// that arrived as `i64` has to leave as that width, not as the compute scalar.
@@ -75,16 +76,17 @@ impl DType {
         Self::ALL.into_iter().find(|dtype| dtype.name() == name)
     }
 
-    /// Returns the name of the data type as a string.
+    /// The dtype's one spelling: molrec's concrete-width name (`f64`,
+    /// `i32`, `u64`, `string`, …).
     pub fn name(&self) -> &'static str {
         match self {
-            DType::Float => "float",
+            DType::Float => "f64",
             DType::I8 => "i8",
             DType::I16 => "i16",
-            DType::Int => "int",
+            DType::Int => "i32",
             DType::I64 => "i64",
             DType::Bool => "bool",
-            DType::Uint => "uint",
+            DType::Uint => "u64",
             DType::U8 => "u8",
             DType::U16 => "u16",
             DType::U32 => "u32",

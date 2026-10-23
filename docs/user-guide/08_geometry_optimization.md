@@ -27,13 +27,16 @@ forcefield = typifier.forcefield()  # OPLS-AA parameters of the types just assig
 
 potentials = mp.ff.compile.PotentialCompiler(forcefield).compile(frame)  # bonded + pair terms
 opt = mp.optimize.Lbfgs(potentials, fmax=0.05, max_steps=200)
-frame, report = opt.minimize(frame)  # a new frame with the relaxed coordinates
+report = opt.minimize(frame)  # relaxes frame's coordinates in place
 
 print(report.converged, report.final_energy, report.final_fmax, report.n_steps)
 ```
 
-`minimize` never mutates its input: it returns the relaxed frame and an
-`OptimizationReport`. Keep the returned frame; the one you passed in is unchanged.
+`minimize` relaxes the frame **in place** — afterwards `frame` holds the relaxed
+coordinates — and returns an `OptimizationReport`. Copy the frame first if you
+need the starting geometry too. A bool `atoms.free` column, when present, marks
+the atoms that may move; fixed atoms stay put but still enter every energy and
+force evaluation.
 
 ## Parameters
 
@@ -46,9 +49,10 @@ print(report.converged, report.final_energy, report.final_fmax, report.n_steps)
 | `max_step` | Largest atomic displacement per step (Å). Smaller = more stable but slower; raise it only if convergence is sluggish and stable. |
 | `memory` | Number of past steps the L-BFGS Hessian approximation keeps. More memory = better curvature estimate, more storage. |
 
-`minimize` also accepts a bare `(N, 3)` coordinate array (or a `(B, N, 3)` batch)
-when you already hold coordinates outside a frame; it returns arrays of the
-same shape.
+When you already hold coordinates outside a frame, `minimize_coords` relaxes a
+writeable, C-contiguous float64 `(N, 3)` array in place and returns its report;
+`minimize_batch` does the same for a `(B, N, 3)` stack, each structure
+independently, and returns one report per structure.
 
 ## Reading the result
 

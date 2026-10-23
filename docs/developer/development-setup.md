@@ -6,8 +6,8 @@ After following this page you will have a working local environment with editabl
 
 You need Python 3.12 or newer, Git, [uv](https://docs.astral.sh/uv/), and the
 Rust toolchain ([`rustup`](https://rustup.rs/)): molpy builds
-[molrs](molrs-backend.md), its Rust compute core, from source. molrs pins the
-toolchain channel and components in its `rust-toolchain.toml`, so no manual
+its Rust core ([molrs](molrs-backend.md)) from source. The repository pins
+the toolchain channel and components in `rust-toolchain.toml`, so no manual
 component setup is required. Everything else is installed by the commands
 below.
 
@@ -74,21 +74,22 @@ at build time). After editing one, regenerate its page with
 
 ## External tools
 
-LAMMPS and AmberTools are optional for *using* MolPy offline recipes; packing uses molpack (`pip install molcrafts-molpack`).
-they are **not** part of the unit suite. Engines and the AmberTools programs are tested with
-mocks and script literals. Doc blocks that would shell out declare
-`# docs: skip`.
+LAMMPS and AmberTools are optional programs for *using* MolPy's engines and
+`mp.tool.ambertools`; packing uses molpack (`pip install molcrafts-molpack`).
+None of them is part of the test suite: engines and the AmberTools programs
+are tested with mocks and script literals. Doc blocks that would shell out
+declare `# docs: skip — <reason>`.
 
 
 ## Common commands
 
 ```bash
-ruff format --check src tests             # check formatting
-ruff format src tests                     # auto-format
-ruff check src                            # lint source tree
-uv run --locked --extra dev python -m pytest tests/ -n auto   # the CI test command
-pre-commit run --all-files                # all pre-commit hooks (see CONTRIBUTING.md "Hooks")
-zensical build                            # build static doc site into site/
+scripts/check.sh fmt ruff                 # formatting and lint, Rust and Python
+scripts/check.sh python types             # molpy wheel + suite, stub check
+scripts/check.sh docs                     # this manual, --strict
+scripts/check.sh verify                   # the pre-push gate: every check once
+cargo mrs-test                            # Rust core unit tests
+cd molpy && uv run --no-sync ruff format molpy tests   # auto-format Python
 ```
 
 

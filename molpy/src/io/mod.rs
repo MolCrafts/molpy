@@ -25,7 +25,6 @@ mod clpol;
 mod csv;
 mod forcefield;
 mod frame_encoding;
-mod json_to_py;
 pub mod lammps_bond_react;
 // The log parser is `std::fs` plus an in-memory parser. It does not use the
 // zarr `filesystem` feature, so it is part of every build, including Pyodide.
@@ -40,25 +39,9 @@ mod source;
 mod stl;
 mod structure;
 
-use pyo3::exceptions::{PyFileNotFoundError, PyIOError, PyValueError};
 use pyo3::prelude::*;
 
 pub(crate) use source::{PySink, PySource};
-
-/// A door's [`std::io::Error`] as Python sees it when the door's refusals
-/// are value errors (CSV, CL&Pol, force fields, wire payloads): a file the
-/// format refuses is a ``ValueError``, a missing file a
-/// ``FileNotFoundError``, any other OS failure an ``OSError``.
-pub(crate) fn data_error(e: std::io::Error) -> PyErr {
-    use std::io::ErrorKind;
-    match e.kind() {
-        ErrorKind::InvalidData | ErrorKind::InvalidInput | ErrorKind::Unsupported => {
-            PyValueError::new_err(e.to_string())
-        }
-        ErrorKind::NotFound => PyFileNotFoundError::new_err(e.to_string()),
-        _ => PyIOError::new_err(e.to_string()),
-    }
-}
 
 /// Register every `molrs::io` binding on the native module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

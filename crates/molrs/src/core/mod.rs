@@ -33,8 +33,7 @@
 //! `/ 10.0` for nm), and [`constants`] holds physical constants and the
 //! constants engines define as data, never a conversion factor; the units
 //! are built from those constants (`bohr` from [`constants::BOHR_RADIUS`],
-//! `eV` from [`constants::ELEMENTARY_CHARGE`]). `module_boundaries` fails on
-//! a conversion-factor constant or literal outside the units module.
+//! `eV` from [`constants::ELEMENTARY_CHARGE`]).
 //! Degrees ↔ radians is `to_radians` / `to_degrees` (the registry's `deg`
 //! is the same π/180).
 //!
@@ -77,6 +76,7 @@ pub(crate) mod type_labels;
 pub(crate) mod typed_json;
 
 // The molecular graph.
+mod adjacency;
 mod atomistic;
 pub(crate) mod bond_order;
 mod bond_weights;
@@ -99,6 +99,7 @@ pub(crate) mod neighbors;
 mod periodic;
 mod region;
 mod simbox;
+mod symmetry;
 mod trace;
 
 // Numerics, units, errors.
@@ -119,9 +120,11 @@ pub use metadata::{MetaIter, MetaMap, MetaValue};
 pub use precision::{
     PRECISION_MAX, PRECISION_MIN, check_precision, quantize, quantize_in_place, quantum,
 };
+pub use symmetry::{SpaceGroup, SymOp};
 pub use trajectory::{ObservableKind, ObservableRecord, ObservableValues, Trajectory};
 pub use type_labels::{BlockTypeLabels, TypeLabels, TypeName};
 
+pub use adjacency::{AdjacencyKind, Adjacent, BondsOnly, NeighborKinds, Wide};
 pub use atomistic::{Atomistic, ExtractedAtomistic};
 pub use bond_order::{BondNumber, BondOrder};
 pub use bond_weights::BondDistanceWeights;
@@ -139,14 +142,14 @@ pub use topology::{Topology, TopologyError};
 
 pub use mesh::{DEGENERATE_AREA2, TriMesh};
 pub use neighbors::{
-    AabbQuery, BruteForce, CellGrid, LinkCell, NeighborColumns, NeighborList, NeighborPair,
-    NeighborPolicy, NeighborQuery, Neighbors, PairSource, QueryMode, SkinError, SkinPair,
-    VerletSkin, filter_rad, filter_sann,
+    AabbQuery, BruteForce, CellGrid, CutoffError, LinkCell, NeighborColumns, NeighborList,
+    NeighborPair, NeighborPolicy, NeighborQuery, Neighbors, PairSource, QueryMode, SkinError,
+    SkinPair, VerletSkin, filter_rad, filter_sann,
 };
-pub use periodic::{GhostError, GhostHalo, GhostSet, ImageRange};
+pub use periodic::{GhostError, GhostSet, ImageRange};
 pub use region::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
-    Polyhedron, PolyhedronError, Region, Sphere, SphereUnion, SphereUnionError,
+    Polyhedron, PolyhedronError, Region, RegionError, Sphere, SphereUnion, SphereUnionError,
 };
 pub use simbox::{BoxError, BoxKind, Cell, Mic, Points, SimBox};
 pub use trace::Trace;
@@ -230,7 +233,7 @@ mod contract_regressions {
     #[test]
     fn block_transforms_preserve_cardinality_and_grid_shape() {
         let mut b = Block::new();
-        b.resize(3).unwrap();
+        b.resize(3);
         assert_eq!(b.select_rows(&[1]).unwrap().n_rows(), Some(1));
         assert_eq!(b.select_columns(&[]).unwrap().n_rows(), Some(3));
         assert_eq!(BlockView::from(&b).to_owned().unwrap().n_rows(), Some(3));
@@ -239,7 +242,7 @@ mod contract_regressions {
         assert_eq!(grid.select_columns(&["value"]).unwrap().shape(), vec![2, 3]);
         let mut empty = Block::new();
         empty.set_shape(&[2, 3]).unwrap();
-        empty.resize(4).unwrap();
+        empty.resize(4);
         assert_eq!(empty.shape(), vec![4]);
     }
 
@@ -338,7 +341,8 @@ mod contract_regressions {
         let ob = b.canonical_order();
         for i in 0..4 {
             for j in 0..4 {
-                let has = |m: &Atomistic, x, y| m.neighbor_bonds(x).any(|(n, _)| n == y);
+                let has =
+                    |m: &Atomistic, x, y| m.neighbors(x, NeighborKinds::BONDS).any(|(n, _)| n == y);
                 assert_eq!(has(&a, oa[i], oa[j]), has(&b, ob[i], ob[j]));
             }
         }

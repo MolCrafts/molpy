@@ -87,27 +87,32 @@ $$ g(r) = \frac{V}{N\,N_q}\,\frac{\langle n(r)\rangle}{4\pi r^2\,\Delta r} $$
 
 from one pair table per frame. Passing the pair tables in explicitly keeps the
 expensive pair search out of the histogram loop and lets you reuse a single
-search for several analyses. The constructor takes the binning, and
-`compute` takes the data by keyword:
+search for several analyses. `Rdf` is a stream: the constructor takes the
+binning, `accumulator()` hands out an accumulator that folds one pair table
+per `push`, and `finish()` normalises the running histogram:
 
 ```python
 from molpy.compute import Rdf
 
-result = Rdf(n_bins=50, r_max=8.0, r_min=0.0).compute(pairs=[neighbors])
+acc = Rdf(n_bins=50, r_max=8.0, r_min=0.0).accumulator()
+acc.push(neighbors)
+result = acc.finish()
 print(result.bin_centers.shape)  # -> (50,)
 print(result.n_frames)           # -> 1
 ```
 
 For an ideal gas (uniformly random points) the middle bins of `result.rdf`
 sit near 1.0, which is the standard sanity check for a correct normalization.
-Several frames are averaged by passing one pair table per frame; a built
-`NeighborList` can be passed in place of its table, and the histogram then
+Several frames are averaged by pushing one pair table per frame; a built
+`NeighborList` can be pushed in place of its table, and the histogram then
 streams its pairs without materialising them.
 
 ## The wider analysis catalog
 
 A range of standard trajectory analyses live in the core. Each class on
-`mp.compute` is configured by its constructor and fed by its `compute(...)`:
+`mp.compute` is configured by its constructor and fed by its `compute(...)` —
+or, for a stream over frames (`Rdf`, `Msd`, `Vacf`, …), by the `push(...)` of
+its `accumulator()`:
 
 | Operator | What it computes |
 |----------|------------------|
@@ -122,8 +127,9 @@ A range of standard trajectory analyses live in the core. Each class on
 | `BondOrientationalOrder` | neighbor bond-direction diagram on a (θ, φ) grid |
 | `PmftXy` | 2-D potential of mean force and torque |
 
-Every one follows the same convention as `Rdf`: configuration in the
-constructor, data by keyword in `compute`. None of them reads a frame; the
+Every one follows the same convention: configuration in the constructor,
+data by keyword in `compute` (or frame by frame into a stream's
+accumulator). None of them reads a frame; the
 columns come from the Frame/Block API on the caller's side. Results chain into
 the next compute as they are — a `ClusterResult` is the partition
 `GyrationTensor` groups by, a `SteinhardtResult` the feature matrix `Pca`
@@ -151,7 +157,10 @@ q6 = Steinhardt(l=[6]).compute(neighbors=neighbors).ql   # (N, n_l): q6 per part
 sk = StaticStructureFactorDebye(np.linspace(0.5, 6.0, 32)).compute(positions=positions)
 
 walk = np.cumsum(rng.normal(0.0, 0.1, size=(200, 10, 3)), axis=0)  # (T, N, 3)
-msd = Msd(max_lag=50).compute(positions=walk, dt=10.0)
+acc = Msd(max_lag=50).accumulator()
+for positions_t in walk:
+    acc.push(positions_t, dt=10.0)
+msd = acc.finish()
 slope = LinearFit(0.2, 0.8).compute(correlation=msd, channel=0).slope
 print(rg.shape == (clusters.n_clusters,), q6.shape, sk.sk.shape)  # -> True (500, 1) (32,)
 ```

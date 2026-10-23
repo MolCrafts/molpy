@@ -194,7 +194,7 @@ impl PyBox {
 /// box = Box.ortho([10.0, 20.0, 30.0])           # orthorhombic
 /// print(box.volume())                           # 6000.0
 /// slab = Box.cube(20.0, pbc=(True, True, False))
-/// free = Box(Cell.undefined(), pbc=(False, False, False))
+/// free = Box(Cell.undefined())                  # periodic on no axis
 /// ```
 #[pyclass(module = "molpy.core", name = "Box", from_py_object, subclass)]
 #[derive(Clone)]
@@ -214,18 +214,22 @@ impl PyBox {
     ///     cell matrix itself (Å, lattice vectors as columns).
     /// origin : array_like, shape (3,)
     ///     Origin of the box in Cartesian coordinates (Å).
-    /// pbc : array_like of bool, shape (3,)
-    ///     Periodic boundary flags for x, y, z.
+    /// pbc : array_like of bool, shape (3,), optional
+    ///     Periodic boundary flags for x, y, z. Omitted: periodic on every
+    ///     axis of a defined cell, on none of an undefined one.
     ///
     /// Raises
     /// ------
     /// ValueError
-    ///     A singular cell matrix, a non-positive or non-finite length, or
-    ///     lengths/angles that describe no cell.
+    ///     A singular cell matrix, a non-positive or non-finite length,
+    ///     lengths/angles that describe no cell, or an undefined cell given a
+    ///     periodic axis.
     #[new]
-    #[pyo3(signature = (cell, origin = [0.0; 3], pbc = [true; 3]))]
-    fn new(cell: CellArg, origin: [F; 3], pbc: [bool; 3]) -> PyResult<Self> {
-        Self::from_cell(cell.into_cell(), origin, pbc)
+    #[pyo3(signature = (cell, origin = [0.0; 3], pbc = None))]
+    fn new(cell: CellArg, origin: [F; 3], pbc: Option<[bool; 3]>) -> PyResult<Self> {
+        let cell = cell.into_cell();
+        let pbc = pbc.unwrap_or([!matches!(cell, Cell::Undefined); 3]);
+        Self::from_cell(cell, origin, pbc)
     }
 
     /// A cubic box of edge ``a`` (Å): ``Box(Cell.lengths([a, a, a]), …)``.

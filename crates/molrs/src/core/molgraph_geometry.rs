@@ -271,6 +271,55 @@ impl MolGraph {
     /// assert_eq!(mol.center(&ids), Ok([3.0, 0.0, 0.0]));
     /// ```
     pub fn center(&self, nodes: &[NodeId]) -> Result<[f64; 3], CenterError> {
+        let points = self.positions_of(nodes)?;
+        let table = self.node_table();
+        let mass = table.column::<f64>(keys::MASS).ok();
+        let mut masses = Vec::with_capacity(nodes.len());
+        for &node in nodes {
+            let row = table.row(node).ok_or(CenterError::NotFound { node })?;
+            masses.push(match mass {
+                Some((data, valid))
+                    if valid.get(row) && data[row].is_finite() && data[row] >= 0.0 =>
+                {
+                    data[row]
+                }
+                _ => return Err(CenterError::BadMass { node }),
+            });
+        }
+        centroid(&points, &masses).ok_or(CenterError::ZeroMass)
+    }
+
+    /// Geometric centre of `nodes`: the plain mean of their positions, no
+    /// mass involved.
+    ///
+    /// # Errors
+    ///
+    /// [`CenterError::Empty`], [`CenterError::NotFound`] or
+    /// [`CenterError::BadPosition`], as [`center`](Self::center) checks them.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::core::MolGraph;
+    /// use molrs::core::keys;
+    /// use molrs::props;
+    ///
+    /// let mut mol = MolGraph::new();
+    /// let ids: Vec<_> = [0.0, 4.0]
+    ///     .map(|x| mol.add_node(props! { keys::X => x, keys::Y => 0.0, keys::Z => 0.0 }).unwrap())
+    ///     .to_vec();
+    /// assert_eq!(mol.centroid(&ids), Ok([2.0, 0.0, 0.0]));
+    /// ```
+    pub fn centroid(&self, nodes: &[NodeId]) -> Result<[f64; 3], CenterError> {
+        let points = self.positions_of(nodes)?;
+        let n = points.len() as f64;
+        Ok(std::array::from_fn(|k| {
+            points.iter().map(|p| p[k]).sum::<f64>() / n
+        }))
+    }
+
+    /// The finite positions of `nodes`, in order.
+    fn positions_of(&self, nodes: &[NodeId]) -> Result<Vec<[f64; 3]>, CenterError> {
         if nodes.is_empty() {
             return Err(CenterError::Empty);
         }
@@ -278,31 +327,20 @@ impl MolGraph {
         // Each dense column is looked up once; an absent (or non-f64) column
         // reads as "missing" for every node.
         let coords = keys::COORDS.map(|key| table.column::<f64>(key).ok());
-        let mass = table.column::<f64>(keys::MASS).ok();
-
-        let mut points = Vec::with_capacity(nodes.len());
-        let mut masses = Vec::with_capacity(nodes.len());
-        for &node in nodes {
-            let row = table.row(node).ok_or(CenterError::NotFound { node })?;
-            let mut point = [0.0; 3];
-            for (value, column) in point.iter_mut().zip(&coords) {
-                *value = match column {
-                    Some((data, valid)) if valid.get(row) && data[row].is_finite() => data[row],
-                    _ => return Err(CenterError::BadPosition { node }),
-                };
-            }
-            let m = match mass {
-                Some((data, valid))
-                    if valid.get(row) && data[row].is_finite() && data[row] >= 0.0 =>
-                {
-                    data[row]
+        nodes
+            .iter()
+            .map(|&node| {
+                let row = table.row(node).ok_or(CenterError::NotFound { node })?;
+                let mut point = [0.0; 3];
+                for (value, column) in point.iter_mut().zip(&coords) {
+                    *value = match column {
+                        Some((data, valid)) if valid.get(row) && data[row].is_finite() => data[row],
+                        _ => return Err(CenterError::BadPosition { node }),
+                    };
                 }
-                _ => return Err(CenterError::BadMass { node }),
-            };
-            points.push(point);
-            masses.push(m);
-        }
-        centroid(&points, &masses).ok_or(CenterError::ZeroMass)
+                Ok(point)
+            })
+            .collect()
     }
 }
 

@@ -126,48 +126,6 @@ pub fn collect_frames<R: FrameReader>(reader: &mut R) -> Result<Vec<Frame>> {
     Ok(out)
 }
 
-/// Frame index storing byte offsets for each frame in a trajectory
-#[derive(Debug, Clone)]
-pub struct FrameIndex {
-    /// Byte offset of each frame start position
-    pub offsets: Vec<u64>,
-}
-
-impl FrameIndex {
-    /// Create a new empty frame index
-    pub fn new() -> Self {
-        Self {
-            offsets: Vec::new(),
-        }
-    }
-
-    /// Add a frame offset to the index
-    pub fn add_frame(&mut self, offset: u64) {
-        self.offsets.push(offset);
-    }
-
-    /// Get number of frames in index
-    pub fn len(&self) -> usize {
-        self.offsets.len()
-    }
-
-    /// Check if index is empty
-    pub fn is_empty(&self) -> bool {
-        self.offsets.is_empty()
-    }
-
-    /// Get offset for a specific frame
-    pub fn get(&self, step: usize) -> Option<u64> {
-        self.offsets.get(step).copied()
-    }
-}
-
-impl Default for FrameIndex {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Iterator over the frames of a [`TrajectoryReader`], from frame 0 until
 /// [`TrajectoryReader::read_frame`] yields `None`.
 ///
@@ -368,21 +326,20 @@ pub fn open_streaming<P: AsRef<Path>>(path: P) -> Result<Box<dyn BufRead>> {
 /// Check a freshly-read frame against the Frame schema — the read-side mirror
 /// of [`check_write_frame`](crate::io::writer::check_write_frame).
 ///
-/// Every [`FrameReader::read`] returns through this. The report names
-/// every offending column at once, so a malformed file takes one round trip to
-/// diagnose rather than one per bad column.
-pub fn check_read_frame<F: crate::core::FrameAccess>(frame: Option<F>) -> Result<Option<F>> {
-    if let Some(ref f) = frame {
-        crate::core::schema::Validator::canonical()
-            .validate(f)
-            .map_err(|report| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("frame does not conform to the Frame schema:\n{report}"),
-                )
-            })?;
-    }
-    Ok(frame)
+/// Each format's frame decoder — the one function every door of the format
+/// reads through — calls this before it returns a frame, so every door checks
+/// once. The report names every offending column at once, so a malformed file
+/// takes one round trip to diagnose rather than one per bad column.
+pub fn check_read_frame<F: crate::core::FrameAccess>(frame: &F) -> Result<()> {
+    crate::core::schema::Validator::canonical()
+        .validate(frame)
+        .map(|_| ())
+        .map_err(|report| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("frame does not conform to the Frame schema:\n{report}"),
+            )
+        })
 }
 
 /// Parse a force-field file into a molrs
@@ -412,7 +369,7 @@ pub fn check_read_frame<F: crate::core::FrameAccess>(frame: Option<F>) -> Result
 /// let text = "special_bonds lj 0 0 0.5 coul 0 0 0.8333\n\
 ///             bond_style harmonic\nbond_coeff CT-HC 340.0 1.09\n";
 /// let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
-/// assert_eq!(ff.get_bondtypes().len(), 1);
+/// assert_eq!(ff.get_types("bond").len(), 1);
 /// ```
 #[cfg(feature = "ff")]
 pub trait ForceFieldReader {

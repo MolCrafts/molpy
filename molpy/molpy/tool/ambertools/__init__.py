@@ -25,6 +25,7 @@ from molpy.tool.ambertools.inputs import (
     net_formal_charge,
     prepgen_control_text,
 )
+from molpy.tool.ambertools.programs import ChargeMethod
 from molpy.tool.ambertools.prmtop import AmberTypifier, Prmtop, PrmtopTypifier
 from molpy.tool.ambertools.steps import AmberSteps, digest, run_directory
 
@@ -32,6 +33,7 @@ __all__ = [
     "UNIT",
     "AmberSteps",
     "AmberTypifier",
+    "ChargeMethod",
     "ParameterSet",
     "Prmtop",
     "PrmtopTypifier",

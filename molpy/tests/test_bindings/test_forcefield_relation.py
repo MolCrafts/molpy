@@ -49,7 +49,7 @@ def _frame(block: str) -> mp.core.Frame:
 
 
 def _reference() -> tuple[float, np.ndarray]:
-    ff = mp.ff.forcefield.ForceField("charmm")
+    ff = mp.ff.forcefield.ForceField("charmm", units="real")
     a = ff.def_style("atom", "full").def_type("A", mass=12.0)
     style = ff.def_style("angle", "charmm")
     for name, k_ub, r_ub in TYPES:
@@ -59,7 +59,7 @@ def _reference() -> tuple[float, np.ndarray]:
 
 
 def _ub_ff(category: str = "urey_bradley") -> mp.ff.forcefield.ForceField:
-    ff = mp.ff.forcefield.ForceField("ub")
+    ff = mp.ff.forcefield.ForceField("ub", units="real")
     a = ff.def_style("atom", "full").def_type("A", mass=12.0)
     style = ff.def_style(category, "spring", {"expression": UB_EXPRESSION})
     for name, k_ub, r_ub in TYPES:
@@ -94,7 +94,7 @@ def test_a_registered_category_is_a_relation_style() -> None:
 
 
 def test_def_type_takes_exactly_the_arity_of_endpoints() -> None:
-    ff = mp.ff.forcefield.ForceField("t")
+    ff = mp.ff.forcefield.ForceField("t", units="real")
     a = ff.def_style("atom", "full").def_type("A")
     style = ff.def_style("urey_bradley", "spring")
     with pytest.raises(ValueError, match="expected 3 endpoints, got 2"):
@@ -108,7 +108,7 @@ def test_a_registered_category_prices_like_angle_charmm_without_k() -> None:
 
 
 def test_a_built_in_relation_category_needs_no_registration() -> None:
-    ff = mp.ff.forcefield.ForceField("drude")
+    ff = mp.ff.forcefield.ForceField("drude", units="real")
     atoms = ff.def_style("atom", "full")
     c, d = atoms.def_type("C"), atoms.def_type("D")
     style = ff.def_style("drude", "harmonic")
@@ -119,7 +119,7 @@ def test_a_built_in_relation_category_needs_no_registration() -> None:
 
 
 def test_an_unknown_category_is_refused() -> None:
-    ff = mp.ff.forcefield.ForceField("t")
+    ff = mp.ff.forcefield.ForceField("t", units="real")
     with pytest.raises(ValueError, match="unknown"):
         ff.def_style("bespoke", "x")
     with pytest.raises(ValueError, match="unknown"):

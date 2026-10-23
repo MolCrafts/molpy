@@ -40,17 +40,18 @@ mod completeness;
 #[cfg(test)]
 mod engine_codec_check;
 #[cfg(test)]
-pub(crate) mod equivalence_check;
+mod equivalence_check;
 pub mod forcefield;
 pub mod form_conversion;
 pub mod ir;
 #[cfg(test)]
 mod ir_invariance;
 #[cfg(test)]
-mod one_four_lammps_check;
+mod one_four_check;
 #[cfg(test)]
 mod openmm_check;
 pub mod params;
 pub mod potential;
 pub mod style_registry;
 pub mod typifier;
+pub mod virtual_sites;

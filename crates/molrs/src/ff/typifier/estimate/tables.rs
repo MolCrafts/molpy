@@ -1,4 +1,4 @@
-//! The estimator's two constant tables — the lookups, not a second copy.
+//! GAFF's two estimation tables — the lookups, not a second copy.
 //!
 //! # One table, one type
 //!
@@ -6,14 +6,14 @@
 //! them in views of its own. The wrapper is the thing to avoid: two structs
 //! describing one table drift, and a reader has to learn which of them is the
 //! table. `ff::params` owns each table's *shape* (its rows and columns, verbatim
-//! from upstream); this module owns the *questions the estimator asks it*, which
-//! are the estimator's business and not the table's.
+//! from upstream); this module owns the *questions GAFF's parmchk2 search asks
+//! it*, which are the search's business and not the table's.
 
 use molrs::core::Element;
 
 use crate::ff::params::{
-    EMPIRICAL_GAFF, EMPIRICAL_GAFF2, EmpiricalBondRow, EmpiricalTable, PARMCHK, ParmchkCorr,
-    ParmchkPenalty, ParmchkTable,
+    EMPIRICAL_GAFF, EMPIRICAL_GAFF2, EmpiricalBondRow, EmpiricalTable, ParmchkCorr, ParmchkPenalty,
+    ParmchkTable,
 };
 
 /// Which force field's empirical constants to use.
@@ -26,7 +26,7 @@ use crate::ff::params::{
 /// seven `ATOMTYPE_*.DEF` take. Nothing here is
 /// parsed at runtime; a malformed table is a **compile** error.
 ///
-/// - [`ParmchkTable`] ([`PARMCHK`]) — `PARMCHK.DAT`: parmchk2's atom-type
+/// - [`ParmchkTable`] ([`PARMCHK`](crate::ff::params::PARMCHK)) — `PARMCHK.DAT`: parmchk2's atom-type
 ///   substitution table (`EQUA` / `CORR` rows with their nine penalty columns),
 ///   its `WEIGHT_*` / `DEFAULT_*` scalars, and the `improper_flag` column that
 ///   says which types may be an improper centre.
@@ -57,12 +57,7 @@ impl EmpiricalSet {
     }
 }
 
-/// The compiled `PARMCHK.DAT` — the one substitution table.
-pub const fn substitution_table() -> ParmchkTable {
-    PARMCHK
-}
-
-/// The questions the cascade asks the substitution table.
+/// The questions GAFF's parmchk2 search asks the substitution table.
 impl ParmchkTable {
     /// Whether an atom of `atom_type` may be the CENTRE of an improper.
     ///
@@ -162,10 +157,11 @@ impl EmpiricalTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::params::PARMCHK;
 
     #[test]
     fn correspondence_rows_carry_per_penalty_values() {
-        let t = substitution_table();
+        let t = PARMCHK;
         // os -> oh is a low-penalty correspondence (ether <-> hydroxyl oxygen).
         let row = t.correspondence("os", "oh").expect("os -> oh is tabulated");
         let bond = row
@@ -176,7 +172,7 @@ mod tests {
 
     #[test]
     fn the_improper_flag_separates_planar_types_from_sp3_ones() {
-        let t = substitution_table();
+        let t = PARMCHK;
         for planar in ["ca", "c", "c2", "n", "na", "nh", "no", "cc", "cd"] {
             assert!(t.is_improper_centre(planar), "{planar} is planar");
         }
@@ -190,7 +186,7 @@ mod tests {
 
     #[test]
     fn correspondence_is_directional_but_similarity_is_not() {
-        let t = substitution_table();
+        let t = PARMCHK;
         // PARMCHK.DAT lists c -> c2, and NOT c2 -> c.
         assert!(t.correspondence("c", "c2").is_some());
         assert!(t.correspondence("c2", "c").is_none());
@@ -204,7 +200,7 @@ mod tests {
 
     #[test]
     fn equivalent_types_are_free_to_swap() {
-        let t = substitution_table();
+        let t = PARMCHK;
         // gaff2's `ns` is `n` under another name; `c5` is `c3`.
         assert!(t.equivalent("ns", "n"));
         assert!(t.equivalent("n", "ns"));
@@ -214,7 +210,7 @@ mod tests {
 
     #[test]
     fn the_table_knows_each_types_element() {
-        let t = substitution_table();
+        let t = PARMCHK;
         assert_eq!(t.element("c3"), Some(Element::C));
         assert_eq!(t.element("os"), Some(Element::O));
         assert_eq!(t.element("br"), Some(Element::Br));

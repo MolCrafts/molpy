@@ -15,11 +15,12 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from molpy.tool.ambertools.inputs import ParameterSet
 from molpy.tool.ambertools.programs import (
     Antechamber,
+    ChargeMethod,
     Parmchk2,
     Prepgen,
     Tleap,
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from molcfg import Config
 
 #: The antechamber ``-fo`` / parmchk2 ``-f`` format of each file suffix.
-_FORMATS = {".ac": "ac", ".mol2": "mol2"}
+_FORMATS: dict[str, Literal["ac", "mol2"]] = {".ac": "ac", ".mol2": "mol2"}
 
 
 def digest(*parts: str | bytes) -> str:
@@ -57,7 +58,7 @@ def run_directory(root: Path, *parts: str | bytes) -> Path:
     return directory
 
 
-def _format(path: Path) -> str:
+def _format(path: Path) -> Literal["ac", "mol2"]:
     if path.suffix not in _FORMATS:
         raise ValueError(f"{path.name}: an AmberTools file is .ac or .mol2")
     return _FORMATS[path.suffix]
@@ -100,7 +101,7 @@ class AmberSteps:
         output: Path,
         *,
         parameter_set: ParameterSet,
-        charge_method: str,
+        charge_method: ChargeMethod,
         net_charge: int,
     ) -> None:
         """Types and charges: ``source`` (mol2) → ``output`` (.ac or .mol2)."""
@@ -113,8 +114,8 @@ class AmberSteps:
                 source,
                 output,
                 input_format="mol2",
-                output_format=output_format,  # type: ignore[arg-type]
-                charge_method=charge_method,  # type: ignore[arg-type]
+                output_format=output_format,
+                charge_method=charge_method,
                 parameter_set=parameter_set,
                 net_charge=net_charge,
             ),
@@ -155,7 +156,7 @@ class AmberSteps:
             lambda: tool.generate_parameters(
                 typed,
                 frcmod,
-                input_format=input_format,  # type: ignore[arg-type]
+                input_format=input_format,
                 parameter_set=parameter_set,
             ),
         )

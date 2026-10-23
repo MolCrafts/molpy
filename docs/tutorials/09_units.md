@@ -74,13 +74,13 @@ argon = mp.core.UnitRegistry()
 argon.define_lj_units(
     39.948 * argon.amu, 3.405 * argon.angstrom, 0.2381 * argon.kilocalorie_per_mole
 )
-print((1.0 * argon.lj_tau).to(argon.ps).magnitude)  # ≈ 2.16
+print((1.0 * argon.lj_tau).to(argon.ps).value)  # ≈ 2.16
 ```
 
 ## Converting quantities
 
 Quantities are `mp.core.Quantity`. Multiply a number by a unit, then `.to(...)` to
-convert; `.magnitude` reads the bare number. The Boltzmann constant is the
+convert; `.value` reads the bare number. The Boltzmann constant is the
 unit `k_B`:
 
 ```python
@@ -88,9 +88,9 @@ u = mp.core.UnitRegistry()
 e = 2.5 * u.eV
 print(e.to("J"))  # convert energy (per particle)
 print((5 * u.angstrom).to("nm"))  # convert length
-print(e.magnitude)  # 2.5
-print((1.0 * u.kilocalorie_per_mole).to("eV").magnitude)
-print((1.0 * u.k_B).to("electron_volt / kelvin").magnitude)  # 8.617e-05
+print(e.value)  # 2.5
+print((1.0 * u.kilocalorie_per_mole).to("eV").value)
+print((1.0 * u.k_B).to("electron_volt / kelvin").value)  # 8.617e-05
 ```
 
 A unit only one registry knows (an LJ scale, a `define`d unit) converts with

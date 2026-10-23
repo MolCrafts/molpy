@@ -1,9 +1,7 @@
 //! The [`ChargeModel`] trait — one seam for every charge method.
 
-use std::collections::HashMap;
-
+use molrs::core::Atomistic;
 use molrs::core::keys;
-use molrs::core::{Atomistic, NodeId};
 
 use molrs::perceive::{EquivalenceOptions, perceive_equivalence_classes};
 
@@ -64,11 +62,6 @@ pub trait ChargeModel {
     fn assign(&self, mol: &Atomistic, qm: Option<&[f64]>) -> Result<Vec<f64>, ChargeError>;
 }
 
-/// The atoms of `mol`, in graph atom order — the order every charge slice is in.
-pub(super) fn atom_ids(mol: &Atomistic) -> Vec<NodeId> {
-    mol.atom_ids().collect()
-}
-
 /// Reject a charge slice that does not belong to this molecule.
 ///
 /// # Errors
@@ -118,17 +111,20 @@ pub(super) fn check_count(mol: &Atomistic, charges: &[f64]) -> Result<(), Charge
 ///
 /// The class-averaged charges, in the same order.
 pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Vec<f64> {
-    let index: HashMap<NodeId, usize> = atom_ids(mol)
-        .into_iter()
-        .enumerate()
-        .map(|(i, id)| (id, i))
-        .collect();
+    let atoms = mol.atom_table();
     let mut out = qm.to_vec();
     for members in perceive_equivalence_classes(mol, EquivalenceOptions::bcc()).classes() {
         if members.len() < 2 {
             continue;
         }
-        let rows: Vec<usize> = members.iter().map(|id| index[id]).collect();
+        let rows: Vec<usize> = members
+            .iter()
+            .map(|&id| {
+                atoms
+                    .row(id)
+                    .expect("an equivalence class names live atoms")
+            })
+            .collect();
         let mean = rows.iter().map(|&i| qm[i]).sum::<f64>() / rows.len() as f64;
         for i in rows {
             out[i] = mean;
@@ -169,7 +165,7 @@ pub(super) fn without_type_columns(mol: &Atomistic) -> Result<Atomistic, ChargeE
         detail: e.to_string(),
     };
 
-    for aid in atom_ids(mol) {
+    for aid in mol.atom_ids() {
         work.clear_atom(aid, keys::TYPE).map_err(malformed)?;
     }
     let bond_ids: Vec<_> = work.bond_ids().collect();
@@ -224,9 +220,9 @@ pub(super) fn reject_dummy_types(
 /// [`ChargeError::Malformed`] when no atom sits at that index or it carries no
 /// valid atomic number: the graph is then the defect to report.
 pub(super) fn atomic_number_of(mol: &Atomistic, atom: usize) -> Result<u8, ChargeError> {
-    atom_ids(mol)
-        .get(atom)
-        .and_then(|aid| mol.get_atom(*aid).ok())
+    mol.atom_ids()
+        .nth(atom)
+        .and_then(|aid| mol.get_atom(aid).ok())
         .and_then(|a| a.atomic_number())
         .ok_or_else(|| ChargeError::Malformed {
             detail: format!("atom {atom} has no valid '{}'", keys::ATOMIC_NUMBER),

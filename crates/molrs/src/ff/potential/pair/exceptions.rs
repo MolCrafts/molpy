@@ -4,11 +4,22 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::potential::flat_coords::{term_table, validate_coords};
-use crate::ff::potential::pair::charmm::lj_coeffs;
 use crate::ff::potential::{Accumulator, IndexedTerms, Potential};
 use molrs::op::F;
 
 const MIN_R2: F = 1e-24;
+
+/// LAMMPS's `lj1..lj4` for one `(ε, σ)`: `48εσ¹²`, `24εσ⁶`, `4εσ¹²`, `4εσ⁶`.
+fn lj_coeffs(epsilon: F, sigma: F) -> [F; 4] {
+    let s12 = sigma.powf(12.0);
+    let s6 = sigma.powf(6.0);
+    [
+        48.0 * epsilon * s12,
+        24.0 * epsilon * s6,
+        4.0 * epsilon * s12,
+        4.0 * epsilon * s6,
+    ]
+}
 
 /// The 1-4 exceptions of one molecule: LJ 12-6 plus Coulomb, no cutoff.
 ///

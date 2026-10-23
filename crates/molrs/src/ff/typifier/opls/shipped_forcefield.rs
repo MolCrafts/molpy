@@ -44,6 +44,8 @@ pub(super) fn force_field() -> ForceField {
 /// `ForceField` lookups scan and take the first match.
 fn try_force_field() -> Result<ForceField, DefError> {
     let mut ff = ForceField::new(OPLSAA_NAME);
+    // The shipped OPLS-AA tables are converted to kcal/mol and Å.
+    ff.set_units("real");
 
     let bonds = ff.def_style("bond", "harmonic", Params::new())?;
     for row in OPLSAA_BONDS {
@@ -194,7 +196,17 @@ mod tests {
         assert_eq!(try_force_field().err(), None);
     }
 
-    use crate::ff::forcefield::{Style, StyleDefs};
+    /// The shipped typing rules compile and layer. `OplsAaTypifier::oplsaa`
+    /// `expect`s this result and names this test.
+    #[test]
+    fn the_shipped_rules_build() {
+        assert_eq!(
+            super::super::layered::LayeredTypingEngine::build(&typing_meta()).err(),
+            None
+        );
+    }
+
+    use crate::ff::forcefield::Style;
     use crate::ff::params::OPLSAA_TYPING;
     use crate::ff::params::{OplsAtomRow, OplsRuleRow};
     use crate::ff::typifier::OplsAaTypifier;
@@ -346,14 +358,13 @@ mod tests {
     #[test]
     fn angle_type_matches_hand_converted_gromacs_row() {
         let ff = try_force_field().expect("embedded OPLS-AA defines");
-        let StyleDefs::Angle(angles) = style(&ff, "angle", "harmonic").defs() else {
-            panic!("angle/harmonic holds no angle defs");
-        };
+        let angles = style(&ff, "angle", "harmonic").defs().types();
         let angle = angles
             .iter()
             .find(|t| {
-                t.jtom == "C="
-                    && ((t.itom == "CM" && t.ktom == "C=") || (t.itom == "C=" && t.ktom == "CM"))
+                t.endpoints[1] == "C="
+                    && ((t.endpoints[0] == "CM" && t.endpoints[2] == "C=")
+                        || (t.endpoints[0] == "C=" && t.endpoints[2] == "CM"))
             })
             .expect("no angle CM-C=-C=");
         let what = "angle CM-C=-C=";
@@ -381,12 +392,15 @@ mod tests {
     #[test]
     fn dihedral_type_matches_hand_converted_gromacs_row() {
         let ff = try_force_field().expect("embedded OPLS-AA defines");
-        let StyleDefs::Dihedral(dihedrals) = style(&ff, "dihedral", "opls").defs() else {
-            panic!("dihedral/opls holds no dihedral defs");
-        };
+        let dihedrals = style(&ff, "dihedral", "opls").defs().types();
         let dihedral = dihedrals
             .iter()
-            .find(|t| t.itom == "HC" && t.jtom == "CT" && t.ktom == "CT" && t.ltom == "HC")
+            .find(|t| {
+                t.endpoints[0] == "HC"
+                    && t.endpoints[1] == "CT"
+                    && t.endpoints[2] == "CT"
+                    && t.endpoints[3] == "HC"
+            })
             .expect("no dihedral HC-CT-CT-HC");
         let what = "dihedral HC-CT-CT-HC";
         for (key, expected) in [("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)] {

@@ -550,42 +550,126 @@ pub(crate) fn canonical_width(name: &str, col: &Column) -> Result<Option<Column>
 // SimBox write / read
 // ---------------------------------------------------------------------------
 
-/// Refuse a cell a writer cannot store: an undefined cell is periodic on no
-/// axis (molrec `frame.md`, "An undefined cell"), so one carrying a periodic
-/// flag contradicts itself.
-pub(crate) fn check_storable_cell(simbox: &SimBox) -> Result<(), MolRsError> {
-    if !simbox.is_cell_defined() && simbox.pbc().iter().any(|&periodic| periodic) {
-        return Err(MolRsError::zarr(format!(
-            "an undefined cell (cell_defined = false) is periodic on no axis, but this one \
-             carries boundary {:?}",
-            simbox.pbc()
-        )));
-    }
-    Ok(())
-}
-
-/// The boundary flags of a cell read back: `stored` when the store carries
-/// them, else the default — all-periodic for a defined cell, all-`false` for
-/// an undefined one, which is periodic on no axis.
+/// The `cell_defined` attribute of a box group: absent means a defined cell
+/// (it is only ever written when false).
 ///
 /// # Errors
 ///
-/// A [`MolRsError::Zarr`] naming `what` when an undefined cell carries a
-/// periodic flag: the store is malformed.
-pub(crate) fn resolve_boundary(
-    stored: Option<[bool; 3]>,
-    cell_defined: bool,
+/// A [`MolRsError::Zarr`] naming `what` when the attribute is not a bool.
+pub(crate) fn cell_defined_attribute(
+    attributes: &serde_json::Map<String, serde_json::Value>,
     what: &str,
-) -> Result<[bool; 3], MolRsError> {
-    match stored {
-        None => Ok([cell_defined; 3]),
-        Some(flags) if !cell_defined && flags.iter().any(|&periodic| periodic) => {
-            Err(MolRsError::zarr(format!(
-                "{what}: an undefined cell is periodic on no axis, but its boundary is {flags:?}"
-            )))
-        }
-        Some(flags) => Ok(flags),
+) -> Result<bool, MolRsError> {
+    match attributes.get("cell_defined") {
+        None => Ok(true),
+        Some(serde_json::Value::Bool(defined)) => Ok(*defined),
+        Some(other) => Err(MolRsError::zarr(format!(
+            "{what}: cell_defined must be a bool, found {other}"
+        ))),
     }
+}
+
+/// The numbers of a JSON box attribute: a flat array, or an array of rows
+/// (the cell's `[[..], [..], [..]]`) read row by row.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming `what` when any entry is not a number.
+pub(crate) fn json_numbers(value: &serde_json::Value, what: &str) -> Result<Vec<F>, MolRsError> {
+    let malformed = || {
+        MolRsError::zarr(format!(
+            "{what}: expected an array of numbers, found {value}"
+        ))
+    };
+    let entries = value.as_array().ok_or_else(malformed)?;
+    let mut out = Vec::with_capacity(9);
+    for entry in entries {
+        match entry {
+            serde_json::Value::Array(row) => {
+                for number in row {
+                    out.push(number.as_f64().ok_or_else(malformed)?);
+                }
+            }
+            number => out.push(number.as_f64().ok_or_else(malformed)?),
+        }
+    }
+    Ok(out)
+}
+
+/// The flags of a JSON boundary attribute.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming `what` when any entry is not a bool.
+pub(crate) fn json_flags(value: &serde_json::Value, what: &str) -> Result<Vec<bool>, MolRsError> {
+    let malformed =
+        || MolRsError::zarr(format!("{what}: expected an array of bools, found {value}"));
+    value
+        .as_array()
+        .ok_or_else(malformed)?
+        .iter()
+        .map(|flag| flag.as_bool().ok_or_else(malformed))
+        .collect()
+}
+
+/// The one decoder of a stored cell, whatever layout it was read from (a
+/// frame's box group, a trajectory's fixed-cell attributes, or one per-step
+/// box update).
+///
+/// `h` is the row-major cell matrix and is read only for a defined cell: an
+/// undefined cell's vectors mean nothing and [`Cell::Undefined`] carries the
+/// identity in their place. An absent `origin` is the coordinate origin; an
+/// absent `boundary` is all-periodic for a defined cell and periodic on no
+/// axis for an undefined one.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming `what` for a missing or mis-sized part, or a
+/// cell [`SimBox::new`] refuses (an undefined cell with a periodic flag
+/// among them).
+pub(crate) fn assemble_cell(
+    cell_defined: bool,
+    h: Option<&[F]>,
+    origin: Option<&[F]>,
+    boundary: Option<&[bool]>,
+    what: &str,
+) -> Result<SimBox, MolRsError> {
+    let cell = if cell_defined {
+        let h =
+            h.ok_or_else(|| MolRsError::zarr(format!("{what}: the cell vectors are missing")))?;
+        if h.len() != 9 {
+            return Err(MolRsError::zarr(format!(
+                "{what}: the cell vectors hold {} values, expected 9",
+                h.len()
+            )));
+        }
+        Cell::Matrix(std::array::from_fn(|r| {
+            std::array::from_fn(|c| h[3 * r + c])
+        }))
+    } else {
+        Cell::Undefined
+    };
+    let origin = match origin {
+        None => [0.0; 3],
+        Some(&[x, y, z]) => [x, y, z],
+        Some(other) => {
+            return Err(MolRsError::zarr(format!(
+                "{what}: the origin holds {} values, expected 3",
+                other.len()
+            )));
+        }
+    };
+    let pbc = match boundary {
+        None => [cell_defined; 3],
+        Some(&[a, b, c]) => [a, b, c],
+        Some(other) => {
+            return Err(MolRsError::zarr(format!(
+                "{what}: the boundary holds {} flags, expected 3",
+                other.len()
+            )));
+        }
+    };
+    SimBox::new(cell, origin, pbc).map_err(|e| MolRsError::zarr(format!("{what}: {e}")))
 }
 
 #[cfg(feature = "zarr")]
@@ -594,7 +678,6 @@ pub(crate) fn write_simbox(
     prefix: &str,
     simbox: &SimBox,
 ) -> Result<(), MolRsError> {
-    check_storable_cell(simbox)?;
     let mut attrs = serde_json::Map::new();
     // `cell_defined` is written only when it is *false*: absent means a
     // defined cell.
@@ -641,94 +724,38 @@ where
     S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
 {
     let group = zarrs::group::Group::open(store.clone(), prefix)?;
+    let cell_defined = cell_defined_attribute(group.attributes(), prefix)?;
 
-    // `cell_defined` is optional and only ever written when false, so absent
-    // means a defined cell.
-    let cell_defined = group
-        .attributes()
-        .get("cell_defined")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
-    // An undefined cell's `vectors` mean nothing, so they are not read:
-    // whatever a store holds there (zeros included) is accepted, never
-    // inverted, and `Cell::Undefined` carries the identity instead.
+    // Narrow float arrays are refused; see `read_simbox_float_path`. An
+    // undefined cell's `vectors` are not read: whatever a store holds there
+    // (zeros included) is never inverted.
     let h = if cell_defined {
-        // Narrow float arrays are refused; see `read_simbox_float_path`.
-        let vectors_path = format!("{}/vectors", prefix);
-        let h_data = read_simbox_float_path(store, &vectors_path)?.ok_or_else(|| {
-            MolRsError::zarr(format!("box vectors array is missing: {vectors_path}"))
-        })?;
-        if h_data.len() != 9 {
-            return Err(MolRsError::zarr(format!(
-                "box vectors expected 9 values, got {}",
-                h_data.len()
-            )));
-        }
-        std::array::from_fn(|r| std::array::from_fn(|c| h_data[3 * r + c]))
+        read_simbox_float_path(store, &format!("{prefix}/vectors"))?
     } else {
-        // Never read: an undefined cell is `Cell::Undefined`.
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        None
     };
-
-    // An absent `origin` array is the zero origin: molrec's codec omits it for
-    // a cell anchored at the coordinate origin, and that store is a well-formed
-    // cell rather than a malformed one.
-    let o_data = read_simbox_float_path(store, &format!("{}/origin", prefix))?
-        .unwrap_or_else(|| vec![0.0; 3]);
-    if o_data.len() != 3 {
-        return Err(MolRsError::zarr(format!(
-            "box origin expected 3 values, got {}",
-            o_data.len()
-        )));
-    }
-    let origin = [o_data[0], o_data[1], o_data[2]];
-
-    // Boundary flags are a `bool[3]` array. An absent array is fully
-    // periodic on a defined cell -- the normative default; reading it as
-    // vacuum would make one store two different physical systems depending
-    // on which implementation opened it -- and periodic on no axis on an
-    // undefined one. A store from before the array form carried the flags as
-    // a group attribute; that is still honoured.
-    let boundary_path = format!("{}/boundary", prefix);
-    let stored = match Array::open(store.clone(), &boundary_path) {
+    // An absent `origin` array is the zero origin: molrec's codec omits it
+    // for a cell anchored at the coordinate origin.
+    let origin = read_simbox_float_path(store, &format!("{prefix}/origin"))?;
+    // An absent `boundary` array is the default `assemble_cell` applies:
+    // fully periodic on a defined cell -- the normative default; reading it
+    // as vacuum would make one store two physical systems depending on who
+    // opened it -- and periodic on no axis on an undefined one.
+    let boundary_path = format!("{prefix}/boundary");
+    let boundary: Option<Vec<bool>> = match Array::open(store.clone(), &boundary_path) {
         Ok(arr) => {
-            let flags: Vec<bool> =
-                arr.retrieve_array_subset(&ArraySubset::new_with_shape(arr.shape().to_vec()))?;
-            if flags.len() != 3 {
-                return Err(MolRsError::zarr(format!(
-                    "box boundary expected 3 flags, got {}",
-                    flags.len()
-                )));
-            }
-            Some([flags[0], flags[1], flags[2]])
+            Some(arr.retrieve_array_subset(&ArraySubset::new_with_shape(arr.shape().to_vec()))?)
         }
-        Err(zarrs::array::ArrayCreateError::MissingMetadata) => match group
-            .attributes()
-            .get("boundary")
-            .and_then(|v| v.as_array())
-        {
-            Some(flags) if flags.len() == 3 => Some([
-                flags[0].as_bool().unwrap_or(true),
-                flags[1].as_bool().unwrap_or(true),
-                flags[2].as_bool().unwrap_or(true),
-            ]),
-            _ => None,
-        },
+        Err(zarrs::array::ArrayCreateError::MissingMetadata) => None,
         Err(e) => return Err(e.into()),
     };
-    let pbc = resolve_boundary(stored, cell_defined, prefix)?;
-
-    SimBox::new(
-        if cell_defined {
-            Cell::Matrix(h)
-        } else {
-            Cell::Undefined
-        },
-        origin,
-        pbc,
+    assemble_cell(
+        cell_defined,
+        h.as_deref(),
+        origin.as_deref(),
+        boundary.as_deref(),
+        prefix,
     )
-    .map_err(|e| MolRsError::zarr(format!("invalid box: {:?}", e)))
 }
 
 /// Read a simbox float array as `Vec<F>` (narrow float arrays are refused —
@@ -784,9 +811,6 @@ pub(in crate::io::mrec::zarr_storage) fn check_storable_frame(
         return Err(MolRsError::zarr(format!(
             "{META_TYPES_ATTR:?} types a frame group's meta document; a meta key cannot take it"
         )));
-    }
-    if let Some(simbox) = &frame.simbox {
-        check_storable_cell(simbox)?;
     }
     for (name, block) in frame.iter() {
         if name == BOX_GROUP {
@@ -1084,9 +1108,7 @@ where
         }
     };
     if block.is_empty() {
-        block
-            .resize(count)
-            .map_err(|e| MolRsError::zarr(format!("block {child_name:?} count={count}: {e}")))?;
+        block.resize(count);
     } else if block.n_rows() != Some(count) {
         return Err(MolRsError::zarr(format!(
             "row_count_mismatch: block {child_name:?} count={count}, columns have {}",
@@ -1701,7 +1723,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let mut block = Block::new();
-        block.resize(7).unwrap();
+        block.resize(7);
         let mut frame = Frame::new();
         frame.insert("ghost", block);
         write_frame_group(&store, FRAME, &frame).unwrap();
@@ -1864,17 +1886,12 @@ mod tests {
 
     /// An undefined cell is periodic on no axis: its all-false boundary is
     /// written explicitly, an omitted one reads all-false, and a periodic flag
-    /// is refused both ways.
+    /// in the store is refused (no `SimBox` can carry one to write).
     #[test]
     fn an_undefined_cell_is_periodic_on_no_axis() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let cell = |pbc| SimBox::new(Cell::Undefined, [0.0, 0.0, 0.0], pbc);
-
-        let err = write_simbox(&store, "/p", &cell([true, false, false]).unwrap())
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("undefined cell"), "{err}");
 
         write_simbox(&store, "/box", &cell([false; 3]).unwrap()).unwrap();
         assert!(Array::open(store.clone(), "/box/boundary").is_ok());
@@ -1894,6 +1911,44 @@ mod tests {
         .unwrap();
         let err = read_simbox(&store, "/box").unwrap_err().to_string();
         assert!(err.contains("undefined cell"), "{err}");
+    }
+
+    /// The box group's attributes are read strictly: a `cell_defined` that is
+    /// not a bool is malformed, never read as "defined".
+    #[test]
+    fn a_non_bool_cell_defined_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let store = storage_in(&dir);
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("cell_defined".into(), serde_json::json!("no"));
+        GroupBuilder::new()
+            .attributes(attrs)
+            .build(store.clone(), "/box")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        write_f64_array(&store, "/box/vectors", &[3, 3], &[0.0; 9]).unwrap();
+        let err = read_simbox(&store, "/box").unwrap_err().to_string();
+        assert!(err.contains("cell_defined must be a bool"), "{err}");
+    }
+
+    /// The boundary lives in the `boundary` array only: a group attribute of
+    /// that name is not a second spelling of it.
+    #[test]
+    fn a_boundary_attribute_is_not_read() {
+        let dir = TempDir::new().unwrap();
+        let store = storage_in(&dir);
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("boundary".into(), serde_json::json!([false, false, false]));
+        GroupBuilder::new()
+            .attributes(attrs)
+            .build(store.clone(), "/box")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        let h = [10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0];
+        write_f64_array(&store, "/box/vectors", &[3, 3], &h).unwrap();
+        assert_eq!(read_simbox(&store, "/box").unwrap().pbc(), [true; 3]);
     }
 
     /// A *defined* cell with a singular matrix is still refused.
@@ -2718,7 +2773,7 @@ mod tests {
             .insert("count".into(), serde_json::json!(2));
         group.store_metadata().unwrap();
         let err = read_frame_group(&store, FRAME).unwrap_err().to_string();
-        assert!(err.contains("\"ix\"") && err.contains("int"), "{err}");
+        assert!(err.contains("\"ix\"") && err.contains("i32"), "{err}");
     }
 
     // -- row references and topology conventions (molrec F4) ---------------

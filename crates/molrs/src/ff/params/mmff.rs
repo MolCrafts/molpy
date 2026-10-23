@@ -51648,7 +51648,7 @@ pub static MMFF_VDW_STYLE: MmffVdwStyle = MmffVdwStyle {
 /// # This is a parameterization, not a kernel
 ///
 /// MMFF owns no electrostatic kernel. The four numbers below configure the
-/// **generic** buffered Coulomb, [`pair/coul/cut`](crate::ff::potential::pair::PairCoulCut)
+/// **generic** buffered Coulomb, [`pair/coul/cut`](crate::ff::potential::pair::CoulCut)
 /// — `delta = 0` degenerates it into the textbook Coulomb every other force field
 /// means. So the whole of MMFF's electrostatics is this block plus a style name.
 ///

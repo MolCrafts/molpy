@@ -261,7 +261,13 @@ impl VanHove {
     ) -> Result<Vec<(Histogram<1>, Histogram<1>)>, ComputeError> {
         let n_frames = input.positions.len_of(NdAxis(0));
         let reference = input.positions.index_axis(NdAxis(0), tau);
-        let query = NeighborQuery::new(&input.boxes[tau], reference, self.axis.max());
+        let query =
+            NeighborQuery::new(&input.boxes[tau], reference, self.axis.max()).map_err(|e| {
+                ComputeError::OutOfRange {
+                    field: "r_max",
+                    value: e.cutoff.to_string(),
+                }
+            })?;
         let mut out = Vec::with_capacity(self.lags.len());
         for &lag in &self.lags {
             let mut self_part = Histogram::new([self.axis]);

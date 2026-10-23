@@ -22,7 +22,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use molrs::perceive::smarts::SmartsPattern;
+use super::layered::compile_def;
 
 use super::typing_metadata::OplsTypingMetadata;
 
@@ -47,11 +47,13 @@ pub struct OplsDependencyAnalyzer {
 impl OplsDependencyAnalyzer {
     /// Build the analyzer from the typing metadata.
     ///
-    /// Each def is parsed once to collect its `%label` context-label
-    /// references; unparseable defs are skipped here (they fail-fast later, at
-    /// [`LayeredTypingEngine::build`](super::layered::LayeredTypingEngine::build)).
+    /// Each def is parsed to collect its `%label` context-label references.
     /// A def with no `def` string is not a node.
-    pub fn new(meta: &OplsTypingMetadata) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// `Err` naming the type for a malformed SMARTS `def`.
+    pub fn new(meta: &OplsTypingMetadata) -> Result<Self, String> {
         // Node set: every type carrying a (parseable) def.
         let mut pattern_types: HashSet<String> = HashSet::new();
         let mut raw_deps: HashMap<String, HashSet<String>> = HashMap::new();
@@ -59,13 +61,9 @@ impl OplsDependencyAnalyzer {
             let Some(def) = row.def.as_deref() else {
                 continue;
             };
-            let Ok(pat) = SmartsPattern::parse(def) else {
-                // Malformed defs are handled (fail-fast) by the engine; for
-                // dependency analysis we simply treat them as label-free.
-                pattern_types.insert(name.clone());
-                raw_deps.insert(name.clone(), HashSet::new());
-                continue;
-            };
+            let pat = compile_def(def).map_err(|e| {
+                format!("OPLS type {name:?}: failed to parse SMARTS def {def:?}: {e}")
+            })?;
             pattern_types.insert(name.clone());
             // In OPLS-style typing a context label is only ever a type name
             // (the parser already stripped the leading `%`). Whether it names
@@ -89,12 +87,12 @@ impl OplsDependencyAnalyzer {
             .collect();
 
         let (levels, circular_groups) = compute_levels(&dependencies);
-        Self {
+        Ok(Self {
             #[cfg(test)]
             dependencies,
             levels,
             circular_groups,
-        }
+        })
     }
 
     /// The dependency set of a type (the types it references via `%label`).
@@ -201,7 +199,7 @@ fn compute_levels(
 }
 
 /// Tarjan's strongly-connected-components over the unprocessed sub-graph;
-/// returns only the genuinely circular components (size > 1), mirroring molpy.
+/// returns only the genuinely circular components (size > 1).
 fn detect_circular_groups(
     dependencies: &HashMap<String, HashSet<String>>,
     unprocessed: &HashSet<String>,
@@ -308,6 +306,16 @@ mod tests {
         m
     }
 
+    /// A def that does not parse is refused by name, not read as label-free.
+    #[test]
+    fn a_malformed_def_is_refused() {
+        let meta = meta_with(&[("opls_ok", Some("[#8]")), ("opls_bad", Some("[C"))]);
+        let Err(err) = OplsDependencyAnalyzer::new(&meta) else {
+            panic!("a malformed def was accepted");
+        };
+        assert!(err.contains("opls_bad"), "{err}");
+    }
+
     #[test]
     fn extracts_percent_dependencies() {
         // opls_146's def references %opls_145 -> dependency {opls_145}.
@@ -318,7 +326,7 @@ mod tests {
             ),
             ("opls_146", Some("H[C;%opls_145]")),
         ]);
-        let a = OplsDependencyAnalyzer::new(&meta);
+        let a = OplsDependencyAnalyzer::new(&meta).unwrap();
         assert!(a.dependencies_of("opls_145").unwrap().is_empty());
         let d146 = a.dependencies_of("opls_146").unwrap();
         assert_eq!(d146.len(), 1);
@@ -332,7 +340,7 @@ mod tests {
             ("opls_999", None), // no def
             ("opls_500", Some("H[C;%opls_999]")),
         ]);
-        let a = OplsDependencyAnalyzer::new(&meta);
+        let a = OplsDependencyAnalyzer::new(&meta).unwrap();
         // opls_999 is not a node; opls_500 has no valid deps -> level 0.
         assert!(a.dependencies_of("opls_500").unwrap().is_empty());
         assert_eq!(a.level("opls_500"), Some(0));
@@ -347,7 +355,7 @@ mod tests {
             ("opls_b", Some("H[C;%opls_a]")),
             ("opls_c", Some("[O;%opls_b]")),
         ]);
-        let a = OplsDependencyAnalyzer::new(&meta);
+        let a = OplsDependencyAnalyzer::new(&meta).unwrap();
         assert_eq!(a.level("opls_a"), Some(0));
         assert_eq!(a.level("opls_b"), Some(1));
         assert_eq!(a.level("opls_c"), Some(2));
@@ -367,7 +375,7 @@ mod tests {
             ("opls_x", Some("[C;%opls_base][O;%opls_y]")),
             ("opls_y", Some("[N;%opls_x]")),
         ]);
-        let a = OplsDependencyAnalyzer::new(&meta);
+        let a = OplsDependencyAnalyzer::new(&meta).unwrap();
         assert_eq!(a.level("opls_base"), Some(0));
         // One circular group {opls_x, opls_y} at level max_level+1 = 1.
         assert_eq!(a.circular_groups().len(), 1);
@@ -386,7 +394,7 @@ mod tests {
             ("opls_135", Some("[C;X4](C)(H)(H)H")),
             ("opls_140", Some("H[C;X4]")),
         ]);
-        let a = OplsDependencyAnalyzer::new(&meta);
+        let a = OplsDependencyAnalyzer::new(&meta).unwrap();
         assert_eq!(a.level("opls_135"), Some(0));
         assert_eq!(a.level("opls_140"), Some(0));
         assert_eq!(a.max_level(), Some(0));
@@ -398,7 +406,7 @@ mod tests {
     #[test]
     fn any_type_name_label_is_a_dependency() {
         let meta = meta_with(&[("CX", Some("[#6;X4]")), ("HX", Some("[#1]-[#6;%CX]"))]);
-        let a = OplsDependencyAnalyzer::new(&meta);
+        let a = OplsDependencyAnalyzer::new(&meta).unwrap();
         let deps = a.dependencies_of("HX").expect("HX is a node");
         assert!(deps.contains("CX"), "HX depends on CX: {deps:?}");
         assert_eq!(a.level("CX"), Some(0));

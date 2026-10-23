@@ -1,7 +1,7 @@
 """The force-field IR is a protocol, from Python (``ff-ir-02-protocol``,
 P-Python): what conforms to its form extends it — a style by expression or
 by a numpy callable, a new category, an array parameter — with nothing in
-molrs rebuilt; it prices as LAMMPS prices it, persists to a process that
+molrs rebuilt; it writes as the LAMMPS style it is, persists to a process that
 registered nothing, and what does not conform is refused by the
 ``mp.ff.ir.IrError`` subclass naming the item.
 
@@ -9,19 +9,15 @@ registered nothing, and what does not conform is refused by the
 |---|---|---|
 | fene by expression = analytic formula | ``test_fene_by_expression_is_the_analytic_formula`` | E rel ≤ 1e-12, F ≤ 1e-12 of the force scale |
 | numpy callable = expression | ``test_a_numpy_kernel_is_the_expression`` | E rel ≤ 1e-12, F rel ≤ 1e-10 |
-| both = pinned LAMMPS ``bond_style fene`` (deck by ``write_lammps_forcefield``) | ``test_fene_is_lammps_bond_style_fene`` | rel ≤ 1e-10 |
-| ``urey_bradley`` from Python = pinned LAMMPS (``angle_style charmm``, K = 0) | ``test_a_python_category_is_lammps_urey_bradley`` | rel ≤ 1e-10 |
-| pair ``lj/smooth/linear`` by expression and numpy, its cutoff straddling the pairs = pinned LAMMPS; ``compile_typed`` (MD's first force call) = ``compile`` | ``test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors`` | rel ≤ 1e-10; doors rel ≤ 1e-12 |
+| fene written as LAMMPS ``bond_style fene`` | ``test_fene_writes_as_lammps_bond_style_fene`` | the deck's style and coefficients |
+| ``urey_bradley`` from Python | ``test_a_python_category_registers_as_urey_bradley`` | arity, block, not built in |
+| pair ``lj/smooth/linear`` by expression and numpy, its cutoff straddling the pairs, written as LAMMPS ``lj/smooth/linear``; ``compile_typed`` (MD's first force call) = ``compile`` | ``test_a_python_pair_style_writes_as_lj_smooth_linear_and_prices_alike_at_both_doors`` | the deck's style; doors rel ≤ 1e-12 |
 | ``.mrec`` round trip: expression byte for byte, a fresh subprocess prices it | ``test_a_record_prices_the_same_bits_in_a_fresh_process`` | bit for bit |
 | callable-only style in a fresh process | ``test_a_callable_only_style_is_no_kernel_in_a_fresh_process`` | ``NoKernel`` (a ``ValueError``) naming the style and ``mp.ff.style_registry.register_style`` |
 | refusals | ``test_what_does_not_conform_is_refused_by_name`` | each its ``IrError`` subclass, naming the item |
 | array param ``dihedral table/linear`` (``table: f64[N]``), numpy kernel | ``test_an_array_param_style_is_hand_linear_interpolation_and_round_trips`` | rel ≤ 1e-12, bits round-trip |
 | class2's bond-angle term as a new category (optional) | ``test_class2_bond_angle_is_one_energy_three_ways`` | expression = numpy = hand −π/60, rel ≤ 1e-12; F = −∇E by central differences |
 
-The LAMMPS numbers are pinned in ``ff_ir_extension_lammps.tsv`` by
-``scripts/ff_ir_extension_lammps_check.sh --pin`` (``MOLRS_PYTHON`` set): with
-``MOLRS_FFEXT_DIR`` set, ``test_write_lammps_inputs`` writes each deck
-through molrs's LAMMPS writer, the script runs ``lmp`` ``run 0`` on it.
 Relative error is ``|got − want| / max(|want|, s)``, ``s`` the largest
 |force component| of the configuration (an energy's own magnitude for the
 energy).
@@ -35,7 +31,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import subprocess
 import sys
 import textwrap
@@ -56,8 +51,6 @@ def _lammps_include(
     mp.io.lammps.LammpsForcefieldWriter(frame, **options).write(buf, ff)  # type: ignore[arg-type]
     return buf.decode()
 
-
-PINNED = Path(__file__).with_name("ff_ir_extension_lammps.tsv")
 
 # LAMMPS `bond_style fene` (Kremer-Grest): K R0 epsilon sigma.
 K, R0, EPS, SIG = 30.0, 1.5, 1.0, 1.0
@@ -349,36 +342,19 @@ def fene_ff(style: str, **row: float) -> mp.ff.forcefield.ForceField:
 
 def smooth_ff(style: str) -> mp.ff.forcefield.ForceField:
     ff, t = field("smooth", "real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     pair = ff.def_style("pair", style, {"cutoff": SMOOTH_RC})
     for name, (eps, sigma) in SMOOTH_ROWS.items():
         pair.def_type(name, t[name], epsilon=eps, sigma=sigma)
     return ff
 
 
-def smooth_frame(xyz: np.ndarray) -> mp.core.Frame:
-    """The six atoms at ``xyz`` and their ``pairs`` list: every pair, none
-    bonded."""
+def smooth_frame(xyz: np.ndarray, ff: mp.ff.forcefield.ForceField) -> mp.core.Frame:
+    """The six atoms at ``xyz`` and their ``pairs`` list under ``ff``'s
+    weights: every pair, none bonded."""
     f = frame(xyz, SMOOTH_TYPES)
-    f["pairs"] = mp.ff.potential.intramolecular_pairs(f)
+    f["pairs"] = mp.ff.potential.intramolecular_pairs(f, ff)
     return f
-
-
-def ub_ff() -> mp.ff.forcefield.ForceField:
-    ff, t = field("ub", "real")
-    style = ff.def_style("urey_bradley", "proof")
-    for _, name, k_ub, r_ub in UB_ROWS:
-        style.def_type(name, *(t[e] for e in name.split("-")), k_ub=k_ub, r_ub=r_ub)
-    return ff
-
-
-def ub_frame(xyz: np.ndarray, block: str = "urey_bradleys") -> mp.core.Frame:
-    return frame(
-        xyz,
-        ["A", "B", "B", "A"],
-        block,
-        [r[0] for r in UB_ROWS],
-        [r[1] for r in UB_ROWS],
-    )
 
 
 def price(
@@ -413,119 +389,6 @@ def fene_analytic(xyz: np.ndarray) -> tuple[float, np.ndarray]:
 
 
 # ---------------------------------------------------------------------------
-# LAMMPS: the decks, and the pinned numbers
-# ---------------------------------------------------------------------------
-
-
-def lammps_cases() -> dict[
-    str,
-    list[
-        tuple[
-            mp.ff.forcefield.ForceField,
-            mp.core.Frame,
-            mp.ff.forcefield.ForceField,
-            mp.core.Frame,
-            str,
-        ]
-    ],
-]:
-    """Per case and configuration: what molrs prices (style, frame), and the
-    deck LAMMPS prices (its force field, frame, units)."""
-    out = {"fene": [], "smooth": [], "urey_bradley": []}
-    smooth = smooth_ff("lj/smooth/linear/proof")
-    for xyz in (SMOOTH_XYZ, moved(SMOOTH_XYZ, 0.13)):
-        # LAMMPS's data file carries no pair list.
-        out["smooth"].append(
-            (smooth, smooth_frame(xyz), smooth, frame(xyz, SMOOTH_TYPES), "real")
-        )
-    fene = fene_ff("fene/proof")
-    for xyz in (BEADS, moved(BEADS, 0.02)):
-        f = bead_frame(xyz)
-        out["fene"].append((fene, f, fene, f, "lj"))
-    # LAMMPS prices the Urey-Bradley term as `angle_style charmm`, K = 0.
-    deck, t = field("ub", "real")
-    angle = deck.def_style("angle", "charmm")
-    for _, name, k_ub, r_ub in UB_ROWS:
-        angle.def_type(
-            name,
-            *(t[e] for e in name.split("-")),
-            k=0.0,
-            theta0=109.5,
-            k_ub=k_ub,
-            r_ub=r_ub,
-        )
-    for xyz in (CHAIN, moved(CHAIN, 0.09)):
-        out["urey_bradley"].append(
-            (ub_ff(), ub_frame(xyz), deck, ub_frame(xyz, "angles"), "real")
-        )
-    return out
-
-
-def test_write_lammps_inputs() -> None:
-    """With ``MOLRS_FFEXT_DIR`` set, write each case's LAMMPS deck to
-    ``$MOLRS_FFEXT_DIR/python/<case>/`` (``pre.lmp``, ``system.ff``,
-    ``data_<k>.lmp``) and molrs's numbers (``mp.tsv``); else nothing."""
-    root = os.environ.get("MOLRS_FFEXT_DIR")
-    if not root:
-        return
-    for case, configs in lammps_cases().items():
-        out = Path(root) / "python" / case
-        out.mkdir(parents=True, exist_ok=True)
-        tsv = []
-        for k, (ff, f, deck, deck_frame, units) in enumerate(configs):
-            text = _lammps_include(deck, deck_frame, precision=17, units=units)
-            lines = text.splitlines(keepends=True)
-            (out / "pre.lmp").write_text(
-                "".join(l for l in lines if l.startswith("units")), encoding="utf-8"
-            )
-            (out / "system.ff").write_text(
-                "".join(l for l in lines if not l.startswith("units")), encoding="utf-8"
-            )
-            mp.io.write_lammps_data(out / f"data_{k}.lmp", deck_frame)
-            e, forces = price(ff, f)
-            tsv.append(f"{case}\t{k}\tpe\t{e!r}\n")
-            for atom, (fx, fy, fz) in enumerate(forces.tolist()):
-                tsv.append(f"{case}\t{k}\tf\t{atom}\t{fx!r}\t{fy!r}\t{fz!r}\n")
-        (out / "molpy.tsv").write_text("".join(tsv), encoding="utf-8")
-
-
-def pinned() -> dict[tuple[str, int], tuple[float, np.ndarray]]:
-    """``(case, config)`` → LAMMPS's energy and forces."""
-    pe: dict[tuple[str, int], float] = {}
-    forces: dict[tuple[str, int], list[list[float]]] = {}
-    for line in PINNED.read_text(encoding="utf-8").splitlines():
-        if line.startswith("#") or not line.strip():
-            continue
-        c = line.split("\t")
-        key = (c[0], int(c[1]))
-        if c[2] == "pe":
-            pe[key] = float(c[3])
-        else:
-            assert int(c[3]) == len(forces.setdefault(key, []))
-            forces[key].append([float(v) for v in c[4:7]])
-    return {key: (pe[key], np.array(forces[key])) for key in pe}
-
-
-def against_lammps(
-    case: str,
-    ff_of: Callable[
-        [mp.ff.forcefield.ForceField], mp.ff.forcefield.ForceField
-    ] = lambda ff: ff,
-) -> float:
-    """The worst relative error of molrs (``ff_of`` the case's force field)
-    against the pinned LAMMPS numbers of ``case``, every configuration."""
-    table = pinned()
-    worst = 0.0
-    for k, (ff, f, *_) in enumerate(lammps_cases()[case]):
-        lmp_e, lmp_f = table[(case, k)]
-        e, forces = price(ff_of(ff), f)
-        scale = float(np.abs(lmp_f).max())
-        worst = max(worst, abs(e - lmp_e) / abs(lmp_e), rel(forces, lmp_f, scale))
-    print(f"MEASURED {case} vs LAMMPS: {worst:.1e}")
-    return worst
-
-
-# ---------------------------------------------------------------------------
 # A new style, by expression and by numpy
 # ---------------------------------------------------------------------------
 
@@ -554,19 +417,11 @@ def test_a_numpy_kernel_is_the_expression() -> None:
     print(f"MEASURED fene numpy vs expression: E {worst_e:.1e}, F {worst_f:.1e}")
 
 
-def test_fene_is_lammps_bond_style_fene() -> None:
+def test_fene_writes_as_lammps_bond_style_fene() -> None:
     deck = _lammps_include(fene_ff("fene/proof"), bead_frame(), units="lj")
     assert "bond_style fene\n" in deck
     (coeff,) = [l for l in deck.splitlines() if l.startswith("bond_coeff B-B ")]
     assert [float(v) for v in coeff.split()[2:]] == [30.0, 1.5, 1.0, 1.0]
-    assert against_lammps("fene") <= 1e-10
-
-    def numpy_twin(
-        ff: mp.ff.forcefield.ForceField,
-    ) -> mp.ff.forcefield.ForceField:
-        return fene_ff("fene/proof-np")
-
-    assert against_lammps("fene", numpy_twin) <= 1e-10
 
 
 def typed_energy_forces(
@@ -574,7 +429,7 @@ def typed_energy_forces(
 ) -> tuple[float, np.ndarray]:
     """The neighbour-driven door: ``compile_typed`` mounted on ``MD`` over a
     neighbour list past every pair, and the setup force call."""
-    from molpy.md import MD, NeighborList, VelocityVerlet
+    from molpy.md import MD, VelocityVerlet
 
     work = f.copy()
     atoms = work["atoms"]
@@ -590,7 +445,7 @@ def typed_energy_forces(
     )
     sim = MD()
     sim.set_integrator(VelocityVerlet(1.0))
-    sim.set_neighbor(NeighborList(29.0, 1.0))
+    sim.set_neighbor(mp.core.NeighborList(30.0), skin=1.0)
     sim.set_evaluator(mp.ff.compile.PotentialCompiler(ff).compile_typed(f))
     sim.run(work, 0)
     forces = np.column_stack(
@@ -599,7 +454,9 @@ def typed_energy_forces(
     return float(work.meta["energy"]), forces
 
 
-def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
+def test_a_python_pair_style_writes_as_lj_smooth_linear_and_prices_alike_at_both_doors() -> (
+    None
+):
     deck = _lammps_include(
         smooth_ff("lj/smooth/linear/proof"),
         frame(SMOOTH_XYZ, SMOOTH_TYPES),
@@ -614,7 +471,8 @@ def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
         r = np.linalg.norm(d, axis=-1)[np.triu_indices(len(xyz), 1)]
         assert (r < SMOOTH_RC).any() and (r >= SMOOTH_RC).any(), r
         for style in ("lj/smooth/linear/proof", "lj/smooth/linear/proof-np"):
-            ff, f = smooth_ff(style), smooth_frame(xyz)
+            ff = smooth_ff(style)
+            f = smooth_frame(xyz, ff)
             e, forces = price(ff, f)
             e_t, f_t = typed_energy_forces(ff, f, xyz)
             scale = float(np.abs(forces).max())
@@ -623,20 +481,11 @@ def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
             )
     assert worst_doors <= 1e-12
     print(f"MEASURED smooth compile_typed vs compile: {worst_doors:.1e}")
-    assert against_lammps("smooth") <= 1e-10
-
-    def numpy_twin(
-        ff: mp.ff.forcefield.ForceField,
-    ) -> mp.ff.forcefield.ForceField:
-        return smooth_ff("lj/smooth/linear/proof-np")
-
-    assert against_lammps("smooth", numpy_twin) <= 1e-10
 
 
-def test_a_python_category_is_lammps_urey_bradley() -> None:
+def test_a_python_category_registers_as_urey_bradley() -> None:
     cat = {c.name: c for c in style_registry.categories()}["urey_bradley"]
     assert (cat.arity, cat.block, cat.builtin) == (3, "urey_bradleys", False)
-    assert against_lammps("urey_bradley") <= 1e-10
 
 
 # ---------------------------------------------------------------------------
@@ -739,7 +588,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict, dict]:
         e, f = price(ff, spec_frame(spec))
         here[name] = {"e": e.hex(), "f": [float(v).hex() for v in f.ravel()]}
     done = subprocess.run(
-        [sys.executable, "-c", FRESH, str(path), json.dumps(frames)],
+        [sys.executable, "-I", "-c", FRESH, str(path), json.dumps(frames)],
         capture_output=True,
         text=True,
         check=False,

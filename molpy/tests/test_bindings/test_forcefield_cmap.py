@@ -188,20 +188,20 @@ def _alanine_ff() -> mp.ff.forcefield.ForceField:
     return ff
 
 
-def _backbone() -> mp.core.Frame:
-    frame = mp.core.Frame()
-    atoms = mp.core.Block()
-    for k, key in enumerate("xyz"):
-        atoms.insert(key, BACKBONE[:, k].copy())
-    atoms.insert("type", list(ALA))
-    atoms.insert("mol_id", np.ones(5, dtype=np.uint64))
-    atoms.insert("charge", np.zeros(5))
-    frame["atoms"] = atoms
-    dihedrals = mp.core.Block()
-    for p, key in enumerate(("atomi", "atomj", "atomk", "atoml")):
-        dihedrals.insert(key, np.array([p, p + 1], dtype=np.uint64))
-    frame["dihedrals"] = dihedrals
-    return frame
+#: The backbone's elements, in atom order (C, N, CA, C, N).
+BACKBONE_Z = (6, 7, 6, 6, 7)
+
+
+def _backbone() -> mp.core.Atomistic:
+    """The five backbone atoms, typed, with the two dihedrals a CMAP spans."""
+    mol = mp.core.Atomistic()
+    atoms = [
+        mol.add_atom(atomic_number=z, type=name, x=x, y=y, z=zc, charge=0.0, mol_id=1)
+        for z, name, (x, y, zc) in zip(BACKBONE_Z, ALA, BACKBONE.tolist(), strict=True)
+    ]
+    mol.add_dihedral(*atoms[:4])
+    mol.add_dihedral(*atoms[1:])
+    return mol
 
 
 def test_read_lammps_cmap_names_rows_by_crossterm_type() -> None:
@@ -214,8 +214,9 @@ def test_read_lammps_cmap_names_rows_by_crossterm_type() -> None:
 
 
 def test_assign_cmaps_builds_the_block_the_kernel_prices() -> None:
-    ff, frame = _alanine_ff(), _backbone()
-    assert mp.ff.typifier.assign_cmaps(frame, ff) == 1
+    ff, mol = _alanine_ff(), _backbone()
+    assert mp.ff.typifier.assign_cmaps(mol, ff) == 1
+    frame = mol.to_frame()
     cmaps = frame["cmaps"]
     assert [int(cmaps[k][0]) for k in ("atomi", "atomm")] == [0, 4]
     assert list(cmaps["type"]) == ["ala"]
@@ -226,8 +227,9 @@ def test_assign_cmaps_builds_the_block_the_kernel_prices() -> None:
 
 
 def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
-    ff, frame = _alanine_ff(), _backbone()
-    mp.ff.typifier.assign_cmaps(frame, ff)
+    ff, mol = _alanine_ff(), _backbone()
+    mp.ff.typifier.assign_cmaps(mol, ff)
+    frame = mol.to_frame()
     del frame["dihedrals"]
 
     cmap = tmp_path / "charmm.cmap"

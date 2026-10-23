@@ -444,13 +444,6 @@ mod tests {
 
     // ---- units -----------------------------------------------------------
 
-    fn factor(from: &str, to: &str, dimension: PresetDim) -> F {
-        LammpsUnitConverter::canonical()
-            .unwrap()
-            .convert(1.0, from, to, dimension)
-            .unwrap()
-    }
-
     #[test]
     fn metal_converts_velocities_and_records_the_style_for_the_reader() {
         let f = frame(FULL);
@@ -475,7 +468,7 @@ mod tests {
     #[test]
     fn a_converted_file_read_back_converts_home() {
         let f = frame(FULL);
-        for units in ["metal", "lj"] {
+        for units in ["metal"] {
             let there = frame(&write(&f, None, Some(units)).unwrap());
             // The reader's `lammps_units` is the frame's units on the way back.
             let home = frame(&write(&there, None, Some("real")).unwrap());
@@ -498,27 +491,13 @@ mod tests {
         }
     }
 
+    /// A frame written as `lj` needs the system's σ, ε and mass, which the
+    /// writer is not given: refused, never relabelled.
     #[test]
-    fn lj_scales_charges_and_velocities_as_the_forcefield_writer_does() {
+    fn lj_is_refused_without_a_reference() {
         let f = frame(FULL);
-        let back = frame(&write(&f, Some("full"), Some("lj")).unwrap());
-        let q = factor("real", "lj", PresetDim::Charge);
-        // One e in lj charge units at the canonical σ = 1 Å, ε = 1 kcal/mol:
-        // sqrt(332.06371) ≈ 18.2224.
-        assert!((q - 18.2224).abs() < 1e-3, "{q}");
-        assert!(close(&floats(&back, keys::CHARGE), &[-0.5 * q, 0.5 * q]));
-        let v = factor("real", "lj", PresetDim::Velocity);
-        assert!(close(&floats(&back, keys::VY), &[0.2 * v, 0.0]));
-        // The force-field writer's scale is the same table.
-        #[cfg(feature = "ff")]
-        {
-            let scale = LammpsUnitConverter::canonical()
-                .unwrap()
-                .scale("real", "lj")
-                .unwrap();
-            let expected = scale.apply(1.0, "Q".parse().unwrap());
-            assert!((expected - q).abs() < 1e-12, "{expected} vs {q}");
-        }
+        let err = write(&f, Some("full"), Some("lj")).unwrap_err();
+        assert!(err.to_string().contains("lj reference"), "{err}");
     }
 
     #[test]

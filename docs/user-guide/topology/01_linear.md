@@ -9,7 +9,7 @@ import molpy as mp
 from eo_kit import library  # examples/topology/
 
 sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|10}").to_coarsegrain()
-chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
 ```
 
 **Check:** 10 units (`frag_id` 0…9), 72 atoms (7 per unit plus the two end hydrogens), 71 bonds, 2 open ports at the ends.

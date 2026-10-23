@@ -1,5 +1,5 @@
 ; amber_pairs: amber with [ pairs ] rows of their own; ACE-ALA-ALA-NME from `gmx pdb2gmx -ff amber99sb-ildn` (GROMACS 2025.3),
-; `grompp -pp`, trimmed to the types it uses (scripts/gromacs_engine_check.sh).
+; `grompp -pp`, trimmed to the types it uses.
 [ defaults ]
 1               2               yes             0.5     0.8333
 

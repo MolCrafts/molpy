@@ -70,7 +70,7 @@ on read. `mp.core.schema.column(key)` is the authoritative table.
 
 Format-specific aliases such as LAMMPS `q` and `mol` exist only at the I/O boundary. Readers canonicalize them to `charge` and `mol_id`; writers localize them back when required by the target format.
 
-**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention. Readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `mp.io.read_openmm_forcefield` hands back Å and kcal/mol.
+**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention. Readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `mp.io.openmm_xml.OpenmmXmlReader` hands back Å and kcal/mol.
 
 #### Bond Topology (`bonds`)
 
@@ -209,12 +209,15 @@ publishes:
   `utils`, `helpers`, `env`): a module says what it holds — the bundled files
   are `mp.resources`, the CL&Pol LJ scaling is `mp.ff.clpol_scaling`.
 - **One I/O door per format**: `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`
-  (`read_pdb`, `read_lammps_data`, `read_top_forcefield`), with `_str`,
-  `_bytes` and `_trajectory` for text, bytes and every frame of a multi-frame
-  file.
+  (`read_pdb`, `read_lammps_data`, `write_lammps_dump`) for one frame; every
+  frame of a multi-frame file, and force-field files, go through the format
+  module's reader and writer classes (`mp.io.pdb.PdbReader`,
+  `mp.io.gromacs.GromacsTopForcefieldReader`). There are no `_str` / `_bytes`
+  variants: a source is a path, `bytes`, or `mp.io.Text` for text in memory,
+  and a sink is a path or a `bytearray`.
 
 ```python
-assert mp.io.read_smiles_str("CCO").n_atoms == 3
+assert mp.io.smiles.read_smiles("CCO").to_atomistic().n_atoms == 3
 assert mp.perceive.SmartsPattern("[#6][#8]").n_query_atoms == 2
 ```
 

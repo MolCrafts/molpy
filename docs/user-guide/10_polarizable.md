@@ -28,9 +28,9 @@ from molpy.builder import DrudeBuilder
 struct, _ = mp.conformer.Conformer(seed=42).generate(mp.io.smiles.read_smiles("CCO").to_atomistic())
 # DrudeBuilder looks up each atom's CL&P type and splits its charge, so the
 # structure must be typed and charged first (normally by a typifier).
-clp_types = {"C": "CT", "O": "OH", "H": "HC"}
+clp_types = {6: "CT", 8: "OH", 1: "HC"}  # by atomic number
 for atom in struct.atoms:
- atom["type"] = clp_types[atom["element"]]
+ atom["type"] = clp_types[atom["atomic_number"]]
  atom["charge"] = 0.0
 builder = DrudeBuilder(drude_prefix="D")
 
@@ -62,7 +62,7 @@ polarized = drude.apply(struct)
 The structure must be typed first: `apply` raises `ValueError` if an atom has
 no `type`, since its polarizability cannot be looked up.
 
-Each shell is a `DrudeParticle` (`vsite == "drude"`, no `element`) tied to its
+Each shell is a `DrudeParticle` (`vsite == "drude"`, `atomic_number` 0: no element) tied to its
 core by a row of molrs's `drudes` relation (`atomi` the core, `atomj` the shell)
 with style `harmonic` and the `drude/harmonic` parameters: `k` (kcal/mol/Å² in
 molrs's `k*r^2` form, i.e. `k_D / 2` converted from kJ), `alpha` (Å³) and
@@ -81,7 +81,7 @@ from molpy.builder import Tip4pBuilder
 water, _ = mp.conformer.Conformer(add_hydrogens=True, seed=1).generate(mp.io.smiles.read_smiles("O").to_atomistic())
 # The M-site carries the oxygen's charge, so the input must already have one.
 for atom in water.atoms:
- atom["charge"] = -0.834 if atom["element"] == "O" else 0.417
+ atom["charge"] = -0.834 if atom["atomic_number"] == 8 else 0.417
 
 tip4p = Tip4pBuilder(d_om=0.1546) # O–M distance in Å
 water4p = tip4p.apply(water)
@@ -94,7 +94,7 @@ Pass `box=` (a `mp.Box`) for a periodic system: the O–H vectors are then
 minimum-image deltas, so a water split by the boundary still gets M on its
 bisector. Hydrogens are found through the bond adjacency of each oxygen.
 
-The M-site is a `MasslessSite` (`vsite == "massless"`, no `element`) and is
+The M-site is a `MasslessSite` (`vsite == "massless"`, `atomic_number` 0: no element) and is
 recorded as a row of molrs's `virtual_sites` relation (`atomi` = M, `atomj`,
 `atomk`, `atoml` = O, H, H) with style `average3` and weights `w1 = 1 - 2a`,
 `w2 = w3 = a`, so an engine can rebuild M from the moving water.
@@ -114,10 +114,11 @@ and `Tip4pBuilder` are the two reference implementations.
  fixed-charge field.
 - `MasslessSite` / `DrudeParticle` are auxiliary particles — downstream exporters
  and engines must be told to treat them as virtual sites, not atoms.
-- molrs's LAMMPS data writer does not yet write the `drudes` springs into the
- `Bonds` section, which the LAMMPS DRUDE package expects.
-- `mp.Atomistic.from_frame` does not yet read `drudes` / `virtual_sites` blocks
- back; keep the builder's output graph, or its frame, rather than round-tripping.
+- molrs's LAMMPS data writer writes each `drudes` spring as a row of the
+ `Bonds` section (bond type `<core>-<shell>`, e.g. `CT-DCT`), as the LAMMPS
+ DRUDE package expects.
+- `mp.Atomistic.from_frame` reads `drudes` / `virtual_sites` blocks back, so
+ the builder's output survives a round trip through its frame.
 
 ## See also
 

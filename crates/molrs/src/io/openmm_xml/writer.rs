@@ -7,7 +7,7 @@ mod custom;
 mod residues;
 
 use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
-use crate::ff::forcefield::{ForceField, Style, StyleDefs};
+use crate::ff::forcefield::{ForceField, Style};
 use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::CombiningRule;
 use crate::ff::ir::Params;
@@ -156,7 +156,7 @@ impl Endpoints {
     fn new(ff: &ForceField) -> Self {
         let mut classes = BTreeSet::new();
         let mut names = Vec::new();
-        for t in ff.get_atomtypes() {
+        for t in ff.get_types("atom") {
             if t.params.get("type_").and_then(|v| v.as_text()) == Some("*") {
                 continue;
             }
@@ -331,8 +331,9 @@ impl OpenmmXmlWriter {
                 custom::bonded(self, reg, style, ends, out)?;
                 continue;
             }
-            match (style.category(), style.defs()) {
-                ("bond", StyleDefs::Bond(types)) => {
+            let types = style.defs().types();
+            match style.category() {
+                "bond" => {
                     for t in types {
                         let what = format!("bond harmonic {}", t.name);
                         // LAMMPS K (kcal/mol/Å²) → OpenMM ½k, k = 2K (kJ/mol/nm²).
@@ -340,20 +341,20 @@ impl OpenmmXmlWriter {
                         let r0 = need(&t.params, "r0", &what)? / NM_TO_ANGSTROM.get();
                         let body =
                             format!(" length=\"{}\" k=\"{}\"", self.fmt_f(r0), self.fmt_f(k));
-                        let key = either_way(&[&t.itom, &t.jtom]);
+                        let key = either_way(&[&t.endpoints[0], &t.endpoints[1]]);
                         if out.admit("Bond", key, &t.name, &body)? {
                             out.bonds.push_str(&format!(
                                 "    <Bond{}{body}/>\n",
-                                ends.attrs(&[&t.itom, &t.jtom])
+                                ends.attrs(&[&t.endpoints[0], &t.endpoints[1]])
                             ));
                         }
                     }
                 }
-                ("angle", StyleDefs::Angle(types)) => {
+                "angle" => {
                     let ub = style.name() == "charmm";
                     for t in types {
                         let what = format!("angle {} {}", style.name(), t.name);
-                        let labels = [t.itom.as_str(), &t.jtom, &t.ktom];
+                        let labels = [t.endpoints[0].as_str(), &t.endpoints[1], &t.endpoints[2]];
                         let k = 2.0 * need(&t.params, "k", &what)? * KCAL_TO_KJ.get();
                         let theta0 = need(&t.params, "theta0", &what)?.to_radians();
                         let body =
@@ -397,10 +398,16 @@ impl OpenmmXmlWriter {
                         }
                     }
                 }
-                ("dihedral", StyleDefs::Dihedral(types)) => {
+                "dihedral" => {
                     for t in types {
-                        let labels = [t.itom.as_str(), &t.jtom, &t.ktom, &t.ltom];
+                        let labels = [
+                            t.endpoints[0].as_str(),
+                            &t.endpoints[1],
+                            &t.endpoints[2],
+                            &t.endpoints[3],
+                        ];
                         self.dihedral(
+                            reg,
                             style,
                             &t.name,
                             &t.params,
@@ -409,7 +416,7 @@ impl OpenmmXmlWriter {
                         )?;
                     }
                 }
-                ("improper", StyleDefs::Improper(types)) => {
+                "improper" => {
                     for t in types {
                         let what = format!("improper {} {}", style.name(), t.name);
                         match style.name() {
@@ -424,16 +431,29 @@ impl OpenmmXmlWriter {
                                 );
                                 // OpenMM prices (c2, c3, c1, c4); stored (i, j, k, l).
                                 let body = self.periodic_term(1, k, n, phase);
-                                let key = centre_first(&t.ktom, [&t.itom, &t.jtom, &t.ltom]);
+                                let key = centre_first(
+                                    &t.endpoints[2],
+                                    [&t.endpoints[0], &t.endpoints[1], &t.endpoints[3]],
+                                );
                                 if out.admit("Improper", key, &t.name, &body)? {
                                     out.periodic.push_str(&format!(
                                         "    <Improper{}{body}/>\n",
-                                        ends.attrs(&[&t.ktom, &t.itom, &t.jtom, &t.ltom])
+                                        ends.attrs(&[
+                                            &t.endpoints[2],
+                                            &t.endpoints[0],
+                                            &t.endpoints[1],
+                                            &t.endpoints[3]
+                                        ])
                                     ));
                                 }
                             }
                             "harmonic" => {
-                                let labels = [t.itom.as_str(), &t.jtom, &t.ktom, &t.ltom];
+                                let labels = [
+                                    t.endpoints[0].as_str(),
+                                    &t.endpoints[1],
+                                    &t.endpoints[2],
+                                    &t.endpoints[3],
+                                ];
                                 if labels.iter().any(|l| l.is_empty()) {
                                     return Err(format!(
                                         "{what}: a wildcard endpoint makes OpenMM re-order the \
@@ -453,7 +473,10 @@ impl OpenmmXmlWriter {
                                     self.fmt_f(k),
                                     self.fmt_f(chi0)
                                 );
-                                let key = centre_first(&t.itom, [&t.jtom, &t.ktom, &t.ltom]);
+                                let key = centre_first(
+                                    &t.endpoints[0],
+                                    [&t.endpoints[1], &t.endpoints[2], &t.endpoints[3]],
+                                );
                                 if out.admit("Improper", key, &t.name, &body)? {
                                     out.custom.push((
                                         chi0,
@@ -465,7 +488,7 @@ impl OpenmmXmlWriter {
                         }
                     }
                 }
-                ("cmap", StyleDefs::Cmap(types)) => {
+                "cmap" => {
                     for t in types {
                         let grid = t
                             .params
@@ -491,7 +514,13 @@ impl OpenmmXmlWriter {
                                     grid[[(i + n / 2) % n, (j + n / 2) % n]] * KCAL_TO_KJ.get();
                             }
                         }
-                        let labels = [t.itom.as_str(), &t.jtom, &t.ktom, &t.ltom, &t.mtom];
+                        let labels = [
+                            t.endpoints[0].as_str(),
+                            &t.endpoints[1],
+                            &t.endpoints[2],
+                            &t.endpoints[3],
+                            &t.endpoints[4],
+                        ];
                         let body = format!("{values:?}");
                         if !out.admit("Torsion", either_way(&labels), &t.name, &body)? {
                             continue;
@@ -505,7 +534,13 @@ impl OpenmmXmlWriter {
                         };
                         out.cmap_rows.push_str(&format!(
                             "    <Torsion map=\"{index}\"{}/>\n",
-                            ends.attrs(&[&t.itom, &t.jtom, &t.ktom, &t.ltom, &t.mtom])
+                            ends.attrs(&[
+                                &t.endpoints[0],
+                                &t.endpoints[1],
+                                &t.endpoints[2],
+                                &t.endpoints[3],
+                                &t.endpoints[4]
+                            ])
                         ));
                     }
                 }
@@ -528,6 +563,7 @@ impl OpenmmXmlWriter {
     /// `k[1 + cos(nφ − γ)]` terms (constant included), RB otherwise.
     fn dihedral(
         &self,
+        reg: &Registry,
         style: &Style,
         name: &str,
         p: &Params,
@@ -594,7 +630,7 @@ impl OpenmmXmlWriter {
         }
         // Every other torsion form, through its form codec: RB holds
         // Σₙ₌₀⁵ Cₙ cosⁿ(φ − 180°), constant included.
-        let series = torsion_series("dihedral", style.name(), style.params(), p)?;
+        let series = torsion_series(reg, "dihedral", style.name(), style.params(), p)?;
         let rb = RyckaertBellemansForm::from_series(&series)
             .map_err(|e| format!("{what}: no RBTorsionForce form: {e}"))?;
         let mut body = String::new();
@@ -683,7 +719,7 @@ impl OpenmmXmlWriter {
 
         // Charges, per real atom type.
         let atoms: Vec<_> = ff
-            .get_atomtypes()
+            .get_types("atom")
             .into_iter()
             .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) != Some("*"))
             .collect();
@@ -731,7 +767,7 @@ impl OpenmmXmlWriter {
             return Ok((custom_xml, None));
         }
 
-        let sb = ff.special_bonds();
+        let sb = ff.required_special_bonds()?;
         if sb.lj[0] != 0.0 || sb.lj[1] != 0.0 || sb.coul[0] != 0.0 || sb.coul[1] != 0.0 {
             return Err(format!(
                 "special_bonds lj {:?} coul {:?}: OpenMM excludes 1-2 and 1-3 pairs and \
@@ -746,14 +782,11 @@ impl OpenmmXmlWriter {
         let mut own: Vec<(&str, &Params)> = Vec::new();
         let mut cross: Vec<(&str, &str, &Params)> = Vec::new();
         if let Some(style) = lj_style {
-            let StyleDefs::Pair(types) = style.defs() else {
-                unreachable!("a pair style holds pair types")
-            };
-            for t in types {
-                if t.itom == t.jtom {
-                    own.push((&t.itom, &t.params));
+            for t in style.defs().types() {
+                if t.endpoints[0] == t.endpoints[1] {
+                    own.push((&t.endpoints[0], &t.params));
                 } else {
-                    cross.push((&t.itom, &t.jtom, &t.params));
+                    cross.push((&t.endpoints[0], &t.endpoints[1], &t.params));
                 }
             }
         }
@@ -1001,7 +1034,7 @@ impl OpenmmXmlWriter {
         ff: &ForceField,
         system: Option<&residues::Templates>,
     ) -> Result<String, ForceFieldWriteError> {
-        if let Some(units) = ff.declared_units()
+        if let Some(units) = ff.units()
             && units != "real"
         {
             return Err(format!(
@@ -1041,7 +1074,7 @@ impl OpenmmXmlWriter {
         // AtomTypes (the reader's class placeholders are not types).
         let mut atoms_xml = String::new();
         let mut sorted: Vec<_> = ff
-            .get_atomtypes()
+            .get_types("atom")
             .into_iter()
             .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) != Some("*"))
             .collect();
@@ -1223,7 +1256,9 @@ mod tests {
     fn series(ff: &ForceField) -> crate::ff::ir::torsion::FourierSeries {
         let s = style(ff, "dihedral");
         let p = &s.defs().collect_type_params()[0].1;
-        torsion_series("dihedral", s.name(), s.params(), p).unwrap()
+        ff.registry()
+            .with(|r| torsion_series(r, "dihedral", s.name(), s.params(), p))
+            .unwrap()
     }
 
     /// OPLS goes out as RB and reads back as `multi/harmonic`: the same
@@ -1231,6 +1266,7 @@ mod tests {
     #[test]
     fn opls_torsions_and_pairs_round_trip_through_the_openmm_units() {
         let mut ff = ForceField::new("opls");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("dihedral", "opls", Params::new())
             .unwrap()
             .def_type(
@@ -1336,6 +1372,7 @@ mod tests {
     fn a_long_range_coulomb_is_written_as_the_charges() {
         let field = |coul: &str, params: Params| {
             let mut ff = ForceField::new("tiny");
+            ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
             ff.def_style("atom", "full", Params::new())
                 .unwrap()
                 .def_type(
@@ -1497,12 +1534,11 @@ mod tests {
         ff.styles()
             .iter()
             .filter(|s| s.category() == "improper")
-            .flat_map(|s| match s.defs() {
-                StyleDefs::Improper(v) => v
+            .flat_map(|s| {
+                s.defs()
+                    .types()
                     .iter()
                     .map(|t| (format!("{}:{}", s.name(), t.name), t.params.clone()))
-                    .collect::<Vec<_>>(),
-                _ => Vec::new(),
             })
             .collect()
     }
@@ -1698,6 +1734,7 @@ mod tests {
     #[test]
     fn an_lj_cross_row_is_an_nbfix_pair() {
         let mut ff = ForceField::new("charmm");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::new())
             .unwrap()
             .def_type(

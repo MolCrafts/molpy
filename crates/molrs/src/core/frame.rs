@@ -651,7 +651,7 @@ impl Frame {
             let mut tiled = b.select_rows(&tile)?;
             if b.is_empty() {
                 // No column to gather: carry the declared row count alone.
-                tiled.resize(rows * count)?;
+                tiled.resize(rows * count);
             }
             let references = if rows > 0 {
                 local_reference_targets(name, b)
@@ -856,23 +856,6 @@ impl Frame {
             }
         }
         Ok(())
-    }
-
-    /// Checks if the frame is consistent without returning an error.
-    ///
-    /// This is a non-panicking version of `validate()` that returns a boolean.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use molrs::core::Frame;
-    /// use molrs::core::Block;
-    ///
-    /// let frame = Frame::new();
-    /// assert!(frame.is_consistent());
-    /// ```
-    pub fn is_consistent(&self) -> bool {
-        self.validate().is_ok()
     }
 }
 
@@ -1603,7 +1586,7 @@ mod tests {
     fn replicate_carries_the_row_count_of_a_columnless_block() {
         let mut frame = chain_of_four();
         let mut marker = Block::new();
-        marker.resize(2).unwrap();
+        marker.resize(2);
         frame.insert("marker", marker);
         assert_eq!(frame.replicate(3).unwrap()["marker"].n_rows(), Some(6));
     }

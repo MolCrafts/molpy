@@ -367,30 +367,30 @@ impl FrameInProgress {
         };
 
         // Coordinates: prefer Cartn over fract.
-        let cartn_x = column_floats(
+        let cartn_x = coordinate_column(
             &self.atom_cols,
             &["_atom_site_Cartn_x", "_atom_site.Cartn_x"],
-        );
-        let cartn_y = column_floats(
+        )?;
+        let cartn_y = coordinate_column(
             &self.atom_cols,
             &["_atom_site_Cartn_y", "_atom_site.Cartn_y"],
-        );
-        let cartn_z = column_floats(
+        )?;
+        let cartn_z = coordinate_column(
             &self.atom_cols,
             &["_atom_site_Cartn_z", "_atom_site.Cartn_z"],
-        );
-        let fract_x = column_floats(
+        )?;
+        let fract_x = coordinate_column(
             &self.atom_cols,
             &["_atom_site_fract_x", "_atom_site.fract_x"],
-        );
-        let fract_y = column_floats(
+        )?;
+        let fract_y = coordinate_column(
             &self.atom_cols,
             &["_atom_site_fract_y", "_atom_site.fract_y"],
-        );
-        let fract_z = column_floats(
+        )?;
+        let fract_z = coordinate_column(
             &self.atom_cols,
             &["_atom_site_fract_z", "_atom_site.fract_z"],
-        );
+        )?;
 
         let (xs, ys, zs): (Vec<F>, Vec<F>, Vec<F>) =
             if let (Some(x), Some(y), Some(z)) = (&cartn_x, &cartn_y, &cartn_z) {
@@ -418,8 +418,13 @@ impl FrameInProgress {
         // Optional columns. Naming follows the PDB reader so downstream
         // molvis modifiers (element coloring, backbone ribbon, selection)
         // can consume CIF and PDB frames interchangeably.
-        if let Some(ids) = column_u32(&self.atom_cols, &["_atom_site.id", "_atom_site_id"]) {
-            insert_column(&mut atoms, "id", ids)?;
+        if let Some(ids) = masked_column(
+            &self.atom_cols,
+            &["_atom_site.id", "_atom_site_id"],
+            |t| t.parse::<Idx>().ok(),
+            "non-negative integer",
+        )? {
+            insert_masked(&mut atoms, "id", ids)?;
         }
         // The species field is kept raw (as the file spells it, e.g. `Fe2+`).
         // A `.` / `?` placeholder is an absent species, not a made-up one: a
@@ -456,18 +461,13 @@ impl FrameInProgress {
         // refused here at the boundary (as the PDB reader does), and the CIF
         // placeholders `.` / `?` (a ligand or water with no polymer residue
         // number) are null rows rather than a fake 0.
-        if let Some((res_ids, valid)) = column_res_id(
+        if let Some(res_ids) = masked_column(
             &self.atom_cols,
             &["_atom_site.label_seq_id", "_atom_site.auth_seq_id"],
+            |t| t.parse::<Idx>().ok(),
+            "non-negative integer (residue ids are unsigned)",
         )? {
-            let n = res_ids.len();
-            let arr = Array1::from_vec(res_ids)
-                .into_shape_with_order(IxDyn(&[n]))
-                .map_err(invalid_data)?
-                .into_dyn();
-            atoms
-                .insert("res_id", arr, Some(valid))
-                .map_err(invalid_data)?;
+            insert_masked(&mut atoms, "res_id", res_ids)?;
         }
         if let Some(chains) = string_column(
             &self.atom_cols,
@@ -481,17 +481,21 @@ impl FrameInProgress {
         if let Some(altlocs) = string_column(&self.atom_cols, &["_atom_site.label_alt_id"]) {
             insert_column(&mut atoms, "altloc", placeholders_as_empty(altlocs))?;
         }
-        if let Some(occ) = column_floats(
+        if let Some(occ) = masked_column(
             &self.atom_cols,
             &["_atom_site.occupancy", "_atom_site_occupancy"],
-        ) {
-            insert_column(&mut atoms, "occupancy", occ)?;
+            parse_float,
+            "number",
+        )? {
+            insert_masked(&mut atoms, "occupancy", occ)?;
         }
-        if let Some(b) = column_floats(
+        if let Some(b) = masked_column(
             &self.atom_cols,
             &["_atom_site.B_iso_or_equiv", "_atom_site_B_iso_or_equiv"],
-        ) {
-            insert_column(&mut atoms, "b_factor", b)?;
+            parse_float,
+            "number",
+        )? {
+            insert_masked(&mut atoms, "b_factor", b)?;
         }
 
         frame.insert("atoms", atoms);
@@ -502,13 +506,67 @@ impl FrameInProgress {
     }
 }
 
-fn column_floats(map: &HashMap<String, Vec<String>>, keys: &[&str]) -> Option<Vec<F>> {
-    for k in keys {
-        if let Some(col) = map.get(*k) {
-            return Some(col.iter().map(|s| parse_float(s).unwrap_or(0.0)).collect());
+/// The column of the first of `keys` the loop holds, each value parsed by
+/// `parse`, with the CIF placeholders (`.`, `?`) as null rows: the values and
+/// their validity mask.
+///
+/// # Errors
+///
+/// `InvalidData` naming the data name and the value for a value `parse`
+/// cannot read — never a made-up 0.
+fn masked_column<T: Default>(
+    map: &HashMap<String, Vec<String>>,
+    keys: &[&str],
+    parse: impl Fn(&str) -> Option<T>,
+    what: &str,
+) -> Result<Option<(Vec<T>, Vec<bool>)>> {
+    let Some((key, col)) = keys.iter().find_map(|k| map.get(*k).map(|col| (k, col))) else {
+        return Ok(None);
+    };
+    let mut values = Vec::with_capacity(col.len());
+    let mut valid = Vec::with_capacity(col.len());
+    for token in col {
+        if is_placeholder(token) {
+            values.push(T::default());
+            valid.push(false);
+            continue;
         }
+        let value = parse(token.trim())
+            .ok_or_else(|| invalid_data(format!("CIF {key} value {token:?} is not a {what}")))?;
+        values.push(value);
+        valid.push(true);
     }
-    None
+    Ok(Some((values, valid)))
+}
+
+/// A coordinate column: every atom states its value.
+///
+/// # Errors
+///
+/// As [`masked_column`], and `InvalidData` naming the row for a placeholder:
+/// an atom without a coordinate cannot be placed.
+fn coordinate_column(map: &HashMap<String, Vec<String>>, keys: &[&str]) -> Result<Option<Vec<F>>> {
+    let Some((values, valid)) = masked_column(map, keys, parse_float, "number")? else {
+        return Ok(None);
+    };
+    if let Some(row) = valid.iter().position(|v| !v) {
+        return Err(invalid_data(format!(
+            "CIF atom row {row} has no {} coordinate",
+            keys[0]
+        )));
+    }
+    Ok(Some(values))
+}
+
+/// Insert a [`masked_column`] as the 1-D column `key` of `block`.
+fn insert_masked<T: crate::core::BlockDtype>(
+    block: &mut Block,
+    key: &str,
+    (values, valid): (Vec<T>, Vec<bool>),
+) -> Result<()> {
+    block
+        .insert(key, Array1::from_vec(values).into_dyn(), Some(valid))
+        .map_err(invalid_data)
 }
 
 fn string_column(map: &HashMap<String, Vec<String>>, keys: &[&str]) -> Option<Vec<String>> {
@@ -532,55 +590,6 @@ fn placeholders_as_empty(values: Vec<String>) -> Vec<String> {
         .into_iter()
         .map(|v| if is_placeholder(&v) { String::new() } else { v })
         .collect()
-}
-
-/// Parse the residue-number column from a CIF loop as unsigned `res_id`
-/// values plus a validity mask: a placeholder (`.` for ligand / water / metal
-/// atoms with no polymer residue numbering, `?`) is a null row.
-///
-/// # Errors
-///
-/// `InvalidData` naming the value for a negative or unparseable number —
-/// residue ids are unsigned, and a reader renumbers at its boundary rather
-/// than storing a fake value.
-fn column_res_id(
-    map: &HashMap<String, Vec<String>>,
-    keys: &[&str],
-) -> Result<Option<(Vec<Idx>, Vec<bool>)>> {
-    let Some(col) = keys.iter().find_map(|k| map.get(*k)) else {
-        return Ok(None);
-    };
-    let mut values = Vec::with_capacity(col.len());
-    let mut valid = Vec::with_capacity(col.len());
-    for token in col {
-        if is_placeholder(token) {
-            values.push(0);
-            valid.push(false);
-            continue;
-        }
-        let v = token.trim().parse::<Idx>().map_err(|_| {
-            invalid_data(format!(
-                "CIF residue number {token:?} is not a non-negative integer; residue ids are \
-                 unsigned"
-            ))
-        })?;
-        values.push(v);
-        valid.push(true);
-    }
-    Ok(Some((values, valid)))
-}
-
-fn column_u32(map: &HashMap<String, Vec<String>>, keys: &[&str]) -> Option<Vec<Idx>> {
-    for k in keys {
-        if let Some(col) = map.get(*k) {
-            return Some(
-                col.iter()
-                    .map(|s| s.trim().parse::<Idx>().unwrap_or(0))
-                    .collect(),
-            );
-        }
-    }
-    None
 }
 
 /// Read one CIF data block from `src`. Returns `Ok(None)` at EOF.
@@ -627,7 +636,10 @@ fn read_one_block<R: BufRead>(src: &mut LineSource<R>) -> Result<Option<Frame>> 
     }
 
     if let Some(f) = current {
-        return Ok(Some(f.build_frame()?));
+        let frame = f.build_frame()?;
+        // Every door reads through here, so every door checks here.
+        crate::io::reader::check_read_frame(&frame)?;
+        return Ok(Some(frame));
     }
     Ok(None)
 }
@@ -823,7 +835,7 @@ impl<R: BufRead> FrameReader for CifReader<R> {
     fn read(&mut self) -> Result<Option<Frame>> {
         // Validate on the way out: a frame that violates the vocabulary
         // is a malformed file or a reader bug, not a result to return.
-        crate::io::reader::check_read_frame(read_one_block(&mut self.src)?)
+        read_one_block(&mut self.src)
     }
 }
 
@@ -841,14 +853,14 @@ pub fn read_cif<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
 
 /// Write a frame as a single-block CIF file.
 pub fn write_cif<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
-    let mut w = sink.into().writer()?;
-    write_frame_to(&mut w, frame)?;
-    w.flush()
+    sink.into().put_with(|w| write_frame_to(w, frame))
 }
 
 /// Write a Frame as a single CIF data block. Cell parameters come from
 /// `frame.simbox`; atoms from the `atoms` block (Cartesian or fractional).
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("CIF write: frame has no atoms block"))?;
@@ -1042,9 +1054,6 @@ impl<W: Write> Writer for CifWriter<W> {
 
 impl<W: Write> FrameWriter for CifWriter<W> {
     fn write(&mut self, frame: &Frame) -> Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         write_frame_to(&mut self.writer, frame)?;
         self.writer.flush()
     }
@@ -1113,6 +1122,48 @@ C2 C 0.5 0.5 0.5
         for i in 0..xs1.len() {
             assert!((xs1[[i]] - xs2[[i]]).abs() < 1e-4);
         }
+    }
+
+    /// A coordinate the file does not state, or cannot spell, is refused by
+    /// name: the atom is not placed at the origin.
+    #[test]
+    fn an_unreadable_or_missing_coordinate_is_refused() {
+        for (text, needle) in [
+            (SMALL_CIF.replace("C2 C 0.5 0.5", "C2 C 0.5 abc"), "\"abc\""),
+            (SMALL_CIF.replace("C2 C 0.5 0.5", "C2 C 0.5 ?"), "row 1"),
+        ] {
+            let err = CifReader::new(Cursor::new(text.as_bytes()))
+                .read()
+                .unwrap_err();
+            assert!(err.to_string().contains(needle), "{err}");
+        }
+    }
+
+    /// An occupancy or atom id of `?` is a null row; one that is no number is
+    /// refused.
+    #[test]
+    fn optional_numeric_columns_keep_placeholders_null() {
+        let text = SMALL_CIF
+            .replace(
+                "_atom_site_fract_z\n",
+                "_atom_site_fract_z\n_atom_site_occupancy\n_atom_site_id\n",
+            )
+            .replace("C1 C 0.0 0.0 0.0", "C1 C 0.0 0.0 0.0 1.0 1")
+            .replace("C2 C 0.5 0.5 0.5", "C2 C 0.5 0.5 0.5 ? ?");
+        let frame = CifReader::new(Cursor::new(text.as_bytes()))
+            .read()
+            .unwrap()
+            .unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        for key in ["occupancy", "id"] {
+            let valid = atoms.validity(key).expect("masked").to_vec();
+            assert_eq!(valid, [true, false], "{key}");
+        }
+        let bad = text.replace("1.0 1", "high 1");
+        let err = CifReader::new(Cursor::new(bad.as_bytes()))
+            .read()
+            .unwrap_err();
+        assert!(err.to_string().contains("_atom_site_occupancy"), "{err}");
     }
 
     #[test]

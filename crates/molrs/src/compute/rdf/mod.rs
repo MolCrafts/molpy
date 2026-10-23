@@ -274,7 +274,7 @@ mod tests {
         let box_len: F = 10.0;
         let r_max: F = 4.0;
         let points = random_points(300, box_len, 7);
-        let mut nl = NeighborList::new(r_max);
+        let mut nl = NeighborList::new(r_max).unwrap();
         nl.build(points.view(), &cube(box_len));
         let table = nl.neighbors(NeighborColumns::DIST_SQ);
 

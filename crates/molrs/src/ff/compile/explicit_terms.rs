@@ -154,6 +154,13 @@ impl ExplicitTerms {
 
         let mut ff = ForceField::new("instances");
         ff.registry = self.registry.clone();
+        // Each explicit term is priced at full strength: the `pairs` rows
+        // below carry no `is_14`, and no 1-2 / 1-3 class is excluded from
+        // terms the caller listed by hand.
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds {
+            lj: [1.0; 3],
+            coul: [1.0; 3],
+        });
         let style = ff
             .def_style(&self.category, &self.style, self.style_params.clone())
             .map_err(def_err)?;

@@ -68,7 +68,7 @@ def test_inpcrd_with_time(tmp_inpcrd_dir):
     frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert frame["atoms"].n_rows == 2
-    assert frame.meta["timestep"] == 100
+    assert frame.meta["time"] == 100.5
 
 
 def test_inpcrd_with_velocities(tmp_inpcrd_dir):
@@ -94,11 +94,12 @@ def test_inpcrd_with_velocities(tmp_inpcrd_dir):
     frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert frame["atoms"].n_rows == 2
-    assert "vel" in frame["atoms"]
 
-    # Check velocities
-    expected_vel = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
-    np.testing.assert_array_almost_equal(frame["atoms"]["vel"], expected_vel)
+    # AMBER velocities are Å per (1/20.455) ps; the frame holds Å/ps.
+    scale = mp.core.constants.AMBER_VELOCITY_TO_ANGSTROM_PER_PS
+    stored = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
+    got = np.column_stack([frame["atoms"][k] for k in ("vx", "vy", "vz")])
+    np.testing.assert_array_almost_equal(got, stored * scale)
 
 
 def test_inpcrd_with_box(tmp_inpcrd_dir):
@@ -143,9 +144,9 @@ def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
     frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert frame["atoms"].n_rows == 2
-    assert "vel" in frame["atoms"]
+    assert all(k in frame["atoms"] for k in ("vx", "vy", "vz"))
     assert frame.box is not None
-    assert frame.meta["timestep"] == 50
+    assert frame.meta["time"] == 50.0
 
 
 def test_inpcrd_update_existing_frame(tmp_inpcrd_dir):
@@ -198,7 +199,7 @@ def test_inpcrd_too_short_file(tmp_inpcrd_dir):
     content = "Only title\n"
     inpcrd_file.write_text(content, encoding="utf-8")
 
-    with pytest.raises(OSError, match="too short"):
+    with pytest.raises(ValueError, match="too short"):
         mp.io.read_inpcrd(inpcrd_file)
 
 
@@ -218,7 +219,7 @@ def test_inpcrd_insufficient_coords(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content, encoding="utf-8")
 
-    with pytest.raises(OSError, match="Not enough lines"):
+    with pytest.raises(ValueError, match="Not enough lines"):
         mp.io.read_inpcrd(inpcrd_file)
 
 
@@ -247,7 +248,9 @@ def test_inpcrd_atom_count_mismatch(tmp_inpcrd_dir):
         "z": np.zeros(2),
     }
 
-    with pytest.raises(OSError, match="atoms block has 2 rows, but the inpcrd has 3"):
+    with pytest.raises(
+        ValueError, match="atoms block has 2 rows, but the inpcrd has 3"
+    ):
         mp.io.read_inpcrd(inpcrd_file, existing_frame)
 
 

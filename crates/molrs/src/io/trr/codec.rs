@@ -285,6 +285,8 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     frame.meta.insert("step", hdr.step);
     frame.meta.insert("time", hdr.t);
     frame.meta.insert("lambda", hdr.lambda);
+    // Every door reads through here, so every door checks here.
+    crate::io::reader::check_read_frame(&frame)?;
     Ok(Some(frame))
 }
 
@@ -454,15 +456,13 @@ impl<R: BufRead + Seek> FrameReader for TrrReader<R> {
             };
             let frame = parse_frame_at(&mut self.reader, off)?;
             self.cursor += 1;
-            return crate::io::reader::check_read_frame(Some(frame));
+            return Ok(Some(frame));
         }
-        match parse_frame_here(&mut self.reader)? {
-            Some(frame) => {
-                self.cursor += 1;
-                crate::io::reader::check_read_frame(Some(frame))
-            }
-            None => Ok(None),
+        let frame = parse_frame_here(&mut self.reader)?;
+        if frame.is_some() {
+            self.cursor += 1;
         }
+        Ok(frame)
     }
 }
 
@@ -518,6 +518,8 @@ fn scale_simbox(sb: SimBox, scale: F) -> Result<SimBox> {
 
 /// Write one frame in single-precision TRR format.
 fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<()> {
+    // Every door writes through here, so every door checks here.
+    crate::io::writer::check_write_frame(frame)?;
     let natoms = frame
         .visit_block("atoms", |a| a.n_rows().unwrap_or(0))
         .ok_or_else(|| invalid_data("TRR write: frame has no atoms block"))?;
@@ -628,9 +630,6 @@ impl<W: Write> Writer for TrrWriter<W> {
 
 impl<W: Write> FrameWriter for TrrWriter<W> {
     fn write(&mut self, frame: &Frame) -> Result<()> {
-        // Refuse to emit a frame that violates the vocabulary: a bad file
-        // looks fine and is found wrong later, by whatever reads it.
-        crate::io::writer::check_write_frame(frame)?;
         write_trr_frame(&mut self.writer, frame)?;
         self.writer.flush()
     }
@@ -647,9 +646,7 @@ pub fn read_trr<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
 
 /// Write one frame as a one-frame TRR file (single precision, Å → nm).
 pub fn write_trr<'a>(sink: impl Into<Sink<'a>>, frame: &impl FrameAccess) -> Result<()> {
-    let mut w = sink.into().writer()?;
-    write_trr_frame(&mut w, frame)?;
-    w.flush()
+    sink.into().put_with(|w| write_trr_frame(w, frame))
 }
 
 impl TrrReader<Box<dyn ReadSeek>> {

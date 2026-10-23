@@ -101,7 +101,7 @@ impl PyBlock {
     /// >>> Block().n_rows
     /// 0
     /// >>> Block({"id": [1, 2]}).dtype("id")
-    /// 'uint'
+    /// 'u64'
     #[new]
     #[pyo3(signature = (data = None))]
     fn new(data: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
@@ -452,8 +452,7 @@ impl PyBlock {
     fn resize(&mut self, n_rows: usize) -> PyResult<()> {
         self.inner
             .with_mut(|b| b.resize(n_rows))
-            .map_err(ffi_error_to_pyerr)?
-            .map_err(|e| PyValueError::new_err(e.to_string()))
+            .map_err(ffi_error_to_pyerr)
     }
 
     /// Declare this block as N-dimensional. Product of ``shape`` must equal
@@ -716,7 +715,7 @@ impl PyBlock {
     /// Returns
     /// -------
     /// str
-    ///     ``"float"``, ``"int"``, ``"i64"``, ``"uint"``,
+    ///     ``"f64"``, ``"i32"``, ``"i64"``, ``"u64"``,
     ///     ``"bool"``, ``"u8"``, ``"string"``, …
     ///
     /// Raises
@@ -1260,6 +1259,29 @@ pub(crate) fn coords_error(e: BlockError) -> PyErr {
     }
 }
 
+/// A column as the numpy array ``Block.__getitem__`` returns for one name.
+pub(crate) fn column_to_numpy(py: Python<'_>, col: &Column) -> PyResult<Py<PyAny>> {
+    match col {
+        Column::Float(array) => typed_array_view(py, Arc::clone(array)),
+        Column::Int(array) => typed_array_view(py, Arc::clone(array)),
+        Column::I8(array) => typed_array_view(py, Arc::clone(array)),
+        Column::I16(array) => typed_array_view(py, Arc::clone(array)),
+        Column::I64(array) => typed_array_view(py, Arc::clone(array)),
+        Column::Bool(array) => typed_array_view(py, Arc::clone(array)),
+        Column::Uint(array) => typed_array_view(py, Arc::clone(array)),
+        Column::U8(array) => typed_array_view(py, Arc::clone(array)),
+        Column::U16(array) => typed_array_view(py, Arc::clone(array)),
+        Column::U32(array) => typed_array_view(py, Arc::clone(array)),
+        Column::C64(array) => typed_array_view(py, Arc::clone(array)),
+        Column::C128(array) => typed_array_view(py, Arc::clone(array)),
+        Column::String(array) => numpy_string_array(
+            py,
+            &array.iter().cloned().collect::<Vec<_>>(),
+            array.shape().to_vec(),
+        ),
+    }
+}
+
 /// Numpy ``str`` array of a string column's row-major values, at `shape`.
 ///
 /// Built outside the store borrow. ``reshape`` keeps a rank above 1; it does
@@ -1396,7 +1418,7 @@ pub(crate) fn column_from_py(value: &Bound<'_, PyAny>) -> PyResult<Column> {
     exact!(bool);
     exact!(Complex<f32>);
     exact!(Complex<f64>);
-    if kind == "U" {
+    if kind == "U" || kind == "T" {
         let shape: Vec<usize> = array.getattr("shape")?.extract()?;
         let strings: Vec<String> = array
             .call_method0("flatten")?

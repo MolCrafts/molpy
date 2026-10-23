@@ -451,6 +451,11 @@ fn emit_primitive(out: &mut String, p: &AtomPrimitive) -> Result<(), SmilesError
             out.push_str(&n.to_string());
             Ok(())
         }
+        AtomPrimitive::Hybridization(n) => {
+            out.push('^');
+            out.push_str(&n.to_string());
+            Ok(())
+        }
         AtomPrimitive::ContextLabel(label) => {
             out.push('%');
             out.push_str(label);

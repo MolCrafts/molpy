@@ -49,6 +49,7 @@ def water() -> mp.Atomistic:
 @pytest.fixture
 def tip3p() -> mp.ff.forcefield.ForceField:
     ff = mp.ff.forcefield.ForceField(name="tip3p", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     atoms = ff.def_style("atom", "full")
     ow = atoms.def_type("OW", mass=15.999, charge=-0.834, element="O")
     hw = atoms.def_type("HW", mass=1.008, charge=0.417, element="H")

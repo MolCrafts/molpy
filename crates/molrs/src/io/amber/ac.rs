@@ -4,8 +4,6 @@ use crate::io::frame_columns::insert_column;
 use crate::io::{Source, invalid_data};
 use std::io::Result;
 
-use ndarray::{Array1, IxDyn};
-
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::{F, Idx};
@@ -20,7 +18,9 @@ use molrs::op::{F, Idx};
 /// name or type. A consumer that needs one sets `element` itself and runs
 /// `Element::fill_atomic_numbers`.
 pub fn read_ac<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
-    parse_ac(&src.into().text()?)
+    let frame = parse_ac(&src.into().text()?)?;
+    crate::io::reader::check_read_frame(&frame)?;
+    Ok(frame)
 }
 
 /// Parse Antechamber `.ac` text.
@@ -87,13 +87,6 @@ fn parse_ac(text: &str) -> Result<Frame> {
         insert_column(&mut atoms, "name", names)?;
         insert_column(&mut atoms, "type", types)?;
         insert_column(&mut atoms, "charge", charges)?;
-        // xyz as (n, 3)
-        let flat: Vec<F> = xyz.iter().flat_map(|r| r.iter().copied()).collect();
-        let arr = Array1::from_vec(flat)
-            .into_shape_with_order(IxDyn(&[n, 3]))
-            .map_err(invalid_data)?
-            .into_dyn();
-        atoms.insert("xyz", arr, None).map_err(invalid_data)?;
         insert_column(&mut atoms, "x", xyz.iter().map(|r| r[0]).collect())?;
         insert_column(&mut atoms, "y", xyz.iter().map(|r| r[1]).collect())?;
         insert_column(&mut atoms, "z", xyz.iter().map(|r| r[2]).collect())?;

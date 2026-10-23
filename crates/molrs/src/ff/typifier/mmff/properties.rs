@@ -7,10 +7,8 @@
 //! [`assign_atom_types`](super::atomtype::assign_atom_types) →
 //! [`compute_partial_charges`](super::charges::compute_partial_charges).
 
-use molrs::core::Atomistic;
-use molrs::core::MolRsError;
-
 use super::{atomtype, charges};
+use crate::ff::typifier::TypingError;
 use crate::perceive::mmff_aromaticity::MmffTopology;
 
 /// MMFF parameterization variant.
@@ -57,26 +55,21 @@ pub(crate) struct MmffMolProperties {
 }
 
 impl MmffMolProperties {
-    /// Run the full MMFF setup (aromaticity → typing → charges).
+    /// Type and charge the atoms of `topo`, a molecule's MMFF topology with
+    /// its MMFF aromaticity already set
+    /// ([`set_mmff_aromaticity`](crate::perceive::mmff_aromaticity::set_mmff_aromaticity)).
     ///
-    /// Returns `Err` if any atom could not be assigned an MMFF type
-    /// (e.g. an unsupported element / transition metal with no MMFF type).
-    pub(crate) fn compute(mol: &Atomistic) -> Result<Self, MolRsError> {
-        let base = MmffTopology::build(mol).map_err(|sym| {
-            MolRsError::validation(format!("MMFF: unsupported element symbol '{sym}'"))
-        })?;
-        let topo = crate::perceive::mmff_aromaticity::set_mmff_aromaticity(&base);
-        let atom_types = atomtype::assign_atom_types(&topo);
-
-        // Locate the first untyped atom for a useful error message.
+    /// # Errors
+    ///
+    /// [`TypingError::MissingAtomType`] naming the first atom no MMFF type
+    /// covers (an unsupported element, a transition metal).
+    pub(crate) fn compute(topo: &MmffTopology) -> Result<Self, TypingError> {
+        let atom_types = atomtype::assign_atom_types(topo);
         if let Some(bad) = atom_types.iter().position(|&t| t == 0) {
-            let z = topo.atno[bad];
-            return Err(MolRsError::validation(format!(
-                "MMFF: could not assign an atom type to atom index {bad} (Z={z})"
-            )));
+            return Err(TypingError::missing_atom("MMFF94", bad, topo.atno[bad]));
         }
 
-        let partial_charges = charges::compute_partial_charges(&topo, &atom_types);
+        let partial_charges = charges::compute_partial_charges(topo, &atom_types);
 
         Ok(Self {
             atom_types,

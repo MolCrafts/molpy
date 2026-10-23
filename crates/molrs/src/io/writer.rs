@@ -1,6 +1,6 @@
 //! The writer side of the io contract: [`Writer`] / [`FrameWriter`], which
 //! every per-format writer class implements; [`check_write_frame`], the Frame
-//! schema check each one runs before writing; and [`ForceFieldWriter`] /
+//! schema check each format's frame encoder runs before writing; and [`ForceFieldWriter`] /
 //! [`ForceFieldWriteError`], the force-field writers' contract (feature `ff`).
 
 use std::io::Result;
@@ -23,7 +23,8 @@ pub trait FrameWriter: Writer {
     /// Write one frame.
     ///
     /// The frame is checked against the Frame schema first
-    /// ([`check_write_frame`]). A non-conforming frame produces a file that
+    /// ([`check_write_frame`], in the format's frame encoder, which the
+    /// single-frame door shares). A non-conforming frame produces a file that
     /// looks fine and is wrong — the expensive kind of failure, found later by
     /// whatever reads it.
     fn write(&mut self, frame: &Frame) -> Result<()>;
@@ -32,7 +33,9 @@ pub trait FrameWriter: Writer {
 /// Check a frame against the Frame schema before writing it — the write-side
 /// mirror of [`check_read_frame`](crate::io::reader::check_read_frame).
 ///
-/// Every [`FrameWriter::write`] calls this first.
+/// Each format's frame encoder calls this first, so every door — the
+/// single-frame `write_<fmt>` and the streaming [`FrameWriter::write`] —
+/// checks once.
 pub fn check_write_frame<F: crate::core::FrameAccess>(frame: &F) -> Result<()> {
     crate::core::schema::Validator::canonical()
         .validate(frame)

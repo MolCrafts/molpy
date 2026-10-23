@@ -10,7 +10,7 @@ use molrs::core::{Atomistic, Element};
 use molrs::core::{NodeId, PropValue, Relation};
 
 use crate::ff::forcefield::ForceField;
-use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier, TypingError};
 
 /// A typifier whose labels are the elements themselves; it defines no force
 /// field.
@@ -71,11 +71,12 @@ pub struct ElementTypifier {
 }
 
 impl ElementTypifier {
-    /// A typifier with an empty library named `"element"`.
+    /// A typifier with an empty library named `"element"`, in `real` units
+    /// (its atoms carry masses in g/mol).
     pub fn new() -> Self {
-        Self {
-            library: ForceField::new("element"),
-        }
+        let mut library = ForceField::new("element");
+        library.set_units("real");
+        Self { library }
     }
 }
 
@@ -132,27 +133,27 @@ fn link_labels(
 }
 
 impl Typifier for ElementTypifier {
-    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
         if graph.n_impropers() > 0 {
-            return Err(format!(
+            return Err(TypingError::malformed(format!(
                 "ElementTypifier derives no improper labels; the graph has {} impropers",
                 graph.n_impropers()
-            ));
+            )));
         }
         let mut elements: HashMap<NodeId, &'static str> = HashMap::new();
         let mut nodes = Vec::new();
         for (row, (id, atom)) in graph.atoms().enumerate() {
             let z = atom.atomic_number().ok_or_else(|| {
-                format!(
+                TypingError::malformed(format!(
                     "ElementTypifier: atom {row} has no valid '{}'",
                     keys::ATOMIC_NUMBER
-                )
+                ))
             })?;
             let element = Element::by_number(z).ok_or_else(|| {
-                format!(
+                TypingError::malformed(format!(
                     "ElementTypifier: atom {row} is a wildcard ('{}' = 0), which has no element type",
                     keys::ATOMIC_NUMBER
-                )
+                ))
             })?;
             elements.insert(id, element.symbol());
             nodes.push(type_value(element.symbol()));
@@ -168,7 +169,7 @@ impl Typifier for ElementTypifier {
         for (kind, terms) in terms {
             links.insert(
                 kind.to_owned(),
-                link_labels(kind, terms, &elements, &mut cache)?,
+                link_labels(kind, terms, &elements, &mut cache).map_err(TypingError::malformed)?,
             );
         }
         Ok(TypeAssignment {
@@ -351,7 +352,7 @@ mod tests {
             .unwrap();
         let mut typing = Typing::new(ElementTypifier::new());
 
-        let err = typing.typify(&mol).unwrap_err();
+        let err = typing.typify(&mol).unwrap_err().to_string();
 
         assert!(err.contains("improper"), "{err}");
         assert!(err.contains('1'), "{err}");
@@ -365,7 +366,7 @@ mod tests {
         mol.add_atom(props! { keys::ATOMIC_NUMBER => 0u8 }).unwrap();
         let mut typing = Typing::new(ElementTypifier::new());
 
-        let err = typing.typify(&mol).unwrap_err();
+        let err = typing.typify(&mol).unwrap_err().to_string();
 
         assert!(err.contains("wildcard"), "{err}");
         assert!(err.contains("atom 1"), "{err}");

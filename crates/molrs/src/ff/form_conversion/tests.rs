@@ -581,6 +581,7 @@ fn lj_class2_is_the_nine_six_lj_cut() {
     let mut rng = StdRng::seed_from_u64(SEED + 2);
     for _ in 0..20 {
         let mut ff = ForceField::new("c2");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         let style = ff
             .def_style("pair", "lj/class2", Params::from_iter([("cutoff", 12.0)]))
             .unwrap();
@@ -666,6 +667,7 @@ fn lj_class2_is_the_nine_six_lj_cut() {
     }
     // The 12-6 has no lj/class2 form.
     let mut ff = ForceField::new("lj");
+    ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
     ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
         .unwrap()
         .def_type("A", &["A"], pairs(&[("epsilon", 0.1), ("sigma", 3.0)]))
@@ -830,6 +832,36 @@ fn a_row_in_the_image_fits_exactly() {
     assert_eq!(
         rows(&out),
         rows(&r.to_form(&opls, "dihedral", "multi/harmonic").unwrap())
+    );
+}
+
+/// A `dihedral charmm` row with `w ≠ 0` prices its 1-4 pair too, which no
+/// torsion of the family holds: fitting it over E(φ) would silently drop that
+/// term, so the fit refuses the row instead.
+#[test]
+fn a_row_its_family_cannot_embed_is_refused_not_fitted() {
+    let r = Registry::builtin();
+    let charmm = one_row(
+        "dihedral",
+        "charmm",
+        pairs(&[
+            ("k", 0.7),
+            ("periodicity", 2.0),
+            ("phase", 37.0),
+            ("w", 0.5),
+        ]),
+    );
+    let err = r
+        .fit_form(
+            &charmm,
+            "dihedral",
+            "periodic",
+            &FitMetric::grid(-PI, PI, 36),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&err, IrError::OutOfImage { reason, .. } if reason.contains("outside its family")),
+        "{err}"
     );
 }
 

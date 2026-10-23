@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use crate::core::Atomistic;
 use crate::core::Element;
 use crate::core::MolRsError;
+use crate::core::NeighborKinds;
 use crate::core::{BondNumber, BondOrder};
 use crate::core::{NodeId, Props, keys};
 use crate::props;
@@ -566,7 +567,7 @@ impl Transform {
         };
         let mut touched = Vec::new();
         for &aid in &leaving {
-            for (other, _) in mol.neighbor_bonds(aid) {
+            for (other, _) in mol.neighbors(aid, NeighborKinds::BONDS) {
                 if !leaving.contains(&other) {
                     touched.push(other);
                 }
@@ -621,7 +622,7 @@ impl Transform {
         for leaving in &leaving_per_edit {
             let mut touched = Vec::new();
             for &atom in leaving {
-                for (other, _) in mol.neighbor_bonds(atom) {
+                for (other, _) in mol.neighbors(atom, NeighborKinds::BONDS) {
                     if !all_leaving.contains(&other) {
                         touched.push(other);
                     }

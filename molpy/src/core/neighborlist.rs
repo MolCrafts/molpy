@@ -54,14 +54,9 @@ fn check_points(points: &ArrayArg2<'_, f64>, label: &str) -> PyResult<()> {
     Ok(())
 }
 
-/// Reject a non-positive cutoff before the core asserts on it.
-fn check_cutoff(cutoff: f64) -> PyResult<()> {
-    if cutoff.is_nan() || cutoff <= 0.0 {
-        return Err(PyValueError::new_err(
-            "cutoff must be a positive length in Å",
-        ));
-    }
-    Ok(())
+/// The core's refusal of a cutoff, as a ``ValueError``.
+fn cutoff_err(err: molrs::core::CutoffError) -> PyErr {
+    PyValueError::new_err(err.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +341,9 @@ pub struct PyNeighborList {
 }
 
 fn engine_moved_err() -> PyErr {
-    PyValueError::new_err("NeighborList has been moved into a VerletSkin; build a new NeighborList")
+    PyValueError::new_err(
+        "NeighborList has been moved into a VerletSkin or an MD; build a new NeighborList",
+    )
 }
 
 impl PyNeighborList {
@@ -370,12 +367,11 @@ impl PyNeighborList {
     #[new]
     #[pyo3(signature = (cutoff, brute_force=false))]
     fn new(cutoff: f64, brute_force: bool) -> PyResult<Self> {
-        check_cutoff(cutoff)?;
         Ok(Self {
             inner: Some(if brute_force {
-                RsNeighborList::brute_force(cutoff)
+                RsNeighborList::brute_force(cutoff).map_err(cutoff_err)?
             } else {
-                RsNeighborList::new(cutoff)
+                RsNeighborList::new(cutoff).map_err(cutoff_err)?
             }),
             brute_force,
             points: None,
@@ -580,9 +576,9 @@ impl PyNeighborQuery {
     #[pyo3(signature = (r#box, points, cutoff))]
     fn new(r#box: &PyBox, points: ArrayArg2<'_, f64>, cutoff: f64) -> PyResult<Self> {
         check_points(&points, "points")?;
-        check_cutoff(cutoff)?;
         Ok(Self {
-            inner: RsNeighborQuery::new(&r#box.inner, points.as_array(), cutoff),
+            inner: RsNeighborQuery::new(&r#box.inner, points.as_array(), cutoff)
+                .map_err(cutoff_err)?,
         })
     }
 
@@ -651,38 +647,17 @@ fn skin_err(err: SkinError) -> PyErr {
 /// A :class:`NeighborList` with Verlet skin — ``VerletSkin(NeighborList, …)``.
 ///
 /// Constructed from a search engine whose cutoff is ``cutoff + skin``. The
-/// engine is **moved** into this object. Passing the skin into
-/// ``VelocityVerlet(..., neighbors=skin)`` moves it again into the integrator.
+/// engine is **moved** into this object: the ``NeighborList`` passed in
+/// raises on any later use.
 #[pyclass(module = "molpy.core", name = "VerletSkin", subclass)]
 pub struct PyVerletSkin {
-    pub(crate) inner: Option<RsVerletSkin>,
+    pub(crate) inner: RsVerletSkin,
     brute_force: bool,
     x_hold: Array2<f64>,
     simbox: SimBox,
     every: usize,
     delay: usize,
     check: bool,
-}
-
-impl PyVerletSkin {
-    #[allow(dead_code)]
-    pub(crate) fn take(&mut self) -> PyResult<RsVerletSkin> {
-        self.inner
-            .take()
-            .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
-    }
-
-    fn get(&self) -> PyResult<&RsVerletSkin> {
-        self.inner
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
-    }
-
-    pub(crate) fn get_mut(&mut self) -> PyResult<&mut RsVerletSkin> {
-        self.inner
-            .as_mut()
-            .ok_or_else(|| PyValueError::new_err("VerletSkin has already been moved"))
-    }
 }
 
 #[pymethods]
@@ -705,8 +680,13 @@ impl PyVerletSkin {
         ndanger: usize,
     ) -> PyResult<Self> {
         check_points(&positions, "positions")?;
-        if cutoff <= 0.0 {
-            return Err(PyValueError::new_err("cutoff must be > 0 Å"));
+        // Checked before the engine is moved out below: a refusal from
+        // `VerletSkin::new` would otherwise consume the caller's NeighborList.
+        // The rule is `VerletSkin::new`'s own.
+        if !(cutoff > 0.0 && cutoff.is_finite()) {
+            return Err(PyValueError::new_err(format!(
+                "cutoff must be a positive finite length, got {cutoff} Å"
+            )));
         }
         // Move the engine out; the emptied NeighborList raises on any later use.
         let search = neighbors.take()?;
@@ -728,7 +708,7 @@ impl PyVerletSkin {
             inner.restore_progress(ago, n_rebuilds, ndanger);
         }
         Ok(Self {
-            inner: Some(inner),
+            inner,
             brute_force: neighbors.brute_force,
             x_hold: positions.as_array().to_owned(),
             simbox: r#box.inner.clone(),
@@ -739,36 +719,33 @@ impl PyVerletSkin {
     }
 
     #[getter]
-    fn cutoff(&self) -> PyResult<f64> {
-        Ok(self.get()?.cutoff())
+    fn cutoff(&self) -> f64 {
+        self.inner.cutoff()
     }
 
     #[getter]
-    fn skin(&self) -> PyResult<f64> {
-        Ok(self.get()?.skin())
+    fn skin(&self) -> f64 {
+        self.inner.skin()
     }
 
     #[getter]
-    fn n_edges(&self) -> PyResult<usize> {
-        Ok(self.get()?.n_edges())
+    fn n_edges(&self) -> usize {
+        self.inner.n_edges()
     }
 
     #[getter]
-    fn n_rebuilds(&self) -> PyResult<usize> {
-        Ok(self.get()?.n_rebuilds())
+    fn n_rebuilds(&self) -> usize {
+        self.inner.n_rebuilds()
     }
 
     #[getter]
-    fn ago(&self) -> PyResult<usize> {
-        Ok(self.get()?.ago())
+    fn ago(&self) -> usize {
+        self.inner.ago()
     }
 
     fn update(&mut self, positions: ArrayArg2<'_, f64>) -> PyResult<bool> {
         check_points(&positions, "positions")?;
-        let rebuilt = self
-            .get_mut()?
-            .update(positions.as_array())
-            .map_err(skin_err)?;
+        let rebuilt = self.inner.update(positions.as_array()).map_err(skin_err)?;
         if rebuilt {
             self.x_hold = positions.as_array().to_owned();
         }
@@ -777,30 +754,26 @@ impl PyVerletSkin {
 
     fn rebuild(&mut self, positions: ArrayArg2<'_, f64>) -> PyResult<()> {
         check_points(&positions, "positions")?;
-        self.get_mut()?
-            .rebuild(positions.as_array())
-            .map_err(skin_err)?;
+        self.inner.rebuild(positions.as_array()).map_err(skin_err)?;
         self.x_hold = positions.as_array().to_owned();
         Ok(())
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(s) => format!(
-                "VerletSkin(cutoff={}, skin={}, edges={}, rebuilds={})",
-                s.cutoff(),
-                s.skin(),
-                s.n_edges(),
-                s.n_rebuilds()
-            ),
-            None => "VerletSkin(<moved>)".into(),
-        }
+        let s = &self.inner;
+        format!(
+            "VerletSkin(cutoff={}, skin={}, edges={}, rebuilds={})",
+            s.cutoff(),
+            s.skin(),
+            s.n_edges(),
+            s.n_rebuilds()
+        )
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        let inner = this.get()?;
+        let inner = &this.inner;
         let neighbors = PyNeighborList::new(inner.cutoff() + inner.skin(), this.brute_force)?;
         crate::pickle::reduce_via_type(
             slf.as_any(),

@@ -86,17 +86,17 @@ class TestReadGro:
         assert _read(bare)["atoms"].n_rows == 1
 
     def test_short_atom_record_raises(self, gro_dir):
-        with pytest.raises(OSError, match="too short"):
+        with pytest.raises(ValueError, match="too short"):
             _read(gro_dir / "truncated_record.gro")
 
     def test_missing_box_line_raises(self, gro_dir):
-        with pytest.raises(OSError, match="box"):
+        with pytest.raises(ValueError, match="box"):
             _read(gro_dir / "no_box.gro")
 
     def test_empty_file_raises(self, tmp_path):
         empty = tmp_path / "empty.gro"
         empty.write_text("", encoding="utf-8")
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError):
             _read(empty)
 
     def test_nonexistent_file_raises(self, tmp_path):

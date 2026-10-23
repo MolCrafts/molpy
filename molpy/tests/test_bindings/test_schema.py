@@ -45,7 +45,7 @@ def test_the_topology_conventions_are_canonical() -> None:
     dtypes = {spec.key: spec.dtype for spec in mp.core.schema.columns}
     assert dtypes["formal_charge"] == "i64"
     assert dtypes["chain"] == "string" and "chain_id" not in dtypes
-    assert dtypes["fx"] == "float"
+    assert dtypes["fx"] == "f64"
     assert [str(key) for key in mp.core.keys.FORCES] == ["fx", "fy", "fz"]
     for name in ["constraints", "drudes", "members", "virtual_sites"]:
         assert mp.core.schema.block(name) is not None

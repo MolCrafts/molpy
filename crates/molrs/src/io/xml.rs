@@ -39,7 +39,6 @@
 //! [`XmlForcefieldReader`] reads it and [`XmlForcefieldWriter`] writes it,
 //! through [`ForceFieldReader::read`] and [`ForceFieldWriter::write`].
 
-use crate::ff::forcefield::Category;
 use std::fmt::Write as _;
 
 use ndarray::{ArrayD, IxDyn};
@@ -48,7 +47,7 @@ use crate::ff::forcefield::{DefError, ForceField, Style};
 use crate::ff::ir::{Params, SpecialBonds};
 use crate::io::reader::ForceFieldReader;
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter, put_text};
-use crate::io::xml_attribute::{attr_str, forcefield_root};
+use crate::io::xml_attribute::{attr_str, forcefield_name, forcefield_root};
 use crate::io::{Sink, Source, invalid_data};
 
 /// The endpoint attributes of a `<Type>`, in order.
@@ -80,7 +79,7 @@ const STYLE_SUFFIX: &str = "Style";
 ///   </BondStyle>
 /// </ForceField>"#;
 /// let ff = XmlForcefieldReader::new().read(xml.as_bytes()).unwrap();
-/// assert_eq!(ff.get_bondtypes().len(), 1);
+/// assert_eq!(ff.get_types("bond").len(), 1);
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct XmlForcefieldReader;
@@ -142,7 +141,7 @@ fn parse(xml: &str) -> Result<ForceField, String> {
             attr.name()
         ));
     }
-    let mut ff = ForceField::new(root.attribute("name").unwrap_or("unnamed"));
+    let mut ff = ForceField::new(forcefield_name(&root));
     if let Some(units) = root.attribute("units") {
         ff.set_units(units);
     }
@@ -270,7 +269,7 @@ fn read_style(ff: &mut ForceField, category: &str, node: &roxmltree::Node) -> Re
                 ));
             };
             let arity = endpoints(first).map_err(|e| format!("{what}: {e}"))?.len();
-            ff.def_style(Category::new(category).arity(arity), name, params.clone())
+            ff.def_style_with_arity(category, arity, name, params.clone())
                 .map_err(|e| format!("{what}: {e}"))?;
         }
         Err(e) => return Err(format!("{what}: {e}")),
@@ -372,14 +371,13 @@ fn read_array(node: &roxmltree::Node, params: &mut Params, what: &str) -> Result
 /// `ff` as force-field XML text ([`XmlForcefieldWriter`]).
 fn render(ff: &ForceField) -> Result<String, String> {
     let mut out = String::new();
-    writeln!(
-        out,
-        "<ForceField name=\"{}\" units=\"{}\">",
-        escape(&ff.name),
-        escape(ff.units())
-    )
-    .unwrap();
-    if let Some(sb) = ff.declared_special_bonds() {
+    // `units` is written when declared; an undeclared one stays absent.
+    let units = ff
+        .units()
+        .map(|u| format!(" units=\"{}\"", escape(u)))
+        .unwrap_or_default();
+    writeln!(out, "<ForceField name=\"{}\"{units}>", escape(&ff.name)).unwrap();
+    if let Some(sb) = ff.special_bonds() {
         writeln!(
             out,
             "  <SpecialBonds lj=\"{}\" coul=\"{}\" />",
@@ -540,7 +538,6 @@ fn escape(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::ff::forcefield::Category;
     use std::collections::BTreeMap;
 
     use super::*;
@@ -588,8 +585,8 @@ mod tests {
         assert_eq!(a.name, b.name, "{what}: name");
         assert_eq!(a.units(), b.units(), "{what}: units");
         assert_eq!(
-            a.declared_special_bonds(),
-            b.declared_special_bonds(),
+            a.special_bonds(),
+            b.special_bonds(),
             "{what}: special bonds"
         );
         assert_eq!(a.styles().len(), b.styles().len(), "{what}: style count");
@@ -619,11 +616,7 @@ mod tests {
         let text = write(ff).unwrap_or_else(|e| panic!("{what}: {e}"));
         let back = read(&text).unwrap_or_else(|e| panic!("{what}: {e}"));
         assert_same(ff, &back, what);
-        assert_eq!(
-            back.declared_units(),
-            Some(ff.units()),
-            "{what}: units declared"
-        );
+        assert_eq!(back.units(), ff.units(), "{what}: units as declared");
         assert_eq!(write(&back).unwrap(), text, "{what}: text");
     }
 
@@ -682,8 +675,8 @@ mod tests {
         </ForceField>
         "#;
         let ff = read(xml).unwrap();
-        assert_eq!(ff.declared_units(), Some("real"));
-        assert_eq!(ff.declared_special_bonds().unwrap().coul_14(), 0.8333);
+        assert_eq!(ff.units(), Some("real"));
+        assert_eq!(ff.special_bonds().unwrap().coul_14(), 0.8333);
         let pair = ff.get_style("pair", "lj/cut").unwrap();
         assert_eq!(
             pair.params().get("cutoff").and_then(|v| v.as_num()),
@@ -738,25 +731,17 @@ mod tests {
     #[test]
     fn an_undeclared_category_round_trips_by_its_rows() {
         let mut ff = ForceField::new("relation");
-        ff.def_style(
-            Category::new("hbond_pair").arity(2),
-            "custom",
-            Params::new(),
-        )
-        .unwrap()
-        .def_type("O-H", &["O", "H"], Params::from_iter([("k", 1.5)]))
-        .unwrap();
+        ff.def_style_with_arity("hbond_pair", 2, "custom", Params::new())
+            .unwrap()
+            .def_type("O-H", &["O", "H"], Params::from_iter([("k", 1.5)]))
+            .unwrap();
         let text = write(&ff).unwrap();
         assert!(text.contains("<HbondPairStyle name=\"custom\">"), "{text}");
         round_trips(&ff, "hbond_pair");
 
         let mut empty = ForceField::new("relation");
         empty
-            .def_style(
-                Category::new("hbond_pair").arity(2),
-                "custom",
-                Params::new(),
-            )
+            .def_style_with_arity("hbond_pair", 2, "custom", Params::new())
             .unwrap();
         let err = write(&empty).unwrap_err();
         assert!(err.contains("arity"), "{err}");

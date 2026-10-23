@@ -16,6 +16,8 @@ concrete task (build, typify, pack, export), go to
 If MolPy is installed, this runs as-is — no optional dependencies, not even RDKit:
 
 ```python
+from pathlib import Path
+
 import molpy as mp
 
 water = mp.Atomistic(name="water")
@@ -26,7 +28,8 @@ water.add_bond(o, h1)
 water.add_bond(o, h2)
 
 frame = water.to_frame()
-mp.io.write_pdb("water.pdb", frame)
+mp.Element.fill_symbols(frame)  # PDB needs element symbols, derived from atomic_number
+mp.io.write_pdb(Path("water.pdb"), frame)
 print(f"Wrote {frame['atoms'].n_rows} atoms to water.pdb")
 ```
 

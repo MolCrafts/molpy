@@ -179,6 +179,15 @@ pub mod ffi {
         fit_end: u64,
     }
 
+    /// A frame's box (molrs `SimBox`): its cell matrix H, 9 row-major values
+    /// with the lattice vectors as columns (empty for a box whose cell is
+    /// undefined), its origin (3) and which axes are periodic (3).
+    struct BoxData {
+        h: Vec<f64>,
+        origin: Vec<f64>,
+        pbc: Vec<bool>,
+    }
+
     /// g(r) over one or more frames (molrs `compute::RdfResult`): bin edges and
     /// centers in Å, the normalized curve and the raw counts.
     struct RdfResult {
@@ -238,12 +247,20 @@ pub mod ffi {
         // `Frame._ffi_frameref_capsule()`). `unsafe` — caller must pass a
         // live pointer; see the `# Safety` note on the Rust impl.
         unsafe fn frame_clone_from_addr(addr: usize) -> Box<FrameRef>;
+        // The capsule name THIS build accepts (ABI line + build fingerprint):
+        // pass it to `PyCapsule_GetPointer`, which then refuses a producer
+        // whose build may lay a handle out differently.
+        fn frameref_capsule_name() -> String;
 
         // introspection
-        fn frame_block_names(fref: &FrameRef) -> Vec<String>;
+        // An absent block, and a handle that no longer names a frame, are
+        // errors: an empty answer would be indistinguishable from an empty
+        // block. Ask `frame_has_block` first.
+        fn frame_block_names(fref: &FrameRef) -> Result<Vec<String>>;
         fn frame_has_block(fref: &FrameRef, block: &str) -> bool;
-        fn frame_block_columns(fref: &FrameRef, block: &str) -> Vec<String>;
-        fn frame_block_n_rows(fref: &FrameRef, block: &str) -> i64;
+        fn frame_block_columns(fref: &FrameRef, block: &str) -> Result<Vec<String>>;
+        fn frame_block_n_rows(fref: &FrameRef, block: &str) -> Result<i64>;
+        fn frame_has_box(fref: &FrameRef) -> bool;
 
         // metadata: keys in insertion order, one value by key, insert/replace
         fn frame_meta_keys(fref: &FrameRef) -> Vec<String>;
@@ -251,10 +268,9 @@ pub mod ffi {
         fn frame_set_meta(fref: &mut FrameRef, value: KeyedMetaValue) -> Result<()>;
 
         // readers — owned copies (RefCell precludes returning borrowed slices);
-        // an absent block or column reads as empty, a column of another dtype
-        // is an error naming both dtypes. The box is its cell matrix H, 9
-        // row-major values (empty when the frame has no box or the box has no
-        // defined cell).
+        // an absent block or column is an error naming it, as is a column of
+        // another dtype (naming both dtypes). The box is `BoxData`: H, origin
+        // and periodicity; a frame without a box is an error.
         //
         // One reader and one writer per column dtype is deliberate: cxx has no
         // generics, so `frame_column::<T>` cannot cross the bridge — the
@@ -264,7 +280,7 @@ pub mod ffi {
         fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Result<Vec<i32>>;
         fn frame_column_u64(fref: &FrameRef, block: &str, col: &str) -> Result<Vec<u64>>;
         fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Result<Vec<String>>;
-        fn frame_box_h(fref: &FrameRef) -> Vec<f64>;
+        fn frame_box(fref: &FrameRef) -> Result<BoxData>;
 
         // create-or-update writers (one per dtype, as the readers)
         fn frame_set_column_f64(
@@ -291,8 +307,14 @@ pub mod ffi {
             col: &str,
             data: &[String],
         ) -> Result<()>;
-        // a periodic box at the origin from its 9-value row-major H
-        fn frame_set_box_h(fref: &mut FrameRef, h: &[f64]) -> Result<()>;
+        // the box of a 9-value row-major H, its origin (3) and periodic
+        // axes (3)
+        fn frame_set_box(
+            fref: &mut FrameRef,
+            h: &[f64],
+            origin: &[f64],
+            pbc: &[bool],
+        ) -> Result<()>;
         // explicit species conversion (molrs Element::fill_atomic_numbers /
         // Element::fill_symbols): atoms.element symbols -> atoms.atomic_number
         // (Uint; "*" is 0), and back (0 is "*"). Nothing else converts; an
@@ -459,14 +481,27 @@ pub mod ffi {
 
         // Radial distribution function g(r) over [r_min, r_max) Å in n_bins
         // bins (note r_max before r_min). Each frame's pairs come from a
-        // periodic cell-list self-query with cutoff r_max; the accumulator
-        // takes one frame and its own H per `push` (NPT supported).
+        // cell-list search with cutoff r_max in that frame's H, periodic on
+        // the axes `pbc` (3 flags) names: `push` self-queries one point set,
+        // `push_cross` queries `query` against `reference` (A–B g(r)).
         type Rdf;
         fn rdf_new(n_bins: u64, r_max: f64, r_min: f64) -> Result<Box<Rdf>>;
         fn accumulator(self: &Rdf) -> Box<RdfAccumulator>;
 
         type RdfAccumulator;
-        fn push(self: &mut RdfAccumulator, positions: &[f64], h: &[f64]) -> Result<()>;
+        fn push(
+            self: &mut RdfAccumulator,
+            positions: &[f64],
+            h: &[f64],
+            pbc: &[bool],
+        ) -> Result<()>;
+        fn push_cross(
+            self: &mut RdfAccumulator,
+            reference: &[f64],
+            query: &[f64],
+            h: &[f64],
+            pbc: &[bool],
+        ) -> Result<()>;
         fn n_frames(self: &RdfAccumulator) -> u64;
         fn finish(self: &RdfAccumulator) -> Result<RdfResult>;
     }

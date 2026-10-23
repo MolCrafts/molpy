@@ -271,6 +271,17 @@ impl Registry {
                     type_: name.to_owned(),
                     reason,
                 };
+                // The canonical parameters, when the source shares the
+                // target's family; the exact conversion when the target holds
+                // them. A source row its own family refuses to embed carries
+                // a term the family does not price (a `dihedral charmm` `w`,
+                // the 1-4 pair): a fit over E(φ) would drop it, so it is
+                // refused, not fitted. Only a projection the target refuses
+                // falls back to the fit.
+                let canonical = source_codec
+                    .map(|c| (c.embed)(&tp))
+                    .transpose()
+                    .map_err(|e| refuse(format!("the source row is outside its family: {e}")))?;
                 let e_src = self
                     .energies(cat, source, &tp, &metric.q)
                     .map_err(|e| refuse(format!("the source cannot be priced: {e}")))?;
@@ -281,10 +292,6 @@ impl Registry {
                         *w *= (-(e - lowest) / kt).exp();
                     }
                 }
-                // The canonical parameters, when the source embeds in the
-                // target's family; the exact conversion when the target holds
-                // them.
-                let canonical = source_codec.and_then(|c| (c.embed)(&tp).ok());
                 let exact = match (&canonical, target) {
                     (Some(c), Some(t)) => (t.project)(c).ok(),
                     _ => None,

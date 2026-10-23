@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from molpy.engine.engine import Engine
 from molpy.core import Element
-from molpy.engine.nonbonded import is_periodic, nonbonded_of, refuse_box_free
+from molpy.engine.nonbonded import is_periodic, refuse_box_free
 from molpy.io import write_pdb
 from molpy.io.openmm_xml import OpenmmXmlWriter
 
@@ -560,18 +560,14 @@ def _with_nonbonded(
         raise refuse_box_free("OpenMM", "NPT (a Monte Carlo barostat)")
     if not periodic and config.nonbonded_method in _PERIODIC_METHODS:
         raise refuse_box_free("OpenMM", f"nonbonded_method {config.nonbonded_method!r}")
-    stated = nonbonded_of(forcefield)
+    stated = forcefield.nonbonded("nanometer")
     method = config.nonbonded_method or (
         _NONBONDED_METHOD[stated.coulomb] if periodic else "NoCutoff"
     )
     cutoff = config.nonbonded_cutoff_nm
     if cutoff is None:
         cutoff = next(
-            (
-                r
-                for r in (stated.coulomb_cutoff_nm, stated.vdw_cutoff_nm)
-                if r is not None
-            ),
+            (r for r in (stated.coulomb_cutoff, stated.vdw_cutoff) if r is not None),
             _DEFAULT_CUTOFF_NM,
         )
     return dataclasses.replace(

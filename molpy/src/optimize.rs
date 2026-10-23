@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 
 use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::potential::Potentials;
-use molrs::optimize::{Lbfgs, LbfgsSettings, OptimizationReport, Optimizer};
+use molrs::optimize::{Lbfgs, LbfgsSettings, OptimizationReport, OptimizeError, Optimizer};
 
 use crate::core::frame::PyFrame;
 use crate::ff::ir;
@@ -115,13 +115,18 @@ impl PyLbfgs {
     fn with_compiled<R>(
         &self,
         py: Python<'_>,
-        f: impl FnOnce(&Lbfgs<&Potentials>) -> Result<R, String>,
+        f: impl FnOnce(&Lbfgs<&Potentials>) -> Result<R, OptimizeError>,
     ) -> PyResult<R> {
         let pots = self.potentials.borrow(py);
         let out = f(&Lbfgs::new(pots.inner.compiled()?, self.settings));
         take_err(&pots.err_slots)?;
-        out.map_err(PyValueError::new_err)
+        out.map_err(optimize_err)
     }
+}
+
+/// A refused minimization, as a ``ValueError``.
+fn optimize_err(err: OptimizeError) -> PyErr {
+    PyValueError::new_err(err.to_string())
 }
 
 #[pymethods]
@@ -182,7 +187,7 @@ impl PyLbfgs {
             };
             Lbfgs::new(pot, self.settings)
                 .minimize(core)
-                .map_err(PyValueError::new_err)
+                .map_err(optimize_err)
         })??;
         take_err(&pots.err_slots)?;
         Ok(report.into())

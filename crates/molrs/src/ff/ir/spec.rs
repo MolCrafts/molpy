@@ -9,8 +9,8 @@ use ndarray::ArrayD;
 use crate::ff::ir::CombiningRule;
 use crate::ff::ir::LammpsForm;
 use crate::ff::ir::Params;
+use crate::ff::ir::{CoulombRange, PairRole, ParamSource, SpecialClass};
 use crate::ff::ir::{IrError, ParamDimension};
-use crate::ff::ir::{ParamSource, SpecialClass};
 use molrs::op::F;
 
 /// A parameter value: a number, a string, or an N-dimensional array.
@@ -212,6 +212,9 @@ pub struct StyleSpec {
     /// Which special-bonds weights scale a pair style; `None` on a pair style
     /// means molrec's default, `lj` ([`SpecialClass::Vdw`]).
     pub special: Option<SpecialClass>,
+    /// What a pair style is to the nonbonded treatment; `None` follows its
+    /// [`special`](Self::special) class ([`pair_role`](Self::pair_role)).
+    pub role: Option<PairRole>,
     /// The energy as a Lepton expression (molrec `docs/spec/forcefield.md`,
     /// Expressions), kept byte for byte.
     pub expression: Option<String>,
@@ -240,6 +243,7 @@ impl StyleSpec {
             style_params: Vec::new(),
             source: ParamSource::TypeRows,
             special: None,
+            role: None,
             expression: None,
             force_is_gradient: true,
             unindexed_one_term: false,
@@ -265,6 +269,11 @@ impl StyleSpec {
 
     pub fn special(mut self, special: SpecialClass) -> Self {
         self.special = Some(special);
+        self
+    }
+
+    pub fn role(mut self, role: PairRole) -> Self {
+        self.role = Some(role);
         self
     }
 
@@ -297,6 +306,16 @@ impl StyleSpec {
     /// molrec's default `lj`.
     pub fn special_class(&self) -> SpecialClass {
         self.special.unwrap_or(SpecialClass::Vdw)
+    }
+
+    /// What this (pair) style is to the nonbonded treatment: its declared
+    /// role, else a truncated Coulomb for a style scaled by the electrostatic
+    /// weights and dispersion for any other.
+    pub fn pair_role(&self) -> PairRole {
+        self.role.unwrap_or(match self.special_class() {
+            SpecialClass::Coulomb => PairRole::Coulomb(CoulombRange::Cut),
+            SpecialClass::Vdw => PairRole::Dispersion,
+        })
     }
 
     /// The style params and type rows a kernel is built from: every value
@@ -575,11 +594,14 @@ fn untruncated() -> ParamSpec {
     cutoff().default_num(F::INFINITY)
 }
 
+/// `mixing`, absent the IR's undeclared rule ([`CombiningRule::UNDECLARED`],
+/// arithmetic). Not every engine's default: LAMMPS mixes `lj/cut`
+/// geometrically, which its reader states explicitly.
 fn mixing() -> ParamSpec {
     mixing_by(CombiningRule::UNDECLARED)
 }
 
-/// `mixing`, absent `rule` (LAMMPS's own default for the style).
+/// `mixing`, absent `rule`.
 fn mixing_by(rule: CombiningRule) -> ParamSpec {
     ParamSpec::text("mixing", &["arithmetic", "geometric", "sixthpower"])
         .default_value(ParamValue::Text(rule.name().into()))
@@ -592,9 +614,27 @@ fn charmm_switch() -> String {
         .to_owned()
 }
 
+/// `(ε₁₄, σ₁₄)` of one `pair lj/charmm` row whose regular pair is
+/// `(epsilon, sigma)`: the row's `epsilon14` / `sigma14`, each absent one the
+/// regular value (CHARMM's and LAMMPS's rule — a type without 1-4 parameters
+/// is priced at its own). The one place the rule is written; the kernel and
+/// the LAMMPS codec both read it.
+pub(crate) fn lj_charmm_one_four(row: &Params, epsilon: f64, sigma: f64) -> (f64, f64) {
+    let own = |key: &str, regular: f64| row.get(key).and_then(|v| v.as_num()).unwrap_or(regular);
+    (own("epsilon14", epsilon), own("sigma14", sigma))
+}
+
+/// The built-in spec of `(category, name)` ([`builtin_styles`], built once).
+pub(crate) fn builtin_style(category: &str, name: &str) -> Option<&'static StyleSpec> {
+    static SPECS: std::sync::LazyLock<Vec<StyleSpec>> = std::sync::LazyLock::new(builtin_styles);
+    SPECS
+        .iter()
+        .find(|s| s.category == category && s.name == name)
+}
+
 /// The spec of every style molrs registers: each built-in kernel (the
-/// crate-private table `ff::potential::BuiltinKernels`), `dihedral rb` (expression only), and the
-/// styles of the categories that price no energy.
+/// crate-private table `ff::style_registry::BuiltinKernels`), `dihedral rb`
+/// (expression only), and the styles of the categories that price no energy.
 ///
 /// Names, order and dimensions are the force-field IR's
 /// (`docs/developer/forcefield-ir.md`, Style reference; molrec
@@ -602,7 +642,7 @@ fn charmm_switch() -> String {
 /// Appendix A of `ff-ir-02-protocol`, byte for byte (the generated ones,
 /// `dihedral periodic` and `nharmonic`, are left to the expression engine).
 /// The per-instance styles (MMFF, UFF, the per-atom-charge Coulomb styles)
-/// list the Frame columns their kernels read.
+/// list the Frame columns their forms read.
 pub fn builtin_styles() -> Vec<StyleSpec> {
     use crate::ff::ir::engine_codec::lammps::{self as lc, custom};
     use ParamSource::PerInstance;
@@ -620,7 +660,9 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         })
     };
     let coulomb = || p("coulomb", "E*L/Q^2");
-    let dielectric = || p("dielectric", "1").default_num(1.0);
+    // Declared, never defaulted: a force field states its dielectric as it
+    // states its Coulomb constant.
+    let dielectric = || p("dielectric", "1");
     let zero = |name: &'static str, dim: &str| p(name, dim).default_num(0.0);
     let mut periodic = s("dihedral", "periodic")
         .params(vec![
@@ -875,6 +917,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         s("pair", "coul/long/pme")
             .style_params(vec![
                 coulomb(),
+                dielectric(),
                 cutoff(),
                 p("alpha", "1/L"),
                 p("order", "1"),
@@ -884,18 +927,24 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             ])
             .source(PerInstance)
             .special(Coulomb)
+            .role(PairRole::Coulomb(CoulombRange::Long))
             .lammps(custom(&lc::COUL_LONG)),
         s("pair", "thole")
             .params(vec![p("charge", "Q"), p("alpha", "L^3"), p("damp", "1")])
-            .special(Coulomb),
+            .style_params(vec![coulomb(), dielectric()])
+            .special(Coulomb)
+            .role(PairRole::Damping),
         s("pair", "coul/tt")
             .params(vec![p("charge", "Q")])
             .style_params(vec![
+                coulomb(),
+                dielectric(),
                 p("b", "1/L").default_num(4.5),
                 p("c", "1").default_num(1.0),
                 p("order", "1").default_num(4.0),
             ])
-            .special(Coulomb),
+            .special(Coulomb)
+            .role(PairRole::Damping),
         s("pair", "uff_lj")
             .params(vec![p("x1", "L"), p("D1", "E")])
             .source(PerInstance)

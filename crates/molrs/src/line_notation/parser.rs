@@ -739,6 +739,21 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // SMARTS's any-aromatic `a` and any-aliphatic `A` stand outside
+        // brackets too (Daylight: `[O]=C(a)N`), as the bracket primitives.
+        if self.dialect == Dialect::Smarts && matches!(first, 'a' | 'A') {
+            let primitive = if first == 'a' {
+                AtomPrimitive::Aromatic
+            } else {
+                AtomPrimitive::Aliphatic
+            };
+            return Ok(AtomNode {
+                spec: AtomSpec::Query(AtomQuery::Primitive(primitive)),
+                span: self.scanner.span_from(start),
+                descriptors: Vec::new(),
+            });
+        }
+
         // One-character organic symbol.
         let one = first.to_string();
         if ORGANIC_SUBSET.contains(&one.as_str()) {
@@ -1241,6 +1256,7 @@ impl<'a> Parser<'a> {
             || ch == '!'
             || ch == ':'
             || ch == '%'
+            || ch == '^'
     }
 
     /// Parse the SMARTS atomic-number primitive `#<n>` (Daylight §3.1).
@@ -1306,6 +1322,13 @@ impl<'a> Parser<'a> {
                 Ok(AtomPrimitive::Wildcard)
             }
             Some('#') => self.parse_atomic_number_primitive(),
+            Some('^') => {
+                self.scanner.advance();
+                match self.parse_count('^')? {
+                    Some(n) if n <= 5 => Ok(AtomPrimitive::Hybridization(n)),
+                    _ => Err(self.error(SmilesErrorKind::InvalidQueryPrimitive("^".to_owned()))),
+                }
+            }
             Some('$') => self.parse_recursive_primitive(),
             Some('@') => self.parse_chirality_primitive(),
             Some(sign @ ('+' | '-')) => self.parse_charge_primitive(sign),

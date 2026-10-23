@@ -50,7 +50,7 @@ def test_typify_and_compose_potentials():
     assert frame["angles"].n_rows == 12
     assert frame["dihedrals"].n_rows == 9
 
-    pairs = mp.ff.potential.intramolecular_pairs(frame)
+    pairs = mp.ff.potential.intramolecular_pairs(frame, typifier.forcefield())
     frame["pairs"] = pairs
     pots = mp.ff.compile.PotentialCompiler(typifier.forcefield()).compile(frame)
     energy, forces = pots.evaluate(frame)

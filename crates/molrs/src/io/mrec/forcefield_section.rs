@@ -13,14 +13,9 @@ use crate::ff::ir::{
 /// The quantities `units` may state, in the order [`unit_preset`] lists them.
 pub const UNIT_QUANTITIES: [&str; 6] = ["length", "energy", "angle", "charge", "mass", "time"];
 
-/// The presets a section's `units.preset` may name: the LAMMPS `units`
-/// styles and `openmm`, as molrec lists them.
-pub const SECTION_PRESETS: [&str; 9] = [
-    "real", "metal", "si", "cgs", "electron", "micro", "nano", "lj", "openmm",
-];
-
 /// The unit of each of [`UNIT_QUANTITIES`] in the preset `name`, as the
-/// section spells it, or `None` when `name` is no section preset. A `None`
+/// section spells it, or `None` when `name` is no built-in preset
+/// ([`UnitPreset::BUILTIN`]). A `None`
 /// entry is a quantity the preset gives no unit (reduced `lj`).
 ///
 /// The units are [`UnitPreset::builtin`]'s — the one table of what each
@@ -32,9 +27,6 @@ pub const SECTION_PRESETS: [&str; 9] = [
 /// **radian**ⁿ (LAMMPS's `K` for an angle is energy/rad²), as in LAMMPS:
 /// `angle` is the unit of angle values, not of force-constant denominators.
 pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
-    if !SECTION_PRESETS.contains(&name) {
-        return None;
-    }
     if name == "lj" {
         return Some([None, None, Some("degree"), None, None, None]);
     }

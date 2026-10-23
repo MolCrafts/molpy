@@ -39,10 +39,10 @@
 //! The npm package is a `bundler` build: importing it loads the module.
 //!
 //! ```js
-//! import { SmilesIr, Conformer, fillSymbols, writeXyz } from "@molcrafts/molrs";
+//! import { SmilesIr, Conformer, fillSymbols, writeXyz } from "@molcrafts/molwasm";
 //!
 //! const frame = SmilesIr.parse("CCO").toFrame();
-//! const mol3d = new Conformer("fast").generate(frame);
+//! const mol3d = new Conformer().generate(frame);
 //! fillSymbols(mol3d);                 // XYZ spells symbols
 //! const xyz   = writeXyz(mol3d);
 //! console.log(xyz);

@@ -208,7 +208,7 @@ pub(crate) fn fallback_spec(
     expression: &str,
 ) -> StyleSpec {
     // Compile-time projections, not the style's own parameters.
-    const INJECTED: [&str; 2] = ["lj14scale", "coulomb14scale"];
+    const INJECTED: [&str; 2] = [crate::ff::ir::LJ_14_SCALE, crate::ff::ir::COULOMB_14_SCALE];
     let mut per_type: Vec<String> = Vec::new();
     for (_, row) in tp {
         let mut keys: Vec<&str> = row

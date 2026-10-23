@@ -8,13 +8,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
-use crate::ff::forcefield::{AtomType, ForceField, Style};
+use crate::ff::forcefield::{ForceField, Style, TypeDef};
 use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::CombiningRule;
 use crate::ff::ir::Params;
 use crate::ff::ir::same_lj;
 use crate::ff::ir::torsion::nharmonic_coefficients;
-use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
+use crate::ff::potential::pair::lj_rows::{charmm_pair_params, mixing_of};
 use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
 use crate::io::Sink;
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter, put_text};
@@ -242,16 +242,13 @@ impl GromacsTopForcefieldWriter {
 
     /// The `[ defaults ]` row: `1 comb yes fudgeLJ fudgeQQ`.
     fn defaults_row(&self, ff: &ForceField, lj: Option<&Style>) -> Result<String, String> {
+        // The style's `mixing` as priced: stated, else its spec's default.
         let mixing = match lj {
-            Some(style) if style.name() == "lj/charmm" => {
-                charmm_mixing(style.params()).map_err(|e| e.to_string())?
+            Some(style) => {
+                let (params, _) =
+                    crate::ff::compile::gathered(ff, style).map_err(|e| e.to_string())?;
+                mixing_of(style.name(), &params).map_err(|e| e.to_string())?
             }
-            Some(style) => match style.params().get("mixing").and_then(|v| v.as_text()) {
-                Some(name) => {
-                    CombiningRule::parse(name).map_err(|e| format!("pair/lj/cut: {e}"))?
-                }
-                None => CombiningRule::UNDECLARED,
-            },
             None => CombiningRule::UNDECLARED,
         };
         let comb = match mixing {
@@ -265,7 +262,7 @@ impl GromacsTopForcefieldWriter {
                 ));
             }
         };
-        let sb = ff.special_bonds();
+        let sb = ff.required_special_bonds()?;
         for (idx, order) in [(0, "1-2"), (1, "1-3")] {
             if sb.lj[idx] != 0.0 || sb.coul[idx] != 0.0 {
                 return Err(format!(
@@ -287,7 +284,7 @@ impl GromacsTopForcefieldWriter {
     /// type without them is written 0.
     fn atomtypes_row(
         &self,
-        t: &AtomType,
+        t: &TypeDef,
         lj: Option<&Style>,
         system: bool,
     ) -> Result<String, String> {
@@ -387,7 +384,13 @@ impl GromacsTopForcefieldWriter {
             lj.defs().kernel_type_params()?.into_iter().collect();
         let by_key: HashMap<&str, &Params> =
             kernel_rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
-        let mixing = charmm_mixing(lj.params()).map_err(|e| e.to_string())?;
+        let mixing = mixing_of(
+            lj.name(),
+            &crate::ff::compile::gathered(ff, lj)
+                .map_err(|e| e.to_string())?
+                .0,
+        )
+        .map_err(|e| e.to_string())?;
         let has_14 = |p: &Params| {
             p.get("epsilon14").and_then(|v| v.as_num()).is_some()
                 || p.get("sigma14").and_then(|v| v.as_num()).is_some()
@@ -401,30 +404,33 @@ impl GromacsTopForcefieldWriter {
             ));
         }
         // Regular cross rows that are not the mix: [ nonbond_params ].
-        for (_, ends, params) in &rows {
+        // Every row states its ε and σ (checked above); a type's own row is
+        // the kernel's, keyed by type.
+        let lj_of = |p: &Params, what: &str| -> Result<(f64, f64), String> {
+            let num = |key: &str| {
+                p.get(key)
+                    .and_then(|v| v.as_num())
+                    .ok_or_else(|| format!("pair/{lj_name} {what} has no {key}"))
+            };
+            Ok((num("epsilon")?, num("sigma")?))
+        };
+        let own = |t: &str| -> Result<(f64, f64), String> {
+            let p = by_key
+                .get(t)
+                .ok_or_else(|| format!("pair/{lj_name} has no row for type '{t}'"))?;
+            lj_of(p, &format!("row of '{t}'"))
+        };
+        for (name, ends, params) in &rows {
             if ends[0] == ends[1] {
                 continue;
             }
-            let own = |t: &str| {
-                let p = by_key[t];
-                (
-                    p.get("epsilon").and_then(|v| v.as_num()).unwrap_or(0.0),
-                    p.get("sigma").and_then(|v| v.as_num()).unwrap_or(0.0),
-                )
-            };
-            let row = (
-                params
-                    .get("epsilon")
-                    .and_then(|v| v.as_num())
-                    .unwrap_or(0.0),
-                params.get("sigma").and_then(|v| v.as_num()).unwrap_or(0.0),
-            );
-            if !same_lj(row, mixing.combine(own(ends[0]), own(ends[1]))) {
+            let row = lj_of(params, &format!("row '{name}'"))?;
+            if !same_lj(row, mixing.combine(own(ends[0])?, own(ends[1])?)) {
                 nonbond.push_str(&line(ends[0], ends[1], row));
             }
         }
         let mut pairtypes = String::new();
-        let weight = ff.special_bonds().lj[2];
+        let weight = ff.required_special_bonds()?.lj[2];
         if one_four == Some("epsilon14") && weight != 0.0 {
             // Every type pair whose 1-4 parameters can differ from the
             // generated ones: one end has its own, or a cross row.
@@ -835,7 +841,7 @@ impl GromacsTopForcefieldWriter {
     /// `[ cmaptypes ]` (its rows carry their parameters), and atom types
     /// without a mass or charge written 0.
     fn directives(&self, ff: &ForceField, system: bool) -> Result<String, ForceFieldWriteError> {
-        if let Some(units) = ff.declared_units()
+        if let Some(units) = ff.units()
             && units != "real"
         {
             return Err(format!(
@@ -855,7 +861,7 @@ impl GromacsTopForcefieldWriter {
         out.push_str(&self.defaults_row(ff, lj)?);
         out.push('\n');
 
-        let atom_types: Vec<&AtomType> = ff.get_atomtypes();
+        let atom_types: Vec<&TypeDef> = ff.get_types("atom");
         let type_names: HashSet<&str> = atom_types.iter().map(|t| t.name.as_str()).collect();
         let (nonbond_params, pairtypes) = match lj {
             Some(lj) => self.cross_sections(ff, lj, &type_names)?,
@@ -1060,8 +1066,8 @@ impl GromacsTopForcefieldWriter {
             .map_err(|e| e.to_string())?;
         let labels =
             AtomLabels::with_widths(frame, n, LabelWidths::GROMACS).map_err(|e| e.to_string())?;
-        let atom_types: HashMap<&str, &AtomType> = ff
-            .get_atomtypes()
+        let atom_types: HashMap<&str, &TypeDef> = ff
+            .get_types("atom")
             .into_iter()
             .map(|t| (t.name.as_str(), t))
             .collect();
@@ -1252,7 +1258,7 @@ impl GromacsTopForcefieldWriter {
         // removes the others of the molecule the frame does not price.
         let pairs = match frame.get("pairs") {
             Some(p) => p.clone(),
-            None => intramolecular_pairs(frame, ff.special_bonds(), None)?,
+            None => intramolecular_pairs(frame, ff.required_special_bonds()?, None)?,
         };
         // A frame whose every pair is excluded (a water) has a column-less
         // `pairs` block: no rows, not a missing column.
@@ -1294,7 +1300,7 @@ impl GromacsTopForcefieldWriter {
                     .map(|b| (start, b)),
             );
         }
-        let sb = ff.special_bonds();
+        let sb = ff.required_special_bonds()?;
         let mut priced = HashSet::new();
         for r in 0..pi.len() {
             let (a, b) = (pi[r], pj[r]);
@@ -1477,6 +1483,7 @@ mod tests {
     /// `mixing` declared when `Some`. 1-4 weights 0.5 / 0.5.
     fn opls_ff(mixing: Option<&str>) -> ForceField {
         let mut ff = ForceField::new("gmx");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("atom", "full", Params::new())
             .unwrap()
             .def_type("opls_135", &[], atom_params(12.011, -0.18, 6.0, "CT"))
@@ -1621,9 +1628,19 @@ mod tests {
 
     #[test]
     fn empty_force_field_writes_only_defaults() {
-        let text = write(&ForceField::new("x"));
+        let mut ff = ForceField::new("x");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
+        let text = write(&ff);
         assert_eq!(section_rows(&text, "defaults")[0][..3], ["1", "2", "yes"]);
         assert!(section_rows(&text, "atomtypes").is_empty(), "{text}");
+    }
+
+    /// `[ defaults ]` states the 1-4 weights, so a field that declares none
+    /// is refused rather than written with assumed ones.
+    #[test]
+    fn a_field_without_special_bonds_is_refused() {
+        let err = write_err(&ForceField::new("x"));
+        assert!(err.contains("declares no special_bonds"), "{err}");
     }
 
     /// GROMACS has no comb-rule for sixth-power mixing.
@@ -2013,7 +2030,7 @@ mod tests {
         let back = GromacsTopForcefieldReader::new()
             .read(text.as_bytes())
             .unwrap();
-        let grid = back.get_cmaptypes()[0]
+        let grid = back.get_types("cmap")[0]
             .params
             .get("grid")
             .and_then(|v| v.as_array())
@@ -2049,6 +2066,7 @@ mod tests {
     #[test]
     fn a_pair_cutoff_is_a_run_setting_and_not_written() {
         let mut ff = ForceField::new("t");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         ff.def_style("pair", "coul/cut", Params::from_iter([("cutoff", 10.0)]))

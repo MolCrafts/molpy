@@ -228,7 +228,8 @@ def test_write_lammps_forcefield_to_path(tmp_path, read_ff):
 
 
 def _hand_ff() -> mp.ff.forcefield.ForceField:
-    ff = mp.ff.forcefield.ForceField("hand")
+    ff = mp.ff.forcefield.ForceField("hand", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     c3 = ff.def_style("atom", "full").def_type("c3", mass=12.011)
     ff.def_style("pair", "lj/cut", {"cutoff": 9.0}).def_type(
         "c3", c3, epsilon=0.1078, sigma=3.39771
@@ -433,7 +434,8 @@ def test_read_lammps_data_coeffs_names_a_missing_file(tmp_path):
 
 def _drude_system() -> tuple[mp.ff.forcefield.ForceField, mp.core.Frame]:
     """A ``CT`` core with its ``DCT`` shell and two ``CT-HC`` bonds."""
-    ff = mp.ff.forcefield.ForceField("clpol")
+    ff = mp.ff.forcefield.ForceField("clpol", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     atoms = ff.def_style("atom", "full")
     ct = atoms.def_type("CT", mass=11.6)
     dct = atoms.def_type("DCT", mass=0.4)
@@ -492,5 +494,5 @@ def test_a_virtual_site_is_refused_by_the_data_writer():
     frame["virtual_sites"] = mp.core.Block(
         {name: np.array([i], dtype=np.uint64) for i, name in enumerate(endpoints)}
     )
-    with pytest.raises(OSError, match="virtual_sites"):
+    with pytest.raises(ValueError, match="virtual_sites"):
         capture(mp.io.write_lammps_data, frame)

@@ -219,7 +219,7 @@ class TestShapes:
         e = mp.core.Ellipsoid(np.zeros(3), np.array([2.0, 3.0, 1.0]))
         pts = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 2.5]])
         np.testing.assert_allclose(e.distance(pts), [-1.0, 0.0, 1.5])
-        with pytest.raises(ValueError, match="semi-axes"):
+        with pytest.raises(ValueError, match="semi-axis"):
             mp.core.Ellipsoid(np.zeros(3), np.array([1.0, 0.0, 1.0]))
 
 

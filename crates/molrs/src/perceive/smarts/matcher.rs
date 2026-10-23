@@ -15,6 +15,7 @@
 
 use crate::core::Atomistic;
 
+use crate::core::NeighborKinds;
 use crate::core::NodeId;
 
 use super::compile::QueryGraph;
@@ -24,12 +25,12 @@ use super::{MatchOptions, SmartsMatch};
 /// Resolve bond facts between two molecule atoms, if they are bonded.
 fn bond_facts(ctx: &SmartsTarget, a: NodeId, b: NodeId) -> Option<BondFacts> {
     let mol = ctx.mol;
-    for (other, bid) in mol.neighbor_bonds(a) {
+    for (other, bid) in mol.neighbors(a, NeighborKinds::BONDS) {
         if other == b {
             // §11.2: `:` reads the bond *class*. §11.3: an explicit `-`/`=`/`#`
             // reads the localized integer. Two questions, two fields — never a
             // number doing both jobs.
-            const LIVE: &str = "neighbor_bonds yields live bonds";
+            const LIVE: &str = "neighbors yields live bonds";
             let aromatic = mol.bond_type(bid).expect(LIVE).is_aromatic();
             let order = mol.bond_number(bid).expect(LIVE).count().max(1) as f64;
             let in_ring = ctx.rings.is_bond_in_ring(bid);
@@ -148,7 +149,7 @@ fn backtrack(
             let anchor = anchor_of(query, depth).expect("non-root query atom must have an anchor");
             let anchor_img = assign[anchor].expect("anchor must be assigned");
             // Bonds only: a port (or any other 2-ary kind) is not a bond.
-            for (cand, _) in ctx.mol.neighbor_bonds(anchor_img) {
+            for (cand, _) in ctx.mol.neighbors(anchor_img, NeighborKinds::BONDS) {
                 if !try_place(query, ctx, rec, root_fix, depth, cand, assign, full, visit) {
                     return false;
                 }
@@ -312,6 +313,27 @@ mod tests {
         );
     }
 
+    /// `H<n>` and `X<n>` count the hydrogens a SMILES leaves implicit as
+    /// they count drawn ones: ethanol read from `CCO` matches what its
+    /// explicit-hydrogen drawing matches.
+    #[test]
+    fn hydrogen_counts_include_implicit_hydrogens() {
+        let mol = crate::io::smiles::SmilesIr::parse("CCO")
+            .expect("parse")
+            .to_atomistic()
+            .expect("to_atomistic");
+        assert_eq!(mol.n_atoms(), 3, "the hydrogens stay implicit");
+        assert_eq!(matches("[OH]", &mol), vec![vec![2]]);
+        assert_eq!(matches("[OX2H1]", &mol), vec![vec![2]]);
+        assert_eq!(matches("[CX4H3]", &mol), vec![vec![0]]);
+        assert_eq!(matches("[CX4H2]", &mol), vec![vec![1]]);
+        assert_eq!(
+            matches("[CD1]", &mol),
+            vec![vec![0]],
+            "D stays the drawn degree"
+        );
+    }
+
     #[test]
     fn every_embedding_is_reported_in_query_atom_order() {
         let mol = ethanol();
@@ -337,6 +359,31 @@ mod tests {
         assert_eq!(matches("C=O", &mol).len(), 1);
         assert!(matches("C-O", &mol).is_empty());
         assert_eq!(matches("C~O", &mol).len(), 1, "`~` is any bond");
+    }
+
+    /// `^<n>` reads the perceived hybridization: acetaldehyde's carbonyl
+    /// carbon and oxygen are sp², its methyl carbon sp³.
+    #[test]
+    fn hybridization_primitives_read_the_perceived_hybridization() {
+        let mut mol = ethanol();
+        let bonds: Vec<_> = mol.bonds().map(|(id, _)| id).collect();
+        mol.set_bond_class(bonds[1], BondOrder::Double, BondNumber::Double)
+            .unwrap();
+        assert_eq!(matches("[C^2]", &mol), [[1]]);
+        assert_eq!(matches("[C^3]", &mol), [[0]]);
+        assert_eq!(matches("[O^2]", &mol), [[2]]);
+        assert!(matches("[*^1]", &mol).is_empty());
+        assert!(super::super::compile::compile("[C^7]").is_err());
+    }
+
+    /// Outside brackets, `a` is any aromatic atom and `A` any aliphatic one,
+    /// as inside them.
+    #[test]
+    fn bare_aromatic_and_aliphatic_atoms_are_the_bracket_primitives() {
+        let mol = ethanol();
+        assert_eq!(matches("A", &mol).len(), 3);
+        assert!(matches("a", &mol).is_empty());
+        assert_eq!(matches("O~A", &mol), matches("O~[A]", &mol));
     }
 
     #[test]

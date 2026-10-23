@@ -476,7 +476,7 @@ mod tests {
     /// Half-shell self pairs of `pts` from the cell-list backend, every column
     /// present.
     fn cell_pairs(cutoff: F, pts: Fnx3View<'_>, bx: &SimBox) -> Neighbors {
-        let mut nl = NeighborList::new(cutoff);
+        let mut nl = NeighborList::new(cutoff).unwrap();
         nl.build(pts, bx);
         nl.neighbors(NeighborColumns::FULL)
     }
@@ -484,7 +484,7 @@ mod tests {
     /// The same, from the O(N²) reference backend — the oracle the cell list is
     /// checked against.
     fn brute_pairs(cutoff: F, pts: Fnx3View<'_>, bx: &SimBox) -> Neighbors {
-        let mut nl = NeighborList::brute_force(cutoff);
+        let mut nl = NeighborList::brute_force(cutoff).unwrap();
         nl.build(pts, bx);
         nl.neighbors(NeighborColumns::FULL)
     }
@@ -566,7 +566,7 @@ mod tests {
             [2.9, 2.8, 2.7]
         ];
 
-        let mut nl = NeighborList::new(0.6);
+        let mut nl = NeighborList::new(0.6).unwrap();
         nl.build(pts.view(), &bx);
 
         let table = table_rows_sorted(&nl.neighbors(NeighborColumns::FULL));
@@ -891,7 +891,7 @@ mod tests {
         ];
         let (xs, ys, zs) = columns(&pts);
         let aos = cell_pairs(2.0, pts.view(), &bx);
-        let mut soa_nl = NeighborList::new(2.0);
+        let mut soa_nl = NeighborList::new(2.0).unwrap();
         soa_nl.build(Points::Columns([&xs, &ys, &zs]), &bx);
         let soa = soa_nl.neighbors(NeighborColumns::FULL);
         assert!(aos.n_pairs() > 0, "fixture should produce pairs");
@@ -914,7 +914,7 @@ mod tests {
         ];
         let (fxs, fys, fzs) = columns(&ptsf);
         let aos_free = cell_pairs(1.0, ptsf.view(), &bxf);
-        let mut soa_free_nl = NeighborList::new(1.0);
+        let mut soa_free_nl = NeighborList::new(1.0).unwrap();
         soa_free_nl.build(Points::Columns([&fxs, &fys, &fzs]), &bxf);
         let soa_free = soa_free_nl.neighbors(NeighborColumns::FULL);
         assert!(aos_free.n_pairs() > 0, "fixture should produce pairs");
@@ -1117,11 +1117,11 @@ mod equivalence {
                     seen_dims.extend(CellGrid::for_cutoff(&bx, cutoff).celldim());
                     configs += 1;
 
-                    let mut bf = NeighborList::brute_force(cutoff);
+                    let mut bf = NeighborList::brute_force(cutoff).unwrap();
                     bf.build(pts.view(), &bx);
                     let (want, _) = collect(&bf.neighbors(NeighborColumns::FULL));
 
-                    let mut lc = NeighborList::new(cutoff);
+                    let mut lc = NeighborList::new(cutoff).unwrap();
                     lc.build(pts.view(), &bx);
                     let (got, emitted) = collect(&lc.neighbors(NeighborColumns::FULL));
 
@@ -1163,7 +1163,7 @@ mod equivalence {
                     let tag = format!("{name} pbc={pbc:?} cutoff={cutoff:.3}");
                     let want = oracle_cross(&query, &refs, &bx, cutoff);
 
-                    let nq = NeighborQuery::new(&bx, refs.view(), cutoff);
+                    let nq = NeighborQuery::new(&bx, refs.view(), cutoff).unwrap();
                     let res = nq.query(query.view());
                     let got: BTreeSet<(u32, u32)> = (0..res.n_pairs())
                         .map(|k| (res.query_point_indices()[k], res.point_indices()[k]))

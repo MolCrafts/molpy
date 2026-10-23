@@ -3,11 +3,11 @@
 
 use crate::array::ArrayArg2;
 use crate::core::frame::PyFrame;
+use crate::core::neighborlist::PyNeighborList;
 use crate::error::ffi_error_to_pyerr;
 use crate::ff::potential::{ErrSlot, take_err, take_members};
 use molrs::md::{
-    FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, NeighborList, TimestepProvider,
-    VelocityVerlet,
+    FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, TimestepProvider, VelocityVerlet,
 };
 use molrs::op::F;
 use ndarray::Array1;
@@ -141,23 +141,6 @@ impl PyFixLangevin {
     }
 }
 
-/// Verlet neighbour list mounted at the `neighbor` phase.
-#[pyclass(name = "NeighborList", module = "molpy.md", subclass)]
-pub struct PyNeighborList {
-    inner: Option<NeighborList>,
-}
-
-#[pymethods]
-impl PyNeighborList {
-    #[new]
-    #[pyo3(signature = (cutoff, skin))]
-    fn new(cutoff: F, skin: F) -> PyResult<Self> {
-        Ok(Self {
-            inner: Some(NeighborList::new(cutoff, skin).map_err(md_err)?),
-        })
-    }
-}
-
 /// The phase driver. `run` writes the frame it is given.
 #[pyclass(name = "MD", module = "molpy.md", unsendable, subclass)]
 pub struct PyMD {
@@ -183,12 +166,14 @@ impl PyMD {
         self.inner.set_thermostat(thermostat.inner).map_err(md_err)
     }
 
-    fn set_neighbor(&mut self, mut neighbor: PyRefMut<'_, PyNeighborList>) -> PyResult<()> {
-        let list = neighbor
-            .inner
-            .take()
-            .ok_or_else(|| PyValueError::new_err("NeighborList was already moved into a driver"))?;
-        self.inner.set_neighbor(list).map_err(md_err)
+    /// Mount ``list`` (moved in) as the run's neighbour list. It searches at
+    /// its own cutoff; pairs within ``cutoff - skin`` reach the pair kernels,
+    /// and it is searched again once an atom has moved half the ``skin``
+    /// (``0`` searches every step). The frame box supplies the periodicity.
+    #[pyo3(signature = (list, *, skin=0.0))]
+    fn set_neighbor(&mut self, mut list: PyRefMut<'_, PyNeighborList>, skin: F) -> PyResult<()> {
+        let list = list.take()?;
+        self.inner.set_neighbor(list, skin).map_err(md_err)
     }
 
     /// Mount a `PairLjCut`, a compiled `Potentials` / `WeightedTerms`, or an
@@ -263,7 +248,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMD>()?;
     m.add_class::<PyVelocityVerlet>()?;
     m.add_class::<PyFixLangevin>()?;
-    m.add_class::<PyNeighborList>()?;
     m.add_class::<PyMaxwellBoltzmann>()?;
     Ok(())
 }

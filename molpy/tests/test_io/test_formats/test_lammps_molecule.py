@@ -233,7 +233,7 @@ class TestReadLammpsMolecule:
         tmp_file = tmp_path / "test.mol"
         with open(tmp_file, "w", encoding="utf-8") as f:
             f.write("")
-        with pytest.raises(OSError, match="Empty molecule file"):
+        with pytest.raises(ValueError, match="Empty molecule file"):
             mp.io.read_lammps_molecule(tmp_file)
 
     def test_nonexistent_file_error(self):
@@ -246,7 +246,7 @@ class TestReadLammpsMolecule:
         tmp_file = tmp_path / "test.json"
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump({"format": "invalid"}, f)
-        with pytest.raises(OSError, match="JSON file must have format='molecule'"):
+        with pytest.raises(ValueError, match="JSON file must have format='molecule'"):
             mp.io.read_lammps_molecule_json(tmp_file)
 
     def test_missing_types_section_json(self, tmp_path):
@@ -255,7 +255,7 @@ class TestReadLammpsMolecule:
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump({"application": "LAMMPS", "format": "molecule", "revision": 1}, f)
         with pytest.raises(
-            OSError, match="JSON molecule file must contain 'types' section"
+            ValueError, match="JSON molecule file must contain 'types' section"
         ):
             mp.io.read_lammps_molecule_json(tmp_file)
 
@@ -270,7 +270,7 @@ class TestReadLammpsMolecule:
             f.write("\n")
             f.write("1 0.0 0.0 0.0\n")
         with pytest.raises(
-            OSError, match="Native molecule file must contain Types section"
+            ValueError, match="Native molecule file must contain Types section"
         ):
             mp.io.read_lammps_molecule(tmp_file)
 

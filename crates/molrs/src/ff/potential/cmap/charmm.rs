@@ -449,17 +449,12 @@ pub fn cmap_charmm_constructor(
     Ok(ForceTerm::indexed(CmapCharmm::new(atoms, map, maps)))
 }
 
+/// Test fixtures: the CHARMM36 alanine map and a chain built to chosen
+/// dihedrals.
 #[cfg(test)]
-pub(crate) mod tests {
+pub(crate) mod fixtures {
     use super::*;
-    use crate::ff::compile::PotentialCompiler;
-    use crate::ff::forcefield::ForceField;
-    use crate::ff::potential::fixtures::OneShot;
-    use crate::ff::potential::flat_coords::compute_dihedral;
     use crate::io::lammps::forcefield_reader::parse_cmap_file;
-    use molrs::core::Block;
-    use molrs::op::Idx;
-    use ndarray::Array1;
 
     /// The CHARMM36 alanine map (LAMMPS `potentials/charmm36.cmap`, type 1).
     pub(crate) fn alanine() -> ArrayD<f64> {
@@ -499,6 +494,19 @@ pub(crate) mod tests {
         let e = place(b, c, d, 1.33, 116.0, psi);
         [a, b, c, d, e].concat()
     }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::fixtures::{alanine, chain, place};
+    use super::*;
+    use crate::ff::compile::PotentialCompiler;
+    use crate::ff::forcefield::ForceField;
+    use crate::ff::potential::fixtures::OneShot;
+    use crate::ff::potential::flat_coords::compute_dihedral;
+    use molrs::core::Block;
+    use molrs::op::Idx;
+    use ndarray::Array1;
 
     fn one(grid: &ArrayD<f64>) -> CmapCharmm {
         CmapCharmm::new(

@@ -9,7 +9,7 @@ import molpy as mp
 from eo_kit import library
 
 sites = mp.io.cgsmiles.read_cgsmiles("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
-tele = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+tele = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
 ```
 
 **Check:** 8 units, 51 atoms, no open port.

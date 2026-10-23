@@ -18,71 +18,71 @@ kernel that raises during an evaluation, a compile or a registration surfaces
 as :class:`KernelShapeError` with the original exception as ``__cause__``.
 """
 
-from molpy._core import ir as _ir
+from molpy import _core
 
-IrError = _ir.IrError
+IrError = _core.ir.IrError
 
-UnknownCategoryError = _ir.UnknownCategoryError
+UnknownCategoryError = _core.ir.UnknownCategoryError
 
-BadNameError = _ir.BadNameError
+BadNameError = _core.ir.BadNameError
 
-ArityError = _ir.ArityError
+ArityError = _core.ir.ArityError
 
-BlockNameError = _ir.BlockNameError
+BlockNameError = _core.ir.BlockNameError
 
-ReservedParamError = _ir.ReservedParamError
+ReservedParamError = _core.ir.ReservedParamError
 
-DuplicateParamError = _ir.DuplicateParamError
+DuplicateParamError = _core.ir.DuplicateParamError
 
-DimensionError = _ir.DimensionError
+DimensionError = _core.ir.DimensionError
 
-ParseError = _ir.ParseError
+ParseError = _core.ir.ParseError
 
-UnboundVariableError = _ir.UnboundVariableError
+UnboundVariableError = _core.ir.UnboundVariableError
 
-UnknownFunctionError = _ir.UnknownFunctionError
+UnknownFunctionError = _core.ir.UnknownFunctionError
 
-FunctionArityError = _ir.FunctionArityError
+FunctionArityError = _core.ir.FunctionArityError
 
-PointError = _ir.PointError
+PointError = _core.ir.PointError
 
-CoordinateMismatchError = _ir.CoordinateMismatchError
+CoordinateMismatchError = _core.ir.CoordinateMismatchError
 
-DerivativeError = _ir.DerivativeError
+DerivativeError = _core.ir.DerivativeError
 
-DisagreeError = _ir.DisagreeError
+DisagreeError = _core.ir.DisagreeError
 
-AsymmetricError = _ir.AsymmetricError
+AsymmetricError = _core.ir.AsymmetricError
 
-SealedError = _ir.SealedError
+SealedError = _core.ir.SealedError
 
-ConflictError = _ir.ConflictError
+ConflictError = _core.ir.ConflictError
 
-NoKernelError = _ir.NoKernelError
+NoKernelError = _core.ir.NoKernelError
 
-NoMixingError = _ir.NoMixingError
+NoMixingError = _core.ir.NoMixingError
 
-MissingParamError = _ir.MissingParamError
+MissingParamError = _core.ir.MissingParamError
 
-BadValueError = _ir.BadValueError
+BadValueError = _core.ir.BadValueError
 
-KernelShapeError = _ir.KernelShapeError
+KernelShapeError = _core.ir.KernelShapeError
 
-NoEngineFormError = _ir.NoEngineFormError
+NoEngineFormError = _core.ir.NoEngineFormError
 
-FormConflictError = _ir.FormConflictError
+FormConflictError = _core.ir.FormConflictError
 
-NoFormError = _ir.NoFormError
+NoFormError = _core.ir.NoFormError
 
-OutOfImageError = _ir.OutOfImageError
+OutOfImageError = _core.ir.OutOfImageError
 
-MalformedError = _ir.MalformedError
+MalformedError = _core.ir.MalformedError
 
-ParamSpec = _ir.ParamSpec
+ParamSpec = _core.ir.ParamSpec
 
-StyleSpec = _ir.StyleSpec
+StyleSpec = _core.ir.StyleSpec
 
-CategorySpec = _ir.CategorySpec
+CategorySpec = _core.ir.CategorySpec
 
 __all__ = [
     "ArityError",

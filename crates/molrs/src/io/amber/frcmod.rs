@@ -95,14 +95,14 @@ impl AmberFrcmodWriter {
     /// Refuse a declared unit system or 1-2/1-3/1-4 weights tleap would not
     /// reproduce.
     fn check_declarations(ff: &ForceField) -> Result<(), String> {
-        if let Some(units) = ff.declared_units()
+        if let Some(units) = ff.units()
             && units != "real"
         {
             return Err(format!(
                 "force field units '{units}': frcmod is in real units (Å, kcal/mol)"
             ));
         }
-        if let Some(sb) = ff.declared_special_bonds() {
+        if let Some(sb) = ff.special_bonds() {
             let amber_lj = [0.0, 0.0, 1.0 / AMBER_SCNB];
             let amber_coul = [0.0, 0.0, 1.0 / AMBER_SCEE];
             let close =

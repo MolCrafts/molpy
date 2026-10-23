@@ -67,10 +67,10 @@ class TestSupportedDtypes:
     @pytest.mark.parametrize(
         "arr,kind",
         [
-            (np.array([1.0, 2.0, 3.0], dtype=np.float64), "float"),
+            (np.array([1.0, 2.0, 3.0], dtype=np.float64), "f64"),
             (np.array([10, 20, 30], dtype=np.int64), "i64"),
             (np.array([True, False, True]), "bool"),
-            (np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64), "float"),
+            (np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64), "f64"),
         ],
     )
     def test_round_trip(self, arr, kind):
@@ -106,7 +106,7 @@ class TestEmptyColumn:
         b.insert("x", np.array([], dtype=np.float64))
         out = b["x"]
         assert out.shape == (0,)
-        assert b.dtype("x") == "float"
+        assert b.dtype("x") == "f64"
 
     def test_empty_object_rejected(self):
         b = mp.core.Block()

@@ -11,7 +11,7 @@ molpy's alone: :class:`MlpJsonlMetricReader`, published in the
 
 from __future__ import annotations
 
-import json as _json
+import json
 from typing import TYPE_CHECKING
 
 from molpy.io import metric_reader
@@ -55,7 +55,7 @@ class MlpJsonlMetricReader:
         source: str = "",
         request: ReadRequest | None = None,
     ) -> Iterator[dict[str, Any]]:
-        """Yield the records *request* selects (see :mod:`._metric_reader`).
+        """Yield the records *request* selects (see :mod:`molpy.io.metric_reader`).
 
         The raw stream is the file's records in line order, so ``since``
         counts records (blank lines and a torn tail excluded). Each record
@@ -94,8 +94,8 @@ def _line_records(
 
 def _parse(text: str) -> dict[str, Any] | None:
     try:
-        record = _json.loads(text)
-    except _json.JSONDecodeError:
+        record = json.loads(text)
+    except json.JSONDecodeError:
         return None
     return record if isinstance(record, dict) and "k" in record else None
 

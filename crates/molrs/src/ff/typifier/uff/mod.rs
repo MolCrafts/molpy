@@ -5,12 +5,14 @@ use molrs::core::TypeName;
 use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::core::{Atomistic, Element, NodeId, Props, keys};
 
+use crate::core::NeighborKinds;
 use crate::core::constants::UFF_COULOMB;
 use crate::ff::forcefield::{DefError, ForceField};
 use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::params::uff::{AtomicParams, LAMBDA, params_for_label};
-use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
-use crate::perceive::perceive_rings;
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier, TypingError};
+use crate::line_notation::atom_keys;
+use crate::perceive::assign_aromaticity;
 use crate::perceive::{Hybridization, perceive_conjugated_atoms, perceive_hybridizations};
 
 /// Universal Force Field typifier (Rappé 1992, RDKit-aligned).
@@ -91,6 +93,8 @@ impl UffTypifier {
     /// The fallible body of [`new`](Self::new).
     fn try_new() -> Result<Self, DefError> {
         let mut ff = ForceField::new("UFF");
+        // The UFF parameters are kcal/mol and Å.
+        ff.set_units("real");
         for (category, name) in [
             ("bond", "uff_bond"),
             ("angle", "uff_angle"),
@@ -156,41 +160,48 @@ impl Typifier for UffTypifier {
     /// under `uff_bond` / `uff_angle` / `uff_torsion` / `uff_inversion` with
     /// the params the kernels read. The `uff_lj` rows `{x1, D1}` of the labels
     /// used are pairs; every library style is declared.
-    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
         graph
             .generate_topology(true, true, false, true)
-            .map_err(|e| e.to_string())?;
+            .map_err(TypingError::malformed)?;
 
-        let atom_ids: Vec<NodeId> = graph.atoms().map(|(id, _)| id).collect();
-        let id_to_idx: HashMap<NodeId, usize> = atom_ids
-            .iter()
-            .enumerate()
-            .map(|(i, &id)| (id, i))
-            .collect();
+        let atom_ids: Vec<NodeId> = graph.atom_ids().collect();
         let n = atom_ids.len();
+        let rows = graph.atom_table();
+        const LIVE: &str = "a relation endpoint is a live atom";
+        let row = |id: NodeId| rows.row(id).expect(LIVE);
 
         // Neighbours + bond orders
         let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
         let mut bond_order: HashMap<(usize, usize), f64> = HashMap::new();
         for (i, &aid) in atom_ids.iter().enumerate() {
-            for (nid, bid) in graph.neighbor_bonds(aid) {
-                if let Some(&j) = id_to_idx.get(&nid) {
+            for (nid, bid) in graph.neighbors(aid, NeighborKinds::BONDS) {
+                if let Some(j) = rows.row(nid) {
                     adj[i].push(j);
                     // UFF's bond-order term is the localized count; an
                     // aromatic bond is conventionally 1.5 *here*, as a UFF
-                    // parameter, not as a molrs bond order.
+                    // parameter, not as a molrs bond order. A bond with no
+                    // order has no UFF term to price.
                     let ord = if graph
                         .bond_type(bid)
-                        .map_err(|e| e.to_string())?
+                        .map_err(TypingError::malformed)?
                         .is_aromatic()
                     {
                         1.5
                     } else {
-                        graph
+                        match graph
                             .bond_number(bid)
-                            .map_err(|e| e.to_string())?
+                            .map_err(TypingError::malformed)?
                             .count()
-                            .max(1) as f64
+                        {
+                            0 => {
+                                return Err(TypingError::malformed(format!(
+                                    "UFF: bond {i}-{j} states no bond order; UFF prices a single, \
+                                     double, triple or aromatic bond"
+                                )));
+                            }
+                            n => n as f64,
+                        }
                     };
                     bond_order.insert(if i < j { (i, j) } else { (j, i) }, ord);
                 }
@@ -199,53 +210,24 @@ impl Typifier for UffTypifier {
             adj[i].dedup();
         }
         let order_of = |i: usize, j: usize| {
-            bond_order
+            *bond_order
                 .get(&(i.min(j), i.max(j)))
-                .copied()
-                .unwrap_or(1.0)
+                .expect("order_of is asked about bonded pairs only")
         };
 
-        let rings = perceive_rings(graph);
-        let mut aromatic_atom = vec![false; n];
-        for ring in rings.rings() {
-            if ring.len() == 5 || ring.len() == 6 {
-                // crude: if all C/N/O and max order suggests aromaticity from 1.5 bonds
-                let idxs: Vec<usize> = ring
-                    .iter()
-                    .filter_map(|id| id_to_idx.get(id).copied())
-                    .collect();
-                let mut aromatic_like = true;
-                for &i in &idxs {
-                    let el = element_of(graph, atom_ids[i])?;
-                    if !matches!(
-                        el,
-                        Element::C | Element::N | Element::O | Element::S | Element::B
-                    ) {
-                        aromatic_like = false;
-                        break;
-                    }
-                }
-                if aromatic_like {
-                    for &i in &idxs {
-                        // mark if any bond order ≈ 1.5 in ring
-                        for &j in &adj[i] {
-                            if idxs.contains(&j) && (order_of(i, j) - 1.5).abs() < 0.1 {
-                                aromatic_atom[i] = true;
-                                aromatic_atom[j] = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Also honor is_aromatic property if present
-        for (i, &aid) in atom_ids.iter().enumerate() {
-            if let Ok(atom) = graph.get_atom(aid)
-                && atom.get(keys::IS_AROMATIC) == Some(&PropValue::Bool(true))
-            {
-                aromatic_atom[i] = true;
-            }
-        }
+        // RDKit's UFF labels follow RDKit aromaticity: perceived on a private
+        // copy (as OPLS does), so the caller's graph keeps its bond classes.
+        let mut perceived = graph.clone();
+        assign_aromaticity(&mut perceived).map_err(TypingError::malformed)?;
+        let aromatic_atom: Vec<bool> = atom_ids
+            .iter()
+            .map(|&aid| {
+                perceived
+                    .get_atom(aid)
+                    .map(|atom| atom_keys::is_aromatic(&atom))
+                    .map_err(TypingError::malformed)
+            })
+            .collect::<Result<_, _>>()?;
 
         // Hybridization + labels
         let mut labels: Vec<String> = Vec::with_capacity(n);
@@ -259,12 +241,14 @@ impl Typifier for UffTypifier {
         let mut lj_used: HashSet<String> = HashSet::new();
 
         for (i, &aid) in atom_ids.iter().enumerate() {
-            let el = element_of(graph, aid)?;
+            let el = element_of(graph, aid).map_err(TypingError::malformed)?;
             z.push(el.z());
             let valence: f64 = adj[i].iter().map(|&j| order_of(i, j)).sum();
             let label = atom_label(el, hyb[i], aromatic_atom[i] || conjugated[i], valence);
-            let p = params_for_label(&label)
-                .ok_or_else(|| format!("UFF: parameters missing for label '{label}'"))?;
+            let p = params_for_label(&label).ok_or_else(|| TypingError::MissingAtomType {
+                table: "UFF".to_owned(),
+                detail: format!("atom {i}: no parameters for label '{label}'"),
+            })?;
             if lj_used.insert(label.clone()) {
                 m.pairs.push((
                     "uff_lj".to_owned(),
@@ -289,7 +273,7 @@ impl Typifier for UffTypifier {
         // term.
         let bonds: Vec<(usize, usize)> = graph
             .bonds()
-            .map(|(_, b)| (id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]))
+            .map(|(_, b)| (row(b.nodes[0]), row(b.nodes[1])))
             .collect();
         for (i, j) in bonds {
             let mut bo = order_of(i, j);
@@ -302,7 +286,7 @@ impl Typifier for UffTypifier {
                 (i, j)
             };
             let ends = [labels[p].as_str(), labels[q].as_str()];
-            let name = qualified(&ends, &[bo])?;
+            let name = qualified(&ends, &[bo]).map_err(TypingError::malformed)?;
             let (r0, kb) = bond_rest_and_k(params[p], params[q], bo);
             m.link_mut(BONDS).push(typed(
                 "uff_bond",
@@ -313,11 +297,12 @@ impl Typifier for UffTypifier {
         }
 
         // Angles
+        let rings = crate::perceive::perceive_rings(graph);
         let in_ring3 = |aid: NodeId| rings.rings_of_size(3).iter().any(|r| r.contains(&aid));
         let in_ring4 = |aid: NodeId| rings.rings_of_size(4).iter().any(|r| r.contains(&aid));
         let angles: Vec<[usize; 3]> = graph
             .angles()
-            .map(|(_, a)| std::array::from_fn(|n| id_to_idx[&a.nodes[n]]))
+            .map(|(_, a)| std::array::from_fn(|n| row(a.nodes[n])))
             .collect();
         for [i, j, k] in angles {
             let mut order = match hyb[j] {
@@ -353,7 +338,8 @@ impl Typifier for UffTypifier {
                 (i, k)
             };
             let ends = [labels[p].as_str(), labels[j].as_str(), labels[q].as_str()];
-            let name = qualified(&ends, &[order_of(p, j), order_of(j, q), code])?;
+            let name = qualified(&ends, &[order_of(p, j), order_of(j, q), code])
+                .map_err(TypingError::malformed)?;
             let (theta0, order_eff) = match order {
                 30 => (150.0_f64.to_radians(), 0u8),
                 35 => (60.0_f64.to_radians(), 0),
@@ -392,7 +378,7 @@ impl Typifier for UffTypifier {
         // Dihedrals — scale V by multiplicity about the central bond
         let dihedrals: Vec<[usize; 4]> = graph
             .dihedrals()
-            .map(|(_, d)| std::array::from_fn(|n| id_to_idx[&d.nodes[n]]))
+            .map(|(_, d)| std::array::from_fn(|n| row(d.nodes[n])))
             .collect();
         let mut bond_counts: HashMap<(usize, usize), usize> = HashMap::new();
         for idx in &dihedrals {
@@ -438,7 +424,7 @@ impl Typifier for UffTypifier {
             } else {
                 forward
             };
-            let name = qualified(&ends, &fields)?;
+            let name = qualified(&ends, &fields).map_err(TypingError::malformed)?;
             m.link_mut(DIHEDRALS).push(typed(
                 "uff_torsion",
                 &name,
@@ -482,9 +468,9 @@ impl Typifier for UffTypifier {
                         atom_ids[c],
                         Props::new(),
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(TypingError::malformed)?;
                 let ends = [&*labels[j], &*labels[a], &*labels[b], &*labels[c]];
-                let name = TypeName::join(&ends)?;
+                let name = TypeName::join(&ends).map_err(TypingError::malformed)?;
                 inversions.insert(
                     iid,
                     typed(

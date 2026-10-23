@@ -15,6 +15,7 @@ use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::typifier::OplsAaTypifier;
 use crate::io::openmm_xml::geometric_mixing;
 use crate::io::reader::ForceFieldReader;
+use crate::io::xml_attribute::{attr_str, forcefield_name, forcefield_root};
 use crate::io::{Source, invalid_data};
 use molrs::core::TypeName;
 
@@ -147,7 +148,7 @@ impl OpenmmXmlReader {
         let text = src.into().text()?;
         let meta = super::opls_typing::read_typing_metadata(&text).map_err(invalid_data)?;
         let ff = parse(&text).map_err(invalid_data)?;
-        Ok(OplsAaTypifier::new(meta, ff))
+        OplsAaTypifier::new(meta, ff).map_err(invalid_data)
     }
 }
 
@@ -161,22 +162,18 @@ impl ForceFieldReader for OpenmmXmlReader {
 fn parse(text: &str) -> Result<ForceField, String> {
     let doc =
         roxmltree::Document::parse(text).map_err(|e| format!("OpenMM XML parse error: {}", e))?;
-    let root = doc.root_element();
-    if root.tag_name().name() != "ForceField" {
-        return Err(format!(
-            "root element must be <ForceField>, got <{}>",
-            root.tag_name().name()
-        ));
-    }
+    let root = forcefield_root(&doc)?;
 
-    let mut ff = ForceField::new(root.attribute("name").unwrap_or("Unknown"));
+    let mut ff = ForceField::new(forcefield_name(&root));
+    // Every OpenMM quantity is converted to kcal/mol and Å as it is read.
+    ff.set_units("real");
     let mut raw = Raw::default();
     for sec in root.children().filter(Node::is_element) {
         match sec.tag_name().name() {
             "AtomTypes" => {
                 for t in sec.children().filter(Node::is_element) {
                     require_tag(&t, "Type")?;
-                    let name = require_str(&t, "name")?.to_owned();
+                    let name = attr_str(&t, "name")?.to_owned();
                     let mass = opt_f64(&t, "mass")?.unwrap_or(0.0);
                     raw.atom_rows.push(AtomTypeRow {
                         name,
@@ -549,18 +546,23 @@ fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) -> Res
             endpoint_classes.insert(part.clone());
         }
     };
-    for bt in ff.get_bondtypes() {
-        for part in [&bt.itom, &bt.jtom] {
+    for bt in ff.get_types("bond") {
+        for part in [&bt.endpoints[0], &bt.endpoints[1]] {
             add(part);
         }
     }
-    for at in ff.get_angletypes() {
-        for part in [&at.itom, &at.jtom, &at.ktom] {
+    for at in ff.get_types("angle") {
+        for part in [&at.endpoints[0], &at.endpoints[1], &at.endpoints[2]] {
             add(part);
         }
     }
-    for dt in ff.get_dihedraltypes() {
-        for part in [&dt.itom, &dt.jtom, &dt.ktom, &dt.ltom] {
+    for dt in ff.get_types("dihedral") {
+        for part in [
+            &dt.endpoints[0],
+            &dt.endpoints[1],
+            &dt.endpoints[2],
+            &dt.endpoints[3],
+        ] {
             add(part);
         }
     }
@@ -893,7 +895,7 @@ fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String
 /// parameters `k`, `theta0` and no global parameter, is `improper harmonic`.
 /// OpenMM's `CustomTorsion` default ordering is `charmm`.
 fn parse_custom_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
-    let energy: String = require_str(sec, "energy")?
+    let energy: String = attr_str(sec, "energy")?
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
@@ -921,7 +923,7 @@ fn parse_custom_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> 
                 return Err(format!(
                     "<CustomTorsionForce energy=\"{energy}\">: global parameter `{}` has no \
                      IR form",
-                    require_str(&child, "name")?
+                    attr_str(&child, "name")?
                 ));
             }
             _ => {}
@@ -1029,7 +1031,7 @@ fn parse_cmap(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
             other => return Err(format!("<CMAPTorsionForce>: unexpected child <{other}>")),
         }
         let ends = endpoints::<5>(&t)?;
-        let index = require_str(&t, "map")?;
+        let index = attr_str(&t, "map")?;
         let grid = index
             .parse::<usize>()
             .ok()
@@ -1053,8 +1055,8 @@ fn parse_cmap(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
 
 fn parse_nonbonded(raw: &mut Raw, sec: &Node) -> Result<(), String> {
     let scales = (
-        require_f64(sec, "coulomb14scale")?,
-        require_f64(sec, "lj14scale")?,
+        require_f64(sec, crate::ff::ir::COULOMB_14_SCALE)?,
+        require_f64(sec, crate::ff::ir::LJ_14_SCALE)?,
     );
     // OpenMM merges repeated tags and refuses different 1-4 scales.
     if let Some(prev) = raw.nonbonded_scales
@@ -1081,7 +1083,7 @@ fn parse_nonbonded(raw: &mut Raw, sec: &Node) -> Result<(), String> {
 }
 
 fn parse_lennard_jones(raw: &mut Raw, sec: &Node) -> Result<(), String> {
-    let scale = require_f64(sec, "lj14scale")?;
+    let scale = require_f64(sec, crate::ff::ir::LJ_14_SCALE)?;
     if let Some(prev) = raw.lj_scale
         && prev != scale
     {
@@ -1191,18 +1193,8 @@ fn require_tag(node: &Node, expect: &str) -> Result<(), String> {
     }
 }
 
-fn require_str<'a>(node: &'a Node, attr: &str) -> Result<&'a str, String> {
-    node.attribute(attr).ok_or_else(|| {
-        format!(
-            "<{}> missing required attribute `{}`",
-            node.tag_name().name(),
-            attr
-        )
-    })
-}
-
 fn require_f64(node: &Node, attr: &str) -> Result<f64, String> {
-    let raw = require_str(node, attr)?;
+    let raw = attr_str(node, attr)?;
     raw.parse::<f64>().map_err(|_| {
         format!(
             "<{}> attribute `{}` is not a number: {:?}",
@@ -1277,7 +1269,7 @@ mod tests {
 
     fn rb_params(xml: &str, style: &str) -> Params {
         let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
-        dihedral_types(ff.get_style("dihedral", style).unwrap())[0]
+        ff.get_style("dihedral", style).unwrap().defs().types()[0]
             .params
             .clone()
     }
@@ -1366,14 +1358,14 @@ mod tests {
 
         // angle: theta0 rad → deg; OpenMM ½k 627.6 → K = 627.6 / 4.184 / 2 = 75.
         let angle = ff.get_style("angle", "harmonic").unwrap();
-        let at = &angle_types(angle)[0];
+        let at = &angle.defs().types()[0];
         assert!((at.params.get("theta0").and_then(|v| v.as_num()).unwrap() - 109.5).abs() < 1e-8);
         assert!((at.params.get("k").and_then(|v| v.as_num()).unwrap() - 75.0).abs() < 1e-9);
 
         // RB → multi/harmonic a1..a5.
         let dih = ff.get_style("dihedral", "multi/harmonic").unwrap();
         assert!(
-            dihedral_types(dih)[0]
+            dih.defs().types()[0]
                 .params
                 .get("a5")
                 .and_then(|v| v.as_num())
@@ -1406,7 +1398,7 @@ mod tests {
 
         // The 1-4 scales live on the ForceField's special_bonds (1-2/1-3
         // excluded) — the single source the pair kernels consume.
-        let sb = ff.special_bonds();
+        let sb = ff.special_bonds().unwrap();
         assert_eq!(sb.lj, [0.0, 0.0, 0.5]);
         assert_eq!(sb.coul, [0.0, 0.0, 0.5]);
 
@@ -1508,7 +1500,8 @@ mod tests {
         let placeholder_names = |text: &str| -> Vec<String> {
             let ff = OpenmmXmlReader::new().read(text.as_bytes()).unwrap();
             let atom = ff.get_style("atom", "full").unwrap();
-            atom_types(atom)
+            atom.defs()
+                .types()
                 .iter()
                 .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) == Some("*"))
                 .map(|t| t.name.clone())
@@ -1548,7 +1541,7 @@ mod tests {
         let dih = ff
             .get_style("dihedral", "periodic")
             .expect("dihedral periodic");
-        let p = &dihedral_types(dih)[0].params;
+        let p = &dih.defs().types()[0].params;
         for (key, want) in [
             ("k1", 1.0),
             ("periodicity1", 3.0),
@@ -1573,7 +1566,7 @@ mod tests {
             r#"<Proper class1="CT" class2="CT" class3="CT" class4="CT" c0="5.4392" c1="-0.2092" c2="0.8368" c3="0.0"/>"#,
         );
         let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
-        let p = &dihedral_types(ff.get_style("dihedral", "opls").unwrap())[0].params;
+        let p = &ff.get_style("dihedral", "opls").unwrap().defs().types()[0].params;
         assert!((p.get("k1").and_then(|v| v.as_num()).unwrap() - 1.3).abs() < 1e-12);
         assert!((p.get("k3").and_then(|v| v.as_num()).unwrap() - 0.2).abs() < 1e-12);
     }
@@ -1618,13 +1611,13 @@ mod tests {
         let imp = ff
             .get_style("improper", "periodic")
             .expect("improper periodic");
-        let t = &improper_types(imp)[0];
+        let t = &imp.defs().types()[0];
         assert_eq!(
             [
-                t.itom.as_str(),
-                t.jtom.as_str(),
-                t.ktom.as_str(),
-                t.ltom.as_str()
+                t.endpoints[0].as_str(),
+                t.endpoints[1].as_str(),
+                t.endpoints[2].as_str(),
+                t.endpoints[3].as_str()
             ],
             ["C", "O", "N", "CT"]
         );
@@ -1652,13 +1645,13 @@ mod tests {
             r#"<ForceField name="x"><PeriodicTorsionForce ordering="charmm">{row}</PeriodicTorsionForce></ForceField>"#
         );
         let ff = OpenmmXmlReader::new().read(charmm.as_bytes()).unwrap();
-        let t = &improper_types(ff.get_style("improper", "periodic").unwrap())[0];
+        let t = &ff.get_style("improper", "periodic").unwrap().defs().types()[0];
         assert_eq!(
             [
-                t.itom.as_str(),
-                t.jtom.as_str(),
-                t.ktom.as_str(),
-                t.ltom.as_str()
+                t.endpoints[0].as_str(),
+                t.endpoints[1].as_str(),
+                t.endpoints[2].as_str(),
+                t.endpoints[3].as_str()
             ],
             ["N", "C", "O", "CT"]
         );
@@ -1763,10 +1756,10 @@ mod tests {
             Some("epsilon14")
         );
         assert!(ff.get_style("pair", "lj/cut").is_none());
-        let rows = pair_types(lj);
+        let rows = lj.defs().types();
         let row = |i: &str, j: &str| {
             rows.iter()
-                .find(|t| t.itom == i && t.jtom == j)
+                .find(|t| t.endpoints[0] == i && t.endpoints[1] == j)
                 .unwrap_or_else(|| panic!("{i}-{j}"))
         };
         let ct1 = &row("CT1", "CT1").params;
@@ -1808,8 +1801,8 @@ mod tests {
             coul.params().get("coulomb").and_then(|v| v.as_num()),
             Some(crate::core::constants::openmm_coulomb_real())
         );
-        assert_eq!(ff.special_bonds().lj, [0.0, 0.0, 1.0]);
-        assert_eq!(ff.special_bonds().coul, [0.0, 0.0, 1.0]);
+        assert_eq!(ff.special_bonds().unwrap().lj, [0.0, 0.0, 1.0]);
+        assert_eq!(ff.special_bonds().unwrap().coul, [0.0, 0.0, 1.0]);
         let atom = ff.get_style("atom", "full").unwrap();
         assert_eq!(
             atom.get_atomtype("C")
@@ -1881,7 +1874,7 @@ mod tests {
     fn urey_bradley_joins_its_angle_as_angle_charmm() {
         let ff = charmm();
         let ch = ff.get_style("angle", "charmm").expect("angle charmm");
-        let rows = angle_types(ch);
+        let rows = ch.defs().types();
         let ub = rows.iter().find(|t| t.name == "NH1-CT1-HB1").unwrap();
         for (key, want) in [
             ("k", 401.664 / 4.184 / 2.0),
@@ -1896,8 +1889,8 @@ mod tests {
         assert_eq!(lone.params.get("k").and_then(|v| v.as_num()), Some(0.0));
         assert!((lone.params.get("k_ub").and_then(|v| v.as_num()).unwrap() - 20.0).abs() < 1e-12);
         let h = ff.get_style("angle", "harmonic").expect("angle harmonic");
-        assert_eq!(angle_types(h).len(), 1);
-        assert_eq!(angle_types(h)[0].name, "NH1-CT1-C");
+        assert_eq!(h.defs().types().len(), 1);
+        assert_eq!(h.defs().types()[0].name, "NH1-CT1-C");
     }
 
     #[test]
@@ -1918,7 +1911,7 @@ mod tests {
         let imp = ff
             .get_style("improper", "harmonic")
             .expect("improper harmonic");
-        let t = &improper_types(imp)[0];
+        let t = &imp.defs().types()[0];
         assert_eq!(t.name, "NH1-C-CT1-HB1");
         assert!((t.params.get("k").and_then(|v| v.as_num()).unwrap() - 20.0).abs() < 1e-12);
         assert_eq!(t.params.get("chi0").and_then(|v| v.as_num()), Some(0.0));
@@ -1942,7 +1935,7 @@ mod tests {
         let ff = OpenmmXmlReader::new()
             .read(custom("k*(abs(theta)-theta0)^2", "3.141592653589793").as_bytes())
             .unwrap();
-        let t = &improper_types(ff.get_style("improper", "harmonic").unwrap())[0];
+        let t = &ff.get_style("improper", "harmonic").unwrap().defs().types()[0];
         assert!((t.params.get("chi0").and_then(|v| v.as_num()).unwrap() - 180.0).abs() < 1e-12);
     }
 
@@ -2009,7 +2002,7 @@ mod tests {
     #[test]
     fn cmap_map_is_shifted_by_half_and_transposed_into_phi_major() {
         let ff = charmm();
-        let rows = ff.get_cmaptypes();
+        let rows = ff.get_types("cmap");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "C-NH1-CT1-C-NH1");
         let grid = rows[0]
@@ -2058,50 +2051,15 @@ mod tests {
             r#"<Improper class1="C" class2="" class3="" class4="O" periodicity1="2" k1="43.932" phase1="3.141592653589793"/>"#,
         );
         let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
-        let t = &improper_types(ff.get_style("improper", "periodic").unwrap())[0];
+        let t = &ff.get_style("improper", "periodic").unwrap().defs().types()[0];
         assert_eq!(
             [
-                t.itom.as_str(),
-                t.jtom.as_str(),
-                t.ktom.as_str(),
-                t.ltom.as_str()
+                t.endpoints[0].as_str(),
+                t.endpoints[1].as_str(),
+                t.endpoints[2].as_str(),
+                t.endpoints[3].as_str()
             ],
             ["", "", "C", "O"]
         );
-    }
-
-    // -- small helpers to reach into StyleDefs for assertions --
-    use crate::ff::forcefield::{
-        AngleType, AtomType, DihedralType, ImproperType, PairType, Style, StyleDefs,
-    };
-    fn pair_types(s: &Style) -> &[PairType] {
-        match s.defs() {
-            StyleDefs::Pair(v) => v,
-            _ => unreachable!(),
-        }
-    }
-    fn improper_types(s: &Style) -> &[ImproperType] {
-        match s.defs() {
-            StyleDefs::Improper(v) => v,
-            _ => unreachable!(),
-        }
-    }
-    fn atom_types(s: &Style) -> &[AtomType] {
-        match s.defs() {
-            StyleDefs::Atom(v) => v,
-            _ => unreachable!(),
-        }
-    }
-    fn angle_types(s: &Style) -> &[AngleType] {
-        match s.defs() {
-            StyleDefs::Angle(v) => v,
-            _ => unreachable!(),
-        }
-    }
-    fn dihedral_types(s: &Style) -> &[DihedralType] {
-        match s.defs() {
-            StyleDefs::Dihedral(v) => v,
-            _ => unreachable!(),
-        }
     }
 }

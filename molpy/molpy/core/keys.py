@@ -6,8 +6,8 @@ LAMMPS frame-meta keys. Every scalar is a :class:`Key`; a group is a list of
 :class:`Key`. A key added to the Rust tables appears here with no edit.
 """
 
-from molpy._core import keys as _keys
+from molpy import _core
 
-__all__ = sorted(name for name in dir(_keys) if not name.startswith("_"))
+__all__ = sorted(name for name in dir(_core.keys) if not name.startswith("_"))
 
-globals().update({name: getattr(_keys, name) for name in __all__})
+globals().update({name: getattr(_core.keys, name) for name in __all__})

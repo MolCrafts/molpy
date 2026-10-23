@@ -285,14 +285,12 @@ impl Graph {
                     .map(|v| v.round() as u64),
             );
         }
-        let index: HashMap<NodeId, usize> =
-            ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        let rows = mol.atom_table();
         let mut con = vec![Vec::new(); ids.len()];
         let mut bonds = Vec::new();
         let mut stated = Vec::new();
         for (_, bond) in mol.bonds() {
-            let (Some(&i), Some(&j)) = (index.get(&bond.nodes[0]), index.get(&bond.nodes[1]))
-            else {
+            let (Some(i), Some(j)) = (rows.row(bond.nodes[0]), rows.row(bond.nodes[1])) else {
                 continue;
             };
             con[i].push(j);

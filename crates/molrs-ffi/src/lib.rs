@@ -1,14 +1,14 @@
 //! FFI layer for molrs with handle-based abstractions.
 //!
-//! This crate provides a stable, handle-based API for Python and WASM bindings.
+//! This crate provides the handle-based frame API the Python, WASM and C++
+//! bindings share.
 //! It separates the Rust-idiomatic core API from cross-language FFI concerns.
 //!
 //! # Usage
 //!
 //! A consumer holds a [`FrameRef`] (a frame id paired with the
 //! [`FrameArenaCell`] that owns the frame) and
-//! borrows columns zero-copy through [`BlockRef`]. See `docs/interop.md` for the
-//! full recipe and the data contract.
+//! borrows columns zero-copy through [`BlockRef`].
 //!
 //! ```no_run
 //! use molrs::op::Idx;

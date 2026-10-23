@@ -369,24 +369,33 @@ impl Atomistic {
     /// The bond joining atoms `a` and `b`, if any. A port, a constraint or
     /// any other two-atom term between them is not a bond.
     pub fn bond_between(&self, a: NodeId, b: NodeId) -> Option<RelationId> {
-        self.neighbor_bonds(a)
+        self.neighbors(a, crate::core::NeighborKinds::BONDS)
             .find(|&(other, _)| other == b)
             .map(|(_, bid)| bid)
     }
 
-    /// Iterate over `(neighbor_id, bond_id)` for a given atom — its bonds
-    /// only, never a port or another two-atom term.
+    /// Arity-2 relations incident to `id`.
     ///
-    /// Yields the bond handle rather than a number: a caller that wants the
+    /// [`NeighborKinds::BONDS`](crate::core::NeighborKinds::BONDS) yields
+    /// `(other_atom, bond_id)`.
+    /// [`NeighborKinds::with_ports`](crate::core::NeighborKinds::with_ports) and
+    /// [`NeighborKinds::with_terms`](crate::core::NeighborKinds::with_terms)
+    /// also yield ports and the other arity-2
+    /// terms (constraints, pairs, exclusions, drudes, virtual sites), and
+    /// each item is an [`Adjacent`](crate::core::Adjacent) so the handle
+    /// stays tied to its table. Angles and dihedrals have more than two
+    /// endpoints and are never neighbors.
+    ///
+    /// The bond item is a handle, not a bond order. A caller that wants the
     /// localized count asks [`bond_number`](Self::bond_number), and one that
     /// wants to know whether the bond is aromatic asks
-    /// [`bond_type`](Self::bond_type). Handing back a single float is what let
-    /// those two questions be answered by the same value.
-    pub fn neighbor_bonds(&self, id: NodeId) -> impl Iterator<Item = (NodeId, RelationId)> + '_ {
-        self.graph
-            .neighbor_relations(id)
-            .filter(move |(kind, _, _)| *kind == self.bond)
-            .map(move |(_, rid, other)| (other, rid))
+    /// [`bond_type`](Self::bond_type).
+    pub fn neighbors<'a, K: crate::core::adjacency::AdjacencyKind + 'a>(
+        &'a self,
+        id: NodeId,
+        which: crate::core::NeighborKinds<K>,
+    ) -> impl Iterator<Item = K::Item<'a>> + 'a {
+        self.graph.adjacent(id, self.bond, which)
     }
 
     // ---- angles ----
@@ -632,7 +641,7 @@ impl Atomistic {
     /// that names the graph-theoretic result.
     ///
     /// Impropers follow the molecular-mechanics reading —
-    /// [`Topology::trivalent_impropers`](crate::core::Topology::trivalent_impropers),
+    /// [`Topology::impropers`](crate::core::Topology::impropers),
     /// one `[centre, i, j, k]` quartet per
     /// atom with exactly three neighbours — not the geometric enumeration of
     /// every 3-combination. Whether such a centre is planar enough to deserve
@@ -650,8 +659,6 @@ impl Atomistic {
         gen_improper: bool,
         clear_existing: bool,
     ) -> Result<(usize, usize, usize), MolRsError> {
-        use crate::core::Topology;
-
         if clear_existing {
             for (wanted, kind) in [
                 (gen_angle, self.angle),
@@ -665,18 +672,8 @@ impl Atomistic {
             }
         }
 
-        // Build the native topology snapshot from bonds (atoms in node-id order).
-        let atoms: Vec<NodeId> = self.graph.node_ids().collect();
-        let pos: HashMap<NodeId, usize> = atoms.iter().enumerate().map(|(i, &a)| (a, i)).collect();
-        let mut edges: Vec<[usize; 2]> = Vec::new();
-        for id in self.graph.relation_ids(self.bond) {
-            let n = self.graph.relation_nodes(self.bond, id)?;
-            if n.len() == 2 {
-                edges.push([pos[&n[0]], pos[&n[1]]]);
-            }
-        }
-        let mut topo = Topology::with_atoms(atoms.len());
-        topo.add_bonds(&edges);
+        let atoms: Vec<NodeId> = self.atom_ids().collect();
+        let topo = self.topology();
 
         let mut n_ang = 0usize;
         let mut n_dih = 0usize;
@@ -719,7 +716,7 @@ impl Atomistic {
                     &self.graph.relation_nodes(self.improper, id)?,
                 ));
             }
-            for q in topo.trivalent_impropers() {
+            for q in topo.impropers() {
                 let nodes = [atoms[q[0]], atoms[q[1]], atoms[q[2]], atoms[q[3]]];
                 if seen.insert(canonical_improper(&nodes)) {
                     self.add_improper(nodes[0], nodes[1], nodes[2], nodes[3], Props::new())?;
@@ -731,39 +728,39 @@ impl Atomistic {
         Ok((n_ang, n_dih, n_imp))
     }
 
-    /// BFS shortest-path distances over the bond graph from `source`, as
-    /// `(atom_id, hops)` pairs for every atom reachable from `source`
-    /// (including `source` at distance 0). Unreachable atoms are omitted; an
-    /// unknown `source` yields an empty vector.
+    /// The bond graph as a [`Topology`](crate::core::Topology) over atom
+    /// rows: atom `i` is the `i`-th of [`atom_ids`](Self::atom_ids) (its
+    /// [`atom_table`](Self::atom_table) row), and every bond is one edge.
     ///
-    /// The BFS runs directly on the native `MolGraph` adjacency (relations
-    /// filtered to the bond kind), keyed by a `SecondaryMap` (O(1),
-    /// slot-indexed) — no `Topology` materialization and no
-    /// NodeId→contiguous-index remap.
-    pub fn topo_distances(&self, source: NodeId, max_hops: Option<i64>) -> Vec<(NodeId, i64)> {
-        use slotmap::SecondaryMap;
-        use std::collections::VecDeque;
+    /// The snapshot index-space algorithms (rings, rotatable bonds, generated
+    /// angles and dihedrals) run on; it does not follow later edits.
+    pub fn topology(&self) -> crate::core::Topology {
+        const LIVE: &str = "a bond's endpoints are live atoms";
+        let rows = self.atom_table();
+        let edges: Vec<[usize; 2]> = self
+            .graph
+            .relation_ids(self.bond)
+            .map(|id| {
+                let ends = self.graph.relation_nodes(self.bond, id).expect(LIVE);
+                [
+                    rows.row(ends[0]).expect(LIVE),
+                    rows.row(ends[1]).expect(LIVE),
+                ]
+            })
+            .collect();
+        let mut topo = crate::core::Topology::with_atoms(self.n_atoms());
+        topo.add_bonds(&edges);
+        topo
+    }
 
-        if !self.graph.node_table().contains(source) {
-            return Vec::new();
-        }
-        let mut dist: SecondaryMap<NodeId, i64> = SecondaryMap::new();
-        dist.insert(source, 0);
-        let mut queue = VecDeque::new();
-        queue.push_back(source);
-        while let Some(cur) = queue.pop_front() {
-            let d = dist[cur];
-            if max_hops.is_some_and(|limit| d >= limit) {
-                continue; // atom is at the boundary; do not expand past the radius
-            }
-            for (other, _) in self.neighbor_bonds(cur) {
-                if !dist.contains_key(other) {
-                    dist.insert(other, d + 1);
-                    queue.push_back(other);
-                }
-            }
-        }
-        dist.into_iter().collect()
+    /// BFS shortest-path distances over the bond graph from `sources`, as
+    /// `(atom_id, hops)` pairs for every atom reachable from one of them
+    /// (each source at distance 0; every other atom at its distance to the
+    /// nearest source), in discovery order, expanding no further than
+    /// `max_hops`. Unreachable atoms are omitted, and an unknown source seeds
+    /// nothing. The cost is the atoms reached, not the molecule.
+    pub fn topo_distances(&self, sources: &[NodeId], max_hops: Option<i64>) -> Vec<(NodeId, i64)> {
+        self.graph.hops_from(sources, self.bond, max_hops, None)
     }
 
     // ---- further relation blocks (the `*_term` family) ----
@@ -1495,8 +1492,10 @@ fn require_atomic_number(atom: &Props, what: &str) -> Result<(), MolRsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Adjacent;
     use crate::core::Block;
     use crate::core::Element;
+    use crate::core::NeighborKinds;
     use crate::core::Props;
     use crate::core::keys;
     use crate::op::{I, Idx};
@@ -1744,7 +1743,7 @@ mod tests {
         ];
         for (i, &src) in atoms.iter().enumerate() {
             assert_eq!(
-                sorted_hops(eth.topo_distances(src, None)),
+                sorted_hops(eth.topo_distances(&[src], None)),
                 sorted_hops(expected_per_source[i].iter().map(|&d| (src, d)).collect()),
                 "ethane source {src:?}"
             );
@@ -1763,12 +1762,12 @@ mod tests {
             chain.add_bond(ids[k], ids[k + 1], props! {}).unwrap();
         }
         assert_eq!(
-            sorted_hops(chain.topo_distances(ids[0], None)),
+            sorted_hops(chain.topo_distances(&[ids[0]], None)),
             (0..12).collect::<Vec<_>>(),
         );
         // The mid-chain atom 5 sees a symmetric profile.
         assert_eq!(
-            hops(chain.topo_distances(ids[0], None)),
+            hops(chain.topo_distances(&[ids[0]], None)),
             (0..12).collect::<Vec<_>>(),
             "chain endpoint ordered by atom id"
         );
@@ -1782,7 +1781,7 @@ mod tests {
             .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
             .unwrap();
         solo.del_atom(stale).unwrap();
-        assert!(solo.topo_distances(stale, None).is_empty());
+        assert!(solo.topo_distances(&[stale], None).is_empty());
     }
 
     #[test]
@@ -1822,7 +1821,7 @@ mod tests {
     }
 
     #[test]
-    fn test_neighbors_and_neighbor_bonds() {
+    fn test_neighbors() {
         let mut mol = Atomistic::new();
         let o = mol
             .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
@@ -1835,7 +1834,7 @@ mod tests {
             .unwrap();
         mol.add_bond(o, h1, props! {}).unwrap();
         mol.add_bond(o, h2, props! {}).unwrap();
-        let nb: Vec<(NodeId, RelationId)> = mol.neighbor_bonds(o).collect();
+        let nb: Vec<(NodeId, RelationId)> = mol.neighbors(o, NeighborKinds::BONDS).collect();
         assert_eq!(nb.len(), 2);
         assert!(
             nb.iter()
@@ -1843,11 +1842,12 @@ mod tests {
         );
     }
 
-    /// `neighbor_bonds` answers "which atoms is this one bonded to"; the
-    /// generic `MolGraph::neighbors` walks every two-node relation, so a port
-    /// and a constraint on the same atoms show up there as extra neighbours.
+    /// `neighbors` with [`NeighborKinds::BONDS`] answers "which atoms is this
+    /// one bonded to". The generic `MolGraph::neighbors` walks every two-node
+    /// relation, so a port and a constraint on the same atoms show up there
+    /// as extra neighbours.
     #[test]
-    fn neighbor_bonds_are_bonds_only_while_molgraph_neighbors_mix_kinds() {
+    fn neighbors_are_bonds_until_ports_and_terms_are_requested() {
         let mut mol = Atomistic::new();
         let o = mol
             .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
@@ -1860,7 +1860,30 @@ mod tests {
             .unwrap();
         mol.add_term("constraints", &[o, h], props! {}).unwrap();
 
-        assert_eq!(mol.neighbor_bonds(o).collect::<Vec<_>>(), vec![(h, bond)]);
+        assert_eq!(
+            mol.neighbors(o, NeighborKinds::BONDS).collect::<Vec<_>>(),
+            vec![(h, bond)]
+        );
+        let with_ports: Vec<_> = mol
+            .neighbors(o, NeighborKinds::BONDS.with_ports())
+            .collect();
+        assert_eq!(with_ports.len(), 2);
+        assert!(with_ports.iter().any(|item| matches!(
+            item,
+            Adjacent::Bond { other, id } if *other == h && *id == bond
+        )));
+        assert!(with_ports.iter().any(|item| matches!(
+            item,
+            Adjacent::Port { other, .. } if *other == h
+        )));
+        let with_terms: Vec<_> = mol
+            .neighbors(o, NeighborKinds::BONDS.with_ports().with_terms())
+            .collect();
+        assert_eq!(with_terms.len(), 3);
+        assert!(with_terms.iter().any(|item| matches!(
+            item,
+            Adjacent::Term { block: "constraints", other, .. } if *other == h
+        )));
         assert_eq!(mol.bond_between(o, h), Some(bond));
         assert_eq!(mol.bond_between(h, o), Some(bond));
         assert_eq!(

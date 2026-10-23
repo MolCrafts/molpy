@@ -9,6 +9,7 @@ use molrs::core::keys;
 use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::core::{Atomistic, NodeId, Props};
 
+use crate::core::NeighborKinds;
 use crate::core::constants::AMBER_COULOMB;
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
@@ -19,7 +20,7 @@ use crate::ff::params::{
     ParmNonbondedRow, ParmTable, ParmType,
 };
 use crate::ff::typifier::BondedTerm;
-use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier, TypingError};
 use crate::ff::typifier::{EmpiricalSet, Provenance};
 
 mod analog;
@@ -134,6 +135,8 @@ fn candidate_forcefield(table: ParmTable) -> ForceField {
 /// output seeded from it carries the weights.
 fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
     let mut ff = ForceField::new(table.name);
+    // The GAFF / GAFF2 tables are kcal/mol and Å (parm*.dat).
+    ff.set_units("real");
     ff.set_special_bonds(SpecialBonds {
         lj: [0.0, 0.0, 1.0 / AMBER_SCNB],
         coul: [0.0, 0.0, 1.0 / AMBER_SCEE],
@@ -262,7 +265,7 @@ fn angle_params(row: &ParmAngleRow) -> [(&'static str, f64); 2] {
 }
 
 /// The cosine terms of one torsion, in the `k{m}` / `periodicity{m}` / `phase{m}` encoding
-/// [`DihedralPeriodic`](crate::ff::potential::dihedral::DihedralPeriodic)
+/// [`dihedral::Periodic`](crate::ff::potential::dihedral::Periodic)
 /// scans upward from `m = 1`. `k = PK / IDIVF`; phases in degrees.
 ///
 /// The terms are numbered in one canonical order — by periodicity, then
@@ -405,6 +408,18 @@ pub(crate) enum GaffError {
     },
 }
 
+impl From<GaffError> for TypingError {
+    fn from(err: GaffError) -> Self {
+        let detail = err.to_string();
+        match err {
+            GaffError::Untyped { .. } | GaffError::Malformed { .. } => {
+                TypingError::Malformed { detail }
+            }
+            GaffError::Missing { .. } => TypingError::MissingTerms { detail },
+        }
+    }
+}
+
 impl std::fmt::Display for GaffError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -485,7 +500,8 @@ impl std::error::Error for GaffError {}
 /// }
 ///
 /// let mut frame = typed.to_frame()?;
-/// let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None)?;
+/// let special = ff.special_bonds().ok_or("the force field states no special_bonds")?;
+/// let pairs = intramolecular_pairs(&frame, special, None)?;
 /// frame.insert("pairs", pairs);
 /// let potentials = PotentialCompiler::new(ff).compile(&frame)?;
 /// # Ok(())
@@ -543,7 +559,7 @@ impl std::error::Error for GaffError {}
 /// | phases in degrees | degrees |
 /// | one `PK` shared by `IDIVF` torsions | one `k` per torsion: `k = PK/IDIVF` |
 /// | R\*, half the LJ minimum separation | σ = 2·R\*/2^(1/6) |
-/// | an improper in AMBER's atom order, centre third | the same order (see [`ImproperPeriodic`](crate::ff::potential::improper::ImproperPeriodic)) |
+/// | an improper in AMBER's atom order, centre third | the same order (see [`improper::Periodic`](crate::ff::potential::improper::Periodic)) |
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GaffTypifier {
     set: GaffParameterSet,
@@ -604,7 +620,12 @@ impl GaffTypifier {
         let order: Vec<NodeId> = graph.atoms().map(|(id, _)| id).collect();
         let neighbours: Vec<Vec<NodeId>> = order
             .iter()
-            .map(|&a| graph.neighbor_bonds(a).map(|(n, _)| n).collect())
+            .map(|&a| {
+                graph
+                    .neighbors(a, NeighborKinds::BONDS)
+                    .map(|(n, _)| n)
+                    .collect()
+            })
             .collect();
         let names: HashMap<NodeId, &'static str> = type_of
             .iter()
@@ -796,8 +817,8 @@ impl Typifier for GaffTypifier {
     /// An atom that carries no [`keys::TYPE`]; a table that declares none of an
     /// atom's type, or covers — exactly, by wildcard or by estimate — none of a
     /// term, listing **every** such term; a graph that cannot be walked.
-    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
-        self.match_terms(graph).map_err(|e| e.to_string())
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
+        Ok(self.match_terms(graph)?)
     }
 
     /// The set's candidate library: every row of the table (wildcards
@@ -1225,7 +1246,7 @@ mod tests {
             lj: [0.0, 0.0, 0.5],
             coul: [0.0, 0.0, 1.0 / 1.2],
         };
-        assert_eq!(typing.forcefield().declared_special_bonds(), Some(&amber));
+        assert_eq!(typing.forcefield().special_bonds(), Some(&amber));
     }
 
     /// `gaff2.dat` declares `ow` and `hw` (MASS rows) but gives neither a NONBON
@@ -1237,7 +1258,8 @@ mod tests {
         let mut typing = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff2));
         let err = typing
             .typify(&water())
-            .expect_err("gaff2.dat has no NONBON row for ow or hw");
+            .expect_err("gaff2.dat has no NONBON row for ow or hw")
+            .to_string();
         for term in ["NONBON ow", "NONBON hw"] {
             assert!(
                 err.contains(term),
@@ -1254,7 +1276,8 @@ mod tests {
         let mut typing = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff));
         let err = typing
             .typify(&diatomic(("H", "hc"), ("Br", "br")))
-            .expect_err("parmchk2 has no analog for hc-br");
+            .expect_err("parmchk2 has no analog for hc-br")
+            .to_string();
         assert!(err.contains("BOND hc-br"), "{err}");
     }
 

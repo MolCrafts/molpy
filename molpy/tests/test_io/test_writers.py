@@ -9,7 +9,8 @@ import molpy as mp
 
 def _forcefield() -> mp.ff.forcefield.ForceField:
     """Two atom types and two bond types; ``c3-oh`` is used only by the template."""
-    ff = mp.ff.forcefield.ForceField("hand")
+    ff = mp.ff.forcefield.ForceField("hand", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
     oh = atoms.def_type("oh", mass=15.999)

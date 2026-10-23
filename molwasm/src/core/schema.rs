@@ -17,7 +17,7 @@ use crate::core::block::JsDType;
 ///
 /// ```js
 /// const doc = molrs.schemaDocument();
-/// doc.columns.find(c => c.key === "atomi").dtype;  // "uint"
+/// doc.columns.find(c => c.key === "atomi").dtype;  // "u64"
 /// ```
 #[wasm_bindgen(js_name = schemaDocument)]
 pub fn schema_document() -> Result<JsValue, JsValue> {
@@ -26,7 +26,7 @@ pub fn schema_document() -> Result<JsValue, JsValue> {
 }
 
 /// Declared dtype of a canonical column, named as `Block.dtype` and
-/// `schemaDocument()` name it (`"float"`, `"uint"`, `"string"`, …: core
+/// `schemaDocument()` name it (`"f64"`, `"u64"`, `"string"`, …: core
 /// `DType::name()`), so the three compare directly.
 ///
 /// Returns `undefined` when the key carries no declared dtype. That means the

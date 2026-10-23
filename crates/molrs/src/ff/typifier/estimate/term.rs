@@ -1,23 +1,19 @@
-//! The currency of the interpolation seam: one bonded term, named by its atoms.
+//! What GAFF's parmchk2 search asks about: one bonded term, named by its atoms.
 
 use molrs::core::TypeName;
 
 /// One bonded term awaiting parameters: its arity-tagged endpoint atom types.
 ///
-/// Handed to a [`ParameterInterpolator`](super::ParameterInterpolator) when no
-/// force-field table covers the term. Kept small and owned so an interpolator
-/// needs no access to the molecular graph.
+/// Built for a term no force-field row covers, so the estimate needs no access
+/// to the molecular graph.
 ///
 /// Proper terms ([`Bond`](Self::Bond), [`Angle`](Self::Angle),
 /// [`Dihedral`](Self::Dihedral)) are **reversal-symmetric** — `i-j-k-l` and
 /// `l-k-j-i` are the same term — and their slot order is the chain along the
 /// bonds. An [`Improper`](Self::Improper) is not: see its own note.
 ///
-/// [`BondedTerm`] is not an OPLS thing: it is the query
-/// type of the generic [`ParameterInterpolator`](super::ParameterInterpolator)
-/// seam, and GAFF speaks it too. A term is its **atom-type names**, in the order
-/// the force field writes them; which force field named them is not this type's
-/// business.
+/// A term is its **atom-type names**, in the order the force field writes
+/// them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BondedTerm {
     /// A bond: the two endpoint atom types.
@@ -28,7 +24,7 @@ pub enum BondedTerm {
     Dihedral([String; 4]),
     /// An improper: the four atom types with the **centre third** (`i-j-k-l`,
     /// `k` central), which is AMBER's slot order and the order
-    /// [`ImproperPeriodic`](crate::ff::potential::improper::ImproperPeriodic)
+    /// [`improper::Periodic`](crate::ff::potential::improper::Periodic)
     /// reads.
     ///
     /// The three peripherals are an unordered **set** — an improper is a

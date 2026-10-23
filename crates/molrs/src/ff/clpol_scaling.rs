@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use super::forcefield::{ForceField, StyleDefs};
+use super::forcefield::ForceField;
 use crate::op::centroid;
 
 const C0: f64 = 0.254_952;
@@ -165,13 +165,10 @@ pub fn scale_lj(
     }
     let mut edits: Vec<PairEdit> = Vec::new();
     for style in output.get_styles("pair") {
-        let StyleDefs::Pair(types) = style.defs() else {
-            continue;
-        };
-        for pair in types {
+        for pair in style.defs().types() {
             let (Some(fi), Some(fj)) = (
-                type_to_fragment.get(&pair.itom),
-                type_to_fragment.get(&pair.jtom),
+                type_to_fragment.get(&pair.endpoints[0]),
+                type_to_fragment.get(&pair.endpoints[1]),
             ) else {
                 continue;
             };
@@ -336,7 +333,7 @@ mod tests {
     #[test]
     fn output_keeps_the_input_special_bonds() {
         let out = scale_lj(&input_ff(), &fragments(), &scaling(), false).unwrap();
-        assert_eq!(*out.special_bonds(), INPUT_SPECIAL_BONDS);
+        assert_eq!(*out.special_bonds().unwrap(), INPUT_SPECIAL_BONDS);
     }
 
     /// Declared state is carried as declared, not re-derived from the
@@ -348,10 +345,10 @@ mod tests {
 
         let out = scale_lj(&ff, &fragments(), &scaling(), false).unwrap();
 
-        assert_eq!(out.declared_units(), ff.declared_units());
-        assert_eq!(out.declared_units(), Some("metal"));
-        assert_eq!(out.declared_special_bonds(), ff.declared_special_bonds());
-        assert_eq!(out.declared_special_bonds(), Some(&INPUT_SPECIAL_BONDS));
+        assert_eq!(out.units(), ff.units());
+        assert_eq!(out.units(), Some("metal"));
+        assert_eq!(out.special_bonds(), ff.special_bonds());
+        assert_eq!(out.special_bonds(), Some(&INPUT_SPECIAL_BONDS));
     }
 
     #[test]

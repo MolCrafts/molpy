@@ -1,10 +1,12 @@
 //! [`FrameRef`] and [`BlockRef`]: a handle paired with the
 //! [`FrameArenaCell`] that owns its frame.
 //!
-//! Every language binding (wasm, python, capi, cxx) holds one of these and
-//! forwards every access through the helpers defined here. The bindings stay thin (attribute macros + name mapping) and the
-//! canonical schema lookup / dtype dispatch / slice borrowing live in one
-//! place.
+//! The Python (`molpy`), WebAssembly (`molwasm`) and C++ (`molcxx`)
+//! bindings hold one of these for a frame and forward every access through
+//! the helpers defined here, so frame schema lookup, dtype dispatch and slice
+//! borrowing live in one place. The C API (`molc`) keeps its own handle
+//! registry over these frames for boxes, force fields and regions, and its
+//! own dtype codes.
 //!
 //! ## Access semantics
 //!

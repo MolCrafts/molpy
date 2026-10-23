@@ -859,7 +859,7 @@ fn compute_bspline_moduli(grid_size: usize, order: usize) -> Vec<F> {
 /// Constructor for the kernel registry.
 ///
 /// **`style_params`** keys — exactly the spec's: `alpha`, `cutoff`,
-/// `grid_x`, `grid_y`, `grid_z`, `order`, `coulomb`.
+/// `grid_x`, `grid_y`, `grid_z`, `order`, `coulomb`, `dielectric`.
 ///
 /// **`frame`**:
 /// - its box ([`Frame::simbox`]): periodic in all three directions, the cell
@@ -893,7 +893,9 @@ pub fn pair_coul_long_pme_constructor(
     let grid_y = count("grid_y")?;
     let grid_z = count("grid_z")?;
     let order = count("order")?;
-    let coulomb = get("coulomb")?;
+    // The prefactor every PME term is priced in: `coulomb / dielectric`,
+    // LAMMPS's `qqrd2e`.
+    let coulomb = get("coulomb")? / get("dielectric")?;
 
     // Read charges from Frame's "atoms" block
     let atoms = frame
@@ -1207,12 +1209,13 @@ mod tests {
         }
     }
 
-    // --- Integration test: PME + PairLjCut in Potentials ---
+    // --- Integration test: PME + a compiled lj/cut in Potentials ---
 
     #[test]
     fn test_pme_in_potentials_collection() {
+        use crate::ff::compile::ExplicitTerms;
+        use crate::ff::ir::Params;
         use crate::ff::potential::Potentials;
-        use crate::ff::potential::pair::PairLjCut;
 
         let box_l: F = 10.0;
         let params = PairCoulLongPmeParams {
@@ -1225,7 +1228,13 @@ mod tests {
         let charges = vec![0.5, -0.5];
         let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), vec![]);
 
-        let lj = PairLjCut::compiled(vec![0], vec![1], vec![1.0], vec![1.0]);
+        let lj = ExplicitTerms::new("pair", "lj/cut")
+            .term(
+                &[0, 1],
+                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
+            )
+            .compile()
+            .unwrap();
 
         let mut pots = Potentials::new();
         pots.push(ForceTerm::plain(pme));
@@ -1280,11 +1289,13 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert(ATOMS, atoms);
         let mut ff = ForceField::new("pme");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style(
             "pair",
             "coul/long/pme",
             Params::from_iter([
                 ("coulomb", 332.06371),
+                ("dielectric", 1.0),
                 ("cutoff", 4.5),
                 ("alpha", 0.35),
                 ("order", 4.0),

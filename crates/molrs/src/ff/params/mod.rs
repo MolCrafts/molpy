@@ -427,7 +427,7 @@ pub struct ParmMassRow {
 /// One `BOND` row: `E = force_constant · (r − length)²`.
 ///
 /// That is **AMBER's** convention and it carries no ½ — unlike molrs's
-/// [`BondHarmonic`](crate::ff::potential::bond::BondHarmonic), whose
+/// [`bond::Harmonic`](crate::ff::potential::bond::Harmonic), whose
 /// `k` is `2 · force_constant`. The factor is applied where the units are
 /// normalised (the [`GaffTypifier`](crate::ff::typifier::GaffTypifier) candidate library), never here:
 /// this row is what the file says.

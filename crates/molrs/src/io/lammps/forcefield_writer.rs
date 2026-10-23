@@ -3,11 +3,7 @@ use crate::io::Sink;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::ff::forcefield::{
-    AngleType, BondType, CmapType, DihedralType, ForceField, ImproperType, PairType, Style,
-    StyleDefs,
-};
-use crate::ff::ir::Params;
+use crate::ff::forcefield::{ForceField, Style, TypeDef};
 use crate::ff::ir::{
     Engine, LammpsCodec, LammpsCoeffs, ParamCombination, StyleSpec, Token, UnitScale,
 };
@@ -27,9 +23,10 @@ const CMAP_FIX_ID: &str = "cmap";
 /// field in a unit system LAMMPS has no `units` style for is refused only
 /// when it would need converting.
 fn units_of(ff: &ForceField, to: &'static str) -> Result<UnitScale, String> {
-    let from = match parse_lammps_units_style(ff.units()) {
+    let units = ff.required_units()?;
+    let from = match parse_lammps_units_style(units) {
         Ok(from) => from,
-        Err(_) if ff.units() == to => return Ok(UnitScale::IDENTITY),
+        Err(_) if units == to => return Ok(UnitScale::IDENTITY),
         Err(e) => return Err(format!("force field units: {e}")),
     };
     LammpsUnitConverter::canonical()
@@ -96,7 +93,7 @@ fn lammps_name(spec: &StyleSpec) -> String {
 pub(crate) fn lammps_coeff_values(
     category: &str,
     style: &str,
-    params: &Params,
+    params: &crate::ff::ir::Params,
     units: &str,
 ) -> Result<Vec<f64>, ForceFieldWriteError> {
     parse_lammps_units_style(units)?;
@@ -121,179 +118,55 @@ fn render(tokens: &[Token], precision: usize) -> String {
 }
 
 /// A bonded type category the writer emits coefficients for.
-trait BondedCoeff: Sized {
+#[derive(Clone, Copy)]
+struct Bonded {
     /// Style category, and the LAMMPS command prefix (`bond_style`, `bond_coeff`).
-    const CATEGORY: &'static str;
+    category: &'static str,
     /// The [`TypeLabels`] block holding this category's labels.
-    const BLOCK: &'static str;
+    block: &'static str,
     /// Data-file section heading.
-    const HEADING: &'static str;
-
-    /// The types of this category `defs` holds, or `None` for another category.
-    fn types_of(defs: &StyleDefs) -> Option<&[Self]>;
-
-    /// The stored type name.
-    fn name(&self) -> &str;
-
-    /// The stored endpoint atom types, in slot order.
-    fn endpoints(&self) -> Vec<&str>;
-
-    /// The stored params, rendered by [`lammps_coeff_values`]'s conversion.
-    fn params(&self) -> &Params;
+    heading: &'static str,
 }
 
-impl BondedCoeff for BondType {
-    const CATEGORY: &'static str = "bond";
-    const BLOCK: &'static str = "bonds";
-    const HEADING: &'static str = "Bond Coeffs";
-
-    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
-        match defs {
-            StyleDefs::Bond(types) => Some(types),
-            _ => None,
-        }
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn endpoints(&self) -> Vec<&str> {
-        vec![self.itom.as_str(), self.jtom.as_str()]
-    }
-
-    fn params(&self) -> &Params {
-        &self.params
-    }
-}
-
-impl BondedCoeff for AngleType {
-    const CATEGORY: &'static str = "angle";
-    const BLOCK: &'static str = "angles";
-    const HEADING: &'static str = "Angle Coeffs";
-
-    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
-        match defs {
-            StyleDefs::Angle(types) => Some(types),
-            _ => None,
-        }
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn endpoints(&self) -> Vec<&str> {
-        vec![self.itom.as_str(), self.jtom.as_str(), self.ktom.as_str()]
-    }
-
-    fn params(&self) -> &Params {
-        &self.params
-    }
-}
-
-impl BondedCoeff for DihedralType {
-    const CATEGORY: &'static str = "dihedral";
-    const BLOCK: &'static str = "dihedrals";
-    const HEADING: &'static str = "Dihedral Coeffs";
-
-    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
-        match defs {
-            StyleDefs::Dihedral(types) => Some(types),
-            _ => None,
-        }
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn endpoints(&self) -> Vec<&str> {
-        vec![
-            self.itom.as_str(),
-            self.jtom.as_str(),
-            self.ktom.as_str(),
-            self.ltom.as_str(),
-        ]
-    }
-
-    fn params(&self) -> &Params {
-        &self.params
-    }
-}
-
-impl BondedCoeff for ImproperType {
-    const CATEGORY: &'static str = "improper";
-    const BLOCK: &'static str = "impropers";
-    const HEADING: &'static str = "Improper Coeffs";
-
-    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
-        match defs {
-            StyleDefs::Improper(types) => Some(types),
-            _ => None,
-        }
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn endpoints(&self) -> Vec<&str> {
-        vec![
-            self.itom.as_str(),
-            self.jtom.as_str(),
-            self.ktom.as_str(),
-            self.ltom.as_str(),
-        ]
-    }
-
-    fn params(&self) -> &Params {
-        &self.params
-    }
-}
-
-impl BondedCoeff for CmapType {
-    const CATEGORY: &'static str = "cmap";
-    const BLOCK: &'static str = "cmaps";
-    const HEADING: &'static str = "CMAP";
-
-    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
-        match defs {
-            StyleDefs::Cmap(types) => Some(types),
-            _ => None,
-        }
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn endpoints(&self) -> Vec<&str> {
-        vec![
-            self.itom.as_str(),
-            self.jtom.as_str(),
-            self.ktom.as_str(),
-            self.ltom.as_str(),
-            self.mtom.as_str(),
-        ]
-    }
-
-    fn params(&self) -> &Params {
-        &self.params
-    }
-}
+const BOND: Bonded = Bonded {
+    category: "bond",
+    block: "bonds",
+    heading: "Bond Coeffs",
+};
+const ANGLE: Bonded = Bonded {
+    category: "angle",
+    block: "angles",
+    heading: "Angle Coeffs",
+};
+const DIHEDRAL: Bonded = Bonded {
+    category: "dihedral",
+    block: "dihedrals",
+    heading: "Dihedral Coeffs",
+};
+const IMPROPER: Bonded = Bonded {
+    category: "improper",
+    block: "impropers",
+    heading: "Improper Coeffs",
+};
+const CMAP: Bonded = Bonded {
+    category: "cmap",
+    block: "cmaps",
+    heading: "CMAP",
+};
 
 /// A bonded label resolved to the style and type that define it.
-struct Resolved<'f, T> {
+struct Resolved<'f> {
+    /// The category the label is of.
+    kind: Bonded,
     /// 1-based type id (label order).
     id: usize,
     /// The label as written: the type's name.
     label: String,
     style: &'f Style,
-    ty: &'f T,
+    ty: &'f TypeDef,
 }
 
-impl<T: BondedCoeff> Resolved<'_, T> {
+impl Resolved<'_> {
     /// The LAMMPS style name and the coefficient lines of the resolved type;
     /// an error names the label.
     fn coeffs(
@@ -302,14 +175,14 @@ impl<T: BondedCoeff> Resolved<'_, T> {
         units: &UnitScale,
     ) -> Result<(String, LammpsCoeffs), ForceFieldWriteError> {
         let at = |e: ForceFieldWriteError| {
-            e.context(format_args!("{} label `{}`", T::BLOCK, self.label))
+            e.context(format_args!("{} label `{}`", self.kind.block, self.label))
         };
-        let (spec, codec) = codec_of(reg, T::CATEGORY, self.style.name()).map_err(at)?;
+        let (spec, codec) = codec_of(reg, self.kind.category, self.style.name()).map_err(at)?;
         codec
             .check_style(spec, self.style.params())
             .map_err(|e| at(e.into()))?;
         let coeffs = codec
-            .write(spec, self.ty.params(), units)
+            .write(spec, &self.ty.params, units)
             .map_err(|e| at(e.into()))?;
         Ok((lammps_name(spec), coeffs))
     }
@@ -322,7 +195,7 @@ struct PairRow<'f> {
     ids: (usize, usize),
     labels: (&'f str, &'f str),
     style: &'f Style,
-    ty: &'f PairType,
+    ty: &'f TypeDef,
 }
 
 impl PairRow<'_> {
@@ -592,10 +465,10 @@ impl<'a> LammpsForcefieldWriter<'a> {
             refuse_other_categories(ff, reg)?;
             let mut lines: Vec<String> = Vec::new();
             self.write_data_pair_coeffs(&mut lines, ff, reg, &units)?;
-            self.write_data_section::<BondType>(&mut lines, ff, reg, &units)?;
-            self.write_data_section::<AngleType>(&mut lines, ff, reg, &units)?;
-            self.write_data_section::<DihedralType>(&mut lines, ff, reg, &units)?;
-            self.write_data_section::<ImproperType>(&mut lines, ff, reg, &units)?;
+            self.write_data_section(&mut lines, BOND, ff, reg, &units)?;
+            self.write_data_section(&mut lines, ANGLE, ff, reg, &units)?;
+            self.write_data_section(&mut lines, DIHEDRAL, ff, reg, &units)?;
+            self.write_data_section(&mut lines, IMPROPER, ff, reg, &units)?;
             Ok(lines.concat())
         })
     }
@@ -629,7 +502,7 @@ impl<'a> LammpsForcefieldWriter<'a> {
     /// The file [`write_cmap`](Self::write_cmap) writes.
     fn cmap_text(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
         let units = units_of(ff, self.options.units)?;
-        let rows = self.resolve::<CmapType>(ff)?;
+        let rows = self.resolve(ff, CMAP)?;
         if rows.is_empty() {
             return Err("cmaps: the system has no CMAP crossterm labels".into());
         }
@@ -685,7 +558,7 @@ impl<'a> LammpsForcefieldWriter<'a> {
         lines: &mut Vec<String>,
         ff: &ForceField,
     ) -> Result<(), ForceFieldWriteError> {
-        if self.resolve::<CmapType>(ff)?.is_empty() {
+        if self.resolve(ff, CMAP)?.is_empty() {
             return Ok(());
         }
         let file = self.options.cmap_file.as_deref().ok_or(
@@ -719,20 +592,21 @@ impl<'a> LammpsForcefieldWriter<'a> {
         }
     }
 
-    /// Every label of `T::BLOCK` resolved to its type, in id order. The first
-    /// style (in force-field order) defining a name wins.
-    fn resolve<'f, T: BondedCoeff>(
+    /// Every label of `kind`'s block resolved to its type, in id order. The
+    /// first style (in force-field order) defining a name wins.
+    fn resolve<'f>(
         &self,
         ff: &'f ForceField,
-    ) -> Result<Vec<Resolved<'f, T>>, ForceFieldWriteError> {
-        let labels = self.block_labels(T::BLOCK);
+        kind: Bonded,
+    ) -> Result<Vec<Resolved<'f>>, ForceFieldWriteError> {
+        let labels = self.block_labels(kind.block);
         if labels.is_empty() {
             return Ok(Vec::new());
         }
-        let mut by_name: HashMap<&'f str, (&'f Style, &'f T)> = HashMap::new();
-        for style in ff.get_styles(T::CATEGORY) {
-            for ty in T::types_of(style.defs()).unwrap_or_default() {
-                by_name.entry(ty.name()).or_insert((style, ty));
+        let mut by_name: HashMap<&'f str, (&'f Style, &'f TypeDef)> = HashMap::new();
+        for style in ff.get_styles(kind.category) {
+            for ty in style.defs().types() {
+                by_name.entry(ty.name.as_str()).or_insert((style, ty));
             }
         }
         labels
@@ -742,26 +616,27 @@ impl<'a> LammpsForcefieldWriter<'a> {
                 let &(style, ty) = by_name.get(label.as_str()).ok_or_else(|| {
                     let mut message = format!(
                         "{}: type label `{label}` has no {} type in the force field",
-                        T::BLOCK,
-                        T::CATEGORY
+                        kind.block, kind.category
                     );
                     // A label matches a name exactly, orientation included; the
                     // likeliest cause is the other spelling, so name it when it
                     // is the one defined.
                     let other_way = by_name.values().find(|(_, ty)| {
-                        let reversed: Vec<&str> = ty.endpoints().into_iter().rev().collect();
+                        let reversed: Vec<&str> =
+                            ty.endpoints.iter().rev().map(String::as_str).collect();
                         TypeName::join(&reversed).is_ok_and(|n| n.as_str() == label)
                     });
                     if let Some((_, defined)) = other_way {
                         message.push_str(&format!(
                             " (`{}` is defined on the same atom types read the other way; a \
                              label matches a type name exactly, orientation included)",
-                            defined.name()
+                            defined.name
                         ));
                     }
                     message
                 })?;
                 Ok(Resolved {
+                    kind,
                     id: i + 1,
                     label: label.clone(),
                     style,
@@ -793,18 +668,17 @@ impl<'a> LammpsForcefieldWriter<'a> {
             .collect();
         let mut rows: BTreeMap<(usize, usize), PairRow<'f>> = BTreeMap::new();
         for style in ff.get_styles("pair") {
-            let StyleDefs::Pair(types) = style.defs() else {
-                continue;
-            };
-            for ty in types {
-                let (Some(&i), Some(&j)) = (ids.get(ty.itom.as_str()), ids.get(ty.jtom.as_str()))
-                else {
+            for ty in style.defs().types() {
+                let (Some(&i), Some(&j)) = (
+                    ids.get(ty.endpoints[0].as_str()),
+                    ids.get(ty.endpoints[1].as_str()),
+                ) else {
                     continue;
                 };
                 let (key, labels) = if i <= j {
-                    ((i, j), (ty.itom.as_str(), ty.jtom.as_str()))
+                    ((i, j), (ty.endpoints[0].as_str(), ty.endpoints[1].as_str()))
                 } else {
-                    ((j, i), (ty.jtom.as_str(), ty.itom.as_str()))
+                    ((j, i), (ty.endpoints[1].as_str(), ty.endpoints[0].as_str()))
                 };
                 rows.entry(key).or_insert(PairRow {
                     ids: key,
@@ -1060,14 +934,15 @@ impl<'a> LammpsForcefieldWriter<'a> {
     /// line is `T_style hybrid <sub-style>…` and each coefficient line names
     /// its sub-style, as LAMMPS reads them. A style's cross-term lines follow
     /// its type's line.
-    fn write_section<T: BondedCoeff>(
+    fn write_section(
         &self,
         lines: &mut Vec<String>,
+        kind: Bonded,
         ff: &ForceField,
         reg: &Registry,
         units: &UnitScale,
     ) -> Result<(), ForceFieldWriteError> {
-        let used = self.resolve::<T>(ff)?;
+        let used = self.resolve(ff, kind)?;
         if used.is_empty() {
             return Ok(());
         }
@@ -1078,7 +953,7 @@ impl<'a> LammpsForcefieldWriter<'a> {
         let subs = distinct(coeffs.iter().map(|(name, _)| name.as_str()));
         let hybrid = subs.len() > 1;
         let p = self.options.precision;
-        lines.push(format!("{}_style {}\n", T::CATEGORY, style_line(&subs)));
+        lines.push(format!("{}_style {}\n", kind.category, style_line(&subs)));
         for (r, (name, c)) in used.iter().zip(&coeffs) {
             let sub = if hybrid {
                 format!("{name} ")
@@ -1087,14 +962,14 @@ impl<'a> LammpsForcefieldWriter<'a> {
             };
             lines.push(format!(
                 "{}_coeff {} {sub}{}\n",
-                T::CATEGORY,
+                kind.category,
                 r.label,
                 render(&c.values, p)
             ));
             for (keyword, values) in &c.extra {
                 lines.push(format!(
                     "{}_coeff {} {sub}{keyword} {}\n",
-                    T::CATEGORY,
+                    kind.category,
                     r.label,
                     render(values, p)
                 ));
@@ -1128,14 +1003,15 @@ impl<'a> LammpsForcefieldWriter<'a> {
         Ok(())
     }
 
-    fn write_data_section<T: BondedCoeff>(
+    fn write_data_section(
         &self,
         lines: &mut Vec<String>,
+        kind: Bonded,
         ff: &ForceField,
         reg: &Registry,
         units: &UnitScale,
     ) -> Result<(), ForceFieldWriteError> {
-        let used = self.resolve::<T>(ff)?;
+        let used = self.resolve(ff, kind)?;
         let coeffs = used
             .iter()
             .map(|r| r.coeffs(reg, units))
@@ -1157,8 +1033,7 @@ impl<'a> LammpsForcefieldWriter<'a> {
                     return Err(format!(
                         "{} label `{}`: its `{keyword}` cross-term line in a hybrid data-file \
                          section has no form this writer writes (write the *.ff include)",
-                        T::BLOCK,
-                        r.label
+                        kind.block, r.label
                     )
                     .into());
                 }
@@ -1171,10 +1046,10 @@ impl<'a> LammpsForcefieldWriter<'a> {
         // The `# style` comment is how `read_data_coeffs` (and LAMMPS's own
         // `write_data`) knows which style the numbers are; without it a reader
         // falls back to `harmonic`.
-        let heading = format!("{} # {}", T::HEADING, style_hint(&subs));
+        let heading = format!("{} # {}", kind.heading, style_hint(&subs));
         push_data_section(lines, &heading, section);
         for (heading, category, keyword) in CROSS_TERM_SECTIONS {
-            if category == T::CATEGORY
+            if category == kind.category
                 && let Some(rows) = cross.remove(keyword)
             {
                 push_data_section(lines, heading, rows);
@@ -1211,8 +1086,13 @@ impl LammpsForcefieldWriter<'_> {
         // own (`skip_special_bonds`): emitted over an input's 0.5, Amber's
         // 1/SCEE is what made PEO-Tg jobs run coul 1-4 = 0.8333. Skipping the
         // `pair_style` line does not skip them — LAMMPS's default is `0 0 0`.
-        if !self.options.skip_special_bonds {
-            let sb = ff.special_bonds();
+        // A field with no pair style has no pair weights to state.
+        let weights = if ff.get_styles("pair").is_empty() {
+            ff.special_bonds()
+        } else {
+            Some(ff.required_special_bonds()?)
+        };
+        if let (false, Some(sb)) = (self.options.skip_special_bonds, weights) {
             let p = self.options.precision;
             lines.push(format!(
                 "special_bonds lj {} {} {} coul {} {} {}\n",
@@ -1230,18 +1110,18 @@ impl LammpsForcefieldWriter<'_> {
             let springs = drude_springs_as_bonds(ff)?;
             refuse_other_categories(&springs, reg)?;
             self.write_pair_section(&mut lines, &springs, reg, &units)?;
-            self.write_section::<BondType>(&mut lines, &springs, reg, &units)?;
+            self.write_section(&mut lines, BOND, &springs, reg, &units)?;
             lines.extend(drude_note(
                 ff,
-                &self.block_labels(BondType::BLOCK),
+                &self.block_labels(BOND.block),
                 reg,
                 &units,
                 self.options.precision,
             )?);
             let ff = &*springs;
-            self.write_section::<AngleType>(&mut lines, ff, reg, &units)?;
-            self.write_section::<DihedralType>(&mut lines, ff, reg, &units)?;
-            self.write_section::<ImproperType>(&mut lines, ff, reg, &units)
+            self.write_section(&mut lines, ANGLE, ff, reg, &units)?;
+            self.write_section(&mut lines, DIHEDRAL, ff, reg, &units)?;
+            self.write_section(&mut lines, IMPROPER, ff, reg, &units)
         })?;
         Ok(lines.concat())
     }
@@ -1288,7 +1168,7 @@ fn refuse_other_categories(ff: &ForceField, reg: &Registry) -> Result<(), ForceF
 
 /// Whether a pair style holds types (a Coulomb style holds none).
 fn typed(style: &Style) -> bool {
-    matches!(style.defs(), StyleDefs::Pair(types) if !types.is_empty())
+    !style.defs().types().is_empty()
 }
 
 /// The distinct names, in first-use order. Two molrs styles LAMMPS spells
@@ -1395,6 +1275,7 @@ fn fmt_num(v: f64, precision: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::ir::Params;
     use crate::io::writer::WrittenText;
 
     /// What `writer` writes as a data file's `* Coeffs` sections.
@@ -1452,6 +1333,8 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     #[test]
     fn a_bonded_only_field_writes_without_pair_rows() {
         let mut ff = ForceField::new("bonded");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type(
@@ -1519,9 +1402,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         assert!((bt.params.get("r0").and_then(|v| v.as_num()).unwrap() - 1.5354).abs() < 1e-9);
 
         let angle = ff2.get_style("angle", "harmonic").unwrap();
-        let StyleDefs::Angle(atypes) = angle.defs() else {
-            panic!("not angle");
-        };
+        let atypes = angle.defs().types();
         let at = &atypes[0];
         assert_eq!(at.params.get("k").and_then(|v| v.as_num()), Some(76.79));
         assert_eq!(
@@ -1530,9 +1411,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         );
 
         let dih = ff2.get_style("dihedral", "periodic").unwrap();
-        let StyleDefs::Dihedral(dtypes) = dih.defs() else {
-            panic!("not dihedral");
-        };
+        let dtypes = dih.defs().types();
         let dt = &dtypes[0];
         assert!((dt.params.get("k1").and_then(|v| v.as_num()).unwrap() - 0.06).abs() < 1e-12);
         assert!(
@@ -1777,7 +1656,7 @@ pair_coeff c3 c3 0.107800 3.397710
     #[test]
     fn metal_write_converts_energy_via_lj_hub() {
         let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
-        assert_eq!(ff.units(), "real");
+        assert_eq!(ff.units(), Some("real"));
         let labels = mini_labels();
         let text = LammpsForcefieldWriter::new(&labels)
             .with_units("metal")
@@ -1800,7 +1679,7 @@ pair_coeff c3 c3 0.107800 3.397710
         // The metal file reads as a metal force field, number for number, and
         // writes back unchanged.
         let ff2 = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
-        assert_eq!(ff2.units(), "metal");
+        assert_eq!(ff2.units(), Some("metal"));
         let again = LammpsForcefieldWriter::new(&labels)
             .with_units("metal")
             .written(&ff2)
@@ -1871,6 +1750,8 @@ pair_coeff c3 c3 0.107800 3.397710
     /// ε/σ for `c3`, `hc` and `oh`, and harmonic bonds `c3-hc`, `c3-oh`.
     fn split_pair_ff() -> ForceField {
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
             .unwrap()
             .def_type("c3", &["c3"], lj(0.1078, 3.39771))
@@ -1919,6 +1800,8 @@ pair_coeff c3 c3 0.107800 3.397710
             params.set("mixing", rule);
         }
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", params)
             .unwrap()
             .def_type("c3", &["c3"], lj(0.1078, 3.39771))
@@ -2058,6 +1941,8 @@ pair_coeff c3 c3 0.107800 3.397710
     /// degrees.
     fn improper_ff() -> ForceField {
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("improper", "harmonic", Params::new())
             .unwrap()
             .def_type(
@@ -2095,6 +1980,8 @@ pair_coeff c3 c3 0.107800 3.397710
     /// AMBER `improper periodic`: `k` kcal/mol, integer `periodicity`, `phase` deg.
     fn periodic_improper_ff(phase: f64) -> ForceField {
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("improper", "periodic", Params::new())
             .unwrap()
             .def_type(
@@ -2151,6 +2038,8 @@ pair_coeff c3 c3 0.107800 3.397710
         // ForceField order: oh, hc, c3 / c3-oh, c3-hc. Label order (sorted):
         // c3=1, hc=2, oh=3 / c3-hc=1, c3-oh=2.
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
             .unwrap()
             .def_type("oh", &["oh"], lj(0.093, 3.242871))
@@ -2201,6 +2090,8 @@ pair_coeff c3 c3 0.107800 3.397710
     #[test]
     fn a_pair_style_without_a_cutoff_is_refused_not_defaulted() {
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "lj/cut", Params::new())
             .unwrap()
             .def_type("c3", &["c3"], lj(0.1078, 3.39771))
@@ -2273,6 +2164,8 @@ pair_coeff c3 c3 0.107800 3.397710
     /// `c3-oh` on `c3`, `oh`.
     fn ff_with_fene() -> ForceField {
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type("c3-hc", &["c3", "hc"], bond(340.0, 1.09))
@@ -2337,6 +2230,8 @@ pair_coeff c3 c3 0.107800 3.397710
     #[test]
     fn label_writer_matches_labels_to_type_names_exactly() {
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type("c3-h1", &["c3", "h1"], bond(340.0, 1.09))
@@ -2402,6 +2297,8 @@ pair_coeff c3 c3 0.107800 3.397710
     #[test]
     fn pair_style_without_writable_coeffs_is_err_naming_style() {
         let mut ff = ForceField::new("hand");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("pair", "thole", Params::from_iter([("cutoff", 12.0)]))
             .unwrap()
             .def_type(
@@ -2646,9 +2543,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             .read(UB_HYBRID.as_bytes())
             .unwrap();
         let ub = ff.get_style("angle", "charmm").unwrap();
-        let StyleDefs::Angle(types) = ub.defs() else {
-            panic!("an angle style");
-        };
+        let types = ub.defs().types();
         let t = types.iter().find(|t| t.name == "HA-CT-CT").unwrap();
         for (key, want) in [
             ("k", 33.43),
@@ -2728,11 +2623,12 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         let back = LammpsForcefieldReader::new()
             .read_data_sections(&data, &maps, "real")
             .unwrap();
-        let angles = |ff: &ForceField, style: &str| -> Vec<AngleType> {
-            match ff.get_style("angle", style).unwrap().defs() {
-                StyleDefs::Angle(types) => types.clone(),
-                _ => panic!("an angle style"),
-            }
+        let angles = |ff: &ForceField, style: &str| -> Vec<TypeDef> {
+            ff.get_style("angle", style)
+                .unwrap()
+                .defs()
+                .types()
+                .to_vec()
         };
         for style in ["charmm", "harmonic"] {
             assert_eq!(angles(&back, style), angles(&ff, style), "{style}");
@@ -2780,6 +2676,8 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
 
     fn cmap_ff(grids: &[(&str, ArrayD<f64>)]) -> ForceField {
         let mut ff = ForceField::new("charmm");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
         for (name, grid) in grids {
             let mut params = Params::new();
@@ -2839,7 +2737,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         let path = dir.path().join("sys.ff");
         std::fs::write(&path, include.replace("\n\n", "\nspecial_bonds charmm\n\n")).unwrap();
         let back = LammpsForcefieldReader::new().read(path.as_path()).unwrap();
-        let rows = back.get_cmaptypes();
+        let rows = back.get_types("cmap");
         assert_eq!(rows.len(), 2);
         assert_eq!(
             rows[0].params.get("grid").and_then(|v| v.as_array()),
@@ -2987,6 +2885,8 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
 
     fn drude_ff() -> ForceField {
         let mut ff = ForceField::new("clpol");
+        ff.set_units("real");
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type("CT-HC", &["CT", "HC"], bond(340.0, 1.09))

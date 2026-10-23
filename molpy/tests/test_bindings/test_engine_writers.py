@@ -164,7 +164,9 @@ def _concat() -> mp.core.Frame:
 
 def test_the_lammps_data_writer_refuses_a_null_id_and_numbers_a_missing_one() -> None:
     frame = _concat()
-    with pytest.raises(OSError, match=r"atoms\.id is null in 2 of 5 rows \(rows 3-4"):
+    with pytest.raises(
+        ValueError, match=r"atoms\.id is null in 2 of 5 rows \(rows 3-4"
+    ):
         capture(mp.io.write_lammps_data, frame)
     del frame["atoms"]["id"]
     text = capture(mp.io.write_lammps_data, frame)
@@ -176,13 +178,15 @@ def test_a_null_charge_is_refused_by_column_and_rows() -> None:
     frame = _concat()
     del frame["atoms"]["id"]
     frame["atoms"].set_validity("charge", [True, True, True, False, True])
-    with pytest.raises(OSError, match=r"atoms\.charge is null in 1 of 5 rows \(row 3"):
+    with pytest.raises(
+        ValueError, match=r"atoms\.charge is null in 1 of 5 rows \(row 3"
+    ):
         capture(mp.io.write_lammps_data, frame)
 
 
 def test_gro_and_pdb_generate_unset_names_and_residues() -> None:
     frame = _concat()
-    with pytest.raises(OSError, match=r"atoms\.id is null"):
+    with pytest.raises(ValueError, match=r"atoms\.id is null"):
         capture(mp.io.write_gro, frame)
     del frame["atoms"]["id"]
     lines = capture(mp.io.write_gro, frame).splitlines()[2:7]

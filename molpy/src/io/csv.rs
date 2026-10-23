@@ -1,10 +1,11 @@
 //! `molpy.io.read_csv_block` / `write_csv_block` — `molrs::io`'s CSV doors
 //! of the same names: a `Block` to and from CSV.
 
+use crate::error::io_error_to_pyerr;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use super::{PySink, PySource, data_error};
+use super::{PySink, PySource};
 use crate::core::block::PyBlock;
 
 // These read and write a store container rather than a molecular file
@@ -61,7 +62,7 @@ pub fn read_csv_block(
     let delimiter = delimiter_char(delimiter)?;
     let block = source
         .read(|s| molrs::io::read_csv_block(s, delimiter, header.as_deref()))
-        .map_err(data_error)?;
+        .map_err(io_error_to_pyerr)?;
     PyBlock::from_core_block(block)
 }
 
@@ -98,7 +99,7 @@ pub fn write_csv_block(
     block.with_block(|b| {
         sink.put(
             |s| molrs::io::write_csv_block(s, b, delimiter, header),
-            data_error,
+            io_error_to_pyerr,
         )
     })?
 }

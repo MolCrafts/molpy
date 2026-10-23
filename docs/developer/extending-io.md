@@ -1,30 +1,34 @@
 # Adding an I/O Format
 
 `mp.io` has one door per format and direction, named after the format:
-`read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` for a path (`read_pdb`,
-`read_lammps_data`, `read_top_forcefield`), `_str` for text in memory
-(`read_smiles_str`), `_bytes` for bytes and `_trajectory` for every frame of a
-multi-frame file. No door picks a format for the caller from a file
-extension. There are no reader or writer classes to subclass. Parsing and serialization belong in the
-native core (molrs): every function on `mp.io` is native, force-field formats
-included (`mp.ff.forcefield` is the `ForceField` data model only). A class
-that belongs to one format lives in that format's submodule (`mp.io.smiles`,
+`read_<fmt>(source)` / `write_<fmt>(sink, frame)` for one frame (`read_pdb`,
+`read_lammps_data`). A source is an `os.PathLike`, `bytes` or
+`mp.io.Text(text)` — a bare `str` is refused, being ambiguous between a path
+and text — and a sink an `os.PathLike` or a `bytearray`. Every frame of a
+multi-frame file is read by the `<Fmt>Reader` class of the format's submodule
+(`mp.io.pdb.PdbReader`), and a force-field format has a reader and a writer
+class (`mp.io.gromacs.GromacsTopForcefieldReader`). No door picks a format for
+the caller from a file extension. There are no reader or writer base classes
+to subclass. Parsing and serialization belong in the native core (molrs):
+every door on `mp.io` is native, force-field formats included
+(`mp.ff.forcefield` is the `ForceField` data model only). A class that
+belongs to one format lives in that format's submodule (`mp.io.smiles`,
 `mp.io.lammps`, `mp.io.mrec`, …).
 
 ## A new format goes into molrs
 
 Add the parser and writer to molrs and bind them in the Python binding
-(`molpy/src/io/`): a function at the top of `mp.io` (`read_<fmt>` /
-`write_<fmt>`, force-field formats included), a class in a `mp.io.<fmt>`
-submodule. A new function is listed in `molpy/molpy/io/__init__.py`'s import
+(`molpy/src/io/`): a one-frame door at the top of `mp.io` (`read_<fmt>` /
+`write_<fmt>`), and the format's classes — multi-frame reader and writer,
+force-field reader and writer — in a `mp.io.<fmt>` submodule. A new function is listed in `molpy/molpy/io/__init__.py`'s import
 from `molpy._core` and its `__all__`; a new format module is a file
 `molpy/molpy/io/<fmt>.py` importing its classes from `molpy._core`, imported
 by `molpy/molpy/io/__init__.py`, and its stub entries go into
 `molpy/molpy/_core.pyi` (the `types` gate holds the stub to the module).
 
 No molpy function coerces paths, re-raises native errors under another type or
-buffers frames for the native writer: the native doors accept `str` and
-`os.PathLike`, take any sequence of frames and report an unreadable file as
+buffers frames for the native writer: the native doors take `os.PathLike`,
+`bytes` and `mp.io.Text` sources themselves and report an unreadable file as
 `OSError`.
 
 ## Behaviour belongs in the native door
@@ -59,18 +63,21 @@ Key canonical fields: `charge` (not `q`), `mol_id` (not `mol`), `id`, `type`,
 
 Every force-field reader and writer — LAMMPS `*.ff` includes and data-file
 `* Coeffs`, GROMACS directives and systems, OpenMM XML, AMBER prmtop / frcmod
-— is a native function on `mp.io`
-(`read_openmm_forcefield` / `write_openmm_forcefield`, `read_top_forcefield` /
-`write_top_forcefield`, the LAMMPS family). The
-LAMMPS writers take the system as well: the coefficients written are selected by
-the frame's type labels, each matched to a type name exactly. The pair cutoff is
+— is a native class in its format's submodule, `reader.read(source)` →
+`ForceField` and `writer.write(sink, forcefield)`
+(`mp.io.openmm_xml.OpenmmXmlReader` / `OpenmmXmlWriter`,
+`mp.io.gromacs.GromacsTopForcefieldReader` / `GromacsTopForcefieldWriter`,
+`mp.io.amber.AmberPrmtopForcefieldReader` / `AmberFrcmodWriter`,
+`mp.io.lammps.LammpsForcefieldReader` / `LammpsForcefieldWriter`). The
+LAMMPS writer is built on the system as well: the coefficients written are
+selected by the frame's type labels, each matched to a type name exactly. The pair cutoff is
 a run setting the caller declares on the pair styles; no reader or writer
 invents one.
 
 ```python
 import molpy as mp
 
-ff = mp.io.read_openmm_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
+ff = mp.io.openmm_xml.OpenmmXmlReader().read(mp.resources.get_path("forcefield/tip3p.xml"))
 water = mp.Frame(
     blocks={
         "atoms": {
@@ -84,8 +91,9 @@ water = mp.Frame(
 )
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-text = mp.io.write_lammps_forcefield_str(ff, water, precision=4)
-assert "bond_coeff" in text
+buf = bytearray()  # in memory; a path writes the file
+mp.io.lammps.LammpsForcefieldWriter(water, precision=4).write(buf, ff)
+assert "bond_coeff" in buf.decode()
 ```
 
 A new **style** is exported by what molrs's writers make of its registration;

@@ -264,7 +264,7 @@ pub(crate) fn hand_frame(ff: &ForceField) -> Frame {
             frame.insert(block, b);
         }
     }
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap();
+    let pairs = intramolecular_pairs(&frame, ff.special_bonds().unwrap(), None).unwrap();
     frame.insert("pairs", pairs);
     frame
 }
@@ -572,7 +572,7 @@ fn typed_frame(typed: &molrs::core::Atomistic, ff: &ForceField) -> Frame {
         atoms.insert("charge", col_f(q), None).unwrap();
         frame.insert("atoms", atoms);
     }
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap();
+    let pairs = intramolecular_pairs(&frame, ff.special_bonds().unwrap(), None).unwrap();
     frame.insert("pairs", pairs);
     frame
 }

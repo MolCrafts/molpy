@@ -34,13 +34,16 @@ struct AtomRecord {
     pub chain_id: char,
     pub res_seq: i32,
     pub i_code: char,
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
+    pub x: F,
+    pub y: F,
+    pub z: F,
     pub occupancy: f32,
     pub temp_factor: f32,
     pub element: String,
-    pub charge: String,
+    /// The formal charge of columns 79-80 (`2+`, `1-`), `None` when blank.
+    pub formal_charge: Option<i64>,
+    /// A `HETATM` record.
+    pub hetero: bool,
 }
 
 /// CONECT record - bond connectivity
@@ -104,15 +107,17 @@ fn parse_atom_or_hetatm_impl(
     line: &str,
     expected_record: &str,
 ) -> std::io::Result<Option<AtomRecord>> {
-    // Minimum length check
-    if line.len() < 54 {
-        return Ok(None);
-    }
-
     // Check record type (columns 1-6, 0-indexed: 0-6)
     let record = substr(line, 0, 6).trim();
     if record != expected_record {
         return Ok(None);
+    }
+    // An atom record without its coordinates is malformed, not skippable.
+    if line.len() < 54 {
+        return Err(invalid_data(format!(
+            "PDB {record} record of {} columns; its coordinates end at column 54: {line:?}",
+            line.len()
+        )));
     }
 
     // Parse fixed-width fields (PDB uses 1-indexed columns, we use 0-indexed)
@@ -132,15 +137,15 @@ fn parse_atom_or_hetatm_impl(
     let i_code = char_at(line, 26);
     let x = substr(line, 30, 38)
         .trim()
-        .parse::<f32>()
+        .parse::<F>()
         .map_err(invalid_data)?;
     let y = substr(line, 38, 46)
         .trim()
-        .parse::<f32>()
+        .parse::<F>()
         .map_err(invalid_data)?;
     let z = substr(line, 46, 54)
         .trim()
-        .parse::<f32>()
+        .parse::<F>()
         .map_err(invalid_data)?;
 
     // Optional fields
@@ -177,12 +182,9 @@ fn parse_atom_or_hetatm_impl(
         String::new()
     };
 
-    // Charge (columns 79-80)
-    let charge = if line.len() >= 80 {
-        substr(line, 78, 80).trim().to_string()
-    } else {
-        String::new()
-    };
+    // Formal charge (columns 79-80): a digit then its sign, `2+` / `1-`.
+    let formal_charge = parse_formal_charge(substr(line, 78, 80))
+        .map_err(|e| invalid_data(format!("{e}: {line:?}")))?;
 
     Ok(Some(AtomRecord {
         serial,
@@ -198,8 +200,43 @@ fn parse_atom_or_hetatm_impl(
         occupancy,
         temp_factor,
         element,
-        charge,
+        formal_charge,
+        hetero: record == "HETATM",
     }))
+}
+
+/// A PDB formal-charge field (columns 79-80): blank for none, else a digit
+/// and its sign (`2+`, `1-`).
+fn parse_formal_charge(field: &str) -> Result<Option<i64>, String> {
+    let field = field.trim();
+    if field.is_empty() {
+        return Ok(None);
+    }
+    let bytes = field.as_bytes();
+    let magnitude = match bytes {
+        [d, b'+' | b'-'] if d.is_ascii_digit() => i64::from(d - b'0'),
+        _ => {
+            return Err(format!(
+                "PDB formal charge {field:?} is not a digit and a sign"
+            ));
+        }
+    };
+    Ok(Some(if bytes[1] == b'-' {
+        -magnitude
+    } else {
+        magnitude
+    }))
+}
+
+/// The PDB formal-charge field of `charge`: blank for none or 0.
+fn formal_charge_field(charge: Option<i64>) -> std::io::Result<String> {
+    match charge {
+        None | Some(0) => Ok(String::new()),
+        Some(q) if q.abs() <= 9 => Ok(format!("{}{}", q.abs(), if q < 0 { '-' } else { '+' })),
+        Some(q) => Err(invalid_data(format!(
+            "PDB formal charge {q} does not fit columns 79-80 (|q| <= 9)"
+        ))),
+    }
 }
 
 /// Parse ATOM record from line
@@ -330,9 +367,9 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
     let mut serial_map: HashMap<i32, Idx> = HashMap::with_capacity(n);
 
     for (i, atom) in atoms.iter().enumerate() {
-        x_vec.push(atom.x as F);
-        y_vec.push(atom.y as F);
-        z_vec.push(atom.z as F);
+        x_vec.push(atom.x);
+        y_vec.push(atom.y);
+        z_vec.push(atom.z);
         ids_vec.push(atom.serial as Idx);
         elements.push(atom.element.clone());
         names.push(atom.name.clone());
@@ -417,6 +454,29 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
     block
         .insert("b_factor", to_array_float(b_factors, n)?, None)
         .map_err(invalid_data)?;
+    // Stated only where the file states them: a structure without hetero
+    // groups or formal charges gets no column.
+    if atoms.iter().any(|a| a.hetero) {
+        let hetero: Vec<bool> = atoms.iter().map(|a| a.hetero).collect();
+        block
+            .insert(
+                keys::HETERO,
+                ndarray::Array1::from_vec(hetero).into_dyn(),
+                None,
+            )
+            .map_err(invalid_data)?;
+    }
+    if atoms.iter().any(|a| a.formal_charge.is_some()) {
+        let valid: Vec<bool> = atoms.iter().map(|a| a.formal_charge.is_some()).collect();
+        let charges: Vec<i64> = atoms.iter().map(|a| a.formal_charge.unwrap_or(0)).collect();
+        block
+            .insert(
+                keys::FORMAL_CHARGE,
+                ndarray::Array1::from_vec(charges).into_dyn(),
+                Some(valid),
+            )
+            .map_err(invalid_data)?;
+    }
 
     Ok((block, unique_elements, serial_map))
 }
@@ -600,7 +660,7 @@ impl<R: BufRead + Seek> TrajectoryReader for PdbReader<R> {
             return Ok(None);
         };
         let bytes = crate::io::frame_index::frame_bytes(&mut self.reader, at)?;
-        crate::io::reader::check_read_frame(Some(read_pdb(bytes.as_slice())?))
+        read_pdb(bytes.as_slice()).map(Some)
     }
 
     fn len(&mut self) -> std::io::Result<usize> {
@@ -647,7 +707,10 @@ impl<R: BufRead> PdbReader<R> {
             return Ok(None);
         }
 
-        Ok(Some(build_frame(&atoms, cryst1.as_ref(), &conects)?))
+        // Every door reads through here, so every door checks here.
+        let frame = build_frame(&atoms, cryst1.as_ref(), &conects)?;
+        crate::io::reader::check_read_frame(&frame)?;
+        Ok(Some(frame))
     }
 }
 
@@ -661,9 +724,7 @@ impl<R: BufRead> Reader for PdbReader<R> {
 
 impl<R: BufRead> FrameReader for PdbReader<R> {
     fn read(&mut self) -> std::io::Result<Option<Frame>> {
-        // Validate on the way out: a frame that violates the vocabulary
-        // is a malformed file or a reader bug, not a result to return.
-        crate::io::reader::check_read_frame(self.read_single_frame()?)
+        self.read_single_frame()
     }
 }
 
@@ -827,10 +888,26 @@ fn write_atom_conect_records<W: Write>(
         .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
         .unwrap_or_default();
     let has_ids = !ids.is_empty();
+    let hetero: Vec<bool> = frame
+        .column("atoms", keys::HETERO)
+        .and_then(|c| c.get::<bool>())
+        .map(|arr| arr.iter().copied().collect())
+        .unwrap_or_default();
+    let formal_charges: Vec<i64> = frame
+        .column("atoms", keys::FORMAL_CHARGE)
+        .and_then(|c| c.get::<i64>())
+        .map(|arr| arr.iter().copied().collect())
+        .unwrap_or_default();
+    let null_formal_charge = crate::io::null_cells::null_rows(frame, "atoms", keys::FORMAL_CHARGE);
 
     let mut serials = Vec::with_capacity(n);
     for i in 0..n {
         let serial = if has_ids { ids[i] as usize } else { i + 1 };
+        if serial > 99_999 {
+            return Err(invalid_data(format!(
+                "PDB atom serial {serial} does not fit columns 7-11 (at most 99999)"
+            )));
+        }
         serials.push(serial);
 
         let elem_raw = elements[i].trim();
@@ -865,12 +942,22 @@ fn write_atom_conect_records<W: Write>(
             .collect::<String>()
             .to_ascii_uppercase();
 
-        // PDB v3.3 ATOM record. occupancy/tempFactor default to 1.00/0.00
-        // when the frame carries no `occupancy` / `b_factor`. Element
-        // right-justified in cols 77-78, then one charge pad space; every
-        // line is padded to 79 printable columns + newline.
-        let mut line = format!(
-            "ATOM  {:>5} {}{}{:<3} {}{:>4}{}   {:>8.3}{:>8.3}{:>8.3}{:>6.2}{:>6.2}          {:>2}  ",
+        let record = if hetero.get(i).copied().unwrap_or(false) {
+            "HETATM"
+        } else {
+            "ATOM  "
+        };
+        let charge = formal_charges
+            .get(i)
+            .copied()
+            .filter(|_| null_formal_charge.binary_search(&i).is_err());
+
+        // PDB v3.3 ATOM / HETATM record. occupancy/tempFactor default to
+        // 1.00/0.00 when the frame carries no `occupancy` / `b_factor`.
+        // Element right-justified in cols 77-78, the formal charge in 79-80:
+        // every record is exactly 80 columns.
+        let line = format!(
+            "{record}{:>5} {}{}{:<3} {}{:>4}{}   {:>8.3}{:>8.3}{:>8.3}{:>6.2}{:>6.2}          {:>2}{:>2}",
             serial,
             name_field,
             altloc,
@@ -884,11 +971,14 @@ fn write_atom_conect_records<W: Write>(
             occupancy,
             b_factor,
             elem_field,
+            formal_charge_field(charge)?,
         );
-        if line.len() < 79 {
-            line = format!("{:<79}", line);
-        } else if line.len() > 79 {
-            line.truncate(79);
+        // A value wider than its field shifts every column after it; refused
+        // rather than written misaligned or cut.
+        if line.len() != 80 {
+            return Err(invalid_data(format!(
+                "PDB atom {i}: a value overflows its columns: {line:?}"
+            )));
         }
         writeln!(writer, "{line}")?;
     }
@@ -960,6 +1050,7 @@ fn write_atom_conect_records<W: Write>(
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
 /// [`FrameView`](molrs::core::FrameView).
 fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
+    crate::io::writer::check_write_frame(frame)?;
     // REMARK: meta "name", else "MOL" (molpy / OpenMM deck convention).
     let title = frame
         .meta_ref()
@@ -1023,9 +1114,7 @@ pub fn read_pdb<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
 /// [`OpenmmXmlWriter::write_system`](crate::io::openmm_xml::OpenmmXmlWriter::write_system) gives its
 /// templates.
 pub fn write_pdb<'a>(sink: impl Into<Sink<'a>>, frame: &impl FrameAccess) -> std::io::Result<()> {
-    let mut out = sink.into().writer()?;
-    write_frame_to(&mut out, frame)?;
-    out.flush()
+    sink.into().put_with(|out| write_frame_to(out, frame))
 }
 
 // ============================================================================
@@ -1523,13 +1612,77 @@ mod tests {
 
     #[test]
     fn test_atom_line_short() {
-        // Line too short should return None
-        let short_line = "ATOM      1  N";
-        assert!(
-            parse_atom_record(short_line)
-                .expect("Parse error")
-                .is_none()
+        // An atom record cut before its coordinates is malformed: refused,
+        // never skipped.
+        let err = parse_atom_record("ATOM      1  N").unwrap_err();
+        assert!(err.to_string().contains("column 54"), "{err}");
+        // Another record is not this parser's.
+        assert!(parse_atom_record("HETATM    1  N").unwrap().is_none());
+    }
+
+    /// HETATM records and formal charges survive a read-write-read round
+    /// trip; coordinates are read at full precision.
+    #[test]
+    fn hetero_records_and_formal_charges_round_trip() {
+        let text = "\
+ATOM      1  N   ALA A   1      11.104   6.134  -6.504  1.00  0.00           N1+\n\
+HETATM    2 NA    NA A   2       1.000   2.000   3.001  1.00  0.00          NA1+\n\
+HETATM    3  O   HOH A   3       0.123   0.000   0.000  1.00  0.00           O  \n\
+END\n";
+        let frame = read_pdb(text.as_bytes()).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        let hetero: Vec<bool> = atoms
+            .get(keys::HETERO)
+            .and_then(|c| c.get::<bool>())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(hetero, [false, true, true]);
+        assert_eq!(
+            atoms.validity(keys::FORMAL_CHARGE),
+            Some(&[true, true, false][..])
         );
+        let z = atoms.get("z").and_then(|c| c.get::<f64>()).unwrap();
+        assert_eq!(z[[1]], 3.001);
+
+        let mut out = Vec::new();
+        write_pdb(&mut out, &frame).unwrap();
+        let written = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = written.lines().filter(|l| l.len() == 80).collect();
+        assert!(
+            lines[0].starts_with("ATOM  ") && lines[0].ends_with(" N1+"),
+            "{written}"
+        );
+        assert!(
+            lines[1].starts_with("HETATM") && lines[1].ends_with("NA1+"),
+            "{written}"
+        );
+        assert!(
+            lines[2].starts_with("HETATM") && lines[2].ends_with(" O  "),
+            "{written}"
+        );
+    }
+
+    /// A serial past five digits would shift the record; refused.
+    #[test]
+    fn a_serial_wider_than_its_columns_is_refused() {
+        let mut frame = read_pdb(
+            "ATOM      1  N   ALA A   1      11.104   6.134  -6.504  1.00  0.00           N\n"
+                .as_bytes(),
+        )
+        .unwrap();
+        let atoms = frame.get_mut("atoms").unwrap();
+        atoms.remove("id");
+        atoms
+            .insert(
+                "id",
+                ndarray::Array1::from_vec(vec![100_000_u64]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let err = write_pdb(&mut Vec::new(), &frame).unwrap_err();
+        assert!(err.to_string().contains("99999"), "{err}");
     }
 
     // -----------------------------------------------------------------

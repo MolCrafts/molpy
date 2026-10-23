@@ -1,6 +1,14 @@
-//! Pair potential kernels.
+//! Pair styles: each built-in pair style's energy as a [`ScalarForm`] of
+//! the distance, priced by [`ScalarPair`] at both compile doors; the
+//! one-type kernel a neighbour loop feeds ([`PairLjCut`]); the 1-4
+//! exceptions kernel ([`PairExceptions`]); and what every pair kernel
+//! shares — the `pairs` block's columns, the type-pair index, the
+//! thread-count-independent fold.
+//!
+//! [`ScalarForm`]: crate::ff::potential::form_kernel::ScalarForm
+//! [`ScalarPair`]: crate::ff::potential::form_kernel::ScalarPair
 
-use molrs::core::schema::block_names::ATOMS;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 
 use crate::ff::potential::Accumulator;
 use molrs::core::Frame;
@@ -43,15 +51,33 @@ where
     acc.add_energy(energy);
 }
 
-/// [`fold_pairs`] for a fold that cannot tally a virial: a compiled pair
-/// list, an intramolecular sum with no periodicity, whose virial from raw
-/// differences would be a number about nothing. A requested virial is lost.
-pub(crate) fn fold_pairs_untallied<P>(acc: &mut Accumulator<'_>, n_pairs: usize, plain: P)
-where
-    P: Fn(&mut [F], std::ops::Range<usize>) -> (F, Virial) + Sync,
-{
-    let (energy, _) = fold_chunks(acc.forces_without_virial(), n_pairs, plain);
-    acc.add_energy(energy);
+/// The `pairs` block's `atomi`, `atomj` and (optional) `is_14` columns — the
+/// list every compiled pair kernel reads, parsed once. `who` names the kernel
+/// in the error.
+///
+/// # Errors
+///
+/// A frame without a `pairs` block, or a block without a u64 `atomi` /
+/// `atomj` column.
+pub(crate) type PairColumns<'f> = (
+    &'f ndarray::ArrayD<u64>,
+    &'f ndarray::ArrayD<u64>,
+    Option<&'f ndarray::ArrayD<bool>>,
+);
+
+/// See [`PairColumns`].
+pub(crate) fn pair_columns<'f>(frame: &'f Frame, who: &str) -> Result<PairColumns<'f>, String> {
+    let block = frame
+        .get(PAIRS)
+        .ok_or_else(|| format!("{who}: frame missing \"pairs\" block"))?;
+    let column = |key: &str| {
+        block
+            .get(key)
+            .and_then(|c| c.get::<u64>())
+            .ok_or_else(|| format!("{who}: pairs block missing \"{key}\" column"))
+    };
+    let is_14 = block.get("is_14").and_then(|c| c.get::<bool>());
+    Ok((column("atomi")?, column("atomj")?, is_14))
 }
 
 /// Map each atom to a dense type index, and hand back the labels in that order.
@@ -111,10 +137,9 @@ where
     const CHUNK: usize = 4_096;
     // Splitting costs one accumulator per chunk, and merging one costs
     // `out.len()` adds — a number that has nothing to do with how many pairs
-    // there are. Under a ghost régime `out` covers the copies as well as the
-    // atoms, so a table can be big enough to want splitting and still lose to
-    // the merge. Both of these are properties of the configuration and not of
-    // the machine, so the grouping stays the same however many threads run.
+    // there are, so a table can be big enough to want splitting and still lose
+    // to the merge. Both are properties of the configuration and not of the
+    // machine, so the grouping stays the same however many threads run.
     let split = n_pairs >= CHUNK && n_pairs >= 3 * out.len();
     let nchunks = if split { n_pairs.div_ceil(CHUNK) } else { 1 };
     let bounds = |c: usize| (c * CHUNK)..((c + 1) * CHUNK).min(n_pairs);
@@ -191,27 +216,25 @@ pub(crate) mod coul_cut;
 pub(crate) mod exceptions;
 pub(crate) mod lj_class2;
 pub(crate) mod lj_cut;
+pub(crate) mod lj_rows;
 pub(crate) mod mmff;
 pub(crate) mod morse;
 pub(crate) mod tang_toennies;
 pub(crate) mod thole;
 pub(crate) mod uff;
 
-pub use buck::{PairBuck, pair_buck_constructor};
-pub use charmm::{
-    PairCoulCharmm, PairLjCharmm, pair_coul_charmm_constructor, pair_lj_charmm_constructor,
-};
-pub use coul_cut::{PairCoulCut, pair_coul_cut_constructor};
+pub use buck::Buck;
+pub use charmm::{CoulCharmm, LjCharmm};
+pub use coul_cut::CoulCut;
 pub use exceptions::PairExceptions;
-pub use lj_class2::{PairLjClass2, pair_lj_class2_constructor};
-pub use lj_cut::{PairLjCut, lj_ab_to_sigma_epsilon, pair_lj_cut_constructor};
-pub use mmff::{
-    PairMmffVdw, PairMmffVdwAtomParams, PairMmffVdwStyleParams, pair_mmff_vdw_constructor,
-};
-pub use morse::{PairMorse, pair_morse_constructor};
-pub use tang_toennies::{PairTangToennies, pair_tang_toennies_constructor};
-pub use thole::{PairThole, pair_thole_constructor};
-pub use uff::{PairUffVdw, pair_uff_vdw_constructor};
+pub use lj_class2::LjClass2;
+pub use lj_cut::{LjCut, PairLjCut};
+pub use lj_rows::lj_ab_to_sigma_epsilon;
+pub use mmff::MmffVdw;
+pub use morse::Morse;
+pub use tang_toennies::TangToennies;
+pub use thole::Thole;
+pub use uff::UffLj;
 
 #[cfg(test)]
 pub(crate) mod fixtures {

@@ -62,8 +62,10 @@ def radial_distribution(trajectory: Trajectory) -> dict[str, float]:
     # Stay just inside L/2: the last bins of a minimum-image histogram are
     # distorted by the corners of the periodic cell.
     r_max = np.floor(trajectory.box_length / 2.0)
-    nlists = [neighbors(frame, r_max) for frame in frames]
-    result = Rdf(int(r_max / 0.05), r_max, 0.0).compute(pairs=nlists)
+    accumulator = Rdf(int(r_max / 0.05), r_max, 0.0).accumulator()
+    for frame in frames:
+        accumulator.push(neighbors(frame, r_max))
+    result = accumulator.finish()
 
     r = np.asarray(result.bin_centers)
     g = np.asarray(result.rdf)

@@ -25,9 +25,8 @@ Built on those, this module also holds:
 * polymers — sequence generators, chain-length distributions and
   :class:`SystemPlanner`; :class:`AmberPolymerBuilder` for GAFF chains
   through AmberTools;
-* virtual sites — :class:`VirtualSiteBuilder` with :class:`DrudeBuilder`
-  (CL&Pol, parameters from ``mp.ff.params.clpol_polarizability``) and
-  :class:`Tip4pBuilder`;
+* virtual sites — :class:`DrudeBuilder` (CL&Pol, parameters from
+  ``mp.ff.params.clpol_polarizability``) and :class:`Tip4pBuilder`;
 * :class:`PackingTemplate` — a built molecule's frame plus its hydrogen
   indices, for a packer's per-atom settings.
 
@@ -39,12 +38,17 @@ from molpy._core import (
     AxisOrienter,
     CarbonTubeBuilder,
     Coarsener,
+    DrudeBuilder,
     GrapheneBuilder,
     GrowthPlacer,
+    Lattice,
+    Site,
     SitePlacer,
+    SpaceGroup,
+    SymOp,
+    Tip4pBuilder,
 )
 
-from molpy.builder.crystal import Lattice, Site
 from molpy.builder.packing import PackingTemplate
 from molpy.builder.polymer import (
     AlternatingSequenceGenerator,
@@ -66,8 +70,6 @@ from molpy.builder.polymer import (
     UniformPolydisperse,
     WeightedSequenceGenerator,
 )
-from molpy.builder.symmetry import SpaceGroup
-from molpy.builder.virtualsite import DrudeBuilder, Tip4pBuilder, VirtualSiteBuilder
 
 __all__ = [
     "Assembler",
@@ -80,6 +82,7 @@ __all__ = [
     "Lattice",
     "Site",
     "SpaceGroup",
+    "SymOp",
     "AlternatingSequenceGenerator",
     "BlockSequenceGenerator",
     "Chain",
@@ -98,7 +101,6 @@ __all__ = [
     "AmberCut",
     "AmberPieces",
     "AmberPolymerBuilder",
-    "VirtualSiteBuilder",
     "DrudeBuilder",
     "Tip4pBuilder",
     "PackingTemplate",

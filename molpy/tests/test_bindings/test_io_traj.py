@@ -190,7 +190,7 @@ class TestDumpColumnChoice:
 
     def test_rejects_a_column_the_frame_lacks(self, tmp_path):
         path = tmp_path / "missing.lammpstrj"
-        with pytest.raises(OSError, match="'q'"):
+        with pytest.raises(ValueError, match="'q'"):
             mp.io.write_lammps_dump(path, self._frame(), columns=["id", "q"])
 
 

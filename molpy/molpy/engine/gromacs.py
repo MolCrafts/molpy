@@ -42,7 +42,7 @@ from molpy.io.gromacs import GromacsTopForcefieldWriter
 
 from molpy.engine.engine import Engine
 from molpy.core import Element
-from molpy.engine.nonbonded import is_periodic, nonbonded_of, refuse_box_free
+from molpy.engine.nonbonded import is_periodic, refuse_box_free
 
 if TYPE_CHECKING:
     from molcfg import Config
@@ -107,7 +107,7 @@ class GromacsEngine(Engine):
 
     def run(
         self,
-        scripts: Script | str | Path | Sequence[Script | Path],
+        scripts: Script | Path | Sequence[Script | Path],
         *,
         workdir: str | Path | None = None,
         structure: str | Path | None = None,
@@ -131,6 +131,7 @@ class GromacsEngine(Engine):
             check: Raise :class:`molpy.tool.ToolError` on a non-zero exit.
 
         Raises:
+            TypeError: If a script is a ``str``.
             ValueError: If *scripts* is an empty list.
             ToolError: A step could not start, timed out, or (with *check*)
                 exited non-zero.
@@ -291,7 +292,7 @@ class GromacsEngine(Engine):
             output_dir=str(out),
             files={key: path.name for key, path in paths.items()},
             temperature=temperature,
-            **nonbonded,
+            mdp=nonbonded,
         )
         return paths
 
@@ -303,8 +304,8 @@ def _nonbonded_mdp(
     rvdw: float | None,
 ) -> dict[str, str | float]:
     """The ``.mdp`` nonbonded settings: the overrides, else the force field's."""
-    stated = nonbonded_of(forcefield)
-    coulomb_nm, vdw_nm = stated.coulomb_cutoff_nm, stated.vdw_cutoff_nm
+    stated = forcefield.nonbonded("nanometer")
+    coulomb_nm, vdw_nm = stated.coulomb_cutoff, stated.vdw_cutoff
     if rcoulomb is None:
         rcoulomb = next(
             (r for r in (coulomb_nm, vdw_nm) if r is not None), _DEFAULT_CUTOFF_NM

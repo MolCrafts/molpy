@@ -166,7 +166,10 @@ seconds and hours, and it is why every correlation in molpy runs on one engine,
 `Correlator`. The named correlations on these pages — `Vacf`, `CurrentAcf`,
 `DipoleAcf`, `Msd`, … — are `Correlator` with the configuration that defines
 the quantity fixed; a correlation with no name of its own is `Correlator`
-configured directly.
+configured directly. Two of them, `Msd` and `Vacf`, are streams: their
+accumulator takes one frame per `push` and folds it against the last `max_lag`
+frames instead of transforming the whole series at once, so memory stays
+bounded, and the curve agrees with the FFT result to round-off.
 
 Test it on a signal whose correlation you can write down. A cosine of period
 $P$ has an autocorrelation that is also a cosine of period $P$. `Correlator`
@@ -271,12 +274,12 @@ the transform.
 
 ## The VDOS is a velocity correlation, transformed
 
-Build the correlation function first. `Vacf` takes the velocities as a
-`(n_frames, n_dof)` array — every Cartesian component of every atom is one
-degree of freedom, so an `(n_frames, n_atoms, 3)` array is reshaped — and
-averages the unbiased autocorrelation over them. `mean="keep"` correlates the
+Build the correlation function first. `Vacf` is a stream: push each frame's
+velocities as an `(n_dof, 1)` column — every Cartesian component of every atom
+is one degree of freedom, so a frame's `(n_atoms, 3)` array is reshaped — and
+it averages the unbiased autocorrelation over them. `mean="keep"` correlates the
 velocities as given, which keeps the zero-frequency end equal to the
-Green–Kubo $D$; the default, `"subtract"`, removes each column's run mean
+Green–Kubo $D$; the default, `"subtract"`, removes each degree of freedom's run mean
 first:
 
 ```python
@@ -285,8 +288,10 @@ from molpy.compute import Vacf
 rng = np.random.default_rng(0)
 velocities = rng.normal(0.0, 0.02, size=(1024, 32, 3))
 
-flat = velocities.reshape(1024, -1)
-vacf = Vacf(256, mean="keep").compute(velocities=flat, dt=0.5)
+accumulator = Vacf(256, mean="keep").accumulator()
+for v in velocities:
+    accumulator.push(v.reshape(-1, 1), dt=0.5)
+vacf = accumulator.finish()
 vdos = Spectrum("cosine_sq", 4).compute(signal=vacf.channel(0), dt=0.5)
 
 nu = vdos.frequencies / (2 * np.pi * c_cm_per_fs)

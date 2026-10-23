@@ -492,9 +492,32 @@ fn need(p: &Params, style: &'static str, key: &str) -> Result<f64> {
         })
 }
 
-/// An optional numeric param of a row, 0 when absent (the kernels' default).
-fn or0(p: &Params, key: &str) -> f64 {
-    p.get(key).and_then(|v| v.as_num()).unwrap_or(0.0)
+/// An optional numeric param of a row of the built-in `style` (`"category
+/// name"`): stated, else its spec's declared default — of the indexed
+/// family a member `<base><m>` belongs to.
+///
+/// # Panics
+///
+/// When the spec declares no default for `key`: a built-in's codec reads an
+/// optional parameter only where its spec makes it one.
+fn or_default(p: &Params, style: &'static str, key: &str) -> f64 {
+    p.get(key).and_then(|v| v.as_num()).unwrap_or_else(|| {
+        let (category, name) = style.split_once(' ').expect("`category name`");
+        let spec = crate::ff::ir::builtin_style(category, name)
+            .unwrap_or_else(|| panic!("{style} is a built-in style"));
+        spec.param(key)
+            .or_else(|| {
+                spec.params.iter().find(|d| {
+                    d.indexed
+                        && key
+                            .strip_prefix(d.name.as_ref())
+                            .is_some_and(|m| m.parse::<usize>().is_ok())
+                })
+            })
+            .and_then(|d| d.default.as_ref())
+            .and_then(|v| v.as_num())
+            .unwrap_or_else(|| panic!("{style} declares a default for `{key}`"))
+    })
 }
 
 // ── single cosine terms ─────────────────────────────────────────────────────
@@ -589,12 +612,13 @@ impl CosineTermForm {
         }
     }
 
-    /// The `improper periodic` row `k`, `periodicity`, `phase` (absent: 0).
+    /// The `improper periodic` row `k`, `periodicity`, `phase` (absent: the
+    /// spec's default, 0).
     pub fn from_params(p: &Params) -> Result<Self> {
         Ok(Self {
             k: need(p, "improper periodic", "k")?,
             periodicity: need(p, "improper periodic", "periodicity")?,
-            phase: or0(p, "phase"),
+            phase: or_default(p, "improper periodic", "phase"),
         })
     }
 
@@ -799,7 +823,7 @@ impl PeriodicForm {
             terms.push(CosineTermForm {
                 k,
                 periodicity: need(p, WHAT, &format!("periodicity{m}"))?,
-                phase: or0(p, &format!("phase{m}")),
+                phase: or_default(p, WHAT, &format!("phase{m}")),
             });
             m += 1;
         }
@@ -807,7 +831,7 @@ impl PeriodicForm {
             terms.push(CosineTermForm {
                 k: need(p, WHAT, "k")?,
                 periodicity: need(p, WHAT, "periodicity")?,
-                phase: or0(p, "phase"),
+                phase: or_default(p, WHAT, "phase"),
             });
         }
         Ok(Self { terms })
@@ -862,9 +886,9 @@ impl CharmmForm {
             term: CosineTermForm {
                 k: need(p, WHAT, "k")?,
                 periodicity: need(p, WHAT, "periodicity")?,
-                phase: or0(p, "phase"),
+                phase: or_default(p, WHAT, "phase"),
             },
-            w: or0(p, "w"),
+            w: or_default(p, WHAT, "w"),
         })
     }
 
@@ -921,10 +945,10 @@ impl OplsForm {
         }
     }
 
-    /// `k1..k4`, absent: 0.
+    /// `k1..k4`, absent: the spec's default (0).
     pub fn from_params(p: &Params) -> Self {
         Self {
-            k: [or0(p, "k1"), or0(p, "k2"), or0(p, "k3"), or0(p, "k4")],
+            k: ["k1", "k2", "k3", "k4"].map(|k| or_default(p, "dihedral opls", k)),
         }
     }
 
@@ -1016,11 +1040,11 @@ impl Class2Form {
         out
     }
 
-    /// `k1..k3`, `phi1..phi3`, absent: 0.
+    /// `k1..k3`, `phi1..phi3`, absent: the spec's default (0).
     pub fn from_params(p: &Params) -> Self {
         Self {
-            k: [or0(p, "k1"), or0(p, "k2"), or0(p, "k3")],
-            phi: [or0(p, "phi1"), or0(p, "phi2"), or0(p, "phi3")],
+            k: ["k1", "k2", "k3"].map(|k| or_default(p, "dihedral class2", k)),
+            phi: ["phi1", "phi2", "phi3"].map(|k| or_default(p, "dihedral class2", k)),
         }
     }
 
@@ -1113,10 +1137,10 @@ impl MultiHarmonicForm {
         Self::from_series(&cosines_up_to(s, 4)).expect("cosines of order ≤ 4")
     }
 
-    /// `a1..a5`, absent: 0.
+    /// `a1..a5`, absent: the spec's default (0).
     pub fn from_params(p: &Params) -> Self {
         Self {
-            a: [1, 2, 3, 4, 5].map(|i| or0(p, &format!("a{i}"))),
+            a: ["a1", "a2", "a3", "a4", "a5"].map(|a| or_default(p, "dihedral multi/harmonic", a)),
         }
     }
 
@@ -1465,6 +1489,40 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
     use std::f64::consts::PI;
+
+    /// An absent optional parameter reads its spec's declared default — a
+    /// member of an indexed family its family's — and a stated one reads as
+    /// stated.
+    #[test]
+    fn an_absent_optional_parameter_is_its_spec_default() {
+        for (style, key) in [
+            ("improper periodic", "phase"),
+            ("dihedral periodic", "phase"),
+            ("dihedral periodic", "phase3"),
+            ("dihedral charmm", "phase"),
+            ("dihedral charmm", "w"),
+            ("dihedral opls", "k4"),
+            ("dihedral class2", "phi2"),
+            ("dihedral multi/harmonic", "a5"),
+        ] {
+            let (category, name) = style.split_once(' ').unwrap();
+            let want = crate::ff::ir::builtin_style(category, name)
+                .and_then(|spec| {
+                    spec.param(key.trim_end_matches(|c: char| c.is_ascii_digit()))
+                        .or_else(|| spec.param(key))
+                })
+                .and_then(|d| d.default.as_ref())
+                .and_then(|v| v.as_num())
+                .unwrap_or_else(|| panic!("{style} `{key}` has a default"));
+            assert_eq!(
+                or_default(&Params::new(), style, key),
+                want,
+                "{style} `{key}`"
+            );
+            let stated = Params::from_iter([(key, 7.5)]);
+            assert_eq!(or_default(&stated, style, key), 7.5, "{style} `{key}`");
+        }
+    }
 
     // ── random rows ──
 

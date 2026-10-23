@@ -234,7 +234,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// // (5.5 Å the other way round the box), so it contributes no pair.
 /// let points = array![[1.0, 1.0, 1.0], [1.4, 1.0, 1.0], [5.5, 1.0, 1.0]];
 ///
-/// let mut nl = NeighborList::new(3.0);
+/// let mut nl = NeighborList::new(3.0).unwrap();
 /// nl.build(points.view(), &bx);
 ///
 /// let bin_width = 0.5;
@@ -258,7 +258,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// let bx = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap();
 /// let points = array![[1.0, 1.0, 1.0], [1.4, 1.0, 1.0]];
 ///
-/// let mut nl = NeighborList::new(3.0);
+/// let mut nl = NeighborList::new(3.0).unwrap();
 /// nl.build(points.view(), &bx);
 ///
 /// let table = nl.neighbors(NeighborColumns::DISP);
@@ -305,7 +305,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// # API at a glance
 ///
 /// ```ignore
-/// let mut nl = NeighborList::new(3.0);       // cell-list backend, cutoff 3 Å
+/// let mut nl = NeighborList::new(3.0).unwrap();       // cell-list backend, cutoff 3 Å
 /// nl.build(points.view(), &simbox);          // index only — no pair table
 /// nl.build(Points::Columns([&xs, &ys, &zs]), &simbox);  // ...same, from x/y/z columns
 /// nl.update(points.view());                  // re-index, reusing that box
@@ -313,7 +313,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// nl.for_each_pair(|pair| { /* ... */ });    // stream half-shell self pairs
 /// let table = nl.neighbors(NeighborColumns::FULL);  // ...or materialize them
 ///
-/// let nq = NeighborQuery::new(&simbox, points.view(), 3.0);
+/// let nq = NeighborQuery::new(&simbox, points.view(), 3.0)?;
 /// let cross = nq.query(query_points.view()); // cross-query, directed
 ///
 /// table.query_point_indices()   // &[u32]           — i of each pair
@@ -352,17 +352,45 @@ pub struct NeighborList {
     n_points: usize,
 }
 
+/// A [`NeighborList`] cutoff that is not a positive, finite length.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CutoffError {
+    /// The refused cutoff (Å).
+    pub cutoff: F,
+}
+
+impl std::fmt::Display for CutoffError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "cutoff must be a positive finite length (Å), got {}",
+            self.cutoff
+        )
+    }
+}
+
+impl std::error::Error for CutoffError {}
+
+/// `cutoff` when it is a positive finite length.
+fn checked_cutoff(cutoff: F) -> Result<F, CutoffError> {
+    if cutoff > 0.0 && cutoff.is_finite() {
+        Ok(cutoff)
+    } else {
+        Err(CutoffError { cutoff })
+    }
+}
+
 impl NeighborList {
     /// A search with the O(N) cell-list backend — the production choice.
     ///
     /// `cutoff` is the interaction radius in Å. It is fixed here rather than
     /// passed per query because it determines the cell width of the index.
     ///
-    /// # Panics
-    /// Panics if `cutoff` is not positive.
-    pub fn new(cutoff: F) -> Self {
-        assert!(cutoff > 0.0, "cutoff must be positive");
-        Self::with_backend(Box::new(LinkCell::new().cutoff(cutoff)))
+    /// # Errors
+    /// [`CutoffError`] if `cutoff` is not a positive finite length.
+    pub fn new(cutoff: F) -> Result<Self, CutoffError> {
+        let cutoff = checked_cutoff(cutoff)?;
+        Ok(Self::with_backend(Box::new(LinkCell::new().cutoff(cutoff))))
     }
 
     /// A search with the bounding-volume-hierarchy backend.
@@ -375,11 +403,11 @@ impl NeighborList {
     /// wide enough that one cutoff makes the cells coarse, leaves a cell list
     /// scanning mostly-empty volume. `LinkCell` remains the default.
     ///
-    /// # Panics
-    /// Panics if `cutoff` is not positive.
-    pub fn aabb(cutoff: F) -> Self {
-        assert!(cutoff > 0.0, "cutoff must be positive");
-        Self::with_backend(Box::new(AabbQuery::new(cutoff)))
+    /// # Errors
+    /// [`CutoffError`] if `cutoff` is not a positive finite length.
+    pub fn aabb(cutoff: F) -> Result<Self, CutoffError> {
+        let cutoff = checked_cutoff(cutoff)?;
+        Ok(Self::with_backend(Box::new(AabbQuery::new(cutoff))))
     }
 
     /// A search with the O(N²) all-pairs backend.
@@ -388,11 +416,11 @@ impl NeighborList {
     /// test oracle — at a cost that grows with the square of the particle
     /// count. Prefer it only for very small systems, or to check the cell list.
     ///
-    /// # Panics
-    /// Panics if `cutoff` is not positive.
-    pub fn brute_force(cutoff: F) -> Self {
-        assert!(cutoff > 0.0, "cutoff must be positive");
-        Self::with_backend(Box::new(BruteForce::new(cutoff)))
+    /// # Errors
+    /// [`CutoffError`] if `cutoff` is not a positive finite length.
+    pub fn brute_force(cutoff: F) -> Result<Self, CutoffError> {
+        let cutoff = checked_cutoff(cutoff)?;
+        Ok(Self::with_backend(Box::new(BruteForce::new(cutoff))))
     }
 
     fn with_backend(backend: Box<dyn Backend + Send + Sync>) -> Self {
@@ -1456,7 +1484,7 @@ mod from_pairs_tests {
         let bx = super::test_fixtures::small_box();
         let pts = super::test_fixtures::small_points();
 
-        let mut bf = NeighborList::brute_force(1.5);
+        let mut bf = NeighborList::brute_force(1.5).unwrap();
         bf.build(pts.view(), &bx);
         let nb: Neighbors = bf.neighbors(NeighborColumns::FULL);
 
@@ -1684,7 +1712,7 @@ mod engine_tests {
         let bx = small_box();
         let pts = small_points();
 
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.build(pts.view(), &bx);
         let pairs = collect_sorted(&nl);
 
@@ -1733,7 +1761,7 @@ mod engine_tests {
         let bx = small_box();
         let pts = small_points();
 
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.build(pts.view(), &bx);
 
         let streamed = collect_sorted(&nl);
@@ -1801,10 +1829,10 @@ mod engine_tests {
         let ys: Vec<F> = pts.column(1).to_vec();
         let zs: Vec<F> = pts.column(2).to_vec();
 
-        let mut aos = NeighborList::new(1.5);
+        let mut aos = NeighborList::new(1.5).unwrap();
         aos.build(pts.view(), &bx);
 
-        let mut soa = NeighborList::new(1.5);
+        let mut soa = NeighborList::new(1.5).unwrap();
         soa.build(Points::Columns([&xs, &ys, &zs]), &bx);
 
         let want = collect_sorted(&aos);
@@ -1873,11 +1901,11 @@ mod engine_tests {
         let bx = small_box();
         let pts = lattice_60();
 
-        let mut lc = NeighborList::new(LATTICE_60_CUTOFF);
+        let mut lc = NeighborList::new(LATTICE_60_CUTOFF).unwrap();
         lc.build(pts.view(), &bx);
         let lc_pairs = collect_sorted(&lc);
 
-        let mut bf = NeighborList::brute_force(LATTICE_60_CUTOFF);
+        let mut bf = NeighborList::brute_force(LATTICE_60_CUTOFF).unwrap();
         bf.build(pts.view(), &bx);
         let bf_pairs = collect_sorted(&bf);
 
@@ -1995,11 +2023,11 @@ mod engine_tests {
             occupied.len()
         );
 
-        let mut nl = NeighborList::new(LATTICE_512_CUTOFF);
+        let mut nl = NeighborList::new(LATTICE_512_CUTOFF).unwrap();
         nl.build(pts.view(), &bx);
         let full = nl.neighbors(NeighborColumns::FULL);
 
-        let mut bf = NeighborList::brute_force(LATTICE_512_CUTOFF);
+        let mut bf = NeighborList::brute_force(LATTICE_512_CUTOFF).unwrap();
         bf.build(pts.view(), &bx);
         let oracle = bf.neighbors(NeighborColumns::FULL);
 
@@ -2122,7 +2150,7 @@ mod engine_tests {
         // (the wrapped one is 15.0 Å), so the pair is gone.
         let far = array![[1.0, 1.0, 1.0], [6.0, 1.0, 1.0]];
 
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.build(near.view(), &bx);
         assert_eq!(
             collect_sorted(&nl).len(),
@@ -2154,7 +2182,7 @@ mod engine_tests {
     #[should_panic(expected = "build")]
     fn engine_update_before_build_panics() {
         let pts = small_points();
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.update(pts.view());
     }
 
@@ -2164,7 +2192,7 @@ mod engine_tests {
         let bx = small_box();
         let pts = small_points();
 
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.build(pts.view(), &bx);
 
         let lean = nl.neighbors(NeighborColumns::INDICES_ONLY);
@@ -2216,7 +2244,7 @@ mod engine_tests {
         let refs = array![[1.0, 1.0, 1.0], [5.0, 5.0, 5.0], [9.0, 9.0, 9.0]];
         let query = array![[9.2, 9.0, 9.0], [5.1, 5.0, 5.0], [1.1, 1.0, 1.0]];
 
-        let nq = NeighborQuery::new(&bx, refs.view(), 1.0);
+        let nq = NeighborQuery::new(&bx, refs.view(), 1.0).unwrap();
         let nb = nq.query(query.view());
 
         assert_eq!(
@@ -2270,7 +2298,7 @@ mod geometry_tests {
     #[test]
     fn neighbor_list_table_carries_the_build_box() {
         let bx = small_box();
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.build(small_points().view(), &bx);
 
         let nb = nl.neighbors(NeighborColumns::FULL);
@@ -2285,7 +2313,7 @@ mod geometry_tests {
     fn query_tables_carry_the_query_box() {
         let bx = small_box();
         let pts = small_points();
-        let q = NeighborQuery::new(&bx, pts.view(), 1.5);
+        let q = NeighborQuery::new(&bx, pts.view(), 1.5).unwrap();
 
         let self_table = q.query_self();
         let cross_table = q.query(pts.view());
@@ -2317,7 +2345,7 @@ mod geometry_tests {
     #[test]
     fn repack_and_filters_keep_the_box() {
         let bx = small_box();
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.build(small_points().view(), &bx);
         let nb = nl.neighbors(NeighborColumns::FULL);
 
@@ -2333,7 +2361,7 @@ mod geometry_tests {
     #[test]
     fn table_and_list_are_the_same_pair_source() {
         let bx = small_box();
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.build(small_points().view(), &bx);
         let nb = nl.neighbors(NeighborColumns::FULL);
 
@@ -2361,7 +2389,7 @@ mod geometry_tests {
     #[test]
     fn lean_table_visits_absent_columns_as_none() {
         let bx = small_box();
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.build(small_points().view(), &bx);
         let lean = nl.neighbors(NeighborColumns::INDICES_ONLY);
 
@@ -2422,7 +2450,7 @@ mod geometry_tests {
         };
         let points =
             ndarray::Array2::from_shape_fn((400, 3), |(_, k)| uniform() * [10.0, 8.0, 6.0][k]);
-        let mut nl = NeighborList::new(2.5);
+        let mut nl = NeighborList::new(2.5).unwrap();
         nl.build(points.view(), &bx);
         let full = nl.neighbors(NeighborColumns::FULL);
         let dist_only = nl.neighbors(NeighborColumns::DIST_SQ);
@@ -2452,11 +2480,23 @@ mod geometry_tests {
     #[test]
     fn lean_source_has_no_dist_sq_to_hand_over() {
         let bx = small_box();
-        let mut nl = NeighborList::new(1.5);
+        let mut nl = NeighborList::new(1.5).unwrap();
         nl.build(small_points().view(), &bx);
         let lean = nl.neighbors(NeighborColumns::INDICES_ONLY);
 
         assert_eq!(dist_sq_column(&lean), None);
         assert_eq!(dist_sq_column(&ProvidedOnly(&lean)), None);
+    }
+
+    /// Every door refuses a cutoff that is not a positive finite length —
+    /// NaN and infinity included — instead of asserting on it.
+    #[test]
+    fn a_non_positive_or_non_finite_cutoff_is_refused() {
+        for cutoff in [0.0, -1.0, F::NAN, F::INFINITY] {
+            let refused = |err: CutoffError| err.cutoff.to_bits() == cutoff.to_bits();
+            assert!(NeighborList::new(cutoff).err().is_some_and(refused));
+            assert!(NeighborList::aabb(cutoff).err().is_some_and(refused));
+            assert!(NeighborList::brute_force(cutoff).err().is_some_and(refused));
+        }
     }
 }

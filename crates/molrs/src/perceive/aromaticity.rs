@@ -7,6 +7,7 @@ use super::kekule::assign_kekule_bond_orders;
 use super::valence::{atomic_number, default_valence, n_implicit_hydrogens};
 use crate::core::Atomistic;
 use crate::core::MolRsError;
+use crate::core::NeighborKinds;
 use crate::core::keys;
 use crate::core::{BondNumber, BondOrder};
 use crate::core::{NodeId, RelationId};
@@ -176,7 +177,7 @@ fn total_degree(mol: &Atomistic, id: NodeId) -> i32 {
 /// the drawn degree, and swapping them makes every aromatic carbon look
 /// saturated.
 fn explicit_degree(mol: &Atomistic, id: NodeId) -> i32 {
-    mol.neighbor_bonds(id).count() as i32
+    mol.neighbors(id, NeighborKinds::BONDS).count() as i32
 }
 
 /// Iterate incident `(RelationId, other_atom, localized bond number)` for an atom.
@@ -188,7 +189,7 @@ fn incident_bonds<'a>(
     mol: &'a Atomistic,
     id: NodeId,
 ) -> impl Iterator<Item = (RelationId, NodeId, f64)> + 'a {
-    mol.neighbor_bonds(id)
+    mol.neighbors(id, NeighborKinds::BONDS)
         .map(move |(other, bid)| (bid, other, bond_order(mol, bid)))
 }
 

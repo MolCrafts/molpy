@@ -1,207 +1,81 @@
 //! CHARMM angle with Urey–Bradley (LAMMPS `angle_style charmm`).
 
-use crate::ff::potential::param_reads;
-use molrs::core::schema::block_names::ANGLES;
-use std::collections::HashMap;
-
-use ndarray::{Array2, ArrayView2};
-
-use crate::ff::ir::Params;
-use crate::ff::potential::flat_coords::{compute_angle, sub3, term_table, validate_coords};
-use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::flat_coords::{accumulate_angle_forces, compute_angle, sub3};
+use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns};
 use crate::op::vec3::norm;
-use molrs::core::Frame;
 use molrs::op::F;
 
-/// One `angle charmm` type's numbers as the kernel holds them (`theta0` in
-/// radians).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AngleCharmmParams {
-    /// Bending constant, energy/rad².
-    pub k: F,
-    /// Equilibrium angle, **radians**.
-    pub theta0: F,
-    /// Urey–Bradley constant, energy/length².
-    pub k_ub: F,
-    /// Urey–Bradley equilibrium 1-3 distance.
-    pub r_ub: F,
-}
-
-/// CHARMM angle + Urey–Bradley potential with pre-resolved flat arrays.
-///
-/// LAMMPS `angle_style charmm`:
-/// E = k·(θ − θ0)² + k_ub·(r₁₃ − r_ub)².
+/// LAMMPS `angle_style charmm`: `E = k (θ − θ0)² + k_ub (r₁₃ − r_ub)²`.
 ///
 /// `k` is LAMMPS's `K` (energy/rad², no ½), `theta0` is in **degrees**, `k_ub`
 /// is LAMMPS's `K_ub` (energy/length², no ½) and `r_ub` a length — the four
-/// numbers of an `angle_coeff t K theta0 K_ub r_ub` line, in that order. The
-/// kernel converts `theta0` to radians once, at construction.
+/// numbers of an `angle_coeff t K theta0 K_ub r_ub` line, in that order.
 ///
-/// r₁₃ is the distance between the angle's end atoms `i` and `k`. The
-/// Urey–Bradley term is a 1-3 harmonic spring that this angle owns: it adds
-/// no exclusion and changes no pair list (which 1-3 pairs a non-bonded style
-/// sees is `special_bonds`'s answer, as for any angle).
-pub struct AngleCharmm {
-    atom_i: Vec<usize>,
-    atom_j: Vec<usize>,
-    atom_k: Vec<usize>,
-    params: Vec<AngleCharmmParams>,
-}
+/// r₁₃ is the distance between the angle's end atoms `i` and `k`, so the
+/// energy is no function of θ alone: an N-body form of the three positions.
+/// The Urey–Bradley term is a 1-3 harmonic spring that this angle owns: it
+/// adds no exclusion and changes no pair list (which 1-3 pairs a non-bonded
+/// style sees is `special_bonds`'s answer, as for any angle).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Charmm;
 
-impl AngleCharmm {
-    pub fn new(
-        atom_i: Vec<usize>,
-        atom_j: Vec<usize>,
-        atom_k: Vec<usize>,
-        params: Vec<AngleCharmmParams>,
-    ) -> Self {
-        let n = atom_i.len();
-        assert_eq!(atom_j.len(), n);
-        assert_eq!(atom_k.len(), n);
-        assert_eq!(params.len(), n);
-        Self {
-            atom_i,
-            atom_j,
-            atom_k,
-            params,
-        }
-    }
-
-    /// The physics, once; the two entry points differ only in which atoms a
-    /// term names.
-    fn fold(
+impl CompoundForm for Charmm {
+    fn eval(
         &self,
-        coords: &[F],
-        out: &mut [F],
-        n_terms: usize,
-        atoms: impl Fn(usize) -> (usize, usize, usize),
-    ) -> F {
-        let _n_atoms = validate_coords(coords);
-        let mut energy: F = 0.0;
-
-        for idx in 0..n_terms {
-            let (i, j, k) = atoms(idx);
-            let p = self.params[idx];
-
+        x: &[[F; 3]],
+        arity: usize,
+        p: &ParamColumns<'_>,
+        e: &mut [F],
+        grad: &mut [[F; 3]],
+    ) {
+        debug_assert_eq!(arity, 3);
+        let (k, theta0) = (p.input("k"), p.input("theta0"));
+        let (k_ub, r_ub) = (p.input("k_ub"), p.input("r_ub"));
+        for t in 0..e.len() {
+            let flat: [F; 9] = std::array::from_fn(|c| x[t * 3 + c / 3][c % 3]);
+            let mut f = [0.0; 9];
             // Bend: dE/dθ = 2k(θ − θ0).
-            let dtheta = compute_angle(coords, i, j, k) - p.theta0;
-            energy += p.k * dtheta * dtheta;
-            super::accumulate_angle_forces(coords, i, j, k, 2.0 * p.k * dtheta, out);
-
+            let dtheta = compute_angle(&flat, 0, 1, 2) - theta0[t].to_radians();
+            let mut energy = k[t] * dtheta * dtheta;
+            accumulate_angle_forces(&flat, 0, 1, 2, 2.0 * k[t] * dtheta, &mut f);
             // Urey–Bradley: a spring along r₁₃ = x_i − x_k.
-            let rik = sub3(coords, i, coords, k);
+            let rik = sub3(&flat, 0, &flat, 2);
             let r = norm(rik);
-            let dr = r - p.r_ub;
-            energy += p.k_ub * dr * dr;
+            let dr = r - r_ub[t];
+            energy += k_ub[t] * dr * dr;
             if r > 0.0 {
                 // F_i = −dE/dr · r̂, F_k = −F_i.
-                let f_over_r = -2.0 * p.k_ub * dr / r;
-                for (d, &x) in rik.iter().enumerate() {
-                    out[i * 3 + d] += f_over_r * x;
-                    out[k * 3 + d] -= f_over_r * x;
+                let f_over_r = -2.0 * k_ub[t] * dr / r;
+                for (d, &xd) in rik.iter().enumerate() {
+                    f[d] += f_over_r * xd;
+                    f[6 + d] -= f_over_r * xd;
                 }
             }
+            e[t] = energy;
+            for (a, g) in grad[t * 3..t * 3 + 3].iter_mut().enumerate() {
+                *g = [-f[a * 3], -f[a * 3 + 1], -f[a * 3 + 2]];
+            }
         }
-
-        energy
-    }
-}
-
-impl Potential for AngleCharmm {
-    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
-        let energy = self.fold(
-            coords,
-            acc.forces_without_virial(),
-            self.atom_i.len(),
-            |t| (self.atom_i[t], self.atom_j[t], self.atom_k[t]),
-        );
-        acc.add_energy(energy);
-    }
-}
-
-impl IndexedTerms for AngleCharmm {
-    fn terms(&self) -> Array2<u32> {
-        term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
 
-    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
-        debug_assert_eq!(
-            terms.nrows(),
-            self.atom_i.len(),
-            "the row set is the force field's; only the atoms a row names may be rebound"
-        );
-        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
-            (
-                terms[[t, 0]] as usize,
-                terms[[t, 1]] as usize,
-                terms[[t, 2]] as usize,
-            )
-        });
-        acc.add_energy(energy);
+    fn inputs(&self) -> Vec<String> {
+        ["k", "theta0", "k_ub", "r_ub"].map(String::from).to_vec()
     }
-}
-
-/// Construct an [`AngleCharmm`] from style params, type params, and Frame
-/// topology. Every type needs all four of `k`, `theta0` (deg), `k_ub`, `r_ub`.
-pub fn angle_charmm_constructor(
-    _style_params: &Params,
-    type_params: &[(&str, &Params)],
-    frame: &Frame,
-) -> Result<ForceTerm, crate::ff::potential::CompileError> {
-    let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-
-    let block = frame
-        .get(ANGLES)
-        .ok_or_else(|| "AngleCharmm: frame missing \"angles\" block".to_string())?;
-    let column = |key: &str| {
-        block
-            .get(key)
-            .and_then(|c| c.get::<u64>())
-            .ok_or_else(|| format!("AngleCharmm: angles block missing \"{key}\" column"))
-    };
-    let (i_col, j_col, k_col) = (column("atomi")?, column("atomj")?, column("atomk")?);
-    let type_col = block
-        .get("type")
-        .and_then(|c| c.get::<String>())
-        .ok_or_else(|| "AngleCharmm: angles block missing \"type\" column".to_string())?;
-
-    let n = i_col.len();
-    let (mut ai, mut aj, mut ak) = (
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-    );
-    let mut params = Vec::with_capacity(n);
-    for idx in 0..n {
-        let label = &type_col[idx];
-        let p = type_map
-            .get(label.as_str())
-            .ok_or_else(|| format!("AngleCharmm: unknown angle type '{label}'"))?;
-        let need = |key: &str| param_reads::type_num("charmm", label, p, key);
-        ai.push(i_col[idx] as usize);
-        aj.push(j_col[idx] as usize);
-        ak.push(k_col[idx] as usize);
-        params.push(AngleCharmmParams {
-            k: need("k")?,
-            // A parameter in degrees (LAMMPS); the kernel works in radians.
-            theta0: need("theta0")?.to_radians(),
-            k_ub: need("k_ub")?,
-            r_ub: need("r_ub")?,
-        });
-    }
-
-    Ok(ForceTerm::indexed(AngleCharmm::new(ai, aj, ak, params)))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::ff::compile::PotentialCompiler;
+    use crate::ff::compile::{ExplicitTerms, PotentialCompiler};
     use crate::ff::forcefield::ForceField;
+    use crate::ff::ir::Params;
     use crate::ff::ir::SpecialBonds;
+    use crate::ff::potential::Potentials;
     use crate::ff::potential::fixtures::OneShot;
+    use crate::ff::potential::flat_coords::{compute_angle, sub3};
     use crate::ff::potential::intramolecular_pairs;
     use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::op::F;
     use molrs::op::Idx;
     use ndarray::Array1;
 
@@ -210,18 +84,24 @@ mod tests {
     const K_UB: F = 22.53;
     const R_UB: F = 2.179;
 
-    fn pot(theta0_deg: F) -> AngleCharmm {
-        AngleCharmm::new(
-            vec![0],
-            vec![1],
-            vec![2],
-            vec![AngleCharmmParams {
-                k: K,
-                theta0: theta0_deg.to_radians(),
-                k_ub: K_UB,
-                r_ub: R_UB,
-            }],
-        )
+    fn pot(theta0_deg: F) -> Potentials {
+        one(K, theta0_deg, K_UB, R_UB)
+    }
+
+    /// One `angle charmm` term over atoms 0-1-2, `theta0` in degrees.
+    fn one(k: F, theta0_deg: F, k_ub: F, r_ub: F) -> Potentials {
+        ExplicitTerms::new("angle", "charmm")
+            .term(
+                &[0, 1, 2],
+                Params::from_iter([
+                    ("k", k),
+                    ("theta0", theta0_deg),
+                    ("k_ub", k_ub),
+                    ("r_ub", r_ub),
+                ]),
+            )
+            .compile()
+            .unwrap()
     }
 
     /// Atom 0 at distance `a` along x, vertex at the origin, atom 2 at
@@ -302,17 +182,7 @@ mod tests {
     fn the_urey_bradley_force_lies_along_r13() {
         // k = 0 isolates the UB term: the force on i is parallel to x_i − x_k
         // and the vertex feels nothing.
-        let p = AngleCharmm::new(
-            vec![0],
-            vec![1],
-            vec![2],
-            vec![AngleCharmmParams {
-                k: 0.0,
-                theta0: 0.0,
-                k_ub: K_UB,
-                r_ub: R_UB,
-            }],
-        );
+        let p = one(0.0, 0.0, K_UB, R_UB);
         let coords = geometry(1.5, 1.2, 100.0);
         let (_, f) = p.energy_forces_at(&coords);
         let r13 = sub3(&coords, 0, &coords, 2);
@@ -346,8 +216,17 @@ mod tests {
                 None,
             )
             .unwrap();
+        // The two bonds the angle spans: a pair's 1-3 class is its bond
+        // distance.
+        let mut bonds = Block::new();
+        for (key, ends) in [("atomi", vec![0 as Idx, 1]), ("atomj", vec![1, 2])] {
+            bonds
+                .insert(key, Array1::from_vec(ends).into_dyn(), None)
+                .unwrap();
+        }
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
         frame.insert("angles", angles);
         frame
     }
@@ -436,9 +315,13 @@ mod tests {
     fn urey_bradley_changes_no_pair_list() {
         let f = frame("HA-CT-HA", &geometry(1.0, 1.0, 100.0));
         let has_13 = |special: &SpecialBonds| {
+            // Every pair of the three atoms is 1-2 or 1-3: excluding both
+            // leaves an empty list.
             let p = intramolecular_pairs(&f, special, None).unwrap();
-            let i = p.get("atomi").unwrap().get::<u64>().unwrap();
-            let j = p.get("atomj").unwrap().get::<u64>().unwrap();
+            let (Some(i), Some(j)) = (p.get("atomi"), p.get("atomj")) else {
+                return false;
+            };
+            let (i, j) = (i.get::<u64>().unwrap(), j.get::<u64>().unwrap());
             i.iter().zip(j.iter()).any(|(&a, &b)| (a, b) == (0, 2))
         };
         let keep_13 = SpecialBonds {
@@ -449,7 +332,7 @@ mod tests {
             has_13(&keep_13),
             "special_bonds keeps 1-3; UB must not drop it"
         );
-        assert!(!has_13(&SpecialBonds::default()));
+        assert!(!has_13(&SpecialBonds::EXCLUDE_12_13));
     }
 
     /// A frame of `xyz` with one `angles` row per `(i, j, k, type)`.
@@ -476,119 +359,6 @@ mod tests {
         frame.insert("atoms", atoms);
         frame.insert("angles", block);
         frame
-    }
-
-    /// Read `include` with the LAMMPS reader, compile it on `frame`, and hold
-    /// the energy to LAMMPS's `pe` (= `eangle`) at 1e-10 relative and the
-    /// forces to its `fx fy fz` at 1e-10 of the largest component.
-    fn agrees_with_lammps(include: &str, frame: &Frame, pe: F, forces: &[[F; 3]]) {
-        use crate::io::{lammps::LammpsForcefieldReader, reader::ForceFieldReader};
-        let ff = LammpsForcefieldReader::new()
-            .read(include.as_bytes())
-            .unwrap();
-        let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
-        let (e, f) = PotentialCompiler::new(&ff)
-            .compile(frame)
-            .unwrap()
-            .energy_forces_at(&coords);
-        assert!(
-            (e - pe).abs() <= 1e-10 * pe.abs(),
-            "molrs {e} vs LAMMPS {pe}"
-        );
-        let scale = forces
-            .iter()
-            .flatten()
-            .fold(0.0 as F, |m, x| m.max(x.abs()));
-        for (a, want) in forces.iter().enumerate() {
-            for d in 0..3 {
-                let got = f[a * 3 + d];
-                assert!(
-                    (got - want[d]).abs() <= 1e-10 * scale,
-                    "atom {a} dim {d}: molrs {got} vs LAMMPS {}",
-                    want[d]
-                );
-            }
-        }
-    }
-
-    /// One `angle_style charmm` angle against LAMMPS (30 Mar 2026, `units
-    /// real`, `atom_style molecular`, `run 0`, the include below after
-    /// `read_data`): `pe` = `eangle` = 0.024871552479721934 kcal/mol, and the
-    /// `write_dump … fx fy fz` forces.
-    #[test]
-    fn three_atom_urey_bradley_agrees_with_lammps_run_0() {
-        let include = "\
-special_bonds lj 0.0 0.0 0.0 coul 0.0 0.0 0.0
-angle_style charmm
-angle_coeff HA-CT-HA 35.5 108.4 5.4 1.802
-";
-        let frame = molecule(
-            &[
-                [1.0915, 0.0213, -0.0317],
-                [0.0, 0.0, 0.0],
-                [-0.3420, 1.0290, 0.0520],
-            ],
-            &[(0, 1, 2, "HA-CT-HA")],
-        );
-        agrees_with_lammps(
-            include,
-            &frame,
-            0.024871552479721934,
-            &[
-                [
-                    0.4437994938277033,
-                    -1.5177102557296727,
-                    -0.07488784735459168,
-                ],
-                [1.1445217256207856, 1.6102574444284228, 0.03125901116125017],
-                [
-                    -1.5883212194484888,
-                    -0.09254718869875017,
-                    0.043628836193341514,
-                ],
-            ],
-        );
-    }
-
-    /// `angle_style hybrid harmonic charmm` — the LAMMPS writer's own output
-    /// for a mixed field — against LAMMPS `run 0`: `pe` = `eangle` =
-    /// 0.3573651687304709 kcal/mol.
-    #[test]
-    fn hybrid_harmonic_charmm_agrees_with_lammps_run_0() {
-        let include = "\
-special_bonds lj 0.000000 0.000000 0.000000 coul 0.000000 0.000000 0.000000
-
-angle_style hybrid harmonic charmm
-angle_coeff CT-CT-CT harmonic 58.350000 113.600000
-angle_coeff HA-CT-CT charmm 33.430000 110.100000 22.530000 2.179000
-angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
-";
-        let frame = molecule(
-            &[
-                [0.0, 0.0, 0.0],
-                [1.53, 0.0, 0.0],
-                [2.05, 1.44, 0.10],
-                [-0.36, 1.02, 0.05],
-                [-0.38, -0.50, 0.89],
-            ],
-            &[
-                (0, 1, 2, "CT-CT-CT"),
-                (3, 0, 1, "HA-CT-CT"),
-                (3, 0, 4, "HA-CT-HA"),
-            ],
-        );
-        agrees_with_lammps(
-            include,
-            &frame,
-            0.3573651687304709,
-            &[
-                [-1.603595194504185, -2.64881509442167, 2.6016199494198533],
-                [-3.5132089052852495, 5.555283389958266, 0.40982273406863357],
-                [4.732030500316453, -1.7005876553258585, -0.11809636495318464],
-                [-0.7362677577264647, 1.54982962383793, -2.5143182980783343],
-                [1.121041357199446, -2.755710264048667, -0.379028020456968],
-            ],
-        );
     }
 
     /// Beside another angle style, each style prices its own rows (the

@@ -197,7 +197,7 @@
 //!
 //! let simbox = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
 //! let points = Array2::from_shape_fn((64, 3), |(i, d)| 2.5 * ((i >> (2 * d)) & 3) as f64 + 0.3);
-//! let mut nl = NeighborList::new(4.0);
+//! let mut nl = NeighborList::new(4.0).unwrap();
 //! nl.build(points.view(), &simbox);
 //!
 //! let rdf = Rdf::new(20, 4.0, 0.0)?;

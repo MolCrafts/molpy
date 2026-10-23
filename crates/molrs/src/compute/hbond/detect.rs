@@ -55,6 +55,7 @@ pub struct HBond {
 /// let acceptors = [2];
 /// let simbox = SimBox::new(Cell::Lengths([20.0; 3]), [-10.0, -10.0, -10.0], [true, true, true]).unwrap();
 /// let table = NeighborQuery::new(&simbox, array![[2.8, 0.0, 0.0]].view(), 3.5)
+///     .unwrap()
 ///     .query(array![[0.0, 0.0, 0.0]].view());
 ///
 /// let bonds = HBonds::new(HBondCriterion::default())?.compute(HBondsInput {
@@ -478,6 +479,7 @@ mod tests {
         x.outer_iter()
             .map(|frame| {
                 NeighborQuery::new(&simbox(), gather(frame, acceptors).view(), cutoff)
+                    .unwrap()
                     .query(gather(frame, &sites).view())
             })
             .collect()

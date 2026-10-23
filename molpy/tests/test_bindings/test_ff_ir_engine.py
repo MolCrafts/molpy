@@ -53,6 +53,7 @@ def chain(style: str) -> tuple[mp.ff.forcefield.ForceField, mp.core.Frame]:
     frame["atoms"] = atoms
     frame["bonds"] = bonds
     ff = mp.ff.forcefield.ForceField("beads", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     b = ff.def_style("atom", "full").def_type("B", mass=1.0)
     ff.def_style("bond", style).def_type(
         "B-B", b, b, k=30.0, r0=1.5, epsilon=1.0, sigma=1.0

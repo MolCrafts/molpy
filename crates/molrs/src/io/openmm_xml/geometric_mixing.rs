@@ -13,8 +13,7 @@
 //! So the writer keeps the `<NonbondedForce>` rows (charges, σ, ε,
 //! `coulomb14scale`, `lj14scale`) and the root's `combining_rule`, and adds
 //! [`SCRIPT`], a `<Script>` OpenMM runs at the end of `createSystem` —
-//! foyer's patch of the `System`, the one the OPLS fixtures price
-//! (`scripts/engine_check_tables.py`, `split_system`):
+//! foyer's patch of the `System`:
 //!
 //! - a `CustomNonbondedForce` named `GeometricLennardJones` prices the Lennard-Jones
 //!   of every pair at `σᵢⱼ = √(σᵢσⱼ)`, `εᵢⱼ = √(εᵢεⱼ)`, with the

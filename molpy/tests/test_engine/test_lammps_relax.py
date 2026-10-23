@@ -24,6 +24,7 @@ def _dimer_system(
 ) -> tuple[mp.Frame, mp.ff.forcefield.ForceField]:
     """A neutral C-C dimer (harmonic bond k=300, r0=1.5) and its force field."""
     ff = mp.ff.forcefield.ForceField("dimer")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     c = ff.def_style("atom", "full").def_type("C", mass=12.011)
     ff.def_style("bond", "harmonic").def_type("C-C", c, c, k=300.0, r0=_R0)
     ff.def_style("pair", "lj/cut/coul/cut").def_type("C", c, epsilon=0.05, sigma=3.4)
@@ -54,6 +55,7 @@ def _cut_dimer_system() -> tuple[mp.Frame, mp.ff.forcefield.ForceField]:
     """The dimer under a 10 Å ``lj/cut`` force field molrs can write."""
     frame, _ = _dimer_system()
     ff = mp.ff.forcefield.ForceField("dimer", units="real")
+    ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     c = ff.def_style("atom", "full").def_type("C", mass=12.011)
     ff.def_style("bond", "harmonic").def_type("C-C", c, c, k=300.0, r0=_R0)
     ff.def_style("pair", "lj/cut", {"cutoff": 10.0}).def_type(
