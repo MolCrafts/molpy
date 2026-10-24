@@ -555,52 +555,51 @@ fn build_block_from_props(
     Ok(block)
 }
 
-/// Parse 9 floats from an ExtxyzValue into a 3×3 H matrix.
-fn parse_lattice_values(v: &ExtxyzValue) -> Option<Vec<F>> {
-    let values: Vec<F> = match v {
-        ExtxyzValue::Array1(vals) => vals
-            .iter()
-            .filter_map(|p| match p {
-                ExtxyzScalar::Real(r) => Some(*r as F),
-                ExtxyzScalar::Int(i) => Some(*i as F),
-                _ => None,
-            })
-            .collect(),
-        ExtxyzValue::Scalar(ExtxyzScalar::Str(s)) => s
-            .split_whitespace()
-            .filter_map(|tok| tok.parse::<F>().ok())
-            .collect(),
-        _ => return None,
-    };
-    if values.len() == 9 {
-        Some(values)
-    } else {
-        None
+/// One number of a comment-line vector value, or a refusal naming it.
+fn vector_number(name: &str, scalar: &ExtxyzScalar) -> std::io::Result<F> {
+    match scalar {
+        ExtxyzScalar::Real(r) => Ok(*r as F),
+        ExtxyzScalar::Int(i) => Ok(*i as F),
+        ExtxyzScalar::Str(s) => s
+            .parse::<F>()
+            .map_err(|_| invalid_data(format!("{name} holds `{s}`, not a number"))),
+        ExtxyzScalar::Logical(b) => Err(invalid_data(format!("{name} holds `{b}`, not a number"))),
     }
 }
 
-/// Parse 3 floats from an Origin ExtxyzValue.
-fn parse_origin_values(v: &ExtxyzValue) -> Option<[F; 3]> {
-    let values: Vec<F> = match v {
-        ExtxyzValue::Array1(vals) => vals
-            .iter()
-            .filter_map(|p| match p {
-                ExtxyzScalar::Real(r) => Some(*r as F),
-                ExtxyzScalar::Int(i) => Some(*i as F),
-                _ => None,
-            })
-            .collect(),
-        ExtxyzValue::Scalar(ExtxyzScalar::Str(s)) => s
-            .split_whitespace()
-            .filter_map(|tok| tok.parse::<F>().ok())
-            .collect(),
-        _ => return None,
-    };
-    if values.len() == 3 {
-        Some([values[0], values[1], values[2]])
-    } else {
-        None
+/// The `n` numbers of a comment-line vector value (`Lattice`, `Origin`). A
+/// value the line states is read whole or refused by name — an element that
+/// is not a number, a count other than `n` — never read as "no box".
+fn vector_values(name: &str, v: &ExtxyzValue, n: usize) -> std::io::Result<Vec<F>> {
+    let mut values = Vec::with_capacity(n);
+    match v {
+        ExtxyzValue::Array1(vals) => {
+            for scalar in vals {
+                values.push(vector_number(name, scalar)?);
+            }
+        }
+        ExtxyzValue::Scalar(ExtxyzScalar::Str(s)) => {
+            for tok in s.split_whitespace() {
+                values
+                    .push(tok.parse::<F>().map_err(|_| {
+                        invalid_data(format!("{name} holds `{tok}`, not a number"))
+                    })?);
+            }
+        }
+        ExtxyzValue::Scalar(scalar) => values.push(vector_number(name, scalar)?),
+        ExtxyzValue::Array2(_) => {
+            return Err(invalid_data(format!(
+                "{name} must be a flat list of {n} numbers, not a 2-D array"
+            )));
+        }
     }
+    if values.len() != n {
+        return Err(invalid_data(format!(
+            "{name} must hold {n} numbers, got {}",
+            values.len()
+        )));
+    }
+    Ok(values)
 }
 
 /// Parse the MolCrafts `Connct` XYZ comment extension.
@@ -687,17 +686,29 @@ fn connct_block(value: &ExtxyzValue, n_atoms: usize) -> Result<Option<Block>, St
 /// Build a SimBox from Lattice + optional Origin ExtValues.
 ///
 /// `Origin` defaults to `[0, 0, 0]` when absent, matching the extxyz convention.
-fn parse_simbox(lattice: &ExtxyzValue, origin: Option<&ExtxyzValue>) -> Option<SimBox> {
-    let h_vals = parse_lattice_values(lattice)?;
+///
+/// # Errors
+///
+/// `InvalidData` for a `Lattice` or `Origin` that does not read as its
+/// numbers ([`vector_values`]), and for lattice vectors no cell has.
+fn parse_simbox(lattice: &ExtxyzValue, origin: Option<&ExtxyzValue>) -> std::io::Result<SimBox> {
+    let h_vals = vector_values("Lattice", lattice, 9)?;
     // extxyz lists the three lattice vectors one after another (R1 R2 R3);
     // `SimBox` keeps them as the *columns* of H, so the row-major reshape is
     // transposed.
-    if h_vals.len() != 9 {
-        return None;
-    }
     let h = std::array::from_fn(|r| std::array::from_fn(|c| h_vals[3 * c + r]));
-    let origin = origin.and_then(parse_origin_values).unwrap_or([0.0; 3]);
-    SimBox::new(Cell::Matrix(h), origin, [true, true, true]).ok()
+    let origin = match origin {
+        Some(o) => {
+            let v = vector_values("Origin", o, 3)?;
+            [v[0], v[1], v[2]]
+        }
+        None => [0.0; 3],
+    };
+    SimBox::new(Cell::Matrix(h), origin, [true, true, true]).map_err(|e| {
+        invalid_data(format!(
+            "Lattice={h_vals:?}: no cell has these lattice vectors ({e:?})"
+        ))
+    })
 }
 
 /// Read one XYZ/EXTXYZ frame from the current position of a buffered reader.
@@ -795,10 +806,8 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Frame>>
     }
 
     // Build SimBox from Lattice + optional Origin
-    if let Some(ref lat) = lattice_value
-        && let Some(simbox) = parse_simbox(lat, origin_value.as_ref())
-    {
-        frame.simbox = Some(simbox);
+    if let Some(ref lat) = lattice_value {
+        frame.simbox = Some(parse_simbox(lat, origin_value.as_ref())?);
     }
 
     // Every door reads through here, so every door checks here: a frame that
@@ -1281,6 +1290,35 @@ mod tests {
         let err = write_xyz(&path, &frame).unwrap_err();
         assert!(err.to_string().contains("Frame schema"), "{err}");
         assert_eq!(std::fs::read(&path).unwrap(), b"kept");
+    }
+
+    /// A `Lattice` or `Origin` the comment line states but that does not
+    /// read as its numbers is refused by name, never read as "no box".
+    #[test]
+    fn a_malformed_lattice_or_origin_is_refused() {
+        let good = "1\nLattice=\"10 0 0 0 10 0 0 0 10\" Properties=species:S:1:pos:R:3\nC 0 0 0\n";
+        assert!(read_xyz(good.as_bytes()).unwrap().simbox.is_some());
+        for (bad, names) in [
+            (
+                "1\nLattice=\"10 0 0 0 1x 0 0 0 10\" Properties=species:S:1:pos:R:3\nC 0 0 0\n",
+                "1x",
+            ),
+            (
+                "1\nLattice=\"10 0 0 0 10 0\" Properties=species:S:1:pos:R:3\nC 0 0 0\n",
+                "9",
+            ),
+            (
+                "1\nLattice=\"1 2 3 2 4 6 3 6 9\" Properties=species:S:1:pos:R:3\nC 0 0 0\n",
+                "Lattice",
+            ),
+            (
+                "1\nLattice=\"10 0 0 0 10 0 0 0 10\" Origin=\"0 0\" Properties=species:S:1:pos:R:3\nC 0 0 0\n",
+                "Origin",
+            ),
+        ] {
+            let err = read_xyz(bad.as_bytes()).unwrap_err().to_string();
+            assert!(err.contains(names), "{bad:?}: {err}");
+        }
     }
 
     /// extxyz `Lattice="R1 R2 R3"` lists the vectors in sequence; `SimBox`
@@ -1846,6 +1884,7 @@ impl<W: Write> FrameWriter for XyzWriter<W> {
 /// [`FrameView`](molrs::core::FrameView). Existing callers passing `&Frame`
 /// continue to work without changes.
 fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
+    crate::io::null_cells::refuse_null_cells_in_block(frame, "atoms")?;
     use molrs::core::DType;
 
     // Every door writes through here, so every door checks here: a frame that

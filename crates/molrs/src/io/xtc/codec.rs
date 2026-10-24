@@ -963,6 +963,7 @@ fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
 fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<()> {
     // Every door writes through here, so every door checks here.
     crate::io::writer::check_write_frame(frame)?;
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &["x", "y", "z"])?;
     let natoms = frame
         .visit_block("atoms", |a| a.n_rows().unwrap_or(0))
         .ok_or_else(|| invalid_data("XTC write: frame has no atoms block"))?;

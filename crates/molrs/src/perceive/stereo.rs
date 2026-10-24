@@ -16,15 +16,31 @@ use super::valence::atomic_number;
 // ---------------------------------------------------------------------------
 
 /// Tetrahedral stereochemistry at an atom.
+///
+/// `Clockwise` and `CounterClockwise` are the clock sense of the
+/// [reference order](tetrahedral_reference), seen from its first substituent.
+/// That is the bond neighbors in bond order when all four are atoms. It is
+/// not RDKit `CHI_TETRAHEDRAL_CW`, and it is not the SMILES `@@` glyph: `@`
+/// and `@@` are this same clock after the string's own neighbor permutation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TetrahedralStereo {
-    /// Clockwise (RDKit `CHI_TETRAHEDRAL_CW`, SMILES `@@`): the neighbours,
-    /// in order, turn clockwise seen from the first.
+    /// Clockwise in the reference order, seen from the first substituent.
     Clockwise,
-    /// Counter-clockwise (RDKit `CHI_TETRAHEDRAL_CCW`, SMILES `@`).
+    /// Counter-clockwise in the reference order, seen from the first substituent.
     CounterClockwise,
     /// No stereo information available or applicable.
     Unspecified,
+}
+
+/// One site of the tetrahedral reference order.
+///
+/// [`TetrahedralSite::Hydrogen`] is the implicit hydrogen of a stated
+/// `h_count` of 1, not an atom of the graph. An explicit hydrogen atom is
+/// [`TetrahedralSite::Atom`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TetrahedralSite {
+    Atom(NodeId),
+    Hydrogen,
 }
 
 /// Double-bond stereochemistry.
@@ -114,40 +130,112 @@ pub fn perceive_chiral_centers(mol: &Atomistic) -> Vec<NodeId> {
 // Stereo assignment from 3D coordinates
 // ---------------------------------------------------------------------------
 
+/// The `h_count` an atom states, or `None` when the key is absent.
+///
+/// Absent is not zero. A bracket atom that omitted the count stores zero; an
+/// organic-subset atom stores nothing.
+pub(crate) fn stated_hydrogen_count(mol: &Atomistic, id: NodeId) -> Option<i32> {
+    mol.get_atom(id)
+        .ok()
+        .and_then(|atom| atom.get_int(keys::H_COUNT))
+}
+
+/// The order a tetrahedral `"CW"` / `"CCW"` is read against.
+///
+/// Four bond neighbors and a missing or zero `h_count` stand in bond order.
+/// Three bond neighbors and `h_count` 1 put the implicit hydrogen first. Any
+/// other count, including four neighbors together with a non-zero `h_count`,
+/// is not a reference this function names.
+pub(crate) fn tetrahedral_reference(mol: &Atomistic, id: NodeId) -> Option<[TetrahedralSite; 4]> {
+    let heavy: Vec<NodeId> = mol
+        .neighbors(id, NeighborKinds::BONDS)
+        .map(|(nb, _)| nb)
+        .collect();
+    match (heavy.len(), stated_hydrogen_count(mol, id)) {
+        (4, None) | (4, Some(0)) => Some([
+            TetrahedralSite::Atom(heavy[0]),
+            TetrahedralSite::Atom(heavy[1]),
+            TetrahedralSite::Atom(heavy[2]),
+            TetrahedralSite::Atom(heavy[3]),
+        ]),
+        (3, Some(1)) => Some([
+            TetrahedralSite::Hydrogen,
+            TetrahedralSite::Atom(heavy[0]),
+            TetrahedralSite::Atom(heavy[1]),
+            TetrahedralSite::Atom(heavy[2]),
+        ]),
+        _ => None,
+    }
+}
+
+/// The substituent perception and SMILES both treat as the representative.
+///
+/// Highest atomic number, then the earliest atom in the molecule. One CIP
+/// sphere: a wildcard (`Z = 0`) ranks below every element. The tie-break is
+/// the atom's own position, not its place in `subs`, so the answer does not
+/// follow bond-insertion order.
+pub(crate) fn priority_substituent(mol: &Atomistic, subs: &[NodeId]) -> Option<NodeId> {
+    subs.iter().copied().max_by_key(|&substituent| {
+        let z = mol
+            .get_atom(substituent)
+            .ok()
+            .map(|atom| atomic_number(&atom))
+            .unwrap_or(0);
+        let order = mol
+            .atoms()
+            .position(|(id, _)| id == substituent)
+            .unwrap_or(usize::MAX);
+        (z, std::cmp::Reverse(order))
+    })
+}
+
 /// Infer tetrahedral chirality for every potential stereocentre from 3-D
 /// coordinates.
 ///
-/// The sign of the chiral volume is computed using the neighbours in the
-/// order they are returned by `mol.neighbors(atom, NeighborKinds::BONDS)`. This gives a
-/// *geometry-based* label (not CIP-ranked), but is stable for a given
-/// molecule and useful for detecting whether two conformers have the same
-/// chirality.
+/// The sign of the chiral volume uses the four atoms of
+/// [`tetrahedral_reference`]. For a centre whose four neighbors are atoms and
+/// whose `h_count` is absent or zero, that is the bond-neighbor order. The
+/// label is geometric, not CIP-ranked.
 ///
-/// Returns a map `NodeId → TetrahedralStereo`.  Atoms without 3-D coordinates
+/// An implicit hydrogen is not an atom, and perception does not invent
+/// coordinates for it, so a centre such as `[C@H]` (three neighbors and
+/// `h_count` 1) stays unlabeled. [`perceive_chiral_centers`] only returns
+/// atoms with four neighbors, which is the same limit: a stated hydrogen is
+/// not a fourth neighbor. Four neighbors plus a non-zero `h_count` is an
+/// inconsistent graph and stays unlabeled too.
+///
+/// Returns a map `NodeId → TetrahedralStereo`. Atoms without 3-D coordinates
 /// receive `Unspecified`.
 pub fn perceive_tetrahedral_stereo(mol: &Atomistic) -> HashMap<NodeId, TetrahedralStereo> {
     let mut result = HashMap::new();
     for center in perceive_chiral_centers(mol) {
-        let nbrs: Vec<NodeId> = mol
-            .neighbors(center, NeighborKinds::BONDS)
-            .map(|(nb, _)| nb)
-            .collect();
-        if nbrs.len() < 4 {
-            result.insert(center, TetrahedralStereo::Unspecified);
-            continue;
-        }
-        let arr = [nbrs[0], nbrs[1], nbrs[2], nbrs[3]];
-        let vol = chiral_volume(mol, center, &arr);
-        let stereo = if vol > 1e-9 {
-            TetrahedralStereo::CounterClockwise
-        } else if vol < -1e-9 {
-            TetrahedralStereo::Clockwise
-        } else {
-            TetrahedralStereo::Unspecified
-        };
-        result.insert(center, stereo);
+        result.insert(center, tetrahedral_label(mol, center));
     }
     result
+}
+
+fn tetrahedral_label(mol: &Atomistic, center: NodeId) -> TetrahedralStereo {
+    let Some(reference) = tetrahedral_reference(mol, center) else {
+        return TetrahedralStereo::Unspecified;
+    };
+    let mut nbrs = Vec::with_capacity(4);
+    for site in reference {
+        match site {
+            TetrahedralSite::Atom(id) => nbrs.push(id),
+            TetrahedralSite::Hydrogen => return TetrahedralStereo::Unspecified,
+        }
+    }
+    if nbrs.len() != 4 {
+        return TetrahedralStereo::Unspecified;
+    }
+    let volume = chiral_volume(mol, center, &[nbrs[0], nbrs[1], nbrs[2], nbrs[3]]);
+    if volume > 1e-9 {
+        TetrahedralStereo::CounterClockwise
+    } else if volume < -1e-9 {
+        TetrahedralStereo::Clockwise
+    } else {
+        TetrahedralStereo::Unspecified
+    }
 }
 
 /// Infer E/Z stereochemistry for every double bond from 3-D coordinates.
@@ -193,44 +281,18 @@ pub fn perceive_bond_stereo(mol: &Atomistic) -> HashMap<RelationId, BondStereo> 
             continue;
         }
 
-        // Pick the substituent with the highest atomic number as the
-        // representative. This is a simplified priority rule — one CIP sphere,
-        // not the full hierarchical digraph.
-        //
-        // The tie-break is load-bearing, not a detail: when both substituents
-        // are the same element the key ties, and `max_by_key` keeps the *last*
-        // maximum — so the label became a function of bond insertion order
-        // rather than of the geometry. 3-methyl-2-pentene came out E or Z
-        // depending only on which of the two C3 bonds was added first. Ranking
-        // by (Z, lowest index) makes the answer a property of the molecule
-        // again; it is still approximate where CIP would look further out, but
-        // it is at least the *same* approximation every time.
-        //
-        // A wildcard substituent (Z = 0) ranks below every element, as CIP
-        // ranks a phantom atom.
-        let z_of = |s: NodeId| -> u8 {
-            let atom = mol
-                .get_atom(s)
-                .expect("a substituent is a neighbour read off the molecule itself");
-            atomic_number(&atom)
+        // Highest atomic number, then the earliest atom. See
+        // [`priority_substituent`]: the tie-break is what keeps 3-methyl-2-pentene
+        // from flipping when the two carbon substituents are inserted in the
+        // other order. Still one CIP sphere.
+        let Some(sa) = priority_substituent(mol, &subs_a) else {
+            result.insert(bid, BondStereo::None);
+            continue;
         };
-        // Ranked by (Z, then the atom's own position in the molecule). The
-        // neighbour list's order is itself insertion-dependent, so breaking the
-        // tie on a position *within that list* would not fix anything.
-        let order_of = |s: NodeId| -> usize {
-            mol.atoms()
-                .position(|(id, _)| id == s)
-                .unwrap_or(usize::MAX)
+        let Some(sb) = priority_substituent(mol, &subs_b) else {
+            result.insert(bid, BondStereo::None);
+            continue;
         };
-        let pick = |atom_id: NodeId, subs: &[NodeId]| -> NodeId {
-            subs.iter()
-                .copied()
-                .max_by_key(|&s| (z_of(s), std::cmp::Reverse(order_of(s))))
-                .unwrap_or(atom_id)
-        };
-
-        let sa = pick(a, &subs_a);
-        let sb = pick(b, &subs_b);
 
         // Get 3-D positions
         let pos = |id: NodeId| -> Option<[f64; 3]> {
@@ -415,6 +477,28 @@ mod tests {
         let centers = perceive_chiral_centers(&g);
         assert_eq!(centers.len(), 1);
         assert_eq!(centers[0], c);
+    }
+
+    #[test]
+    fn an_implicit_hydrogen_is_not_labeled_from_coordinates() {
+        // Three neighbors and `h_count` 1 is a tetrahedral reference whose
+        // first site is the implicit hydrogen. Perception does not invent
+        // coordinates for that hydrogen, so the centre stays unlabeled.
+        let mut g = Atomistic::new();
+        let c = g.add_atom(atom_xyz(Element::C, 0.0, 0.0, 0.0)).unwrap();
+        g.set_atom(c, keys::H_COUNT, 1).unwrap();
+        for (el, x, y, z) in [
+            (Element::F, 1.0, 0.0, 0.0),
+            (Element::Cl, 0.0, 1.0, 0.0),
+            (Element::Br, 0.0, 0.0, 1.0),
+        ] {
+            let neighbor = g.add_atom(atom_xyz(el, x, y, z)).unwrap();
+            g.add_bond(c, neighbor, props! {}).expect("add bond");
+        }
+        assert!(perceive_chiral_centers(&g).is_empty());
+        assert!(!perceive_tetrahedral_stereo(&g).contains_key(&c));
+        let reference = tetrahedral_reference(&g, c).expect("three neighbors, one hydrogen");
+        assert_eq!(reference[0], TetrahedralSite::Hydrogen);
     }
 
     // --- perceive_tetrahedral_stereo ---

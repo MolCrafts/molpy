@@ -299,7 +299,11 @@ impl PyPotentialCompiler {
     /// inside its ``cutoff`` (``r < cutoff``, with its switch where it has
     /// one), as :meth:`compile_typed` and LAMMPS do; a style stating no
     /// ``cutoff`` prices every row. ``pair coul/long/pme`` reads the
-    /// frame's periodic ``box``.
+    /// frame's periodic ``box``. When the frame has a ``pairs`` block, the
+    /// real-space erfc term is priced over that list (an exclusion row
+    /// omitted, a 1-4 row at the Coulomb 1-4 scale); with no ``pairs``
+    /// block that term stays the minimum-image loop inside the kernel.
+    /// The reciprocal sum still reads the box.
     ///
     /// Parameters
     /// ----------
@@ -358,7 +362,9 @@ impl PyPotentialCompiler {
     /// fixed list, right for a free-boundary molecule and wrong for a
     /// periodic system; over the same pairs the two price the same energy. This one resolves them against the
     /// **atoms**, reads no ``pairs`` block, and requires the style's declared
-    /// cutoff.
+    /// cutoff. ``pair coul/long/pme`` prices its real-space erfc over the
+    /// neighbour table; the reciprocal sum still reads the periodic box and
+    /// takes no pair weight.
     ///
     /// The weights come from the force field's ``special_bonds`` walked over
     /// the frame's bond graph. Without them a neighbour table would count a

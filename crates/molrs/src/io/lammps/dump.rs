@@ -921,6 +921,7 @@ fn write_lammps_dump_frame<W: Write>(
                     drop_shadowed_fields(&ordered)
                 }
             };
+            crate::io::null_cells::refuse_null_cells(frame, "atoms", &fields)?;
             dump_lines(atoms, &fields, natoms, "ITEM: ATOMS")
         })
         .transpose()?
@@ -1128,6 +1129,7 @@ fn write_lammps_dump_local_frame<W: Write>(
             .visit_block("entries", |entries| {
                 let mut keys = entries.column_keys();
                 keys.sort_unstable();
+                crate::io::null_cells::refuse_null_cells(frame, "entries", &keys)?;
                 dump_lines(
                     entries,
                     &drop_shadowed_fields(&keys),
@@ -1143,6 +1145,8 @@ fn write_lammps_dump_local_frame<W: Write>(
         return Ok(());
     }
 
+    crate::io::null_cells::refuse_null_cells(frame, "bonds", &["atomi", "atomj", "type_id"])?;
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &["id"])?;
     let atomi = frame
         .column("bonds", "atomi")
         .and_then(|c| c.get::<u64>())

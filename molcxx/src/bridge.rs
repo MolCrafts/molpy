@@ -253,17 +253,19 @@ pub mod ffi {
         fn frameref_capsule_name() -> String;
 
         // introspection
-        // An absent block, and a handle that no longer names a frame, are
-        // errors: an empty answer would be indistinguishable from an empty
-        // block. Ask `frame_has_block` first.
+        // An absent block is `Ok(false)` from `frame_has_block` and an error
+        // from `frame_block_names`: an empty list is an empty frame. A handle
+        // that no longer names a frame is an error from every door, including
+        // `frame_has_block`, `frame_has_box` and `frame_meta_keys`.
         fn frame_block_names(fref: &FrameRef) -> Result<Vec<String>>;
-        fn frame_has_block(fref: &FrameRef, block: &str) -> bool;
+        fn frame_has_block(fref: &FrameRef, block: &str) -> Result<bool>;
         fn frame_block_columns(fref: &FrameRef, block: &str) -> Result<Vec<String>>;
         fn frame_block_n_rows(fref: &FrameRef, block: &str) -> Result<i64>;
-        fn frame_has_box(fref: &FrameRef) -> bool;
+        fn frame_has_box(fref: &FrameRef) -> Result<bool>;
 
-        // metadata: keys in insertion order, one value by key, insert/replace
-        fn frame_meta_keys(fref: &FrameRef) -> Vec<String>;
+        // metadata: keys in insertion order, one value by key, insert/replace.
+        // A dropped frame is an error, not an empty key list.
+        fn frame_meta_keys(fref: &FrameRef) -> Result<Vec<String>>;
         fn frame_get_meta(fref: &FrameRef, key: &str) -> Result<KeyedMetaValue>;
         fn frame_set_meta(fref: &mut FrameRef, value: KeyedMetaValue) -> Result<()>;
 

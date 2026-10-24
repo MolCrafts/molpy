@@ -18,7 +18,7 @@ The repository holds the whole molpy project: the Rust core (`crates/molrs`,
 `crates/molrs-ffi`) and one directory per language binding — `molpy/`
 (Python), `molwasm/`, `molc/`, `molcxx/`. The Python binding is a maturin
 project: `molpy/Cargo.toml` + `molpy/src/` build the native module
-`molpy._core`, and `molpy/molpy/` is the package.
+`molpy._core`, and `molpy/python/molpy/` is the package.
 
 ```bash
 git clone https://github.com/MolCrafts/molrs.git
@@ -28,8 +28,8 @@ uv --directory molpy sync --extra dev   # builds molpy in place (editable)
 cd molpy && uv run pytest               # the Python suite
 ```
 
-Run `pytest`, not `python -m pytest`: the latter puts the checkout on
-`sys.path` ahead of the built package.
+Run `pytest`, not `python -m pytest`. The suite imports the installed wheel.
+The package source is `molpy/python/molpy/`.
 
 
 ## Gates
@@ -37,7 +37,7 @@ Run `pytest`, not `python -m pytest`: the latter puts the checkout on
 `scripts/check.sh verify` is the pre-push gate, every check once. Its Python
 gates are `python` (build one molpy wheel from this checkout, install it in
 molpy's locked environment, `molpy/uv.lock`, and run the suite on it),
-`types` (`molpy/molpy/_core.pyi` against the compiled module) and `docs`
+`types` (`molpy/python/molpy/_core.pyi` against the compiled module) and `docs`
 (this manual, `--strict`, on the same wheel). CI runs `python` on every OS
 leg and `docs` on the Linux wheel. mollog and molcfg come from PyPI, within
 `molpy/pyproject.toml`'s `[project]` ranges.
@@ -89,10 +89,10 @@ scripts/check.sh python types             # molpy wheel + suite, stub check
 scripts/check.sh docs                     # this manual, --strict
 scripts/check.sh verify                   # the pre-push gate: every check once
 cargo mrs-test                            # Rust core unit tests
-cd molpy && uv run --no-sync ruff format molpy tests   # auto-format Python
+cd molpy && uv run --no-sync ruff format python tests   # auto-format Python
 ```
 
 
 ## Troubleshooting
 
-If imports fail after pulling new code, rebuild molpy in place: `uv --directory molpy sync --extra dev --reinstall-package molcrafts-molpy` (the Rust side changed). The manual builds with `scripts/check.sh docs`. If formatting checks fail, run `uv --directory molpy run ruff format molpy tests` before pushing.
+If imports fail after pulling new code, rebuild molpy in place: `uv --directory molpy sync --extra dev --reinstall-package molcrafts-molpy` (the Rust side changed). The manual builds with `scripts/check.sh docs`. If formatting checks fail, run `uv --directory molpy run ruff format python tests` before pushing.

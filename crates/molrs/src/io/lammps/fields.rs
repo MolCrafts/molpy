@@ -39,10 +39,17 @@ impl TypeRef {
         }
     }
 
-    pub(crate) fn resolve(&self, label_to_id: &HashMap<String, I>) -> I {
+    /// The numeric type: the id as written, or the id a `* Type Labels`
+    /// section declared for the label. An undeclared label is refused by
+    /// name, as LAMMPS refuses it — never read as type 1.
+    pub(crate) fn resolve(&self, label_to_id: &HashMap<String, I>) -> std::io::Result<I> {
         match self {
-            TypeRef::Id(id) => *id,
-            TypeRef::Label(label) => label_to_id.get(label).copied().unwrap_or(1),
+            TypeRef::Id(id) => Ok(*id),
+            TypeRef::Label(label) => label_to_id.get(label).copied().ok_or_else(|| {
+                invalid_data(format!(
+                    "type label `{label}` is declared in no `* Type Labels` section"
+                ))
+            }),
         }
     }
 }

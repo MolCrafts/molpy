@@ -18,7 +18,18 @@ pub struct SmilesEmitOptions {
     pub aromatic: AromaticEmit,
     /// How hydrogens appear in the string.
     pub hydrogens: HydrogenEmit,
-    /// Emit tetrahedral / double-bond stereo markers when present on the graph.
+    /// Emit tetrahedral and double-bond stereo when the graph states it.
+    ///
+    /// Tetrahedral `"CW"` / `"CCW"` is the clock sense of the reference
+    /// substituent order. The written `@` / `@@` is that sense in this
+    /// string's OpenSMILES neighbor order, and the glyph is omitted when the
+    /// substituents this string writes are not those four. One bare protium
+    /// this hydrogen policy skips is that centre's bracket `H`. Bond `"E"` /
+    /// `"Z"` is double-bond geometry; `/` and `\` are written for the
+    /// priority substituent on each end. `"up"` / `"down"` is a slash that is
+    /// not that geometry (a ring digit, or a cumulene end): `/` / `\` from
+    /// the bond's first endpoint toward its second, flipped when this string
+    /// traverses the bond the other way.
     pub include_stereo: bool,
     /// Multi-component graph policy.
     pub multi_component: MultiComponentEmit,
@@ -38,11 +49,17 @@ pub enum AromaticEmit {
 /// Hydrogen write policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HydrogenEmit {
-    /// Daylight organic-subset omission of implicit H; skip explicit H atoms.
+    /// Daylight omission for an atom that states no count and has no omitted
+    /// protium neighbor. A stored count is written in a bracket. Each bare
+    /// protium neighbor this policy does not draw is added to that count, so
+    /// drawing the hydrogens and writing them does not drop them. A stored
+    /// zero with nothing omitted is the bare bracket `[C]`.
     OrganicSubset,
-    /// Write every atom including H as bracket atoms.
+    /// Write every atom, including hydrogen, as its own atom. A stored count
+    /// is written as stated; omitted protium is not added on top.
     ExplicitAll,
-    /// Use stored `h_count` / explicit H neighbours only.
+    /// The same count as [`OrganicSubset`](Self::OrganicSubset): the stored
+    /// count plus each bare protium neighbor that is not drawn as an atom.
     AsStored,
 }
 

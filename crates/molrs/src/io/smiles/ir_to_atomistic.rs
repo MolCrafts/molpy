@@ -3,15 +3,23 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::core::NeighborKinds;
+use crate::io::smiles::bond_stereo;
+use crate::io::smiles::chirality::{
+    chirality_in, implicit_hydrogens, opensmiles_order, reference_order,
+};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use crate::line_notation::ast::*;
 use crate::line_notation::atom_keys::{H_COUNT, IS_AROMATIC, ISOTOPE, STEREO, WILDCARD_Z};
 use crate::line_notation::canonical_element_symbol;
+use crate::perceive::priority_substituent;
 use molrs::core::Atomistic;
+use molrs::core::BondOrder;
 use molrs::core::Element;
 use molrs::core::MolRsError;
 use molrs::core::NodeId;
 use molrs::core::Props;
+use molrs::core::RelationId;
 use molrs::core::keys;
 use molrs::op::I;
 
@@ -43,6 +51,29 @@ impl SmilesIr {
     /// atoms get none and are left to valence-based
     /// [`add_hydrogens`](crate::perceive::add_hydrogens).
     ///
+    /// # Tetrahedral chirality
+    ///
+    /// A bracket `@` / `@@` is stored as `stereo` `"CCW"` / `"CW"` when the
+    /// written substituents are a permutation of the reference order: the bond
+    /// neighbors in bond order, with one implicit hydrogen (`h_count` 1 and
+    /// three neighbors) placed first. The written glyph is that configuration
+    /// in the string's own neighbor order, so an odd permutation flips `@`
+    /// and `@@` on the way in. A centre that does not name exactly those four
+    /// substituents stores no marker.
+    ///
+    /// # Directional bonds
+    ///
+    /// A `/` or `\` on a bond that is not the priority substituent of a simple
+    /// alkene is stored as `"up"` or `"down"`: the symbol in the direction from
+    /// the bond's first endpoint toward its second. The two digits of a ring
+    /// bond are one direction. Opposite characters agree (`C/1…\1` is `/` from
+    /// the opener toward the closer), and the same character on both digits
+    /// conflicts. Two directional substituents of one double-bond atom that
+    /// lie on the same side also conflict. A simple alkene — one double bond,
+    /// neither end between two double bonds, both priority substituents marked
+    /// — stores `"E"` or `"Z"` on the double bond and drops the slashes.
+    /// Cumulene ends keep `"up"` / `"down"`.
+    ///
     /// # Errors
     ///
     /// Returns [`SmilesErrorKind::UnmatchedRingClosure`] for a ring digit that is
@@ -71,6 +102,8 @@ impl SmilesIr {
         }
 
         builder.close_rings()?;
+        builder.settle_bond_stereo()?;
+        builder.commit_chirality()?;
 
         Ok(builder.mol)
     }
@@ -173,6 +206,8 @@ fn fragment_to_atomistic(
     }
 
     builder.close_rings()?;
+    builder.settle_bond_stereo()?;
+    builder.commit_chirality()?;
 
     let Builder {
         mol, descriptors, ..
@@ -189,6 +224,90 @@ struct PendingRing {
     atom: NodeId,
     bond: Option<BondKind>,
     span: Span,
+}
+
+/// One heavy neighbor of a chiral centre, in the order the string writes it.
+///
+/// A ring digit is [`HeavySlot::Ring`] until the closure bonds the partner;
+/// the partner then replaces that slot in place, so a reused ring number is
+/// a new slot.
+enum HeavySlot {
+    Atom(NodeId),
+    Ring(u16),
+}
+
+/// A bracket `@` / `@@` whose OpenSMILES neighbor order is still being walked.
+struct ChiralSite {
+    written: Chirality,
+    slots: Vec<HeavySlot>,
+    has_from: bool,
+    span: Span,
+}
+
+/// The bond symbol in the opener → closer direction, or a conflict.
+///
+/// Non-directional kinds agree only when both digits name the same kind.
+/// Directional `/` and `\` agree when the characters are opposite: `/` from
+/// the opener toward the closer is `\` written back on the closer. A symbol
+/// only on the closer is already in the closer → opener direction, so it is
+/// flipped.
+fn agreed_ring_bond(
+    opener: Option<BondKind>,
+    closer: Option<BondKind>,
+) -> Result<Option<BondKind>, ()> {
+    match (opener, closer) {
+        (Some(open), Some(close))
+            if bond_stereo::is_directional(open) && bond_stereo::is_directional(close) =>
+        {
+            if bond_stereo::flip(close) == open {
+                Ok(Some(open))
+            } else {
+                Err(())
+            }
+        }
+        (Some(open), Some(close)) if open != close => Err(()),
+        (Some(open), _) => Ok(Some(open)),
+        (None, Some(close)) if bond_stereo::is_directional(close) => {
+            Ok(Some(bond_stereo::flip(close)))
+        }
+        (None, Some(close)) => Ok(Some(close)),
+        (None, None) => Ok(None),
+    }
+}
+
+/// `"up"` from `carbon` toward `substituent`, along the bond's endpoint order.
+fn up_from_carbon(mol: &Atomistic, carbon: NodeId, substituent: NodeId) -> Option<bool> {
+    let bid = mol
+        .neighbors(carbon, NeighborKinds::BONDS)
+        .find(|(neighbor, _)| *neighbor == substituent)
+        .map(|(_, bid)| bid)?;
+    let bond = mol.get_bond(bid).ok()?;
+    let forward_up = match bond.props.get_str(STEREO) {
+        Some("up") => true,
+        Some("down") => false,
+        _ => return None,
+    };
+    if bond.nodes[0] == carbon && bond.nodes[1] == substituent {
+        Some(forward_up)
+    } else if bond.nodes[1] == carbon && bond.nodes[0] == substituent {
+        Some(!forward_up)
+    } else {
+        None
+    }
+}
+
+fn other_double(mol: &Atomistic, atom: NodeId, partner: NodeId) -> bool {
+    mol.neighbors(atom, NeighborKinds::BONDS)
+        .any(|(neighbor, bid)| {
+            neighbor != partner && mol.bond_type(bid).ok() == Some(BondOrder::Double)
+        })
+}
+
+fn other_neighbors(mol: &Atomistic, atom: NodeId, partner: NodeId) -> Vec<NodeId> {
+    mol.neighbors(atom, NeighborKinds::BONDS)
+        .map(|(neighbor, _)| neighbor)
+        .filter(|neighbor| *neighbor != partner)
+        .collect()
 }
 
 /// Reduce a SMARTS-style [`BondQuery`] back to a single [`BondKind`]. The
@@ -228,6 +347,10 @@ struct Builder<'a> {
     /// [`Builder::add_atom_node`]. Owned, not borrowed: the map is returned by
     /// value.
     descriptors: Vec<(NodeId, BondingDescriptor)>,
+    /// Bracket centres whose `@` / `@@` is committed once every ring digit
+    /// has a partner. Bond order alone is not the OpenSMILES order: a ring
+    /// bond is added when the ring closes, not where its digit was written.
+    chiral: HashMap<NodeId, ChiralSite>,
 }
 
 impl<'a> Builder<'a> {
@@ -239,6 +362,7 @@ impl<'a> Builder<'a> {
             ir,
             collect_descriptors,
             descriptors: Vec::new(),
+            chiral: HashMap::new(),
         }
     }
 
@@ -253,8 +377,10 @@ impl<'a> Builder<'a> {
         let head_id = self.add_atom_node(&chain.head)?;
 
         // Bond head to the previous atom (if coming from a branch or sequence).
+        // That atom is the OpenSMILES from-atom: the viewpoint of a `@` on head.
         if let Some((prev_id, bond)) = prev {
             self.add_bond(prev_id, head_id, bond)?;
+            self.note_from(head_id, prev_id);
         }
 
         let mut current = head_id;
@@ -264,14 +390,24 @@ impl<'a> Builder<'a> {
                 ChainElement::BondedAtom { bond, atom } => {
                     let atom_id = self.add_atom_node(atom)?;
                     self.add_bond(current, atom_id, bond_query_to_kind(bond.as_ref())?)?;
+                    // The tail is flat: rings and branches while `current` is
+                    // this atom belong to it, and the next bonded atom is its
+                    // chain continuation.
+                    self.note_heavy(current, HeavySlot::Atom(atom_id));
+                    self.note_from(atom_id, current);
                     current = atom_id;
                 }
                 ChainElement::Branch { bond, chain, .. } => {
                     // Branch: build sub-chain rooted at `current`.
-                    self.build_chain(chain, Some((current, bond_query_to_kind(bond.as_ref())?)))?;
+                    let branch_head = self
+                        .build_chain(chain, Some((current, bond_query_to_kind(bond.as_ref())?)))?;
+                    self.note_heavy(current, HeavySlot::Atom(branch_head));
                     // `current` does NOT change — branches don't advance the main chain.
                 }
                 ChainElement::RingClosure { bond, rnum, span } => {
+                    // The digit's place in the written order, before the bond
+                    // exists: the partner replaces this slot when the ring closes.
+                    self.note_heavy(current, HeavySlot::Ring(*rnum));
                     self.handle_ring_closure(
                         current,
                         *rnum,
@@ -314,9 +450,10 @@ impl<'a> Builder<'a> {
     /// # Bracket facts
     ///
     /// Integer facts are stored as integers: `isotope`, `h_count`,
-    /// [`keys::FORMAL_CHARGE`] and the atom class as [`keys::ATOM_MAP`]. The
-    /// chirality is the string `stereo` (`"CW"` / `"CCW"`), and a written
-    /// aromatic atom carries `is_aromatic = true`.
+    /// [`keys::FORMAL_CHARGE`] and the atom class as [`keys::ATOM_MAP`]. A
+    /// written aromatic atom carries `is_aromatic = true`. A bracket `@` /
+    /// `@@` is not stored here: its neighbor order is still being walked, and
+    /// [`Builder::commit_chirality`] writes `stereo` once that order is known.
     fn add_atom_node(&mut self, node: &AtomNode) -> Result<NodeId, SmilesError> {
         if !self.collect_descriptors && !node.descriptors.is_empty() {
             return Err(SmilesError::new(
@@ -328,6 +465,7 @@ impl<'a> Builder<'a> {
         }
 
         let aromatic = node.spec.written_aromatic();
+        let mut written_chirality = None;
         let props = match &node.spec {
             AtomSpec::Organic { symbol, .. } => {
                 let element = self.element(symbol, node.span)?;
@@ -349,13 +487,7 @@ impl<'a> Builder<'a> {
                 if let Some(iso) = isotope {
                     props.set(ISOTOPE, I::from(*iso));
                 }
-                if let Some(ch) = chirality {
-                    let s = match ch {
-                        Chirality::CounterClockwise => "CCW",
-                        Chirality::Clockwise => "CW",
-                    };
-                    props.set(STEREO, s);
-                }
+                written_chirality = *chirality;
                 // A bracket atom states its hydrogen count exactly; an omitted
                 // count means zero, not "fill the valence".
                 props.set(H_COUNT, I::from(hcount.unwrap_or(0)));
@@ -386,6 +518,17 @@ impl<'a> Builder<'a> {
             .map_err(|e| self.build_error(&e, node.span))?;
         if aromatic {
             self.aromatic_atoms.insert(id);
+        }
+        if let Some(written) = written_chirality {
+            self.chiral.insert(
+                id,
+                ChiralSite {
+                    written,
+                    slots: Vec::new(),
+                    has_from: false,
+                    span: node.span,
+                },
+            );
         }
 
         if self.collect_descriptors {
@@ -436,10 +579,10 @@ impl<'a> Builder<'a> {
         if let Some(kind) = kind {
             props.set(keys::BOND_TYPE, kind.bond_type());
             props.set(keys::BOND_NUMBER, kind.bond_number());
-            match kind {
-                BondKind::Up => props.set(STEREO, "up"),
-                BondKind::Down => props.set(STEREO, "down"),
-                _ => {}
+            // `kind` is the character in the direction `a` → `b`, which is the
+            // direction `add_bond` stores as endpoint order.
+            if let Some(label) = bond_stereo::label_along(kind, a, b, [a, b]) {
+                props.set(STEREO, label);
             }
         }
 
@@ -479,8 +622,9 @@ impl<'a> Builder<'a> {
             // Close the ring: bond `pending.atom` ↔ `current`.
             // Use the bond type from whichever side specified one
             // (the opener or the closer). If both specified, they must agree.
-            let effective_bond = match (pending.bond, bond) {
-                (Some(a), Some(b)) if a != b => {
+            let effective_bond = match agreed_ring_bond(pending.bond, bond) {
+                Ok(kind) => kind,
+                Err(()) => {
                     return Err(SmilesError::new(
                         SmilesErrorKind::RingBondConflict { rnum },
                         span,
@@ -488,11 +632,10 @@ impl<'a> Builder<'a> {
                         Notation::Smiles,
                     ));
                 }
-                (Some(a), _) => Some(a),
-                (_, Some(b)) => Some(b),
-                (None, None) => None,
             };
             self.add_bond(pending.atom, current, effective_bond)?;
+            self.resolve_ring(pending.atom, rnum, current);
+            self.resolve_ring(current, rnum, pending.atom);
         } else {
             // Open a new ring closure.
             self.open_rings.insert(
@@ -503,6 +646,176 @@ impl<'a> Builder<'a> {
                     span,
                 },
             );
+        }
+        Ok(())
+    }
+
+    /// The from-atom leads the OpenSMILES order. `insert` keeps it first if a
+    /// slot was already noted; a second call would duplicate it.
+    fn note_from(&mut self, id: NodeId, from: NodeId) {
+        let Some(site) = self.chiral.get_mut(&id) else {
+            return;
+        };
+        if site.has_from {
+            return;
+        }
+        site.has_from = true;
+        site.slots.insert(0, HeavySlot::Atom(from));
+    }
+
+    /// Append one written heavy neighbor. No-op when `id` carries no `@`.
+    fn note_heavy(&mut self, id: NodeId, slot: HeavySlot) {
+        let Some(site) = self.chiral.get_mut(&id) else {
+            return;
+        };
+        site.slots.push(slot);
+    }
+
+    /// Replace the first still-open digit `rnum` on `id` with `partner`.
+    fn resolve_ring(&mut self, id: NodeId, rnum: u16, partner: NodeId) {
+        let Some(site) = self.chiral.get_mut(&id) else {
+            return;
+        };
+        for slot in &mut site.slots {
+            if let HeavySlot::Ring(open) = slot
+                && *open == rnum
+            {
+                *slot = HeavySlot::Atom(partner);
+                return;
+            }
+        }
+    }
+
+    /// Store each centre's `@` / `@@` as `"CW"` / `"CCW"` against the
+    /// reference order. A digit that never closed, or a substituent count
+    /// that is not the reference four, stores nothing: there is no permutation
+    /// to apply, and the written clock would not name these substituents.
+    fn commit_chirality(&mut self) -> Result<(), SmilesError> {
+        let sites = std::mem::take(&mut self.chiral);
+        for (id, site) in sites {
+            let Some(stored) = self.reference_chirality(id, &site) else {
+                continue;
+            };
+            let label = match stored {
+                Chirality::Clockwise => "CW",
+                Chirality::CounterClockwise => "CCW",
+            };
+            self.mol
+                .set_atom(id, STEREO, label)
+                .map_err(|e| self.build_error(&e, site.span))?;
+        }
+        Ok(())
+    }
+
+    fn reference_chirality(&self, id: NodeId, site: &ChiralSite) -> Option<Chirality> {
+        let mut heavy = Vec::with_capacity(site.slots.len());
+        for slot in &site.slots {
+            match slot {
+                HeavySlot::Atom(atom) => heavy.push(*atom),
+                HeavySlot::Ring(_) => return None,
+            }
+        }
+        let h = implicit_hydrogens(&self.mol, id);
+        let written_order = opensmiles_order(site.has_from, &heavy, h)?;
+        let reference = reference_order(&self.mol, id)?;
+        chirality_in(site.written, &written_order, &reference)
+    }
+
+    /// One bond-stereo fact. Contradictory wedges are refused before any
+    /// label is rewritten. A simple alkene then stores `E` / `Z` on the double
+    /// bond and clears the slashes those ends carried.
+    fn settle_bond_stereo(&mut self) -> Result<(), SmilesError> {
+        self.refuse_same_side_marks()?;
+        self.store_alkene_geometry()?;
+        Ok(())
+    }
+
+    fn refuse_same_side_marks(&self) -> Result<(), SmilesError> {
+        let atoms: Vec<NodeId> = self.mol.atoms().map(|(id, _)| id).collect();
+        for id in atoms {
+            let has_double = self
+                .mol
+                .neighbors(id, NeighborKinds::BONDS)
+                .any(|(_, bid)| self.mol.bond_type(bid).ok() == Some(BondOrder::Double));
+            if !has_double {
+                continue;
+            }
+            let mut seen_up = false;
+            let mut seen_down = false;
+            for (neighbor, bid) in self.mol.neighbors(id, NeighborKinds::BONDS) {
+                if self.mol.bond_type(bid).ok() == Some(BondOrder::Double) {
+                    continue;
+                }
+                let Some(up) = up_from_carbon(&self.mol, id, neighbor) else {
+                    continue;
+                };
+                if up && seen_up || !up && seen_down {
+                    return Err(SmilesError::new(
+                        SmilesErrorKind::BondStereoConflict,
+                        self.ir.span,
+                        "",
+                        Notation::Smiles,
+                    ));
+                }
+                if up {
+                    seen_up = true;
+                } else {
+                    seen_down = true;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn store_alkene_geometry(&mut self) -> Result<(), SmilesError> {
+        let doubles: Vec<(RelationId, NodeId, NodeId)> = self
+            .mol
+            .bonds()
+            .filter(|(bid, _)| self.mol.bond_type(*bid).ok() == Some(BondOrder::Double))
+            .map(|(bid, rel)| (bid, rel.nodes[0], rel.nodes[1]))
+            .collect();
+        let mut writes = Vec::new();
+        let mut clears = Vec::new();
+        for (bid, a, b) in doubles {
+            if other_double(&self.mol, a, b) || other_double(&self.mol, b, a) {
+                continue;
+            }
+            let Some(sa) = priority_substituent(&self.mol, &other_neighbors(&self.mol, a, b))
+            else {
+                continue;
+            };
+            let Some(sb) = priority_substituent(&self.mol, &other_neighbors(&self.mol, b, a))
+            else {
+                continue;
+            };
+            let Some(up_a) = up_from_carbon(&self.mol, a, sa) else {
+                continue;
+            };
+            let Some(up_b) = up_from_carbon(&self.mol, b, sb) else {
+                continue;
+            };
+            writes.push((bid, if up_a == up_b { "Z" } else { "E" }));
+            for end in [a, b] {
+                let partner = if end == a { b } else { a };
+                for (neighbor, sid) in self.mol.neighbors(end, NeighborKinds::BONDS) {
+                    if neighbor == partner {
+                        continue;
+                    }
+                    if up_from_carbon(&self.mol, end, neighbor).is_some() {
+                        clears.push(sid);
+                    }
+                }
+            }
+        }
+        for bid in clears {
+            self.mol
+                .clear_bond(bid, STEREO)
+                .map_err(|e| self.build_error(&e, self.ir.span))?;
+        }
+        for (bid, label) in writes {
+            self.mol
+                .set_bond(bid, STEREO, label)
+                .map_err(|e| self.build_error(&e, self.ir.span))?;
         }
         Ok(())
     }
@@ -858,6 +1171,114 @@ mod tests {
         let mol = smiles_to_mol("F/C=C/F");
         assert_eq!(mol.n_atoms(), 4);
         assert_eq!(mol.n_bonds(), 3);
+    }
+
+    /// `"up"` / `"down"` on the bond between the atoms created at these two
+    /// positions in the string.
+    fn directional_label(mol: &Atomistic, left: usize, right: usize) -> &'static str {
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let (a, b) = (ids[left], ids[right]);
+        for (_, rel) in mol.bonds() {
+            let joins = rel.nodes.len() == 2
+                && ((rel.nodes[0] == a && rel.nodes[1] == b)
+                    || (rel.nodes[0] == b && rel.nodes[1] == a));
+            if !joins {
+                continue;
+            }
+            return match rel.props.get_str(STEREO) {
+                Some("up") => "up",
+                Some("down") => "down",
+                other => panic!("bond stereo {other:?}"),
+            };
+        }
+        panic!("no bond between atoms {left} and {right}");
+    }
+
+    fn double_bond_geometry(mol: &Atomistic) -> &'static str {
+        let mut found = None;
+        for (_, rel) in mol.bonds() {
+            let label = match rel.props.get_str(STEREO) {
+                Some("E") => "E",
+                Some("Z") => "Z",
+                Some("up" | "down") => panic!("a slash survived next to E/Z"),
+                _ => continue,
+            };
+            assert!(found.is_none(), "two double-bond geometries");
+            found = Some(label);
+        }
+        found.expect("no E/Z on the double bond")
+    }
+
+    #[test]
+    fn a_simple_alkene_is_stored_as_geometry() {
+        assert_eq!(double_bond_geometry(&smiles_to_mol("F/C=C/F")), "E");
+        assert_eq!(double_bond_geometry(&smiles_to_mol("C(\\F)=C/F")), "E");
+        assert_eq!(double_bond_geometry(&smiles_to_mol("C(/F)=C/F")), "Z");
+        assert_eq!(double_bond_geometry(&smiles_to_mol("F/C=C\\F")), "Z");
+    }
+
+    #[test]
+    fn two_substituents_on_the_same_side_conflict() {
+        let err = SmilesIr::parse("C(/F)(/Cl)=C/F")
+            .unwrap()
+            .to_atomistic()
+            .unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::BondStereoConflict));
+    }
+
+    #[test]
+    fn opposite_ring_characters_are_one_direction() {
+        // `/` on the opener and `\` on the closer are the same direction.
+        // A character only on the closer is closer → opener, so it flips.
+        let both = smiles_to_mol("C/1CCCC\\1");
+        assert_eq!(both.n_bonds(), 5);
+        assert_eq!(directional_label(&both, 0, 4), "up");
+        let closer_only = smiles_to_mol("C1CCCC/1");
+        assert_eq!(directional_label(&closer_only, 0, 4), "down");
+        let opener_only = smiles_to_mol("C/1CCCC1");
+        assert_eq!(directional_label(&opener_only, 0, 4), "up");
+
+        // Each carbon has one double bond, so the slashes become E/Z and the
+        // ring single does not keep a direction of its own.
+        let spec = smiles_to_mol("C/1=C/C=C\\C=C/C=C\\1");
+        assert_eq!(spec.n_atoms(), 8);
+        let mut geometry = 0;
+        let mut slash = 0;
+        for (_, rel) in spec.bonds() {
+            match rel.props.get_str(STEREO) {
+                Some("E" | "Z") => geometry += 1,
+                Some("up" | "down") => slash += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(geometry, 4);
+        assert_eq!(slash, 0);
+    }
+
+    #[test]
+    fn the_same_directional_character_on_both_ring_digits_conflicts() {
+        let err = SmilesIr::parse("C/1CCCC/1")
+            .unwrap()
+            .to_atomistic()
+            .unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::RingBondConflict { rnum: 1 }
+        ));
+    }
+
+    #[test]
+    fn non_directional_ring_bonds_still_have_to_agree() {
+        let mol = smiles_to_mol("C=1CCCC=1");
+        assert_eq!(mol.n_bonds(), 5);
+        let err = SmilesIr::parse("C=1CCCC#1")
+            .unwrap()
+            .to_atomistic()
+            .unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::RingBondConflict { rnum: 1 }
+        ));
     }
 
     // -- real molecules -----------------------------------------------------

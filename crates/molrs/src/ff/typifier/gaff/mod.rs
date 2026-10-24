@@ -299,6 +299,31 @@ fn dihedral_params(rows: &[&ParmDihedralRow]) -> Vec<(String, f64)> {
     out
 }
 
+/// [`dihedral_params`] with each row's phase rewritten onto `stored`
+/// ([`TypeName::phase_for_stored_order`]). `authored` is the row's own
+/// spelling, wildcards included; every term of one torsion shares it.
+fn dihedral_params_for(
+    rows: &[&ParmDihedralRow],
+    authored: &[&str],
+    stored: &[String],
+) -> Vec<(String, f64)> {
+    let stored_ref: Vec<&str> = stored.iter().map(String::as_str).collect();
+    let adjusted: Vec<ParmDihedralRow> = rows
+        .iter()
+        .map(|row| ParmDihedralRow {
+            phase_deg: TypeName::phase_for_stored_order(authored, &stored_ref, row.phase_deg),
+            ..**row
+        })
+        .collect();
+    let refs: Vec<&ParmDihedralRow> = adjusted.iter().collect();
+    dihedral_params(&refs)
+}
+
+/// The four slot names of `row`, `X` where the file wrote a wildcard.
+fn row_slot_names(index: &TableIndex, row: &ParmDihedralRow) -> [&'static str; 4] {
+    [&row.i, &row.j, &row.k, &row.l].map(|slot| slot_name(&index.table, slot))
+}
+
 /// `value` as parmchk2 writes it into the frcmod, `%.<decimals>f`: the number
 /// tleap reads back and prices. An estimate is a frcmod row, so its
 /// parameters carry the frcmod's precision, not the analog's (`ne-s6` copies
@@ -714,23 +739,25 @@ impl GaffTypifier {
             .collect();
         for atoms in dihedrals {
             let quartet = atoms.map(|a| type_of[&a]);
+            let query_names = index.names(quartet);
+            let term = BondedTerm::Dihedral(query_names.clone());
+            // The type, and the phase on it, are this orientation. The graph
+            // quartet is moved to it after every term has resolved.
+            let stored: Vec<String> = term.endpoints().into_iter().map(str::to_owned).collect();
             let resolved = match index.dihedral(quartet) {
                 Some(rows) => {
-                    let first = rows[0];
+                    let authored = row_slot_names(&index, rows[0]);
                     Some((
-                        oriented(BondedTerm::Dihedral(
-                            index.names(concrete(first.i, first.j, first.k, first.l)),
-                        )),
-                        Bonded::matched(Params::from_iter(dihedral_params(rows))),
+                        stored.clone(),
+                        Bonded::matched(Params::from_iter(dihedral_params_for(
+                            rows, &authored, &stored,
+                        ))),
                     ))
                 }
                 None => {
-                    let names = index.names(quartet);
-                    let term = BondedTerm::Dihedral(names.clone());
-                    let endpoints: Vec<String> =
-                        term.endpoints().into_iter().map(str::to_owned).collect();
                     let canon = torsion::canonical(quartet.map(|ty| index.name_of(ty)));
                     if let Some(estimate) = torsions.estimate(&canon) {
+                        let authored = row_slot_names(&index, estimate.rows[0]);
                         let printed: Vec<ParmDihedralRow> = estimate
                             .rows
                             .iter()
@@ -739,16 +766,19 @@ impl GaffTypifier {
                         let printed: Vec<&ParmDihedralRow> = printed.iter().collect();
                         Some(Bonded::estimated(
                             &term,
-                            Params::from_iter(dihedral_params(&printed)),
+                            Params::from_iter(dihedral_params_for(&printed, &authored, &stored)),
                             estimate.provenance.clone(),
                         ))
                     } else if let Some(rows) = torsions.general(canon[1], canon[2]) {
+                        let authored = row_slot_names(&index, rows[0]);
                         Some((
-                            endpoints,
-                            Bonded::matched(Params::from_iter(dihedral_params(&rows))),
+                            stored.clone(),
+                            Bonded::matched(Params::from_iter(dihedral_params_for(
+                                &rows, &authored, &stored,
+                            ))),
                         ))
                     } else {
-                        missed.note(MissingTerm::Dihedral(names));
+                        missed.note(MissingTerm::Dihedral(query_names));
                         None
                     }
                 }
@@ -772,6 +802,11 @@ impl GaffTypifier {
             });
         }
 
+        // Every proper resolved, so its phase is the phase of the oriented
+        // type. Perception left the quartet at `j < k`; store that same
+        // orientation or the kernel prices φ with the wrong sign.
+        store_propers_in_type_order(graph, &type_of, &index)?;
+
         let used: HashSet<&str> = used.iter().map(|&ty| index.name_of(ty)).collect();
         m.declare_styles_of(library);
         m.add_pairs_among(library, &used);
@@ -792,9 +827,12 @@ impl Typifier for GaffTypifier {
     /// `angle/harmonic`, `dihedral/periodic` or `improper/periodic`. A term an
     /// bond, angle or dihedral is named by [`BondedTerm::type_name`], its
     /// types in [`TypeName::orient`]'s orientation (`c3-c3-oh-ho`, however
-    /// the covering `.dat` row is written), an improper by its types in
-    /// AMBER's order; a dihedral's cosine terms are numbered by periodicity,
-    /// then phase, then `k`. A term estimated rather than covered by a row
+    /// the covering `.dat` row is written). A proper is stored in that same
+    /// atom order, and its phase is the phase of that order
+    /// ([`TypeName::phase_for_stored_order`]: the covering row's phase, negated
+    /// when the row is written the other way; a half-turn stays `180`). An
+    /// improper is named by its types in AMBER's order; a dihedral's cosine
+    /// terms are numbered by periodicity, then phase, then `k`. A term estimated rather than covered by a row
     /// has the same name, its params carry the provenance keys `estimated`,
     /// `estimate_penalty`, `estimate_method` and `estimate_analog`, and its
     /// numbers are the frcmod's, at the precision parmchk2 prints them. These
@@ -910,6 +948,31 @@ fn oriented(term: BondedTerm) -> Vec<String> {
     term.endpoints().into_iter().map(str::to_owned).collect()
 }
 
+/// Store each proper in the orientation its type name uses
+/// ([`TypeName::orient`] of the query types). Perception emits `j < k`; a
+/// quartet whose types read reversed is stored reversed, so the signed φ
+/// the kernel prices is the φ of the type's phase. The relation sequence is
+/// unchanged, which is the sequence the assignment's dihedral rows follow.
+fn store_propers_in_type_order(
+    graph: &mut Atomistic,
+    type_of: &HashMap<NodeId, ParmType>,
+    index: &TableIndex,
+) -> Result<(), GaffError> {
+    let ids: Vec<_> = graph.dihedral_ids().collect();
+    let stored = graph.del_dihedrals(&ids).map_err(malformed)?;
+    for rel in stored {
+        let mut nodes = rel.nodes;
+        let names: Vec<&str> = nodes.iter().map(|id| index.name_of(type_of[id])).collect();
+        if TypeName::reads_reversed(&names) {
+            nodes.reverse();
+        }
+        graph
+            .add_dihedral(nodes[0], nodes[1], nodes[2], nodes[3], Props::new())
+            .map_err(malformed)?;
+    }
+    Ok(())
+}
+
 /// Rebuild the impropers of `graph` as AmberTools would (see [`improper`]) and
 /// resolve each one, by id.
 ///
@@ -946,19 +1009,6 @@ fn add_impropers(
         terms.insert(id, (term.types.to_vec(), bonded));
     }
     Ok(terms)
-}
-
-/// The four slots of a row this module has already established is wildcard-free.
-///
-/// Only the exact-match index feeds this, and it holds no row with a `None` slot,
-/// so the panic is unreachable by construction rather than by hope.
-fn concrete(
-    i: Option<ParmType>,
-    j: Option<ParmType>,
-    k: Option<ParmType>,
-    l: Option<ParmType>,
-) -> [ParmType; 4] {
-    [i, j, k, l].map(|slot| slot.expect("the exact-match index holds no wildcard row"))
 }
 
 fn malformed(e: impl std::fmt::Display) -> GaffError {
@@ -1481,6 +1531,79 @@ mod tests {
                 .unwrap();
             assert!((got - penalty).abs() < 1e-9, "{}: {got}", set.name());
         }
+    }
+
+    /// `gaff.dat` writes `ho-oh-c3-c3`. Perception stores it with `j < k`, which
+    /// is that spelling when the atoms are added in that order, and the reverse
+    /// spelling when they are added as `c3-c3-oh-ho`. Both are stored as
+    /// `c3-c3-oh-ho`: the type name's order, which is the order its phase
+    /// belongs to.
+    #[test]
+    fn a_proper_is_stored_in_its_type_name_order() {
+        let reversed = molecule(
+            &[("H", "ho"), ("O", "oh"), ("C", "c3"), ("C", "c3")],
+            &[(0, 1), (1, 2), (2, 3)],
+        );
+        let forward = molecule(
+            &[("C", "c3"), ("C", "c3"), ("O", "oh"), ("H", "ho")],
+            &[(0, 1), (1, 2), (2, 3)],
+        );
+        for mol in [reversed, forward] {
+            let mut typing = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff));
+            let typed = typing
+                .typify(&mol)
+                .expect("ho-oh-c3-c3 is a gaff.dat torsion");
+            let dihedrals: Vec<_> = typed.dihedrals().collect();
+            assert_eq!(dihedrals.len(), 1);
+            let labels: Vec<String> = dihedrals[0]
+                .1
+                .nodes
+                .iter()
+                .map(|&id| {
+                    typed
+                        .get_atom(id)
+                        .unwrap()
+                        .get_str(keys::TYPE)
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect();
+            assert_eq!(labels, ["c3", "c3", "oh", "ho"]);
+        }
+    }
+
+    /// A covering row written the other way from the stored quartet negates a
+    /// phase that is not a half-turn. `180` stays `180`, so a merge with a
+    /// table that spells the half-turn positive still compares equal.
+    #[test]
+    fn dihedral_params_for_negates_a_phase_onto_the_stored_order() {
+        let row = crate::ff::params::ParmDihedralRow {
+            i: None,
+            j: None,
+            k: None,
+            l: None,
+            divisor: 1,
+            barrier: 1.0,
+            phase_deg: 60.0,
+            periodicity: 1,
+            more_terms: false,
+        };
+        let stored = ["c3", "c3", "oh", "ho"].map(str::to_owned);
+        let phase = |row: &crate::ff::params::ParmDihedralRow| {
+            super::dihedral_params_for(&[row], &["ho", "oh", "c3", "c3"], &stored)
+                .into_iter()
+                .find(|(key, _)| key == "phase1")
+                .unwrap()
+                .1
+        };
+        assert_eq!(phase(&row), -60.0);
+        assert_eq!(
+            phase(&crate::ff::params::ParmDihedralRow {
+                phase_deg: 180.0,
+                ..row
+            }),
+            180.0
+        );
     }
 
     /// Guanidinium: parmchk2 writes `nh-cz-nh-hn 4 2.700 180.000 2.000 same as

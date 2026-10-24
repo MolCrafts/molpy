@@ -213,6 +213,7 @@ pub(crate) fn type_pair(ti: u32, tj: u32, ntypes: usize) -> usize {
 pub(crate) mod buck;
 pub(crate) mod charmm;
 pub(crate) mod coul_cut;
+pub(crate) mod coul_long;
 pub(crate) mod exceptions;
 pub(crate) mod lj_class2;
 pub(crate) mod lj_cut;
@@ -226,6 +227,7 @@ pub(crate) mod uff;
 pub use buck::Buck;
 pub use charmm::{CoulCharmm, LjCharmm};
 pub use coul_cut::CoulCut;
+pub use coul_long::CoulLong;
 pub use exceptions::PairExceptions;
 pub use lj_class2::LjClass2;
 pub use lj_cut::{LjCut, PairLjCut};

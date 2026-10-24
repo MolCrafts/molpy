@@ -106,7 +106,7 @@ native: they live in molrs and `mp.ff.typifier` re-exports them one by one. A ne
 rule-based force field belongs there too.
 
 A MolPy-side typifier is one that drives an external tool, as
-`AntechamberTypifier` and `TleapTypifier` in `molpy/ff/ambertools.py`
+`AntechamberTypifier` and `TleapTypifier` in `molpy/python/molpy/ff/ambertools.py`
 do: `assign` writes the graph for the tool, runs the program (an
 `mp.tool.Tool`), reads the result back and returns it as a `TypeAssignment`. The
 AmberTools steps, leap script and prmtop reader they run are the private

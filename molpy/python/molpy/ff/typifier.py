@@ -3,7 +3,9 @@
 A typifier implements one hook, ``assign(graph) -> TypeAssignment``: it reads a graph and
 returns the annotations to write, positional against the graph's atoms and
 against each relation kind's own rows (``graph.bonds`` … ``graph.impropers``,
-``graph.terms(block)``). The
+``graph.terms(block)``). ``special_bonds`` on the assignment, when present,
+fill an output that has declared none. Two declared triples that differ
+raise ``ValueError`` and the output is unchanged. The
 base :class:`Typifier` owns the rest. ``typify(mol)`` copies ``mol`` (as
 ``copy.copy(mol)``), calls
 ``assign`` on the copy, stamps the match onto the copy and defines its types in

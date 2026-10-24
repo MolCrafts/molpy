@@ -19,7 +19,7 @@ molpy lives in the molrs repository, at `molpy/`. Fork that repository, then:
 git clone https://github.com/YOUR_USERNAME/molrs.git
 cd molrs
 uvx pre-commit install
-scripts/check.sh molpy molpy_docs
+scripts/check.sh python docs
 ```
 
 ## Hooks and CI
@@ -28,7 +28,7 @@ Every gate is one function of `scripts/check.sh`, called by the prek hooks
 and by CI alike; `scripts/check.sh verify` (the pre-push hook) runs them all
 once. The Python ones are `python` (build one molpy wheel from the checkout,
 check format and types, run the whole Python suite on it), `types`
-(`molpy/molpy/_core.pyi` against the compiled module) and `docs` (this
+(`molpy/python/molpy/_core.pyi` against the compiled module) and `docs` (this
 manual, `--strict`). CI runs `python` on every OS leg of `test / python` and
 `docs` in `test / docs`.
 **Never `git commit --no-verify` or `git push --no-verify`, and never merge a

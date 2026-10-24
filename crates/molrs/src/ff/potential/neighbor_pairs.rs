@@ -64,7 +64,12 @@ pub(super) fn over_neighbors(
     }
 
     let mut pairs = Block::new();
+    // The same refusal as the bond-graph list: an override whose pair this
+    // table did not keep would otherwise vanish into an empty block.
     if pi.is_empty() {
+        if let Some((i, j)) = super::override_pairs(frame)?.into_iter().next() {
+            return Err(super::excluded_override(i, j));
+        }
         return Ok(pairs);
     }
     let overrides = carried_overrides(frame, &pi, &pj)?;
@@ -207,5 +212,28 @@ mod tests {
                 full.get(key).unwrap().get::<u64>().unwrap()
             );
         }
+    }
+
+    #[test]
+    fn an_empty_table_refuses_an_overlay_the_list_would_drop() {
+        let mut frame = chain();
+        let mut overlay = Block::new();
+        overlay
+            .insert(ATOMI, Array1::from_vec(vec![0_u64]).into_dyn(), None)
+            .unwrap();
+        overlay
+            .insert(ATOMJ, Array1::from_vec(vec![1_u64]).into_dyn(), None)
+            .unwrap();
+        overlay
+            .insert("lj_scale", Array1::from_vec(vec![0.5_f64]).into_dyn(), None)
+            .unwrap();
+        frame.insert(molrs::core::schema::block_names::PAIR_OVERRIDES, overlay);
+        let err = crate::ff::potential::intramolecular_pairs(
+            &frame,
+            &SpecialBonds::EXCLUDE_12_13,
+            Some(&table(&[])),
+        )
+        .unwrap_err();
+        assert!(err.contains("would be dropped"), "{err}");
     }
 }

@@ -461,3 +461,12 @@ class TestPairLjCut:
         table = mp.core.NeighborQuery(box, pos, 2.5).query_self()
         with pytest.raises(ValueError, match="past the 1 rows"):
             mp.ff.potential.PairLjCut(1.0, 1.0, 2.5).evaluate_pairs(pos[:1], table)
+
+    def test_a_bare_kernel_in_potentials_refuses_coordinate_evaluation(self) -> None:
+        pots = mp.ff.potential.Potentials()
+        pots.push(mp.ff.potential.PairLjCut(1.0, 1.0, 2.5))
+        coords = np.array([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]])
+        with pytest.raises(ValueError, match="neighbour table"):
+            pots.evaluate(coords.ravel())
+        with pytest.raises(ValueError, match="neighbour table"):
+            mp.optimize.Lbfgs(pots).minimize_coords(coords.copy())

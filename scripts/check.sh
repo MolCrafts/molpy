@@ -172,16 +172,16 @@ molpy_env() {
 
 # Build one non-editable dev-profile molpy wheel (no --release, no LTO), then
 # check molpy's format and types and run the whole Python suite on it.
-# `pytest`, not `python -m pytest`: the latter would put the checkout on
-# sys.path ahead of the installed package. `types`, `mrec` and `docs` reuse
-# this wheel.
+# `pytest`, not `python -m pytest`. The suite imports the installed wheel.
+# The package source is python/molpy (maturin python-source). `types`,
+# `mrec` and `docs` reuse this wheel.
 gate_python() {
     MOLPY_TESTED_WHEEL=
     molpy_env
     uv --directory molpy run --no-sync python -I -c \
         'import molpy, pathlib; p=pathlib.Path(molpy.__file__).resolve(); assert "site-packages" in str(p), p'
-    uv --directory molpy run --no-sync ruff format --check molpy tests
-    uv --directory molpy run --no-sync ty check molpy
+    uv --directory molpy run --no-sync ruff format --check python tests
+    uv --directory molpy run --no-sync ty check python/molpy
     local report=()
     [ -z "$REPORT" ] || report=("--junitxml=$REPORT/junit.xml" --cov=molpy --cov-branch
         "--cov-report=json:$REPORT/coverage.json")
@@ -189,10 +189,10 @@ gate_python() {
         ${report[@]+"${report[@]}"}
 }
 
-# The stubs are the Python type contract of the native module: molpy/_core.pyi
-# and the side stubs of the modules that copy its names at import time
-# (molpy/core/{keys,schema,constants}.pyi) are held to themselves and to the
-# runtime they describe, with
+# The stubs are the Python type contract of the native module:
+# python/molpy/_core.pyi and the side stubs of the modules that copy its
+# names at import time (python/molpy/core/{keys,schema,constants}.pyi) are
+# held to themselves and to the runtime they describe, with
 # molpy/pyproject.toml's [tool.mypy] (strict, the source-tree stub first on
 # the path). `mypy` type-checks the stub; `mypy.stubtest` imports molpy._core
 # and checks every name, signature, parameter kind and default the stub
@@ -200,15 +200,16 @@ gate_python() {
 # stub misses. stubtest-allowlist.txt holds the structural exemptions only.
 #
 # stubtest runs from an empty directory, so the runtime it imports is the
-# installed wheel and never molpy/ (the source tree has no _core, or a stale
-# one); MYPYPATH points mypy at the source tree's stubs.
+# installed wheel. MYPYPATH points mypy at python/, where the source package
+# lives; that tree has no _core, or a stale one.
 gate_types() {
     molpy_env
-    uv --directory molpy run --no-sync python -m mypy molpy/_core.pyi \
-        molpy/core/keys.pyi molpy/core/schema.pyi molpy/core/constants.pyi
+    uv --directory molpy run --no-sync python -m mypy python/molpy/_core.pyi \
+        python/molpy/core/keys.pyi python/molpy/core/schema.pyi \
+        python/molpy/core/constants.pyi
     scratch
     local src=$PWD/molpy
-    (cd "$WORK" && MYPYPATH="$src" "$MOLPY_PYTHON" -m mypy.stubtest \
+    (cd "$WORK" && MYPYPATH="$src/python" "$MOLPY_PYTHON" -m mypy.stubtest \
         molpy._core molpy.core.keys molpy.core.schema molpy.core.constants \
         --mypy-config-file "$src/pyproject.toml" \
         --allowlist "$src/stubtest-allowlist.txt" --ignore-disjoint-bases)

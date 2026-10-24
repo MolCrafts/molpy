@@ -50,6 +50,26 @@ impl LammpsTypeLabelMaps {
             improper: map("impropers")?,
         })
     }
+
+    /// The id a coefficient row's leading token names in `category`: the
+    /// integer as written, or the id the category's `* Type Labels` section
+    /// declared for the label (`pair` and `pairij` rows name atom types).
+    fn type_id(&self, category: &str, token: &str) -> Option<u32> {
+        if let Ok(id) = token.parse::<u32>() {
+            return Some(id);
+        }
+        let map = match category {
+            "pair" | "pairij" => &self.atom,
+            "bond" => &self.bond,
+            "angle" => &self.angle,
+            "dihedral" => &self.dihedral,
+            "improper" => &self.improper,
+            _ => return None,
+        };
+        map.iter()
+            .find(|(_, label)| label.as_str() == token)
+            .map(|(id, _)| *id)
+    }
 }
 
 /// Reader for a LAMMPS force-field include (`*.ff`), AMBER/GAFF flavour.
@@ -807,23 +827,25 @@ fn data_sections_to_commands(
             };
             continue;
         }
-        // New uppercase section ends coeffs.
-        if line.chars().next().is_some_and(|c| c.is_uppercase())
-            && !line.chars().next().unwrap().is_ascii_digit()
-        {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+        // A coefficient row leads with a type id or a declared type label
+        // (LAMMPS ≥ 2022) and carries at least one number; a line with no
+        // number at all is the header of a section this pass does not read.
+        let is_row =
+            parts[0].parse::<u32>().is_ok() || parts[1..].iter().any(|p| p.parse::<f64>().is_ok());
+        if !is_row {
             section = None;
             continue;
         }
         let Some(kind) = section else {
             continue;
         };
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.is_empty() {
-            continue;
-        }
-        let id: u32 = parts[0].parse().map_err(|_| {
+        let id = labels.type_id(kind, parts[0]).ok_or_else(|| {
             format!(
-                "line {}: expected integer type id in {kind} coeffs, got {}",
+                "line {}: `{}` is neither a type id nor a declared {kind} type label",
                 lineno + 1,
                 parts[0]
             )
@@ -883,9 +905,10 @@ fn data_sections_to_commands(
                         lineno + 1
                     ));
                 }
-                let j: u32 = parts[1].parse().map_err(|_| {
+                let j = labels.type_id("pair", parts[1]).ok_or_else(|| {
                     format!(
-                        "line {}: expected integer type id in PairIJ Coeffs, got {}",
+                        "line {}: `{}` is neither a type id nor a declared atom type label \
+                         (PairIJ Coeffs)",
                         lineno + 1,
                         parts[1]
                     )
@@ -2473,6 +2496,29 @@ PairIJ Coeffs # lj/cut
             &LammpsTypeLabelMaps::default(),
             "real",
         )
+    }
+
+    /// A coefficient row led by a declared type label (LAMMPS ≥ 2022, what
+    /// `write_lammps_data` writes beside `* Type Labels`) is that type's row;
+    /// an undeclared label is refused by name, never dropped as a section.
+    #[test]
+    fn data_coeffs_rows_may_lead_with_a_declared_label() {
+        let mut labels = LammpsTypeLabelMaps::default();
+        labels.atom.insert(1, "CT".into());
+        labels.bond.insert(1, "CT-CT".into());
+        let ff = LammpsForcefieldReader::new()
+            .read_data_sections(
+                "Pair Coeffs # lj/cut\n\nCT 0.1 3.5\n\nBond Coeffs # harmonic\n\nCT-CT 300.0 1.5\n",
+                &labels,
+                "real",
+            )
+            .unwrap();
+        assert!(ff.get_style("pair", "lj/cut").is_some(), "{ff:?}");
+        assert!(ff.get_style("bond", "harmonic").is_some(), "{ff:?}");
+        let err = LammpsForcefieldReader::new()
+            .read_data_sections("Pair Coeffs # lj/cut\n\nXX 0.1 3.5\n", &labels, "real")
+            .unwrap_err();
+        assert!(err.contains("XX"), "{err}");
     }
 
     /// `Bond Coeffs # fene/kk` must not be read as harmonic: the reader has no

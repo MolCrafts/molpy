@@ -255,6 +255,10 @@ struct HeaderPartial {
     natoms: u32,
     namnf: u32,
     delta: f64,
+    /// `(has_box, has_4d)` as a CHARMM-flavour header states them
+    /// (`icntrl[10]`, `icntrl[11]`); `None` for an X-PLOR header, whose
+    /// layout is inferred from the record sizes.
+    charmm_flags: Option<(bool, bool)>,
     title: String,
     free_atoms: Option<Vec<i32>>,
     data_offset: u64,
@@ -391,6 +395,8 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
         buf.copy_from_slice(&h1[40..48]);
         read_f64(&buf, byte_order)
     };
+    // CHARMM: the crystal flag at icntrl[10], the 4D flag at icntrl[11].
+    let charmm_flags = (charmm_ver != 0).then(|| (read_i32_at(44) != 0, read_i32_at(48) != 0));
 
     // -- Header record 2 (title) --
     let h2 = read_record(reader, byte_order, marker_size)?;
@@ -475,10 +481,43 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
         natoms,
         namnf,
         delta,
+        charmm_flags,
         title,
         free_atoms,
         data_offset,
     })
+}
+
+/// The per-frame byte sizes `(first, rest)` the header flags state, once the
+/// first record agrees with them.
+///
+/// # Errors
+///
+/// A first record whose size contradicts the crystal flag.
+fn layout_from_flags(
+    partial: &HeaderPartial,
+    first_marker: u64,
+    has_box: bool,
+    has_4d: bool,
+) -> std::io::Result<(u64, u64)> {
+    let m = partial.marker_size.bytes();
+    let coord_marker_full = u64::from(partial.natoms) * 4;
+    let predicted_first = if has_box { 48 } else { coord_marker_full };
+    if first_marker != predicted_first {
+        return Err(invalid_data(format!(
+            "the header says the file {} a unit cell, but the first record is {first_marker} \
+             bytes, not {predicted_first}",
+            if has_box { "has" } else { "has no" }
+        )));
+    }
+    let box_part = if has_box { 2 * m + 48 } else { 0 };
+    let n_recs = if has_4d { 4 } else { 3 };
+    let coord_rec_full = 2 * m + coord_marker_full;
+    let coord_rec_eff = 2 * m + u64::from(partial.natoms - partial.namnf) * 4;
+    Ok((
+        box_part + coord_rec_full * n_recs,
+        box_part + coord_rec_eff * n_recs,
+    ))
 }
 
 fn try_parse_header_records(bytes: &[u8]) -> std::io::Result<Option<HeaderPartial>> {
@@ -499,6 +538,26 @@ fn resolve_frame_layout(
 ) -> std::io::Result<FrameLayout> {
     if trailing == 0 {
         return Ok(HeaderPartial::empty_layout());
+    }
+
+    // A CHARMM header states the layout; only an X-PLOR header is inferred.
+    if let Some((has_box, has_4d)) = partial.charmm_flags {
+        let (frame_size_first, frame_size_rest) =
+            layout_from_flags(partial, first_marker, has_box, has_4d)?;
+        if trailing < frame_size_first {
+            return Err(invalid_data(format!(
+                "the data section holds {trailing} bytes, less than one {frame_size_first}-byte \
+                 frame"
+            )));
+        }
+        let nset = 1 + (trailing - frame_size_first) / frame_size_rest;
+        return Ok(FrameLayout {
+            has_box,
+            has_4d,
+            frame_size_first,
+            frame_size_rest,
+            nset: u32::try_from(nset).unwrap_or(u32::MAX),
+        });
     }
 
     let m = partial.marker_size.bytes();
@@ -1041,6 +1100,7 @@ fn write_dcd_frame<W: Write + Seek>(
 ) -> std::io::Result<()> {
     // Every door writes through here, so every door checks here.
     crate::io::writer::check_write_frame(frame)?;
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &["x", "y", "z", "w"])?;
     // Reject 4D / fixed-atom frames eagerly.
     let has_w = frame
         .visit_block("atoms", |a| {
@@ -1135,14 +1195,13 @@ fn write_header_stub<W: Write + Seek>(
         writer.write_all(&0i32.to_le_bytes())?;
     }
     writer.write_all(&0i32.to_le_bytes())?; // NAMNF
-    writer.write_all(&(if has_box { 1i32 } else { 0i32 }).to_le_bytes())?;
-    writer.write_all(&0i32.to_le_bytes())?; // 4D flag
-    for _ in 0..5 {
-        writer.write_all(&0i32.to_le_bytes())?;
-    }
+    // The CHARMM words, where the reader decodes them: DELTA at icntrl[9],
+    // the crystal flag at icntrl[10], the 4D flag at icntrl[11].
     writer.write_all(&1.0f32.to_le_bytes())?; // DELTA
-    for _ in 0..2 {
-        writer.write_all(&0i32.to_le_bytes())?;
+    writer.write_all(&(if has_box { 1i32 } else { 0i32 }).to_le_bytes())?; // crystal flag
+    writer.write_all(&0i32.to_le_bytes())?; // 4D flag
+    for _ in 0..7 {
+        writer.write_all(&0i32.to_le_bytes())?; // icntrl[12..=18]
     }
     writer.write_all(&24i32.to_le_bytes())?; // CHARMM_VER (NAMD-compatible)
     write_marker(writer, byte_order, marker_size, 84)?;
@@ -1814,6 +1873,18 @@ impl DcdIndexBuilder {
             let trailing = total.saturating_sub(partial.data_offset);
             return resolve_frame_layout(partial, first_marker, trailing).map(Some);
         }
+        // A CHARMM header states the layout, so no total is needed.
+        if let Some((has_box, has_4d)) = partial.charmm_flags {
+            let (frame_size_first, frame_size_rest) =
+                layout_from_flags(partial, first_marker, has_box, has_4d)?;
+            return Ok(Some(FrameLayout {
+                has_box,
+                has_4d,
+                frame_size_first,
+                frame_size_rest,
+                nset: 0,
+            }));
+        }
 
         // Incremental: a boxed file (first marker 48, natoms ≠ 12) can
         // resolve has_4d by peeking the record after three coordinate axes.
@@ -2127,6 +2198,32 @@ mod tests {
         frame
     }
 
+    /// `n` atoms on the x axis from `x0`, one Å apart.
+    fn n_atom_frame(n: usize, x0: f64, with_box: bool) -> Frame {
+        let mut atoms = Block::new();
+        let ids: Vec<u64> = (1..=n as u64).collect();
+        let xs: Vec<f64> = (0..n).map(|i| x0 + i as f64).collect();
+        atoms
+            .insert("id", Array1::from(ids).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("x", Array1::from(xs).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("y", Array1::from(vec![0.0; n]).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("z", Array1::from(vec![0.0; n]).into_dyn(), None)
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        if with_box {
+            let h = [[20.0, 0.0, 0.0], [0.0, 20.0, 0.0], [0.0, 0.0, 20.0]];
+            frame.simbox = Some(SimBox::new(Cell::Matrix(h), [0.0; 3], [true; 3]).unwrap());
+        }
+        frame
+    }
+
     fn write_dcd_mem(frames: &[Frame]) -> Vec<u8> {
         let mut cursor = Cursor::new(Vec::new());
         {
@@ -2150,6 +2247,44 @@ mod tests {
         }
         out.extend(builder.finish().expect("finish dcd index"));
         out
+    }
+
+    /// The CHARMM header words: DELTA at `icntrl[9]`, the crystal flag at
+    /// `icntrl[10]`, the 4D flag at `icntrl[11]`; the reader's `delta` is the
+    /// writer's.
+    #[test]
+    fn the_header_puts_delta_and_the_crystal_flag_in_the_charmm_words() {
+        let bytes = write_dcd_mem(&[two_atom_frame(0.0, true)]);
+        // Record 1: a 4-byte marker, "CORD", then icntrl[i] at 8 + 4·i.
+        let word = |i: usize| -> [u8; 4] { bytes[8 + 4 * i..12 + 4 * i].try_into().unwrap() };
+        assert_eq!(f32::from_le_bytes(word(9)), 1.0, "DELTA");
+        assert_eq!(i32::from_le_bytes(word(10)), 1, "crystal flag");
+        assert_eq!(i32::from_le_bytes(word(11)), 0, "4D flag");
+        let mut reader = DcdReader::new(Cursor::new(bytes));
+        let frame = reader.read_frame(0).unwrap().unwrap();
+        assert_eq!(frame.meta.get("delta").and_then(|v| v.as_str()), Some("1"));
+    }
+
+    /// Twelve atoms make a box record the size of a coordinate record, so
+    /// the byte count alone cannot tell three boxed frames from four box-less
+    /// ones: the CHARMM header flags decide.
+    #[test]
+    fn twelve_boxed_atoms_over_three_frames_read_as_three_boxed_frames() {
+        let frames: Vec<Frame> = (0..3).map(|i| n_atom_frame(12, i as f64, true)).collect();
+        let bytes = write_dcd_mem(&frames);
+        let mut reader = DcdReader::new(Cursor::new(bytes));
+        assert_eq!(reader.len().unwrap(), 3);
+        for i in 0..3 {
+            let frame = reader.read_frame(i).unwrap().unwrap();
+            assert!(frame.simbox.is_some(), "frame {i} lost its box");
+            let x = frame
+                .get("atoms")
+                .unwrap()
+                .get("x")
+                .and_then(|c| c.get::<f64>())
+                .unwrap();
+            assert!((x[0] - i as f64).abs() < 1e-5, "frame {i}: {x:?}");
+        }
     }
 
     #[test]

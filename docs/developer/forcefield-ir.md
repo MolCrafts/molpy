@@ -167,6 +167,12 @@ without a box, with a box not periodic in x, y and z, or with a cell
 outside LAMMPS's restricted triclinic form (`a` along x, `b` in the xy
 plane) is refused by name (Rust `CompileError::NoBox`; Python
 `ValueError`). Its spec declares exactly the parameters its kernel reads.
+A `pairs` block prices the real-space erfc as the pair form (a 1-4 row at
+`coulomb14scale`, an exclusion row omitted); with no `pairs` block the
+compiled door keeps the minimum-image loop inside the kernel. The
+neighbour-driven door always prices that erfc over the neighbour table.
+The reciprocal sum still reads the box and takes no pair weight, so a 1-4
+scale changes only the real-space term.
 
 ## Improper atom order
 
@@ -280,12 +286,13 @@ parameters:
    use of the style) prices LAMMPS's `K[1 + cos(nφ − d)]` alone.
 
 **Per-pair exceptions LAMMPS cannot express** — a GROMACS `[ pairs ]` row
-with explicit parameters, an OpenMM `NonbondedForce` exception, an AMBER
-dihedral whose `SCEE`/`SCNB` differ from the field's (the force-field
-reader's `read_system` writes them, see [AMBER prmtop](#amber-prmtop)) — are per-instance
-float columns on the
-Frame's `pairs` block, the rows the pair kernels already price (`atomi`,
-`atomj`, `is_14`):
+with explicit parameters, an OpenMM `NonbondedForce` exception — are
+per-instance float columns on the Frame's `pairs` block, the rows the pair
+kernels already price (`atomi`, `atomj`, `is_14`). An AMBER dihedral whose
+`SCEE`/`SCNB` differ from the field's is those same columns on
+`pair_overrides` (see [AMBER prmtop](#amber-prmtop)): a sparse overlay, not
+an evaluation list. `intramolecular_pairs` carries its cells onto `pairs`.
+The columns, on either block:
 
 | Column | Meaning |
 |---|---|
@@ -797,22 +804,22 @@ CTITLE`) reads through the same pair.
 | `LENNARD_JONES_ACOEF/BCOEF` via ICO | `lj/cut` (`lj/charmm` in a chamber file) self rows; a cross row where the entry is not Lorentz–Berthelot (NBFIX) |
 | `LENNARD_JONES_14_ACOEF/BCOEF` (chamber) | `lj/charmm` `epsilon14` / `sigma14` (cross rows where not Lorentz–Berthelot) and `one_four = "epsilon14"` when the table differs from the regular one |
 | `CHARGE` | ÷ 18.2223, `coul/cut` at 332.0522173; ÷ √332.0716 and `coul/charmm` at 332.0716 in a chamber file |
-| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame `AmberPrmtopForcefieldReader::read_system` (Python `AmberPrmtopForcefieldReader().read_system(source)`) returns has `pairs` giving every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
+| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; `AmberPrmtopForcefieldReader::read_system` (Python `AmberPrmtopForcefieldReader().read_system(source)`) writes `pair_overrides` (`coul_scale` / `lj_scale`) for every 1-4 pair weighted otherwise, and no `pairs` block |
 | `AMBER_ATOM_TYPE` | the type name; `<name>~<class>` where one name stands for two LJ classes or masses (a chamber file cuts CHARMM's types to four characters) |
 
 sander prices a 1-4 pair once per proper row whose 3rd pointer is not
 negative, at that row's `1/SCEE`, `1/SCNB` (never an improper's, whatever its
 pointer). The field's weights are the divisors most such rows carry; the
-frame reader's `pairs` block lists the pairs whose summed weight differs —
-another divisor (GLYCAM's 1.0 beside ff14SB's 1.2 / 2.0), a pair two rows
-list, a 1-4 pair of the topology no row lists (weight 0, or 1 if the
-exclusion list leaves it out) — with only the differing cells set.
+frame reader's `pair_overrides` block lists the pairs whose summed weight
+differs — another divisor (GLYCAM's 1.0 beside ff14SB's 1.2 / 2.0), a pair
+two rows list, a 1-4 pair of the topology no row lists (weight 0, or 1 if
+the exclusion list leaves it out) — with only the differing cells set.
 `intramolecular_pairs` keeps those cells when it builds the full pair list.
 A chamber file's 1-4 Lennard-Jones (`one_four = "epsilon14"`) reaches a
 frame through `ForceField.materialize_one_four`. Build the full list first
-(`intramolecular_pairs`, which keeps the frame reader's cells), then
+(`intramolecular_pairs`, which keeps the overlay's cells), then
 materialize: `materialize_one_four` builds a list only when the frame has
-no `pairs`, and the frame reader's `pairs` hold only the odd 1-4 pairs.
+no `pairs`, so the overlay is carried rather than read as that list.
 
 sander clamps the cosine of a harmonic angle to ±0.999 before taking its
 arccosine, so it prices an angle beyond 177.44° as 177.44°; LAMMPS and molrs

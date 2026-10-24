@@ -44,7 +44,7 @@ requires, in order:
 2. Teach native copy/merge/extract/topology and Frame projection about it.
 3. Expose a native view class and graph factory in molrs.
 4. Export it from `molpy.core`; molpy's mirror
-   of molrs's core (`molpy/core/__init__.py`) star-imports it with its
+   of molrs's core (`molpy/python/molpy/core/__init__.py`) star-imports it with its
    `__all__`, so `mp.core.<Name>` follows with no molpy edit. Promote it to the
    root only if it is a data class a user handles directly.
 5. Update relevant readers/writers and add Rust, binding, and molpy integration tests.

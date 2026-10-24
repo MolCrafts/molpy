@@ -106,7 +106,7 @@ ITEM: ATOMS id type x y z\n\
         let frame = stream
             .parse_range_in_input(f1.byte_offset() as usize, f1.byte_len() as usize)
             .expect("parse_range_in_input");
-        assert_eq!(frame.keys(), vec!["atoms".to_string()]);
+        assert_eq!(frame.keys().unwrap(), vec!["atoms".to_string()]);
         let atoms = frame.get("atoms").expect("atoms block");
         let keys = atoms.keys().expect("keys");
         // The dump's `type` column is read as the canonical `type_id`.
@@ -115,7 +115,10 @@ ITEM: ATOMS id type x y z\n\
         let x: js_sys::Float64Array =
             wasm_bindgen::JsCast::unchecked_into(JsValue::from(atoms.copy("x", None).expect("x")));
         assert_eq!(x.to_vec(), vec![0.5, 1.5]);
-        assert!(frame.get_box().is_some(), "the dump's box bounds survive");
+        assert!(
+            frame.get_box().unwrap().is_some(),
+            "the dump's box bounds survive"
+        );
     }
 
     /// `writeLammpsDump` writes the chosen columns; `readLammpsDump` reads

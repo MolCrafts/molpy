@@ -295,10 +295,13 @@ impl PyPotentials {
     /// A Python-callable member's exception is re-raised afterwards (see
     /// `ErrSlot`).
     fn eval_any(&self, arg: &Bound<'_, PyAny>) -> PyResult<(f64, Vec<f64>)> {
-        fn run(p: &Potentials, coords: &[F]) -> (F, Vec<F>) {
+        fn run(p: &Potentials, coords: &[F]) -> PyResult<(F, Vec<F>)> {
+            // A pair kernel over a type table reads a neighbour table and
+            // adds nothing here: refuse it instead of returning its zero.
+            p.require_pair_lists().map_err(ir::compile_err)?;
             let mut acc = Accumulator::new(coords.len());
             p.evaluate(coords, &mut acc);
-            (acc.energy(), acc.into_forces())
+            Ok((acc.energy(), acc.into_forces()))
         }
         let ef = if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
             let core = frame.clone_core_frame()?;
@@ -308,13 +311,13 @@ impl PyPotentials {
                 .into_iter()
                 .collect();
             match &self.inner {
-                PotBacking::Compiled(p) => run(p, &coords),
+                PotBacking::Compiled(p) => run(p, &coords)?,
                 PotBacking::Deferred(ff) => run(
                     &PotentialCompiler::new(ff)
                         .compile(&core)
                         .map_err(ir::compile_err)?,
                     &coords,
-                ),
+                )?,
                 PotBacking::Moved => return Err(potentials_moved_err()),
             }
         } else {
@@ -326,7 +329,7 @@ impl PyPotentials {
                     slice.len()
                 )));
             }
-            run(self.inner.compiled()?, slice)
+            run(self.inner.compiled()?, slice)?
         };
         take_err(&self.err_slots)?;
         Ok(ef)
@@ -371,8 +374,12 @@ impl PyPotentials {
         }
     }
 
-    /// Move one more member into the collection: an ``PairLjCut`` nonbond term, a
+    /// Move one more member into the collection: a ``PairLjCut`` nonbond term, a
     /// callable ``Potential``, or another ``Potentials``.
+    ///
+    /// A ``PairLjCut`` reads a neighbour table, so a collection holding one is
+    /// priced by an MD evaluator (``set_evaluator``), never by
+    /// :meth:`evaluate` or a minimizer, which refuse it.
     fn push(&mut self, potential: &Bound<'_, PyAny>) -> PyResult<()> {
         // Gate first so a failed push does not consume the pushed potential.
         self.inner.compiled_mut()?;
@@ -425,6 +432,10 @@ impl PyPotentials {
 /// single-molecule geometry optimization where intramolecular van der Waals
 /// drives chain collapse. (``compile`` silently drops the pair styles when
 /// no ``"pairs"`` block is present, so bonded-only optimizations need nothing.)
+/// Cells already on ``pairs``, or on ``pair_overrides`` when ``pairs`` is
+/// absent (an AMBER prmtop's 1-4 rows whose ``SCEE`` / ``SCNB`` differ from
+/// the field), are kept on the pairs they name. An override on a pair the
+/// list excludes is an error.
 ///
 /// Parameters
 /// ----------

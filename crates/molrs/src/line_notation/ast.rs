@@ -191,12 +191,17 @@ pub enum BracketSymbol {
     Aromatic,
 }
 
-/// Tetrahedral chirality marker.
+/// Tetrahedral chirality marker as written: `@` or `@@`.
+///
+/// The glyph is a clock sense in the OpenSMILES neighbor order of the string
+/// it sits in. It is not a CIP `R`/`S` label. On a molecular graph the same
+/// configuration is stored as `stereo` `"CW"` / `"CCW"` against the reference
+/// substituent order; the SMILES reader and writer translate between the two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chirality {
-    /// `@` — counter-clockwise (S).
+    /// `@` — anticlockwise in that string's neighbor order.
     CounterClockwise,
-    /// `@@` — clockwise (R).
+    /// `@@` — clockwise in that string's neighbor order.
     Clockwise,
 }
 

@@ -859,6 +859,7 @@ pub fn write_cif<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
 /// Write a Frame as a single CIF data block. Cell parameters come from
 /// `frame.simbox`; atoms from the `atoms` block (Cartesian or fractional).
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &["x", "y", "z"])?;
     // Every door writes through here, so every door checks here.
     crate::io::writer::check_write_frame(frame)?;
     let atoms = frame
@@ -914,6 +915,8 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
     let labels = atoms.get("name").and_then(|c| c.get::<String>());
+    // A null name is generated like an absent column (`null_cells`).
+    let name_valid = atoms.validity("name");
     // CIF spells species as `_atom_site_type_symbol`; the writer reads the
     // `element` column and nothing else. An empty value writes CIF's own
     // "unknown" placeholder `?`.
@@ -929,9 +932,10 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         })?;
 
     for i in 0..n {
-        let label = labels
-            .map(|c| c[[i]].clone())
-            .unwrap_or_else(|| format!("X{}", i + 1));
+        let label = match labels {
+            Some(c) if name_valid.is_none_or(|valid| valid[i]) => c[[i]].clone(),
+            _ => format!("X{}", i + 1),
+        };
         let sym = match symbols[[i]].trim() {
             "" => "?",
             s => s,

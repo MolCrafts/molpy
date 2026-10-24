@@ -20,11 +20,11 @@ edit files — you check compliance and name the move that fixes a violation.
   crate::io` inside `core/` or `perceive/` is an inversion.
 - Bindings depend on `crates/molrs` (and `crates/molrs-ffi` for handles);
   nothing in `crates/` may name a binding directory. `rg -n 'molwasm|molc\b|molcxx|molpy' crates/molrs/src` should only hit docs/comments.
-- Re-implementation signals in Python (`molpy/molpy/**`): a loop over atoms
+- Re-implementation signals in Python (`molpy/python/molpy/**`): a loop over atoms
   or bonds doing numeric work, a parser (`split()`, `re.` on file text), a
   force-field formula, an XML/JSON bridge to pass data to the core. Each is a
   core-sink candidate.
-- A new module under `molpy/molpy/engine/` or `molpy/molpy/io/` that writes
+- A new module under `molpy/python/molpy/engine/` or `molpy/python/molpy/io/` that writes
   engine input for one potential is the per-potential-writer violation
   (export comes from the style registration).
 - Compute types take arrays and configuration, not a `Frame`

@@ -1,6 +1,6 @@
 //! Reads of a style's parameters outside a form, refused typed: the form
-//! kernels' `cutoff`s and 1-4 weight, the constructors no form carries
-//! (PME), and the Lennard-Jones rows of the 1-4 exceptions.
+//! kernels' `cutoff`s and 1-4 weight, PME's reciprocal-space constructor,
+//! and the Lennard-Jones rows of the 1-4 exceptions.
 //!
 //! A parameter one needs and does not find is [`IrError::MissingParam`]
 //! naming the style, the type and the parameter — the refusal a form kernel

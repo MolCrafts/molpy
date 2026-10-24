@@ -153,7 +153,7 @@ impl Frame {
     /// ```
     #[wasm_bindgen(js_name = get)]
     pub fn get(&self, key: &str) -> Result<Block, JsValue> {
-        if !self.has(key) {
+        if !self.has(key)? {
             return Err(JsValue::from_str(&format!("block '{key}' not found")));
         }
         let handle = self
@@ -168,13 +168,14 @@ impl Frame {
     }
 
     /// Whether a block named `key` exists.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the frame has been dropped. A live frame that lacks `key`
+    /// returns `false`.
     #[wasm_bindgen(js_name = has)]
-    pub fn has(&self, key: &str) -> bool {
-        self.inner
-            .arena
-            .borrow()
-            .with_frame(self.inner.id, |f| f.contains_key(key))
-            .unwrap_or(false)
+    pub fn has(&self, key: &str) -> Result<bool, JsValue> {
+        self.inner.has_block(key).map_err(js_err)
     }
 
     /// Store a deep copy of `block` under `key`, replacing any block there.
@@ -313,24 +314,30 @@ impl Frame {
     /// Includes every key whatever its dtype; read each value with
     /// [`getMeta`](Self::get_meta).
     ///
+    /// # Errors
+    ///
+    /// Throws if the frame has been dropped. A live frame with no metadata
+    /// returns an empty list.
+    ///
     /// # Example (JavaScript)
     ///
     /// ```js
     /// const keys = frame.metaKeys(); // e.g. ["energy", "config", "temp"]
     /// ```
     #[wasm_bindgen(js_name = metaKeys)]
-    pub fn meta_keys(&self) -> Vec<String> {
+    pub fn meta_keys(&self) -> Result<Vec<String>, JsValue> {
         self.inner
-            .arena
-            .borrow()
-            .with_frame(self.inner.id, |frame| {
-                frame.meta.keys().cloned().collect::<Vec<String>>()
-            })
-            .unwrap_or_default()
+            .with(|frame| frame.meta.keys().cloned().collect::<Vec<String>>())
+            .map_err(js_err)
     }
 
     /// Names of the blocks in this frame, in insertion order (the order the
-    /// file or the caller added them). Empty if the frame has been dropped.
+    /// file or the caller added them).
+    ///
+    /// # Errors
+    ///
+    /// Throws if the frame has been dropped. A live frame with no blocks
+    /// returns an empty list.
     ///
     /// # Example (JavaScript)
     ///
@@ -338,14 +345,10 @@ impl Frame {
     /// const names = frame.keys(); // e.g. ["atoms", "bonds"]
     /// ```
     #[wasm_bindgen(js_name = keys)]
-    pub fn keys(&self) -> Vec<String> {
+    pub fn keys(&self) -> Result<Vec<String>, JsValue> {
         self.inner
-            .arena
-            .borrow()
-            .with_frame(self.inner.id, |frame| {
-                frame.keys().map(|k| k.to_string()).collect::<Vec<String>>()
-            })
-            .unwrap_or_default()
+            .with(|frame| frame.keys().map(|k| k.to_string()).collect())
+            .map_err(js_err)
     }
 
     /// Store `value` as metadata `name`, replacing any value there. The
@@ -393,8 +396,14 @@ impl Frame {
     ///
     /// # Returns
     ///
-    /// The [`Box`](super::simbox::Box) if one has been set,
-    /// or `undefined` otherwise.
+    /// The [`Box`](super::simbox::Box) if one has been set, or `undefined`
+    /// when this frame is live and has no box.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the frame has been dropped. That is not the absent-box
+    /// signal: a live frame with no box is `undefined`, and a dropped frame
+    /// is an exception.
     ///
     /// # Example (JavaScript)
     ///
@@ -405,7 +414,7 @@ impl Frame {
     /// }
     /// ```
     #[wasm_bindgen(getter, js_name = box)]
-    pub fn get_box(&self) -> Option<super::simbox::Box> {
+    pub fn get_box(&self) -> Result<Option<super::simbox::Box>, JsValue> {
         self.inner
             .arena
             .borrow()
@@ -414,7 +423,7 @@ impl Frame {
                     .as_ref()
                     .map(|s| super::simbox::Box { inner: s.clone() })
             })
-            .ok()?
+            .map_err(js_err)
     }
 
     /// Attach or detach a simulation box.
@@ -658,6 +667,15 @@ mod tests {
         assert!(frame.clear().is_err());
     }
 
+    /// The JS error text. `unwrap_err` needs the success type to be `Debug`,
+    /// and [`Block`] is not.
+    fn js_error<T>(result: Result<T, JsValue>) -> String {
+        match result {
+            Ok(_) => panic!("expected an error"),
+            Err(err) => err.as_string().expect("error string"),
+        }
+    }
+
     /// Helper: build a wrapped `Frame` with two typed meta entries.
     fn frame_with_meta() -> Frame {
         use molrs::core::MetaValue;
@@ -726,12 +744,12 @@ mod tests {
     fn get_returns_a_live_block_and_throws_when_missing() {
         use wasm_bindgen::JsCast;
         let frame = Frame::new();
-        assert!(!frame.has("atoms"));
+        assert!(!frame.has("atoms").unwrap());
         let e = frame.get("atoms").err().expect("missing block throws");
         assert!(e.as_string().unwrap().contains("'atoms' not found"));
 
         frame.create_block("atoms").unwrap();
-        assert!(frame.has("atoms"));
+        assert!(frame.has("atoms").unwrap());
         let mut atoms = frame.get("atoms").unwrap();
         let x = js_sys::Float64Array::from(&[1.0, 2.0][..]);
         atoms
@@ -757,11 +775,11 @@ mod tests {
         atoms
             .set("y", JsValue::from(y).unchecked_into(), None)
             .unwrap();
-        assert!(!dst.get("atoms").unwrap().has("y"));
-        assert_eq!(dst.keys(), vec!["atoms".to_string()]);
+        assert!(!dst.get("atoms").unwrap().has("y").unwrap());
+        assert_eq!(dst.keys().unwrap(), vec!["atoms".to_string()]);
 
         dst.del_block("atoms").unwrap();
-        assert!(!dst.has("atoms"));
+        assert!(!dst.has("atoms").unwrap());
         assert!(dst.del_block("atoms").is_err());
     }
 
@@ -769,8 +787,30 @@ mod tests {
     fn meta_keys_follow_insertion_order() {
         let frame = frame_with_meta();
         assert_eq!(
-            frame.meta_keys(),
+            frame.meta_keys().unwrap(),
             vec!["energy".to_string(), "config".to_string()]
         );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_dropped_frame_is_an_error_on_every_probe() {
+        let frame = Frame::new();
+        frame.create_block("atoms").unwrap();
+        let block = frame.get("atoms").unwrap();
+        frame.drop_frame().unwrap();
+        for text in [
+            js_error(frame.has("atoms")),
+            js_error(frame.get("atoms")),
+            js_error(frame.keys()),
+            js_error(frame.meta_keys()),
+            js_error(block.has("x")),
+            js_error(frame.get_box()),
+        ] {
+            assert!(
+                text.contains("Invalid frame") || text.contains("Invalid block"),
+                "{text}"
+            );
+            assert!(!text.contains("not found"), "{text}");
+        }
     }
 }

@@ -110,6 +110,57 @@ impl TypeName {
         }
     }
 
+    /// Whether `authored` is the opposite direction of `stored`.
+    ///
+    /// Opposite when the reverse of `authored` matches `stored` slot by slot
+    /// and the forward spelling does not. `X` matches any slot, so a wildcard
+    /// row `X-os-c3-X` is opposite `c3-c3-os-ho` and the same direction as
+    /// `c3-os-c3-ho`. A palindrome matches both ways and is not opposite.
+    /// Anything that is not a quartet is not opposite: a bond or an angle has
+    /// no signed phase.
+    fn opposite_direction(authored: &[&str], stored: &[&str]) -> bool {
+        if authored.len() != 4 || stored.len() != 4 {
+            return false;
+        }
+        let forward = Self::slots_align(authored, stored);
+        let mut reverse = authored.to_vec();
+        reverse.reverse();
+        Self::slots_align(&reverse, stored) && !forward
+    }
+
+    fn slots_align(authored: &[&str], stored: &[&str]) -> bool {
+        authored
+            .iter()
+            .zip(stored)
+            .all(|(a, s)| *a == *s || *a == "X" || *s == "X")
+    }
+
+    /// `phase` of a proper dihedral written along `authored`, as the number
+    /// that belongs to `stored`.
+    ///
+    /// Reversing a quartet negates φ, and `cos(nφ − γ) = cos(n(−φ) − (−γ))`,
+    /// so a phase written for the opposite direction is negated. `0` and a
+    /// half-turn are fixed points of that negation: an exact `−180` (degrees,
+    /// as a parameter table writes it) or `−π` (radians, as a prmtop stores
+    /// it) is spelled positive, which is what the tables write and what an
+    /// exact merge compares. Any other phase keeps the sign negation gives
+    /// it (`60` becomes `−60`). An improper is not reversal-symmetric and
+    /// must not come through here.
+    pub fn phase_for_stored_order(authored: &[&str], stored: &[&str], phase: f64) -> f64 {
+        let phase = if Self::opposite_direction(authored, stored) {
+            -phase
+        } else {
+            phase
+        };
+        if phase == 0.0 {
+            0.0
+        } else if phase == -180.0 || phase == -std::f64::consts::PI {
+            -phase
+        } else {
+            phase
+        }
+    }
+
     /// This name with the qualifier `@f1_f2_…` appended.
     ///
     /// `Err` when the name already has a qualifier, when `fields` is empty,
@@ -839,6 +890,58 @@ mod tests {
         assert_eq!(
             TypeName::orient(&["hc", "c3", "c3", "hc"]),
             vec!["hc", "c3", "c3", "hc"]
+        );
+    }
+
+    #[test]
+    fn phase_for_stored_order_negates_only_the_opposite_direction() {
+        let authored = ["ho", "oh", "c3", "c3"];
+        let stored = ["c3", "c3", "oh", "ho"];
+        assert_eq!(
+            TypeName::phase_for_stored_order(&authored, &stored, 60.0),
+            -60.0
+        );
+        assert_eq!(
+            TypeName::phase_for_stored_order(&authored, &stored, 180.0),
+            180.0
+        );
+        assert_eq!(
+            TypeName::phase_for_stored_order(&authored, &stored, std::f64::consts::PI),
+            std::f64::consts::PI
+        );
+        assert_eq!(
+            TypeName::phase_for_stored_order(&stored, &stored, 60.0),
+            60.0
+        );
+        let palindrome = ["hc", "c3", "c3", "hc"];
+        assert_eq!(
+            TypeName::phase_for_stored_order(&palindrome, &palindrome, 60.0),
+            60.0
+        );
+        let wild = ["X", "os", "c3", "X"];
+        assert_eq!(
+            TypeName::phase_for_stored_order(&wild, &["c3", "c3", "os", "ho"], 60.0),
+            -60.0
+        );
+        assert_eq!(
+            TypeName::phase_for_stored_order(&wild, &["c3", "os", "c3", "ho"], 60.0),
+            60.0
+        );
+        assert_eq!(
+            TypeName::phase_for_stored_order(
+                &["X", "c3", "c3", "X"],
+                &["hc", "c3", "c3", "hc"],
+                60.0
+            ),
+            60.0
+        );
+        assert_eq!(
+            TypeName::phase_for_stored_order(
+                &["hc", "c3", "c3", "oh"],
+                &["oh", "c3", "c3", "hc"],
+                60.0
+            ),
+            -60.0
         );
     }
 

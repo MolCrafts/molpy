@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from molpy.core import Atomistic
-from molpy.ff.forcefield import ForceField
+from molpy._core import ForceField
 
 
 @dataclass

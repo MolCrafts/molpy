@@ -705,7 +705,7 @@ pub(crate) fn molrs_terms(
             .unwrap()
             .energy_at(x);
     }
-    let (lj14, coul14) = exceptions::plan(ff, &frame)
+    let (lj14, coul14) = exceptions::plan(ff, &frame, true)
         .unwrap()
         .kernel
         .map(|k| k.energy_terms(x))

@@ -118,7 +118,9 @@ impl PyLbfgs {
         f: impl FnOnce(&Lbfgs<&Potentials>) -> Result<R, OptimizeError>,
     ) -> PyResult<R> {
         let pots = self.potentials.borrow(py);
-        let out = f(&Lbfgs::new(pots.inner.compiled()?, self.settings));
+        let compiled = pots.inner.compiled()?;
+        compiled.require_pair_lists().map_err(ir::compile_err)?;
+        let out = f(&Lbfgs::new(compiled, self.settings));
         take_err(&pots.err_slots)?;
         out.map_err(optimize_err)
     }
@@ -185,6 +187,7 @@ impl PyLbfgs {
                 }
                 PotBacking::Moved => return Err(potentials_moved_err()),
             };
+            pot.require_pair_lists().map_err(ir::compile_err)?;
             Lbfgs::new(pot, self.settings)
                 .minimize(core)
                 .map_err(optimize_err)

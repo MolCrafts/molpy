@@ -108,7 +108,7 @@ pub struct ParamSpec { name, dim: ParamDimension, kind: ParamKind, default: Opti
 |---|---|---|---|
 | 1 | `Kernel::Expression`, or `register_style(spec, None)` with `spec.expression` | `expression=` | the expression, compiled with exact (dual-number) derivatives |
 | 2 | `Kernel::Scalar(Arc<dyn ScalarForm>)`, `Kernel::Compound(Arc<dyn CompoundForm>)` | `kernel=` (a numpy callable; `compound=True` for positions) | a batch function of the coordinate, or of the atoms' positions |
-| 3 | `Kernel::Constructor { compiled, typed, rows }` | – | a constructor that builds the whole kernel (`pair coul/long/pme`, `cmap charmm`: no form carries them) |
+| 3 | `Kernel::Constructor { compiled, typed, rows }` | – | a constructor that builds the reciprocal sum of `pair coul/long/pme` and the splines of `cmap charmm` (the real-space erfc of PME is the pair form) |
 
 The kernel contract, every tier:
 

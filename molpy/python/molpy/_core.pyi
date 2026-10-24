@@ -1498,9 +1498,10 @@ class MolGraph:
     def relation_ids(self, kind: str) -> list[int]: ...
     # --- columns ---
     def column(self, key: ColumnKey) -> npt.NDArray[Any]:
-        """Column ``key`` over every node, typed as the field (``f64`` is a
-        zero-copy write-through view; ``i32``/``bool``/``str`` are copies).
-        ``KeyError`` when any node lacks the field — never zero-filled."""
+        """Column ``key`` over every node, typed as the field. Always a copy:
+        writing to it leaves the graph alone (use ``set_node``), and it stays
+        valid when the graph is mutated afterwards. ``KeyError`` when any node
+        lacks the field — never zero-filled."""
     def columns(self) -> list[str]:
         """Names of every field column registered on the node table."""
     def validity(self, key: ColumnKey) -> ArrayBool: ...
@@ -2581,6 +2582,7 @@ class schema:
     EXCLUSIONS: str
     IMPROPERS: str
     MEMBERS: str
+    PAIR_OVERRIDES: str
     PAIRS: str
     VIRTUAL_SITES: str
     TOPOLOGY: tuple[str, ...]
@@ -4529,14 +4531,16 @@ class Lbfgs:
         """Relax a C-contiguous float64 ``(B, N, 3)`` stack in place, each
         structure independently; one report per structure."""
 
-#: A param value of a type annotation or style: numbers to the numeric side,
-#: strings to the string side.
-type AssignmentParamValue = float | int | str
+#: A param value of a type annotation or style: a number, a string, or a
+#: float64 array (a cmap ``grid``). Numbers and strings are stamped; an
+#: array stays on the type.
+type AssignmentParamValue = float | int | str | ArrayF
 
 #: What a ``TypeAssignment`` writes under one key of one graph element: a scalar is
 #: stamped and defines nothing; ``(style, name, endpoints, params)`` stamps
-#: ``name`` and every param and defines the type ``name`` on ``endpoints``
-#: (atom-type names; empty for an atom type) under the style.
+#: ``name`` and every number or string param and defines the type ``name``
+#: on ``endpoints`` (atom-type names; empty for an atom type) under the
+#: style. An array param stays on the type.
 type Annotation = (
     str
     | bool
@@ -4557,7 +4561,11 @@ class TypeAssignment:
     type of the category whose block the kind is (``urey_bradleys`` →
     ``urey_bradley``). Any other key raises ``TypeError``, a kind named twice
     ``ValueError``. ``styles`` are ``(category, style, params)`` to declare,
-    in order; ``pairs`` are ``(style, name, endpoints, params)`` pair rows."""
+    in order; ``pairs`` are ``(style, name, endpoints, params)`` pair rows.
+    ``special_bonds`` is ``(lj, coul)``, each a length-3 sequence of 1-2 /
+    1-3 / 1-4 weights. It is adopted when the output has declared none. Two
+    declared triples that differ raise ``ValueError`` and change nothing.
+    Omitted, the output's weights stay."""
 
     def __new__(
         cls,
@@ -4568,6 +4576,7 @@ class TypeAssignment:
         pairs: Sequence[
             tuple[str, str, Sequence[str], dict[str, AssignmentParamValue]]
         ] = (),
+        special_bonds: tuple[Sequence[float], Sequence[float]] | None = None,
     ) -> Self: ...
 
 class Typifier(Generic[_TGraph]):

@@ -202,7 +202,7 @@ columns! {
     REACT_ID: "react_id", Uint, Scalar, NotAQuantity, "Identifier pairing an atom of a LAMMPS `fix bond/react` pre-reaction template with the same atom of the post-reaction one.";
     RES_ID: "res_id", Uint, Scalar, NotAQuantity, "Residue identifier. Unsigned like every other id in the vocabulary; a file with negative residue numbers is renumbered at the reader boundary, not accommodated by the schema.";
     RES_NAME: "res_name", Str, Scalar, NotAQuantity, "Residue name (e.g. \"ALA\").";
-    STEREO: "stereo", Str, Scalar, NotAQuantity, "Stereo marker. On an atom: tetrahedral chirality `\"CW\"` / `\"CCW\"` (`\"unspecified\"` from perception). On a bond: a line notation's direction `\"up\"` / `\"down\"`, or perceived double-bond geometry `\"E\"` / `\"Z\"` / `\"either\"` / `\"none\"`.";
+    STEREO: "stereo", Str, Scalar, NotAQuantity, "Stereo marker. On an atom: tetrahedral chirality `\"CW\"` / `\"CCW\"`, clockwise or anticlockwise seen from the first substituent of the reference order (bond neighbors in bond order; one implicit hydrogen, `h_count` 1 with three neighbors, is placed first). `\"unspecified\"` is perception's empty label. On a bond: `\"E\"` / `\"Z\"` / `\"either\"` is the double-bond geometry of the highest-Z substituent on each end (opposite sides are E). `\"up\"` / `\"down\"` is a slash that is not that geometry — a ring digit, or a cumulene end — and is `/` / `\\` from the bond's first endpoint toward its second. They are not two spellings of one fact.";
     STYLE: "style", Str, Scalar, NotAQuantity, "Force-field style of a relation row, picking among styles of one category that hold the row's `type` (hybrid styles).";
     TYPE: "type", Str, Scalar, NotAQuantity, "Force-field type label. Always a String: a label is what survives a round trip through a force field. Numeric ordinals live in `type_id`.";
     TYPE_ID: "type_id", Uint, Scalar, NotAQuantity, "Numeric type ordinal as used by formats that number their types (LAMMPS). Format-local; the force field reads `type`.";
@@ -330,12 +330,18 @@ blocks! {
     &[consts::IBEAD, MEMBER_ATOM],
     &[],
     "Coarse-grained membership, one row per (bead, atom): `ibead` is the bead's `atoms` row; `atom` indexes the all-atom block its `targets` names (`/frame/atoms`, …) and is an opaque handle without one.";
+    PAIR_OVERRIDES = "pair_overrides",
+    RowKind::Relation { arity: 2 },
+    Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS))] }),
+    &[consts::ATOMI, consts::ATOMJ],
+    &[],
+    "Sparse per-pair non-bonded overrides (`atomi`, `atomj`, and the override columns) that are not an evaluation list. `ff::potential::intramolecular_pairs` carries them onto `pairs`. `PotentialCompiler::compile` refuses a pair style while this block is present and `pairs` is absent.";
     PAIRS = "pairs",
     RowKind::Relation { arity: 2 },
     Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS))] }),
     &[consts::ATOMI, consts::ATOMJ],
     &[consts::TYPE, consts::TYPE_ID, consts::STYLE, consts::IS_14],
-    "Intramolecular non-bonded pair list. Usually consumer-built (`ff::potential::intramolecular_pairs`); GROMACS `.top` also carries one as its `[ pairs ]` section, which is by definition the 1-4 list and is read in with `is_14` set on every row.";
+    "The non-bonded pairs `PotentialCompiler::compile` prices: `atomi`, `atomj`, `is_14`, and optional per-pair override columns. Built by `ff::potential::intramolecular_pairs` or `install_pairs`, or written complete by a reader (a GROMACS system). A sparse 1-4 overlay is `pair_overrides`, not this block.";
     VIRTUAL_SITES = "virtual_sites",
     RowKind::Relation { arity: 4 },
     Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMK, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOML, EndpointTarget::Block(block_names::ATOMS))] }),
@@ -349,9 +355,10 @@ blocks! {
 /// in the vocabulary.
 pub const MEMBER_ATOM: &str = "atom";
 
-/// The per-pair override columns a `pairs` row may carry: what LAMMPS cannot
-/// express per pair (a GROMACS `[ pairs ]` row with parameters, an OpenMM
-/// exception, an AMBER dihedral's own SCEE / SCNB). `epsilon` / `sigma` (the
+/// The per-pair override columns a `pairs` or `pair_overrides` row may carry:
+/// what LAMMPS cannot express per pair (a GROMACS `[ pairs ]` row with
+/// parameters, an OpenMM exception, an AMBER dihedral's own SCEE / SCNB).
+/// `epsilon` / `sigma` (the
 /// pair's LJ parameters), `charge_product` (qᵢqⱼ, e²), `lj_scale` /
 /// `coul_scale` (its weights in place of `special_bonds`). Float, a null cell
 /// (validity mask) taking the force field's value. Not canonical keys —

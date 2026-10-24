@@ -90,12 +90,11 @@ molpy/                     the project repository (today's molrs repo, renamed)
   manifest, sources and tests. The Rust core and the ABI layer, which are not
   bindings, live in `crates/`. The project manual, README and contributor
   files are molpy's, at the root.
-- **D11. Flat Python package.** The package is `molpy/molpy/`, next to the
-  binding's `Cargo.toml` and `src/`; maturin picks it up as the mixed
-  project's Python source. Every `src/` in the repository is Rust. Tests run
-  against an installed molpy (`maturin develop` puts `_core` into the
-  package; CI installs the tested wheel and runs `pytest`, never
-  `python -m pytest` from a directory that shadows it).
+- **D11. Python package under python/.** The import package is
+  `molpy/python/molpy/`. maturin reads it through `python-source = "python"`
+  in `molpy/pyproject.toml`. Every `src/` in the repository is Rust. Tests
+  run against an installed molpy (CI installs the tested wheel and runs
+  `pytest`, never `python -m pytest`).
 - **D12. molrs-ext-example is deleted.**
 - **D13. molrs's docs are folded.** The molrs-python docs site and the
   molrs README are deleted. `attribution`, `interop` and `mic-matrix` move to
@@ -269,13 +268,13 @@ Rust core, one Python package with the native module `molpy._core`, and no
      registered submodule name becomes `molpy.…`.
    - The ABI capsule names (`molrs.FrameRef/<major.minor>`, …) are molrs-ffi's
      and stay.
-   - Each `molrs-python/python/molrs/<m>` merges into `molpy/molpy/<m>`. The
+   - Each `molrs-python/python/molrs/<m>` merges into `molpy/python/molpy/<m>`. The
      molrs module is the base, and molpy's additions join it (`Am1BccModel`
      in `ff.charge`, the metric readers in `io.*`, the selectors in `core`, …).
      molpy's identity re-export shells disappear.
    - `_native.pyi` becomes `_core.pyi`; the `_protocol` and
      `_style_declaration` modules lose their underscore (D4).
-   - `molpy/src/molpy/` becomes `molpy/molpy/` (D11).
+   - `molpy/src/molpy/` becomes `molpy/python/molpy/` (D11).
    - `molpy/pyproject.toml` builds with maturin.
    - `molrs-python/tests` join `molpy/tests`, and `import molrs` becomes
      `import molpy as mp`.
@@ -287,7 +286,7 @@ Rust core, one Python package with the native module `molpy._core`, and no
    - molrs's README, root `docs/` and `molrs-python/docs` go, per D13.
 4. **Gates and CI.**
    - `scripts/check.sh`: `python` builds and tests the molpy wheel; `types`
-     checks `molpy/molpy/_core.pyi`; `docs` builds the one manual; the
+     checks `molpy/python/molpy/_core.pyi`; `docs` builds the one manual; the
      separate `molpy` and `molpy_docs` gates fold into those.
    - `test.yml`, `release.yml` and `nightly.yml` use the new paths;
      `release.yml` publishes `molcrafts-molpy` and no longer publishes

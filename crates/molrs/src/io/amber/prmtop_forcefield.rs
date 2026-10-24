@@ -88,16 +88,18 @@ impl AmberPrmtopForcefieldReader {
 
     /// The whole AMBER system `src` holds (a path or a whole file's bytes):
     /// the force field, and the structure frame of
-    /// [`read_prmtop`](crate::io::read_prmtop) plus a `pairs` block holding the 1-4 pairs
-    /// sander weighs otherwise than the field's `special_bonds` — a torsion
-    /// type whose `SCEE` / `SCNB` differ from the divisor most 1-4 rows carry
-    /// (GLYCAM beside ff14SB), a pair two rows list, a 1-4 pair no row lists
-    /// — each with its own `coul_scale` (Σ 1/SCEE) / `lj_scale` (Σ 1/SCNB)
-    /// where it differs, null where it agrees. No `pairs` block when every
-    /// pair agrees, or the file has no `SCEE_SCALE_FACTOR` /
-    /// `SCNB_SCALE_FACTOR` (pre-Amber-11). It is not a pair list: build the
-    /// full one with `ff::potential::intramolecular_pairs`, which keeps these
-    /// cells.
+    /// [`read_prmtop`](crate::io::read_prmtop) plus a `pair_overrides` block
+    /// holding the 1-4 pairs sander weighs otherwise than the field's
+    /// `special_bonds` — a torsion type whose `SCEE` / `SCNB` differ from
+    /// the divisor most 1-4 rows carry (GLYCAM beside ff14SB), a pair two
+    /// rows list, a 1-4 pair no row lists — each with its own `coul_scale`
+    /// (Σ 1/SCEE) / `lj_scale` (Σ 1/SCNB) where it differs, null where it
+    /// agrees. No block when every pair agrees, or the file has no
+    /// `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` (pre-Amber-11). It is not
+    /// the list [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)
+    /// prices: build that with
+    /// [`intramolecular_pairs`](crate::ff::potential::intramolecular_pairs),
+    /// which keeps these cells.
     ///
     /// # Errors
     ///
@@ -121,7 +123,7 @@ fn system(bytes: &[u8]) -> Result<(ForceField, Frame), String> {
     let ff = build_forcefield(&sections)?;
     let mut frame = frame_from_sections(&sections).map_err(|e| e.to_string())?;
     if let Some(pairs) = one_four_pairs(&sections, &frame)? {
-        frame.insert(molrs::core::schema::block_names::PAIRS, pairs);
+        frame.insert(molrs::core::schema::block_names::PAIR_OVERRIDES, pairs);
     }
     Ok((ff, frame))
 }
@@ -138,9 +140,24 @@ fn ico_lookup(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> R
     let index = n_types
         .saturating_mul(iac_i.saturating_sub(1))
         .saturating_add(iac_j.saturating_sub(1));
-    let nb = *nb_index.get(index).unwrap_or(&0);
+    let nb = *nb_index.get(index).ok_or_else(|| {
+        format!(
+            "NONBONDED_PARM_INDEX has no entry {} for atom types ({iac_i}, {iac_j}): the \
+             section holds {} of the NTYPES² = {} entries",
+            index + 1,
+            nb_index.len(),
+            n_types * n_types
+        )
+    })?;
     if nb < 0 {
         return Err("10-12 interactions are not supported".into());
+    }
+    if nb == 0 {
+        return Err(format!(
+            "NONBONDED_PARM_INDEX entry {} for atom types ({iac_i}, {iac_j}) is 0; AMBER \
+             numbers the Lennard-Jones coefficients from 1",
+            index + 1
+        ));
     }
     Ok(nb)
 }
@@ -158,28 +175,23 @@ fn read_lj_table(
     acoef: &[f64],
     bcoef: &[f64],
 ) -> Result<LjTable, String> {
-    let entry = |i: usize, j: usize| -> Result<Option<Lj>, String> {
+    let entry = |i: usize, j: usize| -> Result<Lj, String> {
         let nb = ico_lookup(n_types, i, j, nb_index)?;
-        if nb == 0 {
-            return Ok(None);
-        }
-        Ok(Some(lj_ab_to_sigma_epsilon(
+        Ok(lj_ab_to_sigma_epsilon(
             entry(acoef, "LENNARD_JONES_ACOEF", nb)?,
             entry(bcoef, "LENNARD_JONES_BCOEF", nb)?,
-        )))
+        ))
     };
-    let mut self_params = vec![(1.0, 0.0); n_types + 1];
-    for (t, slot) in self_params.iter_mut().enumerate().skip(1) {
-        if let Some(p) = entry(t, t)? {
-            *slot = p;
-        }
+    // Slot 0 is never read: AMBER numbers its atom types from 1. Every type
+    // reads its own entry or the file is refused — no σ = 1, ε = 0 stand-in.
+    let mut self_params = vec![(0.0, 0.0)];
+    for t in 1..=n_types {
+        self_params.push(entry(t, t)?);
     }
     let mut cross = Vec::new();
     for i in 1..=n_types {
         for j in (i + 1)..=n_types {
-            if let Some(p) = entry(i, j)? {
-                cross.push(((i, j), p));
-            }
+            cross.push(((i, j), entry(i, j)?));
         }
     }
     Ok(LjTable { self_params, cross })
@@ -789,7 +801,7 @@ fn tally(counts: &mut Vec<Tally>, v: f64) {
     }
 }
 
-/// The `pairs` rows of [`AmberPrmtopForcefieldReader::read_system`]: the 1-4
+/// The `pair_overrides` rows of [`AmberPrmtopForcefieldReader::read_system`]: the 1-4
 /// pairs of `frame` (the structure reader's) whose summed sander weight
 /// differs from the field's (`one_four_weights`); `None` when none does.
 ///
@@ -881,13 +893,6 @@ fn one_four_pairs(
             .insert(column, ndarray::Array1::from_vec(ids).into_dyn(), None)
             .map_err(column_err)?;
     }
-    block
-        .insert(
-            keys::IS_14,
-            ndarray::Array1::from_vec(vec![true; rows.len()]).into_dyn(),
-            None,
-        )
-        .map_err(column_err)?;
     for (column, pick, field) in [
         ("coul_scale", 0usize, weights.coul),
         ("lj_scale", 1usize, weights.lj),
@@ -1047,27 +1052,28 @@ fn def_lj_charmm(
 mod tests {
     use super::*;
 
-    /// The structure frame of `text` with the `pairs` rows
+    /// The structure frame of `text` with the `pair_overrides` rows
     /// [`AmberPrmtopForcefieldReader::read_system`] adds (the test prmtops hold
     /// no LJ tables, so the force field itself is not read).
     fn read_system(text: &str) -> Frame {
         let sections = parse_flag_sections(text.as_bytes()).unwrap();
         let mut frame = frame_from_sections(&sections).unwrap();
         if let Some(pairs) = one_four_pairs(&sections, &frame).unwrap() {
-            frame.insert("pairs", pairs);
+            frame.insert("pair_overrides", pairs);
         }
         frame
     }
 
     use crate::io::amber::prmtop::tests::chain5_prmtop;
 
-    /// SCEE = SCNB = 1 on every 1-4 row of a chamber file: uniform, no `pairs`.
+    /// SCEE = SCNB = 1 on every 1-4 row of a chamber file: uniform, neither block.
     #[test]
     fn a_uniform_chamber_file_has_no_pairs() {
         let (_, frame) = AmberPrmtopForcefieldReader::new()
             .read_system(CHAMBER_MINI.as_bytes())
             .unwrap();
         assert!(frame.get("pairs").is_none());
+        assert!(frame.get("pair_overrides").is_none());
     }
 
     /// [`chain5_prmtop`] with the dihedral tables and SCEE/SCNB: type 1
@@ -1095,10 +1101,10 @@ mod tests {
             )
     }
 
-    /// The `(atomi, atomj, coul_scale, lj_scale)` of each `pairs` row, a null
-    /// cell as `None`.
+    /// The `(atomi, atomj, coul_scale, lj_scale)` of each `pair_overrides`
+    /// row, a null cell as `None`.
     fn pair_scales(frame: &Frame) -> Vec<(Idx, Idx, Option<F>, Option<F>)> {
-        let pairs = frame.get("pairs").expect("pairs");
+        let pairs = frame.get("pair_overrides").expect("pair_overrides");
         let ai = pairs.get("atomi").unwrap().get::<u64>().unwrap();
         let aj = pairs.get("atomj").unwrap().get::<u64>().unwrap();
         let cell = |k: &str, r: usize| -> Option<F> {
@@ -1115,7 +1121,7 @@ mod tests {
 
     /// Two 1-4 pairs, (0, 3) at type 1's 1.2 / 2.0 and (1, 4) at type 2's
     /// 1.0 / 1.0: the field takes the first divisor on the tie, and the
-    /// frame's `pairs` carry the other pair's own weights.
+    /// frame's `pair_overrides` carry the other pair's own weights.
     #[test]
     fn a_non_uniform_scee_gives_the_odd_pairs_their_scales() {
         let text = chain5_scaled(
@@ -1124,9 +1130,9 @@ mod tests {
             "1.00000000E+00",
         );
         let frame = read_system(&text);
+        assert!(frame.get("pairs").is_none());
         assert_eq!(pair_scales(&frame), vec![(1, 4, Some(1.0), Some(1.0))]);
-        let flags = frame.get("pairs").unwrap().get("is_14").unwrap();
-        assert!(flags.get::<bool>().unwrap().iter().all(|&f| f));
+        assert!(frame.get("pair_overrides").unwrap().get("is_14").is_none());
     }
 
     /// Only the weight that differs gets a cell: SCNB 2.0 on both types.
@@ -1391,6 +1397,28 @@ c3  c3  c3  hc
         assert_ne!(lj, GAFF_MINI);
         let err = read_err(&lj);
         assert!(err.contains("ATOM_TYPE_INDEX"), "{err}");
+    }
+
+    /// A `NONBONDED_PARM_INDEX` shorter than NTYPES², or an entry of 0, is
+    /// refused by name — never a σ = 1, ε = 0 type.
+    #[test]
+    fn a_short_or_zero_nonbonded_parm_index_is_refused() {
+        let table = "%FLAG NONBONDED_PARM_INDEX\n%FORMAT(10I8)\n       1       2       2       3\n";
+        for (edited, what) in [
+            (
+                "%FLAG NONBONDED_PARM_INDEX\n%FORMAT(10I8)\n       1       2       2\n",
+                "short",
+            ),
+            (
+                "%FLAG NONBONDED_PARM_INDEX\n%FORMAT(10I8)\n       1       2       2       0\n",
+                "zero",
+            ),
+        ] {
+            let text = GAFF_MINI.replace(table, edited);
+            assert_ne!(text, GAFF_MINI, "{what}");
+            let err = read_err(&text);
+            assert!(err.contains("NONBONDED_PARM_INDEX"), "{what}: {err}");
+        }
     }
 
     #[test]

@@ -4,7 +4,7 @@ MolPy's Rust core is tested by unit tests next to the code
 (`#[cfg(test)]` modules in `crates/molrs/src/**`, run with `cargo mrs-test`),
 and the Python binding by pytest. The Python tests live under
 `molpy/tests/`, mirroring the package structure
-(`molpy/molpy/engine/lammps.py` → `molpy/tests/test_engine/test_lammps.py`;
+(`molpy/python/molpy/engine/lammps.py` → `molpy/tests/test_engine/test_lammps.py`;
 the former native-binding suite is `molpy/tests/test_bindings/`) with no
 `__init__.py` files (`--import-mode=importlib`), and warnings are errors.
 Fixture files are small, committed under `molpy/tests/tests-data/<format>/`,

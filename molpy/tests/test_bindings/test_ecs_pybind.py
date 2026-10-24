@@ -172,7 +172,7 @@ def test_relation_endpoints_survive_del_node_no_reindex():
 # --------------------------------------------------------------------------- #
 
 
-def test_column_is_zero_copy_view_write_through():
+def test_column_is_a_copy_that_outlives_graph_mutation():
     g = mp.core.MolGraph()
     h0 = g.add_node(x=1.0)
     g.add_node(x=4.0)
@@ -181,9 +181,14 @@ def test_column_is_zero_copy_view_write_through():
     assert isinstance(col, np.ndarray)
     assert col.tolist() == [1.0, 4.0]
 
-    # Mutating the view writes through to the world.
+    # A copy: writing to it leaves the graph alone ...
     col[0] = 9.0
-    assert g.get_node(h0)["x"] == 9.0
+    assert g.get_node(h0)["x"] == 1.0
+    # ... and growing the graph (which reallocates the column) leaves the
+    # array alone.
+    for i in range(1024):
+        g.add_node(x=float(i))
+    assert col.tolist() == [9.0, 4.0]
 
 
 def test_validity_mask_reflects_set_components():

@@ -66,7 +66,7 @@ namespace itself is flat. Every operation has exactly one door: no `Str` /
   `toCart(frac)`, `delta(a, b, minimumImage)` → `NDArray`, and
   `wrap(xyz)` → `{ xyz, shifts }` (the image shift applied to each point).
   Also `volume()`, `origin()`, `lengths()`, `tilts()`, `pbc()`, `corners()`,
-  `h()` (the cell matrix, flat **column-major**)
+  `h()` (the cell matrix, flat row-major — what `Cell.matrix` takes)
 
 ```js
 const box = new Box(Cell.lengths([10, 10, 10]), [0, 0, 0], [true, true, true]);

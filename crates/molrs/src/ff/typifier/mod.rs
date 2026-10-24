@@ -37,9 +37,8 @@ use indexmap::IndexMap;
 use molrs::core::Atomistic;
 use molrs::core::{MolRsError, NodeId, PropValue, Relation, RelationId};
 
-use crate::ff::forcefield::{ForceField, Style};
-use crate::ff::ir::Params;
-use crate::ff::ir::{Arity, EndpointOrder};
+use crate::ff::forcefield::{DefError, ForceField, Style};
+use crate::ff::ir::{Arity, EndpointOrder, Params, SpecialBonds};
 
 /// Name the atoms `ids` of `mol` as the ATD typifier names an atom it cannot
 /// type — `atom {i} ({element})`, `i` the 0-based position in `mol.atoms()`
@@ -206,12 +205,17 @@ pub type Annotations = Vec<(String, Annotation)>;
 ///
 /// `styles` are `(category, style, style params)` to declare, in output
 /// order; `pairs` are `(style, name, endpoints, params)` pair rows.
+/// `special_bonds` are 1-2 / 1-3 / 1-4 weights to declare on the output.
+/// `None` leaves the output's declaration alone. A different triple from one
+/// the output has declared is [`DefError::SpecialBondsConflict`] (see
+/// [`TypeAssignment::apply_to`]).
 #[derive(Debug, Clone, Default)]
 pub struct TypeAssignment {
     pub nodes: Vec<Annotations>,
     pub links: IndexMap<String, Vec<Annotations>>,
     pub styles: Vec<(String, String, Params)>,
     pub pairs: Vec<(String, String, Vec<String>, Params)>,
+    pub special_bonds: Option<SpecialBonds>,
 }
 
 /// The category whose Frame block is the relation kind `kind`, and how its
@@ -416,13 +420,18 @@ impl TypeAssignment {
     ///    [`Style::def_type`] apply. A type or pair row whose style is neither
     ///    in `forcefield` nor in `styles` is an error, as is one element
     ///    writing one key twice with different values.
+    ///    [`TypeAssignment::special_bonds`], when set, fills an output that has
+    ///    declared none. Two declared triples that differ are
+    ///    [`DefError::SpecialBondsConflict`], the same error as
+    ///    [`ForceField::merge`], and nothing below runs.
     /// 2. **Stamp** every annotation onto `graph`. A write the graph refuses
     ///    (a value contradicting the dtype of a declared key) is an error.
     /// 3. **Commit** through [`ForceField::def_style`] (in `styles` order) and
     ///    [`Style::def_type`] (types in element order — nodes, then the
     ///    relation kinds in the graph's registration order: bonds, angles,
     ///    dihedrals, impropers, then any kind registered later — then pair
-    ///    rows). Phase 1 makes this infallible.
+    ///    rows). Adopted `special_bonds` are declared last. Phase 1 makes
+    ///    this infallible.
     ///
     /// An estimated type (its params carry the provenance flag `estimated`)
     /// whose name the force field or the match already defines otherwise is
@@ -443,7 +452,26 @@ impl TypeAssignment {
             mut links,
             styles,
             pairs,
+            special_bonds,
         } = self;
+
+        // Equal weights are a no-op. An output that has declared none takes
+        // the assignment's. Two declared triples that differ are
+        // SpecialBondsConflict, and nothing below runs.
+        let adopt = match special_bonds {
+            None => None,
+            Some(incoming) => match forcefield.special_bonds().copied() {
+                Some(existing) if existing == incoming => None,
+                Some(existing) => {
+                    return Err(DefError::SpecialBondsConflict {
+                        ours: existing,
+                        theirs: incoming,
+                    }
+                    .to_string());
+                }
+                None => Some(incoming),
+            },
+        };
 
         // Phase 1: validate into a batch force field of this match's
         // definitions alone, and a list of stamps.
@@ -608,6 +636,9 @@ impl TypeAssignment {
                     .def_type(name, &endpoints, params.clone())
                     .map_err(|e| format!("commit after validation: {e}"))?;
             }
+        }
+        if let Some(weights) = adopt {
+            forcefield.set_special_bonds(weights);
         }
         Ok(())
     }
@@ -1171,6 +1202,7 @@ mod tests {
                 pair_row("lj/cut", "CT", &["CT"], lj(0.066, 3.5)),
                 pair_row("lj/cut", "OH", &["OH"], lj(0.17, 3.12)),
             ],
+            ..TypeAssignment::default()
         };
 
         m.apply_to(&mut g, &mut ff).unwrap();
@@ -1550,6 +1582,96 @@ mod tests {
 
         assert!(result.is_err(), "{result:?}");
         assert_same_definitions(&ff, &before);
+    }
+
+    const GLYCAM: SpecialBonds = SpecialBonds {
+        lj: [0.0, 0.0, 1.0],
+        coul: [0.0, 0.0, 1.0],
+    };
+
+    /// `CT` on atom 0, carrying `weights` for the output to adopt.
+    fn ct_with_weights(weights: SpecialBonds) -> TypeAssignment {
+        TypeAssignment {
+            nodes: vec![vec![atom_full("CT", 12.011)], vec![]],
+            styles: vec![atom_full_style()],
+            special_bonds: Some(weights),
+            ..TypeAssignment::default()
+        }
+    }
+
+    /// A declared triple is final. Different weights conflict before any style
+    /// exists, and neither the force field nor the graph changes.
+    #[test]
+    fn apply_to_refuses_different_special_bonds_while_the_output_has_no_styles() {
+        let mut g = pair2();
+        let mut ff = ForceField::new("out");
+        ff.set_special_bonds(SB);
+        let before = ff.clone();
+        let graph_before = graph_props(&g);
+
+        let err = ct_with_weights(GLYCAM)
+            .apply_to(&mut g, &mut ff)
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            DefError::SpecialBondsConflict {
+                ours: SB,
+                theirs: GLYCAM,
+            }
+            .to_string()
+        );
+        assert_same_definitions(&ff, &before);
+        assert_eq!(graph_props(&g), graph_before);
+    }
+
+    #[test]
+    fn apply_to_sets_special_bonds_an_output_has_not_declared() {
+        let mut g = pair2();
+        let mut ff = ForceField::new("out");
+
+        ct_with_weights(GLYCAM).apply_to(&mut g, &mut ff).unwrap();
+
+        assert_eq!(ff.special_bonds(), Some(&GLYCAM));
+    }
+
+    #[test]
+    fn apply_to_accepts_the_same_special_bonds_after_styles_exist() {
+        let mut g = pair2();
+        let mut ff = ForceField::new("out");
+        ct_with_weights(GLYCAM).apply_to(&mut g, &mut ff).unwrap();
+        let mut again = pair2();
+
+        ct_with_weights(GLYCAM)
+            .apply_to(&mut again, &mut ff)
+            .unwrap();
+
+        assert_eq!(ff.special_bonds(), Some(&GLYCAM));
+    }
+
+    #[test]
+    fn apply_to_refuses_different_special_bonds_once_styles_exist() {
+        let mut g = pair2();
+        let mut ff = ForceField::new("out");
+        ct_with_weights(GLYCAM).apply_to(&mut g, &mut ff).unwrap();
+        let before = ff.clone();
+        let mut again = pair2();
+        let graph_before = graph_props(&again);
+
+        let err = ct_with_weights(SB)
+            .apply_to(&mut again, &mut ff)
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            DefError::SpecialBondsConflict {
+                ours: GLYCAM,
+                theirs: SB,
+            }
+            .to_string()
+        );
+        assert_same_definitions(&ff, &before);
+        assert_eq!(graph_props(&again), graph_before);
     }
 
     // -- Typing -----------------------------------------------------------------

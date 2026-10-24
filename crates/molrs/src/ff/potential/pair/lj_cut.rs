@@ -412,13 +412,17 @@ mod tests {
         assert!((mie_c(12.0, 6.0) - 4.0).abs() < 1e-12);
     }
 
+    /// A `lj/cut` kernel reads a neighbour table. A collection holding one
+    /// cannot be priced from coordinates alone, and says so when asked —
+    /// instead of adding nothing — while a compiled pair list passes.
     #[test]
-    fn loop_without_pairs_is_explicit_zero() {
+    fn a_kernel_without_a_pair_list_refuses_coordinate_only_evaluation() {
         let lj = PairLjCut::new(1.0, 1.0, 2.5, 12, 6, true, false).unwrap();
-        let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.1, 0.0, 0.0];
-        let (e, f) = lj.energy_forces_at(&coords);
-        assert_eq!(e, 0.0);
-        assert!(f.iter().all(|&x| x == 0.0));
+        let mut pots = crate::ff::potential::Potentials::new();
+        pots.push(crate::ff::potential::ForceTerm::pair(lj));
+        let err = pots.require_pair_lists().unwrap_err().to_string();
+        assert!(err.contains("neighbour table"), "{err}");
+        assert!(compiled(1.0, 1.0).require_pair_lists().is_ok());
     }
 
     /// One `lj/cut` pair over atoms 0-1, its row the pair's.

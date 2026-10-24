@@ -45,6 +45,8 @@
 //! assert_eq!(SmilesIr::parse(&text).unwrap().to_atomistic().unwrap().n_atoms(), 3);
 //! ```
 
+pub(crate) mod bond_stereo;
+pub(crate) mod chirality;
 pub(crate) mod element_check;
 pub(crate) mod emit_options;
 pub(crate) mod ir_from_atomistic;

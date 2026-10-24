@@ -14,7 +14,7 @@ molpy lives in the [molrs repository](https://github.com/MolCrafts/molrs), at `m
 Implement the change with tests. Run local checks before pushing:
 
 ```bash
-scripts/check.sh ruff molpy      # from the repository root
+scripts/check.sh python      # from the repository root
 ```
 
 Open a pull request with a clear summary. The PR description should include what changed, why, and how to verify it.

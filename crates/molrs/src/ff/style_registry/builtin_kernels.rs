@@ -18,11 +18,15 @@
 //! ([`Native`]): the form kernel inlines its force law, and a pair style
 //! evaluates through its [`pair_law`](crate::ff::potential::form_kernel::ScalarForm::pair_law)
 //! in one fused pass, as a hand-written kernel would. Two
-//! built-ins stay whole-kernel constructors ([`Kernel::Constructor`]), each
-//! for a reason a form cannot carry:
+//! built-ins stay whole-kernel constructors ([`Kernel::Constructor`]):
 //!
-//! * `pair coul/long/pme` — a k-space sum over every atom's charge and the
-//!   `exclusions`, not a function of a pair's distance;
+//! * `pair coul/long/pme` — the reciprocal-space sum, the self energy and
+//!   the exclusion correction. The real-space erfc term is the pair form
+//!   [`CoulLong`](crate::ff::potential::pair::CoulLong) beside that sum. A
+//!   compiled frame with no `pairs` block still prices the real-space term
+//!   inside the constructor, minimum-imaged, because there is no list to
+//!   hand the form. The neighbour-driven door always prices it over the
+//!   neighbour table.
 //! * `cmap charmm` — its parameter is an energy grid whose bicubic-spline
 //!   coefficients are derived once per type at build; a compound form is
 //!   handed the raw grid at every evaluation and would re-derive them each
@@ -38,6 +42,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::ff::ir::SpecialClass;
 use crate::ff::potential::form_kernel::{CompoundForm, ScalarForm};
 use crate::ff::potential::{angle, bond, cmap, dihedral, improper, kspace, pair};
 use crate::ff::style_registry::{Kernel, Native, RowSource};
@@ -156,15 +161,17 @@ impl BuiltinKernels {
         r.scalar("pair", "coul/tt", pair::TangToennies);
         r.scalar("pair", "uff_lj", pair::UffLj);
         r.scalar("pair", "mmff_vdw", pair::MmffVdw);
-        // PME sums in reciprocal space over the atoms' charges and subtracts
-        // `exclusions`; it reads no `pairs` block, so the pair category's
-        // gate must not delete it when there is none.
+        // Reciprocal sum, self energy and exclusion correction. The
+        // real-space erfc term is `CoulLong`. With no `pairs` block the
+        // constructor still prices real space (minimum image), so the pair
+        // gate must not delete the style. The neighbour door is that pair
+        // form plus the reciprocal sum.
         r.insert(
             "pair",
             "coul/long/pme",
             Kernel::Constructor {
                 compiled: kspace::pme::pair_coul_long_pme_constructor,
-                typed: None,
+                typed: Some((kspace::pme::pair_coul_long_pme_typed, SpecialClass::Coulomb)),
                 rows: RowSource::Atoms,
             },
             None,
@@ -207,8 +214,10 @@ mod tests {
         assert!(r.kernel("bond", "does-not-exist").is_none());
     }
 
-    /// Every built-in pair style but PME is a scalar form, so it has both
-    /// compile doors: a fixed pair list and a neighbour table.
+    /// Every built-in pair style but PME is a scalar form with both doors.
+    /// PME's real-space term is the pair form `CoulLong`, tested with the
+    /// reciprocal sum in `kspace::pme`; the style stays a constructor
+    /// because the reciprocal sum is not a function of one distance.
     #[test]
     fn every_pair_form_has_both_doors() {
         let r = BuiltinKernels::builtin();
@@ -230,14 +239,16 @@ mod tests {
     /// `pairs` block is absent or empty — a rule that is right for every other
     /// pair kernel and deleted PME outright. The symptom was a system with
     /// zero long-range electrostatics and no error: the style was declared,
-    /// accepted, and dropped.
+    /// accepted, and dropped. The row source stays the atoms. A present
+    /// `pairs` block prices the real-space term as the pair form; it does
+    /// not decide whether the style is built.
     #[test]
     fn pme_is_not_gated_on_a_pairs_block() {
         let r = crate::ff::style_registry::Registry::builtin();
         assert_eq!(
             r.row_source("pair", "coul/long/pme"),
             Some(RowSource::Atoms),
-            "PME reads charges and exclusions, never `pairs`"
+            "an absent pairs block still builds PME"
         );
         for gated in ["lj/cut", "coul/cut", "buck", "thole"] {
             assert_eq!(

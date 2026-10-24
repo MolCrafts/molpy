@@ -119,6 +119,11 @@ pub enum SmilesErrorKind {
     RecursionLimit,
     /// Ring closure bond types are inconsistent between open and close.
     RingBondConflict { rnum: u16 },
+    /// Two directional substituents of one double-bond atom are marked on the
+    /// same side (`C(/F)(/Cl)=C/F`). Opposite marks agree: they are one
+    /// configuration. A ring digit that disagrees with itself is
+    /// [`RingBondConflict`], not this.
+    BondStereoConflict,
     /// Graph → IR / IR → string emit failure (message is the reason).
     Emit(String),
     /// An IR → graph construction step failed — an internal invariant of the
@@ -366,6 +371,9 @@ impl SmilesErrorKind {
             SmilesErrorKind::RecursionLimit => "recursive SMARTS nesting limit exceeded".to_owned(),
             SmilesErrorKind::RingBondConflict { rnum } => {
                 format!("conflicting bond types on ring closure {rnum}")
+            }
+            SmilesErrorKind::BondStereoConflict => {
+                "two substituents of one double-bond atom are marked on the same side".to_owned()
             }
             SmilesErrorKind::Emit(s) => format!("emit error: {s}"),
             SmilesErrorKind::Build(s) => format!("graph construction failed: {s}"),

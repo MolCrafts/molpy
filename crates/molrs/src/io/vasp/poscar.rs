@@ -234,6 +234,7 @@ pub fn write_poscar<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> 
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     // Every door writes through here, so every door checks here.
     crate::io::writer::check_write_frame(frame)?;
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &["x", "y", "z", keys::ELEMENT])?;
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("POSCAR write: frame has no atoms block"))?;

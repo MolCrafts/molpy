@@ -78,6 +78,22 @@ pub(crate) fn refuse_null_cells(
     Ok(())
 }
 
+/// [`refuse_null_cells`] over every column of `block`: for a writer that
+/// writes the whole block (XYZ, the LAMMPS dump and molecule writers). An
+/// absent block has no columns and passes.
+pub(crate) fn refuse_null_cells_in_block(
+    frame: &impl FrameAccess,
+    block: &str,
+) -> std::io::Result<()> {
+    let keys: Vec<String> = frame
+        .visit_block(block, |b| {
+            b.column_keys().into_iter().map(str::to_owned).collect()
+        })
+        .unwrap_or_default();
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    refuse_null_cells(frame, block, &keys)
+}
+
 /// `rows` (ascending) as runs: `rows 3, 7-9, 12`, eliding after
 /// [`LISTED_RUNS`].
 fn runs(rows: &[usize]) -> String {
@@ -128,6 +144,94 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
         frame
+    }
+
+    /// Every frame writer refuses a null cell in a column it writes; none
+    /// writes the filler.
+    #[test]
+    fn every_frame_writer_refuses_a_null_cell_it_would_write() {
+        use crate::io::{
+            write_cif, write_cube, write_dcd, write_lammps_dump, write_lammps_dump_local,
+            write_lammps_molecule, write_mol2, write_poscar, write_trr, write_xsf, write_xtc,
+            write_xyz,
+        };
+        use molrs::core::{Cell, SimBox};
+
+        let mut atoms = Block::new();
+        let f = |v: Vec<f64>| Array1::from_vec(v).into_dyn();
+        let s = |v: &[&str]| Array1::from_vec(v.iter().map(|x| x.to_string()).collect()).into_dyn();
+        atoms
+            .insert("id", Array1::from_vec(vec![1u64, 2]).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("x", f(vec![0.0, 1.5]), Some(vec![true, false]))
+            .unwrap();
+        atoms.insert("y", f(vec![0.0, 0.0]), None).unwrap();
+        atoms.insert("z", f(vec![0.0, 0.0]), None).unwrap();
+        atoms.insert("charge", f(vec![0.0, 0.0]), None).unwrap();
+        atoms.insert("element", s(&["C", "C"]), None).unwrap();
+        atoms.insert("name", s(&["C1", "C2"]), None).unwrap();
+        atoms.insert("type", s(&["C", "C"]), None).unwrap();
+        atoms
+            .insert(
+                "atomic_number",
+                Array1::from_vec(vec![6u64, 6]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let mut bonds = Block::new();
+        bonds
+            .insert(
+                "atomi",
+                Array1::from_vec(vec![0u64]).into_dyn(),
+                Some(vec![false]),
+            )
+            .unwrap();
+        bonds
+            .insert("atomj", Array1::from_vec(vec![1u64]).into_dyn(), None)
+            .unwrap();
+        let mut grid = Block::new();
+        grid.insert(
+            "value",
+            ndarray::ArrayD::<f64>::zeros(ndarray::IxDyn(&[2, 2, 2])),
+            None,
+        )
+        .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+        frame.insert("grid", grid);
+        let h = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+        frame.simbox = Some(SimBox::new(Cell::Matrix(h), [0.0; 3], [true; 3]).unwrap());
+
+        let mut buf = Vec::new();
+        let doors: Vec<(&str, std::io::Error)> = vec![
+            ("xyz", write_xyz(&mut buf, &frame).unwrap_err()),
+            ("mol2", write_mol2(&mut buf, &frame).unwrap_err()),
+            ("cif", write_cif(&mut buf, &frame).unwrap_err()),
+            ("dcd", write_dcd(&mut buf, &frame).unwrap_err()),
+            ("trr", write_trr(&mut buf, &frame).unwrap_err()),
+            ("xtc", write_xtc(&mut buf, &frame).unwrap_err()),
+            ("poscar", write_poscar(&mut buf, &frame).unwrap_err()),
+            ("xsf", write_xsf(&mut buf, &frame).unwrap_err()),
+            ("cube", write_cube(&mut buf, &frame).unwrap_err()),
+            (
+                "dump",
+                write_lammps_dump(&mut buf, &frame, None).unwrap_err(),
+            ),
+            (
+                "molecule",
+                write_lammps_molecule(&mut buf, &frame).unwrap_err(),
+            ),
+        ];
+        for (door, err) in doors {
+            assert!(err.to_string().contains("atoms.x is null"), "{door}: {err}");
+        }
+        let err = write_lammps_dump_local(&mut buf, &[frame]).unwrap_err();
+        assert!(
+            err.to_string().contains("bonds.atomi is null"),
+            "dump local: {err}"
+        );
     }
 
     #[test]

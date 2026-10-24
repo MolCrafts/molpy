@@ -474,6 +474,22 @@ pub fn write_mol2<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
 
 /// Emit one frame in MOL2 format.
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
+    crate::io::null_cells::refuse_null_cells(
+        frame,
+        "atoms",
+        &[
+            "id",
+            "x",
+            "y",
+            "z",
+            "charge",
+            "name",
+            "type",
+            keys::RES_ID,
+            keys::RES_NAME,
+        ],
+    )?;
+    crate::io::null_cells::refuse_null_cells_in_block(frame, "bonds")?;
     // Every door writes through here, so every door checks here.
     crate::io::writer::check_write_frame(frame)?;
     let atoms = frame

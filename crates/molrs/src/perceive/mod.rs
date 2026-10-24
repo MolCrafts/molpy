@@ -101,5 +101,8 @@ pub use stereo::{
     BondStereo, TetrahedralStereo, assign_stereo, chiral_volume, perceive_bond_stereo,
     perceive_chiral_centers, perceive_tetrahedral_stereo,
 };
+pub(crate) use stereo::{
+    TetrahedralSite, priority_substituent, stated_hydrogen_count, tetrahedral_reference,
+};
 pub use subgraph::SubgraphMatcher;
 pub use valence::{n_hydrogens, n_implicit_hydrogens};

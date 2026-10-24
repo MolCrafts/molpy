@@ -58,10 +58,10 @@ molc/include/molc.h
 pkg/
 molwasm/pkg/
 molwasm/dist/
-molpy/molpy/*.dylib
-molpy/molpy/*.dll
-molpy/molpy/*.so
-molpy/molpy/*.dylib.dSYM/
+molpy/python/molpy/*.dylib
+molpy/python/molpy/*.dll
+molpy/python/molpy/*.so
+molpy/python/molpy/*.dylib.dSYM/
 
 .claude/worktrees/
 
@@ -69,7 +69,7 @@ molpy/molpy/*.dylib.dSYM/
 
 # Per-arch / per-consumer cargo target dirs (target-aarch64, target-x86_64-molnex, ...).
 **/target-*/
-molpy/molpy/_core.abi3.so.*
+molpy/python/molpy/_core.abi3.so.*
 
 # Per-architecture toolchain and wheel output for the GH200 build job
 .cargo-aarch64/

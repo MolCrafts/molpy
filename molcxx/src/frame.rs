@@ -104,9 +104,11 @@ pub(crate) fn frame_block_names(fref: &FrameRef) -> Result<Vec<String>, String> 
 ///
 /// @param fref  frame handle
 /// @param block block key
-/// @return true if the block exists
-pub(crate) fn frame_has_block(fref: &FrameRef, block: &str) -> bool {
-    fref.0.has_block(block)
+/// @return true if the block exists; an error for a handle that names no frame
+pub(crate) fn frame_has_block(fref: &FrameRef, block: &str) -> Result<bool, String> {
+    fref.0
+        .has_block(block)
+        .map_err(|e| format!("frame_has_block: {e}"))
 }
 
 /// List the column keys of a block.
@@ -138,9 +140,14 @@ pub(crate) fn frame_block_n_rows(fref: &FrameRef, block: &str) -> Result<i64, St
 /// Test whether the frame has a box.
 ///
 /// @param fref frame handle
-/// @return true if it has one (false too for a handle that names no frame)
-pub(crate) fn frame_has_box(fref: &FrameRef) -> bool {
-    matches!(fref.0.box_clone(), Ok(Some(_)))
+/// @return true if it has one; false when the frame is live and has none;
+///         an error for a handle that names no frame
+pub(crate) fn frame_has_box(fref: &FrameRef) -> Result<bool, String> {
+    match fref.0.box_clone() {
+        Ok(Some(_)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(e) => Err(format!("frame_has_box: {e}")),
+    }
 }
 
 /// A [`bridge::ffi::KeyedMetaValue`] of `dtype` with every payload empty.
@@ -170,11 +177,12 @@ pub(crate) fn empty_keyed_meta_value(
 /// The keys of the frame's metadata, in insertion order.
 ///
 /// @param fref frame handle
-/// @return metadata keys; empty when the frame has none
-pub(crate) fn frame_meta_keys(fref: &FrameRef) -> Vec<String> {
+/// @return metadata keys; empty when the live frame has none; an error for a
+///         handle that names no frame
+pub(crate) fn frame_meta_keys(fref: &FrameRef) -> Result<Vec<String>, String> {
     fref.0
         .with(|frame| frame.meta.keys().map(|key| key.to_string()).collect())
-        .unwrap_or_default()
+        .map_err(|e| format!("frame_meta_keys: {e}"))
 }
 
 /// One metadata value with its exact dtype and native payload.
@@ -351,8 +359,8 @@ fn frame_column<T: BlockDtype>(
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
-/// @return owned column data; empty if the block or column is absent, an
-///         error if the column is not `f64`
+/// @return owned column data. An absent block, an absent column, a column
+///         of another dtype, and a dropped frame are all errors.
 pub(crate) fn frame_column_f64(
     fref: &FrameRef,
     block: &str,
@@ -366,8 +374,8 @@ pub(crate) fn frame_column_f64(
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
-/// @return owned column data; empty if the block or column is absent, an
-///         error if the column is not `i32`
+/// @return owned column data. An absent block, an absent column, a column
+///         of another dtype, and a dropped frame are all errors.
 pub(crate) fn frame_column_i32(
     fref: &FrameRef,
     block: &str,
@@ -381,8 +389,8 @@ pub(crate) fn frame_column_i32(
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
-/// @return owned column data; empty if the block or column is absent, an
-///         error if the column is not the domain uint
+/// @return owned column data. An absent block, an absent column, a column
+///         of another dtype, and a dropped frame are all errors.
 pub(crate) fn frame_column_u64(
     fref: &FrameRef,
     block: &str,
@@ -396,8 +404,8 @@ pub(crate) fn frame_column_u64(
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
-/// @return owned column data; empty if the block or column is absent, an
-///         error if the column is not a string column
+/// @return owned column data. An absent block, an absent column, a column
+///         of another dtype, and a dropped frame are all errors.
 pub(crate) fn frame_column_str(
     fref: &FrameRef,
     block: &str,
@@ -641,8 +649,8 @@ mod tests {
         // ── Introspection ──
         let names = frame_block_names(&fref).unwrap();
         assert_eq!(names, vec!["atoms".to_string()]);
-        assert!(frame_has_block(&fref, "atoms"));
-        assert!(!frame_has_block(&fref, "bonds"));
+        assert!(frame_has_block(&fref, "atoms").unwrap());
+        assert!(!frame_has_block(&fref, "bonds").unwrap());
 
         let mut cols = frame_block_columns(&fref, "atoms").unwrap();
         cols.sort();
@@ -698,7 +706,7 @@ mod tests {
         stress.f64_values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         frame_set_meta(&mut fref, stress).unwrap();
 
-        assert_eq!(frame_meta_keys(&fref).len(), 2);
+        assert_eq!(frame_meta_keys(&fref).unwrap().len(), 2);
         let tag = frame_get_meta(&fref, "tag").unwrap();
         assert!(tag.dtype == MetaType::I64);
         assert_eq!(tag.i64_value, 9_007_199_254_740_993);
@@ -731,7 +739,7 @@ mod tests {
         run.string_value = "third".into();
         frame_set_meta(&mut fref, run).unwrap();
 
-        let keys = frame_meta_keys(&fref);
+        let keys = frame_meta_keys(&fref).unwrap();
         assert_eq!(
             keys,
             vec!["tag".to_string(), "stress".to_string(), "run".to_string()]
@@ -770,13 +778,30 @@ mod tests {
         );
     }
 
+    /// A dropped frame is an error on every probe. Absence of a block, a box
+    /// or metadata stays `Ok` on a live frame.
+    #[test]
+    fn a_dropped_frame_is_an_error_on_every_probe() {
+        let fref = frame_new();
+        let stale = FrameRef(fref.0.clone());
+        fref.0.clone().drop_frame().unwrap();
+        let err = frame_has_block(&stale, "atoms").unwrap_err();
+        assert!(err.contains("Invalid frame"), "{err}");
+        let err = frame_has_box(&stale).unwrap_err();
+        assert!(err.contains("Invalid frame"), "{err}");
+        let err = frame_meta_keys(&stale).unwrap_err();
+        assert!(err.contains("Invalid frame"), "{err}");
+        let err = frame_block_names(&stale).unwrap_err();
+        assert!(err.contains("Invalid frame"), "{err}");
+    }
+
     /// A frame without a box is an error to read; a box without a defined
     /// cell carries an identity placeholder, which is not a cell: it reads
     /// as no H.
     #[test]
     fn a_box_without_a_defined_cell_reads_as_no_h() {
         let fref = frame_new();
-        assert!(!frame_has_box(&fref));
+        assert!(!frame_has_box(&fref).unwrap());
         assert!(frame_box(&fref).is_err());
         let undefined = SimBox::new(Cell::Undefined, [0.0; 3], [false; 3]).unwrap();
         fref.0.set_box(Some(undefined)).unwrap();

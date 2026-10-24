@@ -195,9 +195,11 @@ impl TorsionTables<'_> {
 /// One torsion of a prmtop: every `DIHEDRALS_*` row on one atom quartet.
 ///
 /// A proper is stored in [`TypeName::orient`]'s orientation of its type
-/// names (atoms reversed with them), and its rows are merged by quartet in
-/// either direction; an improper (negative 4th pointer) keeps its prmtop
-/// order, centre third, and merges by exact order. `terms` holds every row's
+/// names (atoms reversed with them), and each term's phase is the phase of
+/// that stored direction ([`TypeName::phase_for_stored_order`]). A later row
+/// of the same quartet negates its own phase before the terms are merged.
+/// An improper (negative 4th pointer) keeps its prmtop order, centre third,
+/// and its phase, and merges by exact order. `terms` holds every row's
 /// cosine terms in row order (empty without parameter tables); `exclude_14`
 /// is set when every merged row's 3rd pointer was negative.
 #[derive(Debug, Clone, PartialEq)]
@@ -365,7 +367,9 @@ pub(crate) fn torsion_rows(pointers: &[i64], n_atoms: usize) -> Result<Vec<Torsi
 /// The torsions of `DIHEDRALS_INC_HYDROGEN` + `DIHEDRALS_WITHOUT_HYDROGEN`
 /// (`pointers`, concatenated), one per atom quartet ([`Torsion`]), in the
 /// order of each quartet's first row. With `tables`, each row's type id is
-/// expanded through its multi-term chain into the torsion's `terms`.
+/// expanded through its multi-term chain into the torsion's `terms`. A
+/// proper row's phase is rewritten onto the stored atom order; an improper's
+/// phase is kept.
 pub(crate) fn decode_torsions(
     pointers: &[i64],
     atom_types: &[String],
@@ -375,10 +379,11 @@ pub(crate) fn decode_torsions(
     let mut seen: HashMap<(bool, [usize; 4]), usize> = HashMap::new();
     for row in torsion_rows(pointers, atom_types.len())? {
         let mut atoms = row.atoms;
-        let types = atoms.map(|a| atom_types[a].as_str());
-        if !row.improper && TypeName::reads_reversed(&types) {
+        let authored = atoms.map(|a| atom_types[a].as_str());
+        if !row.improper && TypeName::reads_reversed(&authored) {
             atoms.reverse();
         }
+        let stored = atoms.map(|a| atom_types[a].as_str());
         let key = if row.improper {
             atoms
         } else {
@@ -386,10 +391,15 @@ pub(crate) fn decode_torsions(
             reversed.reverse();
             atoms.min(reversed)
         };
-        let terms = match tables {
+        let mut terms = match tables {
             Some(t) => t.chain(row.tid)?,
             None => Vec::new(),
         };
+        if !row.improper {
+            for term in &mut terms {
+                term.phase = TypeName::phase_for_stored_order(&authored, &stored, term.phase);
+            }
+        }
         if let Some(&at) = seen.get(&(row.improper, key)) {
             out[at].exclude_14 &= row.exclude_14;
             out[at].terms.extend(terms);
@@ -706,6 +716,60 @@ mod tests {
         assert_eq!(amber_phase(-3.141594), -PI);
         assert_eq!(amber_phase(3.1), 3.1);
         assert_eq!(amber_phase(0.0), 0.0);
+    }
+
+    /// File order `ho-oh-c3-c3` is stored as `c3-c3-oh-ho`, and a phase that is
+    /// not a half-turn changes sign with that reversal. A half-turn stays `+π`.
+    /// A row already in the stored order keeps its phase. An improper is never
+    /// reversed and never negated. A second row of the same quartet, written
+    /// the other way, brings its own phase onto the first row's direction.
+    #[test]
+    fn a_reversed_proper_stores_the_phase_of_the_stored_order() {
+        use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, PI};
+        let types = ["ho", "oh", "c3", "c3"].map(str::to_owned).to_vec();
+        let k = [1.0];
+        let periodicity = [1.0];
+        let third = [FRAC_PI_3];
+        let one = TorsionTables {
+            k: &k,
+            periodicity: &periodicity,
+            phase: &third,
+        };
+        let reversed = decode_torsions(&[0, 3, 6, 9, 1], &types, Some(one)).unwrap();
+        assert_eq!(reversed[0].atoms, [3, 2, 1, 0]);
+        assert_eq!(reversed[0].terms[0].phase, -FRAC_PI_3);
+        let pi = [PI];
+        let half = TorsionTables {
+            k: &k,
+            periodicity: &periodicity,
+            phase: &pi,
+        };
+        let half_turn = decode_torsions(&[0, 3, 6, 9, 1], &types, Some(half)).unwrap();
+        assert_eq!(half_turn[0].terms[0].phase, PI);
+
+        let forward = decode_torsions(&[9, 6, 3, 0, 1], &types, Some(one)).unwrap();
+        assert_eq!(forward[0].atoms, [3, 2, 1, 0]);
+        assert_eq!(forward[0].terms[0].phase, FRAC_PI_3);
+
+        let improper = decode_torsions(&[0, 3, 6, -9, 1], &types, Some(one)).unwrap();
+        assert!(improper[0].improper);
+        assert_eq!(improper[0].atoms, [0, 1, 2, 3]);
+        assert_eq!(improper[0].terms[0].phase, FRAC_PI_3);
+
+        let merged = decode_torsions(
+            &[0, 3, 6, 9, 1, 9, 6, 3, 0, 2],
+            &types,
+            Some(TorsionTables {
+                k: &[1.0, 1.0],
+                periodicity: &[1.0, 1.0],
+                phase: &[FRAC_PI_3, FRAC_PI_2],
+            }),
+        )
+        .unwrap();
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].atoms, [3, 2, 1, 0]);
+        assert_eq!(merged[0].terms[0].phase, -FRAC_PI_3);
+        assert_eq!(merged[0].terms[1].phase, FRAC_PI_2);
     }
 
     fn sections(flags: &[(&str, &str)]) -> HashMap<String, Vec<String>> {

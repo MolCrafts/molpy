@@ -119,8 +119,8 @@ mod tests {
         let mut builder = CarbonTubeBuilder::new(6, 0).unwrap();
         builder.set_extent(&TubeExtent::cells(2)).unwrap();
         let frame = builder.build().unwrap();
-        assert!(frame.has("atoms"));
-        assert!(frame.has("bonds"));
+        assert!(frame.has("atoms").unwrap());
+        assert!(frame.has("bonds").unwrap());
         assert!(builder.set_extent(&TubeExtent::cells(0)).is_err());
         assert!(builder.set_extent(&TubeExtent::length(-1.0)).is_err());
         builder.set_extent(&TubeExtent::length(10.0)).unwrap();

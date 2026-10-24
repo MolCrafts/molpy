@@ -520,6 +520,11 @@ fn scale_simbox(sb: SimBox, scale: F) -> Result<SimBox> {
 fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<()> {
     // Every door writes through here, so every door checks here.
     crate::io::writer::check_write_frame(frame)?;
+    crate::io::null_cells::refuse_null_cells(
+        frame,
+        "atoms",
+        &["x", "y", "z", "vx", "vy", "vz", "fx", "fy", "fz"],
+    )?;
     let natoms = frame
         .visit_block("atoms", |a| a.n_rows().unwrap_or(0))
         .ok_or_else(|| invalid_data("TRR write: frame has no atoms block"))?;

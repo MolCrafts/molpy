@@ -54,6 +54,9 @@ pub fn read_lammps_molecule_json<'a>(src: impl Into<Source<'a>>) -> Result<Frame
 /// Write a frame as a LAMMPS molecule template file (the native text format).
 pub fn write_lammps_molecule<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
     crate::io::writer::check_write_frame(frame)?;
+    for block in ["atoms", "bonds", "angles", "dihedrals", "impropers"] {
+        crate::io::null_cells::refuse_null_cells_in_block(frame, block)?;
+    }
     sink.into()
         .put_with(|w| write_lammps_molecule_native(w, frame))
 }
@@ -61,6 +64,9 @@ pub fn write_lammps_molecule<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Re
 /// Write a frame as a LAMMPS molecule template in its JSON format.
 pub fn write_lammps_molecule_json<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
     crate::io::writer::check_write_frame(frame)?;
+    for block in ["atoms", "bonds", "angles", "dihedrals", "impropers"] {
+        crate::io::null_cells::refuse_null_cells_in_block(frame, block)?;
+    }
     sink.into().put_with(|w| write_json(w, frame))
 }
 

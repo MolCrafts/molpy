@@ -967,12 +967,11 @@ impl PyMolGraph {
     /// The field column ``key``, aligned to row order (length ==
     /// ``n_nodes``), as a numpy array of the column's own element type.
     ///
-    /// A ``f64`` column is a **zero-copy view** that writes through to the
-    /// world (``col[i] = v`` updates the node at row ``i``); ``i32``, ``bool``
-    /// and ``str`` columns are copied. The view borrows the world's storage;
-    /// structural mutation (``add_node`` / ``del_node``) may reallocate or
-    /// reorder the column and invalidate an outstanding view — re-fetch after
-    /// such ops.
+    /// Every column is a **copy**: writing to the array does not change the
+    /// graph (use :meth:`set_node`), and the array stays valid however the
+    /// graph is mutated afterwards. The entity table owns its storage and
+    /// may reallocate it on ``add_node`` / ``del_node``, so no view into it
+    /// is handed out.
     ///
     /// Every node must carry the field: a column with a hole is a
     /// ``KeyError`` naming how many nodes lack it, never a silently
@@ -1000,15 +999,7 @@ impl PyMolGraph {
             )));
         }
         match table.entity_column(&key).ok_or_else(absent)? {
-            EntityColumn::F64(data, _) => {
-                let (ptr, len) = (data.as_ptr(), data.len());
-                drop(this);
-                // SAFETY: `slf` owns the backing Vec and is held as the array's base
-                // object, so the memory stays valid for the array's lifetime; the
-                // documented contract forbids structural mutation while held.
-                let view = unsafe { numpy::ndarray::ArrayView1::from_shape_ptr(len, ptr) };
-                Ok(unsafe { numpy::PyArray1::borrow_from_array(&view, slf.into_any()) }.into_any())
-            }
+            EntityColumn::F64(data, _) => Ok(numpy::PyArray1::from_slice(py, data).into_any()),
             EntityColumn::I32(data, _) => Ok(numpy::PyArray1::from_slice(py, data).into_any()),
             EntityColumn::Bool(data, _) => Ok(numpy::PyArray1::from_slice(py, data).into_any()),
             EntityColumn::Str(data, _) => {

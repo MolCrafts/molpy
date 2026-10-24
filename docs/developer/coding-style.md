@@ -103,7 +103,7 @@ Use Google-style docstrings for public functions and classes. Include `Args`, `R
 
 ## Formatting
 
-Ruff is the single source of truth for formatting and linting. Run `ruff format src tests` and `ruff check src` before committing. Pre-commit hooks enforce this automatically.
+Ruff is the single source of truth for formatting and linting. From `molpy/`, run `ruff format python tests` and `ruff check python tests` before committing. The `python` gate runs those checks. Pre-commit hooks enforce this automatically.
 
 
 ## Ready-to-commit checklist
@@ -115,6 +115,6 @@ A change is ready when:
 - [ ] Core APIs mutate in place intentionally; helpers do not mutate caller-owned inputs
 - [ ] Tests cover the changed behavior
 - [ ] Public APIs have type hints and docstrings
-- [ ] `ruff format --check src tests` passes
-- [ ] `ruff check src` passes
+- [ ] `ruff format --check python tests` passes
+- [ ] `ruff check python tests` passes
 - [ ] `pre-commit run --all-files` passes

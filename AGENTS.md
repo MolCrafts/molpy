@@ -15,7 +15,7 @@ manual, gates); the Python binding is one of the bindings.
 |---|---|---|
 | `crates/molrs/` | the Rust core, crate `molcrafts-molrs` (lib `molrs`) | crates.io `molcrafts-molrs` |
 | `crates/molrs-ffi/` | the ABI layer: handles, capsules, the only ABI contract | — |
-| `molpy/` | Python binding: pyo3 crate (`molpy/src/`) building `molpy._core`, the flat package `molpy/molpy/`, tests `molpy/tests/` | PyPI `molcrafts-molpy` |
+| `molpy/` | Python binding: pyo3 crate (`molpy/src/`) building `molpy._core`, the package `molpy/python/molpy/`, tests `molpy/tests/` | PyPI `molcrafts-molpy` |
 | `molwasm/` | WebAssembly binding (wasm-bindgen) | npm `@molcrafts/molwasm` |
 | `molc/` | C API, header `molc.h`, symbols `molc_*` / `Molc*` / `MOLC_*` | — |
 | `molcxx/` | CXX bridge for Atomiverse C++ (`FrameView`, zero-copy) | — |
@@ -39,6 +39,9 @@ without the operator confirming the target remote and branch.
 handle layout, so builds that may disagree on a layout refuse each other's
 capsules. A layout change fails the `ffi` gate's snapshot test
 (`abi::tests::layout_matches_the_snapshot`): bump the minor line with it.
+A binding never hands out a view into storage the core may reallocate: a
+column crosses the seam as a copy, or over a reference-counted column array
+the numpy base keeps alive (`Block`), never as a raw pointer into a `Vec`.
 
 ## Design preferences
 
@@ -158,13 +161,14 @@ never `-p`. All roots share `<repo>/target`. Linking is static by default.
 `molc/include/molc.h`.
 
 Run Python from `molpy/` with `uv run --no-sync` (the project venv is
-`molpy/.venv`), and `pytest` directly, never `python -m pytest` — the flat
-layout would put the source tree ahead of the installed wheel. A site-packages
-check uses `python -I`.
+`molpy/.venv`), and `pytest` directly, never `python -m pytest`. The suite
+imports the installed wheel. The package source is `molpy/python/molpy/`.
+A site-packages check uses `python -I`.
 
 ## Core data model and conventions
 
-- `F = f64`, `I = i32`, `U = u32`, no precision switch.
+- `F = f64`, `I = i32`, `Idx = u64` (every identity column: `id`, `mol_id`,
+  `type_id`, `res_id`, relation endpoints), no precision switch.
 - `Block`: string keys → typed columns with one `nrows`; component values
   are numpy arrays/scalars, and the core raises on anything else. `Frame`:
   string keys → `Block`s plus optional box and `meta`. Lengths in a `Frame`

@@ -13,7 +13,7 @@ You write documentation that matches the current API and runs. You do NOT
 change behaviour of production code (docstrings and stubs only).
 
 Write/Edit is granted for `docs/`, `README.md`, docstrings/rustdoc comments
-and `molpy/molpy/_core.pyi` documentation text.
+and `molpy/python/molpy/_core.pyi` documentation text.
 
 ## Unique Knowledge (not in AGENTS.md)
 

@@ -1,7 +1,7 @@
 //! Kernels: a force field's terms evaluated on coordinates — the
 //! [`Potential`] traits, the generic form kernels and the built-in forms they
-//! price (`bond`, `angle`, `dihedral`, `improper`, `pair`), the kernels no
-//! form carries (`kspace`, `cmap`), and
+//! price (`bond`, `angle`, `dihedral`, `improper`, `pair`), PME's
+//! reciprocal-space sum and `cmap`, and
 //! the weights a non-bonded kernel takes on close pairs ([`PairWeights`],
 //! [`SpecialWeights`]).
 //!
@@ -33,7 +33,7 @@ pub mod soft;
 
 pub use error::CompileError;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ndarray::{Array1, Array2, ArrayView2};
 
@@ -43,9 +43,9 @@ use molrs::core::BondDistanceWeights;
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::core::keys::{ATOMI, ATOMJ, IS_14};
+use molrs::core::keys::{ATOMI, ATOMJ, IS_14, MOL_ID};
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::core::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIR_OVERRIDES, PAIRS};
 use molrs::op::{F, Idx};
 
 /// Above this many atoms, [`intramolecular_pairs`] refuses rather than
@@ -81,11 +81,11 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 ///
 /// # Per-pair overrides
 ///
-/// A `pairs` block the frame already carries — a reader's list of the pairs
-/// with their own 1-4 data, such as the AMBER prmtop reader's torsions whose
-/// `SCEE` / `SCNB` differ from the field's — keeps its override cells
-/// (`lj_scale`, `coul_scale`, `epsilon`, `sigma`, `charge_product`): they
-/// move onto the same pairs of the new list. An override on a pair the new
+/// Override cells (`lj_scale`, `coul_scale`, `epsilon`, `sigma`,
+/// `charge_product`) already on the frame move onto the same pairs of the
+/// new list. They are read from `pairs` when that block is present, and from
+/// `pair_overrides` otherwise — the AMBER prmtop reader's 1-4 rows whose
+/// `SCEE` / `SCNB` differ from the field's. An override on a pair the new
 /// list excludes is an [`Err`], since the list would drop it.
 ///
 /// # Why this needs the force field's weights
@@ -169,6 +169,301 @@ pub fn intramolecular_pairs(
     Ok(pairs)
 }
 
+/// The `pairs` block [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)
+/// should price.
+///
+/// No `pairs` block: [`intramolecular_pairs`] builds one (bond graph, or the
+/// pairs of `neighbors`) and carries `pair_overrides` onto it. A `pairs`
+/// block and no neighbor table: that block, unchanged. A `pairs` block and a
+/// neighbor table: the intersection. Intramolecular rows of the existing
+/// list stay as written (`is_14` and override cells included), so a GROMACS
+/// exclusion or a `[ pairs ]` flag the bond graph would not assign survives.
+/// Intermolecular rows are authoritative only when the list already contains
+/// a cross-`mol_id` pair, or the frame has a single `mol_id` (no column
+/// counts as one molecule). Otherwise the list is the intramolecular one a
+/// reader writes above [`MAX_ATOMS_FOR_A_FULL_PAIR_LIST`], and intermolecular
+/// candidates come from the neighbor table under `special`.
+///
+/// # Errors
+///
+/// The errors of [`intramolecular_pairs`]. A `pairs` row whose endpoints fall
+/// outside `atoms.mol_id`. Two rows of one unordered pair. A column other
+/// than `atomi`, `atomj`, `is_14` and the override columns on a list that the
+/// intersection has to extend with a neighbor pair. A kept row of a block
+/// with no bool `is_14` column.
+pub fn install_pairs(
+    frame: &Frame,
+    special: &SpecialBonds,
+    neighbors: Option<&Neighbors>,
+) -> Result<Block, String> {
+    let Some(existing) = frame.get(PAIRS) else {
+        return intramolecular_pairs(frame, special, neighbors);
+    };
+    let Some(neighbors) = neighbors else {
+        return Ok(existing.clone());
+    };
+    intersect_pairs(frame, existing, special, neighbors)
+}
+
+/// One output row of [`intersect_pairs`]: an existing `pairs` row, or a
+/// neighbor pair the capped list does not hold.
+enum KeptPair {
+    Row(usize),
+    Fresh { lo: Idx, hi: Idx, is_14: bool },
+}
+
+/// `neighbors` cut by the evaluation list `existing`.
+fn intersect_pairs(
+    frame: &Frame,
+    existing: &Block,
+    special: &SpecialBonds,
+    neighbors: &Neighbors,
+) -> Result<Block, String> {
+    let (ai, aj) = pair_endpoints(existing)?;
+    let mut index: HashMap<(usize, usize), usize> = HashMap::with_capacity(ai.len());
+    for (r, (&a, &b)) in ai.iter().zip(aj.iter()).enumerate() {
+        let pair = (a.min(b) as usize, a.max(b) as usize);
+        if index.insert(pair, r).is_some() {
+            return Err(format!(
+                "install_pairs: atoms {} and {} are on two pairs rows",
+                pair.0, pair.1
+            ));
+        }
+    }
+    let mol = molecule_ids(frame)?;
+    let closed = intermolecular_list_is_closed(mol.as_ref(), &ai, &aj)?;
+    let [keep_12, keep_13] = if closed {
+        [true, true]
+    } else {
+        special.compiled_inclusion()?
+    };
+    let classes = if closed {
+        HashMap::new()
+    } else {
+        let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
+        bond_classes(frame, n_atoms)?
+    };
+
+    let mut seen = HashSet::new();
+    let mut kept = Vec::new();
+    for (&a, &b) in neighbors
+        .query_point_indices()
+        .iter()
+        .zip(neighbors.point_indices())
+    {
+        let (lo, hi) = (a.min(b) as usize, a.max(b) as usize);
+        if lo == hi || !seen.insert((lo, hi)) {
+            continue;
+        }
+        let same = same_molecule(mol.as_ref(), lo, hi)?;
+        if same || closed {
+            if let Some(&row) = index.get(&(lo, hi)) {
+                kept.push(KeptPair::Row(row));
+            }
+        } else {
+            let class = classes.get(&(lo, hi)).copied();
+            if (!keep_12 && class == Some(1)) || (!keep_13 && class == Some(2)) {
+                continue;
+            }
+            kept.push(KeptPair::Fresh {
+                lo: lo as Idx,
+                hi: hi as Idx,
+                is_14: class == Some(3),
+            });
+        }
+    }
+    materialize_intersection(existing, &kept)
+}
+
+/// `(atomi, atomj)` of a `pairs` block. A column-less block (no rows) has
+/// neither, and that is an empty list.
+fn pair_endpoints(block: &Block) -> Result<(Vec<Idx>, Vec<Idx>), String> {
+    if block.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let column = |key: &str| -> Result<Vec<Idx>, String> {
+        block
+            .get(key)
+            .and_then(|c| c.get::<u64>())
+            .map(|c| c.iter().copied().collect())
+            .ok_or_else(|| format!("install_pairs: pairs block missing \"{key}\""))
+    };
+    Ok((column(ATOMI)?, column(ATOMJ)?))
+}
+
+/// `atoms.mol_id`, when the frame has that column.
+fn molecule_ids(frame: &Frame) -> Result<Option<ndarray::ArrayView1<'_, Idx>>, String> {
+    let Some(atoms) = frame.get(ATOMS) else {
+        return Ok(None);
+    };
+    let Some(col) = atoms.get(MOL_ID) else {
+        return Ok(None);
+    };
+    let ids = col
+        .get::<u64>()
+        .ok_or_else(|| "install_pairs: atoms.mol_id must be an unsigned column".to_string())?;
+    ids.view()
+        .into_dimensionality()
+        .map(Some)
+        .map_err(|_| "install_pairs: atoms.mol_id must be one-dimensional".to_string())
+}
+
+/// Whether intermolecular membership of `pairs` is closed.
+///
+/// One distinct `mol_id` (or no column) has no intermolecular pair, so the
+/// list is the whole answer. Several molecules are closed when a row already
+/// crosses two of them — the reader included those pairs — and open when
+/// every row is intramolecular, which is the list written once the system
+/// exceeds [`MAX_ATOMS_FOR_A_FULL_PAIR_LIST`].
+fn intermolecular_list_is_closed(
+    mol: Option<&ndarray::ArrayView1<'_, Idx>>,
+    ai: &[Idx],
+    aj: &[Idx],
+) -> Result<bool, String> {
+    let Some(mol) = mol else {
+        return Ok(true);
+    };
+    if mol.iter().collect::<HashSet<_>>().len() <= 1 {
+        return Ok(true);
+    }
+    for (&a, &b) in ai.iter().zip(aj.iter()) {
+        let (ma, mb) = molecule_pair(mol, a as usize, b as usize)?;
+        if ma != mb {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether atoms `lo` and `hi` share a molecule. No `mol_id` column means
+/// they do.
+fn same_molecule(
+    mol: Option<&ndarray::ArrayView1<'_, Idx>>,
+    lo: usize,
+    hi: usize,
+) -> Result<bool, String> {
+    let Some(mol) = mol else {
+        return Ok(true);
+    };
+    let (a, b) = molecule_pair(mol, lo, hi)?;
+    Ok(a == b)
+}
+
+fn molecule_pair(
+    mol: &ndarray::ArrayView1<'_, Idx>,
+    lo: usize,
+    hi: usize,
+) -> Result<(Idx, Idx), String> {
+    match (mol.get(lo), mol.get(hi)) {
+        (Some(&a), Some(&b)) => Ok((a, b)),
+        _ => Err(format!(
+            "install_pairs: atoms {lo} and {hi} are outside the atoms mol_id column ({})",
+            mol.len()
+        )),
+    }
+}
+
+/// The columns an intersection may extend with a fresh neighbor row.
+const INSTALL_COLUMNS: [&str; 8] = [
+    ATOMI,
+    ATOMJ,
+    IS_14,
+    "epsilon",
+    "sigma",
+    "charge_product",
+    "lj_scale",
+    "coul_scale",
+];
+
+fn materialize_intersection(existing: &Block, kept: &[KeptPair]) -> Result<Block, String> {
+    let rows: Vec<usize> = kept
+        .iter()
+        .filter_map(|row| match row {
+            KeptPair::Row(r) => Some(*r),
+            KeptPair::Fresh { .. } => None,
+        })
+        .collect();
+    if rows.len() == kept.len() {
+        return existing.select_rows(&rows).map_err(|e| e.to_string());
+    }
+    if let Some(key) = existing.keys().find(|key| !INSTALL_COLUMNS.contains(key)) {
+        return Err(format!(
+            "install_pairs: pairs column '{key}' has no form on a neighbor pair the list does \
+             not already hold"
+        ));
+    }
+    let is_14 = existing.get(IS_14).and_then(|c| c.get::<bool>());
+    if kept.iter().any(|row| matches!(row, KeptPair::Row(_))) && is_14.is_none() {
+        return Err("install_pairs: pairs block missing a bool \"is_14\" column".to_string());
+    }
+    let n = kept.len();
+    let mut pi = Vec::with_capacity(n);
+    let mut pj = Vec::with_capacity(n);
+    let mut p14 = Vec::with_capacity(n);
+    let (ai, aj) = if kept.iter().any(|row| matches!(row, KeptPair::Row(_))) {
+        pair_endpoints(existing)?
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    for row in kept {
+        match row {
+            KeptPair::Row(r) => {
+                pi.push(ai[*r].min(aj[*r]));
+                pj.push(ai[*r].max(aj[*r]));
+                p14.push(is_14.expect("checked above")[*r]);
+            }
+            KeptPair::Fresh { lo, hi, is_14 } => {
+                pi.push(*lo);
+                pj.push(*hi);
+                p14.push(*is_14);
+            }
+        }
+    }
+    let mut out = Block::new();
+    if n == 0 {
+        return Ok(out);
+    }
+    out.insert(ATOMI, Array1::from_vec(pi).into_dyn(), None)
+        .map_err(|e| e.to_string())?;
+    out.insert(ATOMJ, Array1::from_vec(pj).into_dyn(), None)
+        .map_err(|e| e.to_string())?;
+    out.insert(IS_14, Array1::from_vec(p14).into_dyn(), None)
+        .map_err(|e| e.to_string())?;
+    for key in PAIR_OVERRIDE_COLUMNS {
+        let Some(col) = existing.get(key) else {
+            continue;
+        };
+        let values = col
+            .get::<f64>()
+            .ok_or_else(|| format!("pairs: the per-pair override column '{key}' must be float"))?;
+        let valid = existing.validity(key);
+        let mut new_values = Vec::with_capacity(n);
+        let mut new_valid = Vec::with_capacity(n);
+        for row in kept {
+            match row {
+                KeptPair::Row(r) => {
+                    let holds = valid.is_none_or(|mask| mask[*r]);
+                    new_values.push(if holds { values[*r] } else { 0.0 });
+                    new_valid.push(holds);
+                }
+                KeptPair::Fresh { .. } => {
+                    new_values.push(0.0);
+                    new_valid.push(false);
+                }
+            }
+        }
+        if new_valid.iter().any(|&holds| holds) {
+            out.insert(
+                key,
+                Array1::from_vec(new_values).into_dyn(),
+                Some(new_valid),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(out)
+}
+
 /// The bond distance (1, 2 or 3) of every pair at most three bonds apart in
 /// `frame`'s `bonds`: [`Topology::close_pairs`](molrs::core::Topology::close_pairs).
 /// A frame with no atoms has none.
@@ -187,13 +482,14 @@ pub(crate) fn bond_classes(
 type OverrideColumn = (&'static str, Vec<F>, Vec<bool>);
 
 /// The per-pair override cells ([`PAIR_OVERRIDE_COLUMNS`]) of the frame's
-/// own `pairs` rows, moved onto the rows `(pi, pj)` of the new list: a
-/// reader's per-pair data (an AMBER torsion's own SCEE / SCNB, a GROMACS
-/// `[ pairs ]` row's parameters) survives building the full list. An
+/// own rows, moved onto the rows `(pi, pj)` of the new list: a reader's
+/// per-pair data (an AMBER torsion's own SCEE / SCNB, a GROMACS `[ pairs ]`
+/// row's parameters) survives building the full list. Read from `pairs`
+/// when that block is present, and from `pair_overrides` otherwise. An
 /// override on a pair the new list leaves out (1-2 / 1-3) is an `Err`: it
 /// would be dropped.
 fn carried_overrides(frame: &Frame, pi: &[Idx], pj: &[Idx]) -> Result<Vec<OverrideColumn>, String> {
-    let Some(old) = frame.get(PAIRS) else {
+    let Some(old) = override_source(frame) else {
         return Ok(Vec::new());
     };
     let (Some(oi), Some(oj)) = (
@@ -213,21 +509,44 @@ fn carried_overrides(frame: &Frame, pi: &[Idx], pj: &[Idx]) -> Result<Vec<Overri
         let Some(col) = old.get(key) else {
             continue;
         };
-        let values = col
-            .get::<f64>()
-            .ok_or_else(|| format!("pairs: the per-pair override column '{key}' must be float"))?;
+        let values = col.get::<f64>().ok_or_else(|| {
+            format!("pairs or pair_overrides: the per-pair override column '{key}' must be float")
+        })?;
         let valid = old.validity(key);
         let mut new_values = vec![0.0; pi.len()];
         let mut new_valid = vec![false; pi.len()];
+        // One row owns a pair, across every override column. A second row
+        // last-writing the cell is the split `exceptions::plan` already rejects.
+        let mut row_of_pair: HashMap<(Idx, Idx), usize> = HashMap::new();
         for (r, (&a, &b)) in oi.iter().zip(oj.iter()).enumerate() {
             if valid.is_some_and(|m| !m[r]) {
                 continue;
             }
+            let v = values[r];
+            if !v.is_finite() {
+                return Err(format!(
+                    "pairs or pair_overrides row {r}: '{key}' = {v}; a null cell is a \
+                     validity mask, not a non-finite value"
+                ));
+            }
             let pair = (a.min(b), a.max(b));
+            match row_of_pair.get(&pair) {
+                Some(&prev) if prev != r => {
+                    return Err(format!(
+                        "pairs or pair_overrides: atoms {} and {} carry per-pair overrides \
+                         on two rows; a pair has one set of exception parameters",
+                        pair.0, pair.1
+                    ));
+                }
+                None => {
+                    row_of_pair.insert(pair, r);
+                }
+                _ => {}
+            }
             let at = *row_of
                 .get(&pair)
                 .ok_or_else(|| excluded_override(pair.0 as usize, pair.1 as usize))?;
-            new_values[at] = values[r];
+            new_values[at] = v;
             new_valid[at] = true;
         }
         if new_valid.iter().any(|&v| v) {
@@ -237,9 +556,14 @@ fn carried_overrides(frame: &Frame, pi: &[Idx], pj: &[Idx]) -> Result<Vec<Overri
     Ok(out)
 }
 
-/// The pairs of the frame's `pairs` rows that carry an override cell.
+/// `pairs` when the frame has it, otherwise `pair_overrides`.
+fn override_source(frame: &Frame) -> Option<&Block> {
+    frame.get(PAIRS).or_else(|| frame.get(PAIR_OVERRIDES))
+}
+
+/// The pairs of the frame's override rows that carry an override cell.
 fn override_pairs(frame: &Frame) -> Result<Vec<(usize, usize)>, String> {
-    let Some(old) = frame.get(PAIRS) else {
+    let Some(old) = override_source(frame) else {
         return Ok(Vec::new());
     };
     let (Some(oi), Some(oj)) = (
@@ -265,9 +589,9 @@ fn override_pairs(frame: &Frame) -> Result<Vec<(usize, usize)>, String> {
 
 fn excluded_override(i: usize, j: usize) -> String {
     format!(
-        "intramolecular_pairs: the frame's pairs row for atoms {i} and {j} carries a per-pair \
-         override, and the force field's special_bonds exclude that pair (1-2 or 1-3), so the \
-         override would be dropped"
+        "intramolecular_pairs: the frame's pairs or pair_overrides row for atoms {i} and {j} \
+         carries a per-pair override, and the force field's special_bonds exclude that pair \
+         (1-2 or 1-3), so the override would be dropped"
     )
 }
 
@@ -599,6 +923,14 @@ pub trait PairDriven: Potential {
     /// the same Rust type in molrs (the list is a private source variant), so
     /// the answer cannot be inferred and has to be given.
     fn binds_a_fixed_pair_list(&self) -> bool;
+
+    /// Whether pricing this member needs a neighbour table handed to it each
+    /// step: true for a kernel over a type table (`PairLjCut`, a
+    /// `compile_typed` kernel), false for one bound to a fixed pair list. An
+    /// aggregate asks its members ([`Potentials`]).
+    fn reads_a_neighbor_table(&self) -> bool {
+        !self.binds_a_fixed_pair_list()
+    }
 }
 
 /// One member of a force evaluation, with its role fixed when it was built.
@@ -923,6 +1255,34 @@ impl Potentials {
         self.inner.len()
     }
 
+    /// Whether every pair member is bound to its pair list, so the
+    /// collection can be priced from coordinates alone
+    /// ([`Potential::evaluate`]). A pair kernel built over a type table —
+    /// `PairLjCut`, a `compile_typed` kernel — reads a neighbour table each
+    /// step and adds nothing to a coordinates-only evaluation; a door that
+    /// evaluates from coordinates (a minimizer, `Potentials::evaluate`)
+    /// asks here first.
+    ///
+    /// # Errors
+    ///
+    /// [`CompileError::Invalid`] naming how many members read a neighbour
+    /// table, and where they are priced instead.
+    pub fn require_pair_lists(&self) -> Result<(), CompileError> {
+        let unbound = self
+            .inner
+            .iter()
+            .filter(|m| matches!(m, ForceTerm::Pair(p) if p.reads_a_neighbor_table()))
+            .count();
+        if unbound == 0 {
+            return Ok(());
+        }
+        Err(CompileError::Invalid(format!(
+            "{unbound} pair member(s) read a neighbour table and add nothing to an evaluation \
+             from coordinates alone: price them through an MD evaluator with a NeighborList \
+             or VerletSkin, or compile the force field over the frame's pair list"
+        )))
+    }
+
     /// Number of atoms the kernels were compiled against, i.e. the expected
     /// `coords.len() / 3`. Returns `0` if unknown (built via [`push`]).
     ///
@@ -1011,6 +1371,12 @@ impl PairDriven for Potentials {
     /// aggregate's answer independent of the table it is handed.
     fn binds_a_fixed_pair_list(&self) -> bool {
         self.inner.iter().any(ForceTerm::binds_a_fixed_pair_list)
+    }
+
+    fn reads_a_neighbor_table(&self) -> bool {
+        self.inner
+            .iter()
+            .any(|m| matches!(m, ForceTerm::Pair(p) if p.reads_a_neighbor_table()))
     }
 }
 
@@ -1800,6 +2166,246 @@ mod tests {
     /// `N(N-1)/2` with no cutoff is the shape of this list, and the failure
     /// mode past a certain `N` is the OOM killer, which tells the caller
     /// nothing about what to do instead. The refusal names the alternative.
+    /// An overlay on a bond-graph 1-4 is carried onto that pair. A `pairs`
+    /// block already present wins, and the overlay is not read.
+    #[test]
+    fn pair_overrides_are_carried_onto_the_bond_graph_list() {
+        let chain = || {
+            let mut frame = Frame::new();
+            let mut atoms = Block::new();
+            atoms
+                .insert("x", Array1::from_vec(vec![0.0_f64; 4]).into_dyn(), None)
+                .unwrap();
+            frame.insert(ATOMS, atoms);
+            let mut bonds = Block::new();
+            bonds
+                .insert(ATOMI, Array1::from_vec(vec![0_u64, 1, 2]).into_dyn(), None)
+                .unwrap();
+            bonds
+                .insert(ATOMJ, Array1::from_vec(vec![1_u64, 2, 3]).into_dyn(), None)
+                .unwrap();
+            frame.insert("bonds", bonds);
+            frame
+        };
+        let overlay = |scale: f64| {
+            let mut block = Block::new();
+            block
+                .insert(ATOMI, Array1::from_vec(vec![0_u64]).into_dyn(), None)
+                .unwrap();
+            block
+                .insert(ATOMJ, Array1::from_vec(vec![3_u64]).into_dyn(), None)
+                .unwrap();
+            block
+                .insert("lj_scale", Array1::from_vec(vec![scale]).into_dyn(), None)
+                .unwrap();
+            block
+        };
+        let scale_of = |pairs: &Block| -> f64 {
+            let i = pairs.get(ATOMI).unwrap().get::<u64>().unwrap();
+            let j = pairs.get(ATOMJ).unwrap().get::<u64>().unwrap();
+            let row = (0..i.len()).find(|&r| i[[r]] == 0 && j[[r]] == 3).unwrap();
+            pairs.get("lj_scale").unwrap().get::<f64>().unwrap()[[row]]
+        };
+
+        let mut frame = chain();
+        frame.insert(PAIR_OVERRIDES, overlay(0.5));
+        let built = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
+        assert!(
+            built
+                .get(IS_14)
+                .unwrap()
+                .get::<bool>()
+                .unwrap()
+                .iter()
+                .all(|&f| f)
+        );
+        assert_eq!(scale_of(&built), 0.5);
+
+        frame.insert(PAIRS, overlay(0.2));
+        let built = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
+        assert_eq!(scale_of(&built), 0.2);
+    }
+
+    #[test]
+    fn a_repeated_or_non_finite_overlay_row_is_refused() {
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", Array1::from_vec(vec![0.0_f64; 4]).into_dyn(), None)
+            .unwrap();
+        frame.insert(ATOMS, atoms);
+        let mut bonds = Block::new();
+        bonds
+            .insert(ATOMI, Array1::from_vec(vec![0_u64, 1, 2]).into_dyn(), None)
+            .unwrap();
+        bonds
+            .insert(ATOMJ, Array1::from_vec(vec![1_u64, 2, 3]).into_dyn(), None)
+            .unwrap();
+        frame.insert("bonds", bonds);
+
+        let mut twice = Block::new();
+        twice
+            .insert(ATOMI, Array1::from_vec(vec![0_u64, 0]).into_dyn(), None)
+            .unwrap();
+        twice
+            .insert(ATOMJ, Array1::from_vec(vec![3_u64, 3]).into_dyn(), None)
+            .unwrap();
+        twice
+            .insert(
+                "lj_scale",
+                Array1::from_vec(vec![0.5_f64, 0.25]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        frame.insert(PAIR_OVERRIDES, twice);
+        let err = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap_err();
+        assert!(err.contains("two rows"), "{err}");
+
+        let mut nan = Block::new();
+        nan.insert(ATOMI, Array1::from_vec(vec![0_u64]).into_dyn(), None)
+            .unwrap();
+        nan.insert(ATOMJ, Array1::from_vec(vec![3_u64]).into_dyn(), None)
+            .unwrap();
+        nan.insert(
+            "lj_scale",
+            Array1::from_vec(vec![f64::NAN]).into_dyn(),
+            None,
+        )
+        .unwrap();
+        frame.insert(PAIR_OVERRIDES, nan);
+        let err = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap_err();
+        assert!(err.contains("non-finite"), "{err}");
+    }
+
+    /// A list that omits one intramolecular pair and flags another `is_14`
+    /// the bond graph would not keeps both facts. A second molecule's
+    /// neighbor is kept only when the list is open.
+    #[test]
+    fn install_pairs_keeps_an_authoritative_list_and_opens_a_capped_one() {
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
+
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", Array1::from_vec(vec![0.0_f64; 5]).into_dyn(), None)
+            .unwrap();
+        // 0-1-2-3 one molecule, atom 4 another.
+        atoms
+            .insert(
+                MOL_ID,
+                Array1::from_vec(vec![0_u64, 0, 0, 0, 1]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        frame.insert(ATOMS, atoms);
+        let mut bonds = Block::new();
+        bonds
+            .insert(ATOMI, Array1::from_vec(vec![0_u64, 1, 2]).into_dyn(), None)
+            .unwrap();
+        bonds
+            .insert(ATOMJ, Array1::from_vec(vec![1_u64, 2, 3]).into_dyn(), None)
+            .unwrap();
+        frame.insert("bonds", bonds);
+
+        // (0, 2) is bond distance 2, which the bond graph would exclude, and
+        // the list flags it 1-4. (0, 3) is the bond-graph 1-4 and is omitted.
+        let mut listed = Block::new();
+        listed
+            .insert(ATOMI, Array1::from_vec(vec![0_u64]).into_dyn(), None)
+            .unwrap();
+        listed
+            .insert(ATOMJ, Array1::from_vec(vec![2_u64]).into_dyn(), None)
+            .unwrap();
+        listed
+            .insert(IS_14, Array1::from_vec(vec![true]).into_dyn(), None)
+            .unwrap();
+        listed
+            .insert(
+                "lj_scale",
+                Array1::from_vec(vec![0.25_f64]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let neighbors = Neighbors::from_pairs(
+            [(0_u32, 2_u32), (0, 3), (0, 4)]
+                .into_iter()
+                .map(|(i, j)| NeighborPair {
+                    i,
+                    j,
+                    dist_sq: 1.0,
+                    disp: [1.0, 0.0, 0.0],
+                }),
+            NeighborColumns::FULL,
+            QueryMode::SelfQuery { n_points: 5 },
+        );
+        let rows = |block: &Block| -> (Vec<u64>, Vec<u64>, Vec<bool>) {
+            (
+                block
+                    .get(ATOMI)
+                    .unwrap()
+                    .get::<u64>()
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect(),
+                block
+                    .get(ATOMJ)
+                    .unwrap()
+                    .get::<u64>()
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect(),
+                block
+                    .get(IS_14)
+                    .unwrap()
+                    .get::<bool>()
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect(),
+            )
+        };
+
+        // Open: two molecules and no cross-molecule row. (0, 4) comes from
+        // the neighbor table; (0, 3) stays omitted.
+        frame.insert(PAIRS, listed.clone());
+        let open = install_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, Some(&neighbors)).unwrap();
+        assert_eq!(rows(&open), (vec![0, 0], vec![2, 4], vec![true, false]));
+        let scale = open.get("lj_scale").unwrap().get::<f64>().unwrap();
+        let valid = open.validity("lj_scale").unwrap();
+        assert_eq!(scale[[0]], 0.25);
+        assert!(valid[0] && !valid[1]);
+
+        // Closed by a cross-molecule row, (1, 4), that the neighbor table
+        // does not contain. (0, 4) is then omitted: a closed list adds no
+        // intermolecular pair it does not already hold. (0, 3) stays omitted.
+        let mut closed_list = Block::new();
+        closed_list
+            .insert(ATOMI, Array1::from_vec(vec![0_u64, 1]).into_dyn(), None)
+            .unwrap();
+        closed_list
+            .insert(ATOMJ, Array1::from_vec(vec![2_u64, 4]).into_dyn(), None)
+            .unwrap();
+        closed_list
+            .insert(IS_14, Array1::from_vec(vec![true, false]).into_dyn(), None)
+            .unwrap();
+        closed_list
+            .insert(
+                "lj_scale",
+                Array1::from_vec(vec![0.25_f64, 0.0]).into_dyn(),
+                Some(vec![true, false]),
+            )
+            .unwrap();
+        frame.insert(PAIRS, closed_list);
+        let closed = install_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, Some(&neighbors)).unwrap();
+        assert_eq!(rows(&closed), (vec![0], vec![2], vec![true]));
+        assert_eq!(
+            closed.get("lj_scale").unwrap().get::<f64>().unwrap()[[0]],
+            0.25
+        );
+    }
+
     #[test]
     fn a_frame_too_large_for_a_full_pair_list_is_refused() {
         use molrs::core::Block;

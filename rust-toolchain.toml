@@ -1,8 +1,8 @@
-# One exact toolchain for every local build, prek hook and CI job. A floating
-# `stable` let CI pick up a newer clippy/rustdoc than the machine that ran the
-# hooks, so CI failed on lints the hooks never saw. Bump this line (and fix
-# what the new lints flag) in its own commit.
+# Floating `stable`: every MolCrafts project builds with the latest stable Rust
+# (workspace decision, 2026-10-23). The molrs-ffi ABI fingerprint hashes
+# `rustc -V`, so molpy and molpack must be built by one toolchain — keep this
+# file identical across the sibling repos.
 [toolchain]
-channel = "1.99.1"
+channel = "stable"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]

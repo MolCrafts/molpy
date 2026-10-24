@@ -234,7 +234,7 @@ fn a_weight_beside_global_1_4_weights_is_refused() {
 fn a_weight_of_one_is_the_1_4_parameters_priced_directly() {
     let ff = read(CHARMM, "1.0");
     let frame = frame(ff.special_bonds().unwrap(), false);
-    let k = exceptions::plan(&ff, &frame).unwrap().kernel.unwrap();
+    let k = exceptions::plan(&ff, &frame, true).unwrap().kernel.unwrap();
     let one_four = |t: &str| match t {
         "CT3" | "CT2" => (0.01, 3.385),
         "OH1" => (0.1521, 3.1508),
@@ -419,7 +419,7 @@ fn a_dihedral_weight_equals_per_pair_rows_of_its_parameters() {
 fn an_override_cell_beats_the_weight_and_a_null_cell_keeps_it() {
     let ff = read(CHARMM, "1.0");
     let base = frame(ff.special_bonds().unwrap(), false);
-    let (lj_w, coul_w) = exceptions::plan(&ff, &base)
+    let (lj_w, coul_w) = exceptions::plan(&ff, &base, true)
         .unwrap()
         .kernel
         .unwrap()
@@ -427,7 +427,7 @@ fn an_override_cell_beats_the_weight_and_a_null_cell_keeps_it() {
     // The coul_scale cell only: the Coulomb part of every 1-4 pair is
     // quartered, its van der Waals is the dihedral's.
     let quarter = with_overrides(&base, &[("coul_scale", &|_, _| 0.25)]);
-    let (lj, coul) = exceptions::plan(&ff, &quarter)
+    let (lj, coul) = exceptions::plan(&ff, &quarter, true)
         .unwrap()
         .kernel
         .unwrap()
@@ -435,7 +435,7 @@ fn an_override_cell_beats_the_weight_and_a_null_cell_keeps_it() {
     close("LJ kept", lj, lj_w, 1e-14);
     close("Coulomb quartered", coul, 0.25 * coul_w, 1e-13);
     // And the regular kernels price none of those rows.
-    let plan = exceptions::plan(&ff, &quarter).unwrap();
+    let plan = exceptions::plan(&ff, &quarter, true).unwrap();
     assert_eq!(plan.override_rows.len(), 5);
 }
 

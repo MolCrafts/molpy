@@ -186,6 +186,11 @@ fn read_smiles_fragment(body: &str) -> PyResult<PyFragmentIr> {
 ///     How hydrogens appear.
 /// include_stereo : bool
 ///     Write tetrahedral / double-bond stereo marks the graph holds.
+///     Tetrahedral ``CW`` / ``CCW`` is rewritten as ``@`` / ``@@`` for the
+///     neighbor order of the string being written. A lone explicit hydrogen
+///     the hydrogen policy skips is written as that centre's bracket ``H``.
+///     Bond ``up`` / ``down`` is rewritten as ``/`` or ``\`` for the direction
+///     the string traverses the bond.
 /// multi_component : {"error_if_multiple", "join_dot", "first_only"}
 ///     What a molecule of several connected components becomes.
 /// organic_subset : bool

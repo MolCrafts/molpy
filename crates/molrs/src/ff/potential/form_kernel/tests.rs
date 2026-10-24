@@ -752,6 +752,8 @@ fn every_pair_form_prices_a_pair_list_and_a_table_alike() {
     let builtin = Registry::builtin();
     let pair_styles: Vec<String> = builtin
         .styles(Some("pair"))
+        // `coul/long/pme` is a constructor: the reciprocal sum. Its real-space
+        // term is the pair form, tested in `kspace::pme` and `pair::coul_long`.
         .filter(|(spec, _)| spec.name != "coul/long/pme")
         .map(|(spec, _)| spec.name.to_string())
         .collect();

@@ -595,10 +595,12 @@ impl PyAmberPrmtopForcefieldReader {
     /// Read a whole prmtop (or ParmEd chamber) topology into a force field
     /// and a typed frame.
     ///
-    /// The frame is :func:`molpy.io.read_prmtop`'s plus a ``pairs`` block
-    /// holding the 1-4 pairs sander weighs otherwise than the field's
+    /// The frame is :func:`molpy.io.read_prmtop`'s plus a ``pair_overrides``
+    /// block holding the 1-4 pairs sander weighs otherwise than the field's
     /// ``special_bonds``, each with its own ``coul_scale`` / ``lj_scale``
-    /// where it differs (no ``pairs`` block when every 1-4 pair agrees).
+    /// where it differs. That block is not the list ``PotentialCompiler.compile``
+    /// prices; :func:`molpy.ff.potential.intramolecular_pairs` carries the
+    /// cells onto ``pairs``. No block when every 1-4 pair agrees.
     /// Coordinates come from the restart (:func:`molpy.io.read_inpcrd`).
     ///
     /// Parameters

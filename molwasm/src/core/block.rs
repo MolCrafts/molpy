@@ -12,7 +12,7 @@
 //! | `view` | `(key: string) -> NumericColumn` | Zero-copy typed-array view of a numeric column. The primary immediate read |
 //! | `copy` | `(key: string, fallback?: Column) -> Column` | Owned copy of every dtype, including bool, string, and complex; an absent key returns `fallback` or throws |
 //! | `set` | `(key: string, data: Column, shape?: number[])` | Insert or replace; dtype inferred from `data` |
-//! | `has` | `(key: string) -> boolean` | Presence |
+//! | `has` | `(key: string) -> boolean` | Presence; throws if the handle is dead |
 //! | `dtype` | `(key: string) -> DType` | Dtype name; missing throws |
 //! | `shape` | `(key: string) -> number[]` | Column shape (`[nRows]`, `[nRows, 3]`, ...); missing throws |
 //! | `keys` | `() -> string[]` | Column names in insertion order |
@@ -263,14 +263,19 @@ impl Block {
 
     /// Whether column `key` exists (of any dtype).
     ///
+    /// # Errors
+    ///
+    /// Throws if the block handle has been invalidated. A live block that
+    /// lacks `key` returns `false`.
+    ///
     /// # Example (JavaScript)
     ///
     /// ```js
     /// if (bonds.has("bond_type") && bonds.dtype("bond_type") === "u64") { … }
     /// ```
     #[wasm_bindgen(js_name = has)]
-    pub fn has(&self, key: &str) -> bool {
-        self.with(|b| b.contains_key(key)).unwrap_or(false)
+    pub fn has(&self, key: &str) -> Result<bool, JsValue> {
+        self.with(|b| b.contains_key(key))
     }
 
     /// Dtype of column `key`; see the `DType` type for the names.
@@ -1003,14 +1008,14 @@ mod tests {
     #[wasm_bindgen_test]
     fn has_keys_n_rows() {
         let mut b = block();
-        assert!(!b.has("x"));
+        assert!(!b.has("x").unwrap());
         assert_eq!(b.n_rows().unwrap(), 0);
         b.set("x", col(Float64Array::from(&[1.0, 2.0][..])), None)
             .unwrap();
         b.set("id", col(BigUint64Array::from(&[1_u64, 2][..])), None)
             .unwrap();
-        assert!(b.has("x"));
-        assert!(!b.has("y"));
+        assert!(b.has("x").unwrap());
+        assert!(!b.has("y").unwrap());
         assert_eq!(b.keys().unwrap(), vec!["x".to_string(), "id".to_string()]);
         assert_eq!(b.n_rows().unwrap(), 2);
     }
@@ -1072,7 +1077,7 @@ mod tests {
             .set("x", col(Uint8ClampedArray::new_with_length(2)), None)
             .unwrap_err();
         assert!(err_text(e).contains("Uint8ClampedArray"));
-        assert!(!b.has("x"));
+        assert!(!b.has("x").unwrap());
     }
 
     #[wasm_bindgen_test]

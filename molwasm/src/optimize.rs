@@ -10,7 +10,9 @@
 //! ```
 //!
 //! The non-bonded pairs come from a [`NeighborList`](crate::core::NeighborList)
-//! and nowhere else: the optimizer builds no pair list of its own.
+//! when the frame has no `pairs` block. A frame that already has one keeps
+//! that list, cut to the neighbor table. The optimizer builds no pair list
+//! of its own.
 
 use std::sync::Arc;
 
@@ -21,7 +23,7 @@ use molrs::core::Frame as RsFrame;
 use molrs::core::Neighbors as RsNeighbors;
 use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::forcefield::ForceField as RsForceField;
-use molrs::ff::potential::{Potential, Potentials as RsPotentials, intramolecular_pairs};
+use molrs::ff::potential::{Potential, Potentials as RsPotentials, install_pairs};
 use molrs::optimize::{Lbfgs as RsLbfgs, LbfgsSettings, Optimizer, set_free_mask};
 
 use crate::core::Neighbors;
@@ -38,7 +40,7 @@ use crate::ff::Potentials;
 /// [`Neighbors`], built at the force field's non-bonded cutoff (or
 /// `NeighborList.bruteForce` for a small molecule). Its pairs are installed
 /// as the frame's `pairs` with the force field's `special_bonds` applied, by
-/// `molrs::ff::potential::intramolecular_pairs`.
+/// `molrs::ff::potential::install_pairs`.
 #[wasm_bindgen(js_name = Lbfgs)]
 pub struct Lbfgs {
     ff: RsForceField,
@@ -133,7 +135,7 @@ impl Lbfgs {
             .inner
             .with_mut(
                 |rs| -> Result<molrs::optimize::OptimizationReport, String> {
-                    let pairs = intramolecular_pairs(
+                    let pairs = install_pairs(
                         rs,
                         self.ff.required_special_bonds()?,
                         Some(&self.neighbors),

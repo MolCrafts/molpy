@@ -491,6 +491,12 @@ impl<R: BufRead + Seek> TrajectoryReader for CubeReader<R> {
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsError> {
     // Every door writes through here, so every door checks here.
     crate::io::writer::check_write_frame(frame)?;
+    crate::io::null_cells::refuse_null_cells(
+        frame,
+        "atoms",
+        &["x", "y", "z", "atomic_number", "charge"],
+    )?;
+    crate::io::null_cells::refuse_null_cells_in_block(frame, "grid")?;
     let grid_block = frame
         .get("grid")
         .ok_or_else(|| MolRsError::validation("frame has no 'grid' block"))?;

@@ -8,7 +8,8 @@ use molrs::op::F;
 ///
 /// ```text
 /// order 0:  E = ka (c0 + c1 cos θ + c2 cos 2θ)
-/// order n:  E = ka (1 − cos nθ) / n²       (linear, trigonal, square, octahedral centres)
+/// order 1:  E = ka (1 + cos θ)             (linear centres: minimal at 180°)
+/// order n:  E = ka (1 − cos nθ) / n²       (trigonal, square, octahedral centres)
 /// ```
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Uff;
@@ -23,6 +24,13 @@ impl ScalarForm for Uff {
                 let cos2 = cos_t * cos_t - sin_t * sin_t;
                 e[t] = ka[t] * (c0[t] + c1[t] * cos_t + c2[t] * cos2);
                 de[t] = -ka[t] * (c1[t] * sin_t + 2.0 * c2[t] * (2.0 * sin_t * cos_t));
+            } else if order[t] == 1.0 {
+                // A linear centre. `(1 − cos nθ)/n²` rests at 0° for n = 1,
+                // so the linear case is `1 + cos θ`, minimal at 180° — the
+                // form the MMFF linear branch prices too.
+                let (sin_t, cos_t) = theta[t].sin_cos();
+                e[t] = ka[t] * (1.0 + cos_t);
+                de[t] = -ka[t] * sin_t;
             } else {
                 let n = order[t];
                 let (sin_n, cos_n) = (n * theta[t]).sin_cos();
@@ -74,6 +82,19 @@ mod tests {
         let pot = bent(0.0, [0.75, 0.3, 0.25]);
         let (e, _) = pot.energy_forces_at(&right_angle());
         assert!((e - 100.0 * (0.75 - 0.25)).abs() < 1e-9);
+    }
+
+    /// A linear centre (`order = 1`, what the UFF typifier emits for every
+    /// sp atom) rests at 180°: the energy there is the minimum, and a right
+    /// angle costs the full `ka`.
+    #[test]
+    fn a_linear_centre_rests_at_180_degrees() {
+        let pot = bent(1.0, [0.0, 0.0, 0.0]);
+        let straight = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0];
+        let (e_straight, _) = pot.energy_forces_at(&straight);
+        let (e_right, _) = pot.energy_forces_at(&right_angle());
+        assert!(e_straight.abs() < 1e-9, "E(180°) = {e_straight}");
+        assert!((e_right - 100.0).abs() < 1e-9, "E(90°) = {e_right}");
     }
 
     #[test]

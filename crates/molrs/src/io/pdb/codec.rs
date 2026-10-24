@@ -15,7 +15,7 @@ use molrs::core::keys;
 use molrs::op::{F, I, Idx};
 use ndarray::{Array1, IxDyn};
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, Seek, Write};
+use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 
 // ============================================================================
 // Record Structs (per PDB 3.3 spec)
@@ -274,34 +274,62 @@ fn parse_conect_record(line: &str) -> Option<ConectRecord> {
     Some(ConectRecord { serial, bonded })
 }
 
-/// Parse CRYST1 record
-fn parse_cryst1_record(line: &str) -> Option<Cryst1Record> {
+/// The `CRYST1` record, or `None` for any other line.
+///
+/// A field that holds text other than a number is refused by name: a length
+/// never reads as "no cell", an angle never as 90°. A blank angle or Z field
+/// keeps the record's default (90°, 1), as a blank occupancy keeps its own.
+fn parse_cryst1_record(line: &str) -> std::io::Result<Option<Cryst1Record>> {
     if !line.starts_with("CRYST1") {
-        return None;
+        return Ok(None);
     }
-
+    let record = line.trim_end();
     if line.len() < 54 {
-        return None;
+        return Err(invalid_data(format!(
+            "CRYST1 record `{record}` ends before column 54: its lengths and angles are cut off"
+        )));
     }
-
-    let a = substr(line, 6, 15).trim().parse::<f32>().ok()?;
-    let b = substr(line, 15, 24).trim().parse::<f32>().ok()?;
-    let c = substr(line, 24, 33).trim().parse::<f32>().ok()?;
-    let alpha = substr(line, 33, 40).trim().parse::<f32>().unwrap_or(90.0);
-    let beta = substr(line, 40, 47).trim().parse::<f32>().unwrap_or(90.0);
-    let gamma = substr(line, 47, 54).trim().parse::<f32>().unwrap_or(90.0);
+    // A stated field reads as its number or is refused; a blank one is `None`.
+    let field = |name: &str, from: usize, to: usize| -> std::io::Result<Option<f32>> {
+        let text = substr(line, from, to).trim();
+        if text.is_empty() {
+            return Ok(None);
+        }
+        text.parse::<f32>().map(Some).map_err(|_| {
+            invalid_data(format!(
+                "CRYST1 {name} `{text}` is not a number: `{record}`"
+            ))
+        })
+    };
+    let length = |name: &str, from: usize, to: usize| -> std::io::Result<f32> {
+        field(name, from, to)?
+            .ok_or_else(|| invalid_data(format!("CRYST1 {name} is blank: `{record}`")))
+    };
+    let a = length("a", 6, 15)?;
+    let b = length("b", 15, 24)?;
+    let c = length("c", 24, 33)?;
+    let alpha = field("alpha", 33, 40)?.unwrap_or(90.0);
+    let beta = field("beta", 40, 47)?.unwrap_or(90.0);
+    let gamma = field("gamma", 47, 54)?.unwrap_or(90.0);
 
     // `substr` clamps to the line, so a record whose trailing Z field (and
     // blanks) were cut off still keeps its symbol.
     let space_group = substr(line, 55, 66).trim().to_string();
 
     let z = if line.len() >= 70 {
-        substr(line, 66, 70).trim().parse::<i32>().unwrap_or(1)
+        let text = substr(line, 66, 70).trim();
+        if text.is_empty() {
+            1
+        } else {
+            text.parse::<i32>().map_err(|_| {
+                invalid_data(format!("CRYST1 Z `{text}` is not an integer: `{record}`"))
+            })?
+        }
     } else {
         1
     };
 
-    Some(Cryst1Record {
+    Ok(Some(Cryst1Record {
         a,
         b,
         c,
@@ -310,7 +338,7 @@ fn parse_cryst1_record(line: &str) -> Option<Cryst1Record> {
         gamma,
         space_group,
         z,
-    })
+    }))
 }
 
 /// Check if line is ENDMDL
@@ -633,6 +661,9 @@ fn build_frame(
 pub struct PdbReader<R: BufRead> {
     reader: R,
     index: Option<Vec<FrameOffset>>,
+    /// The last `CRYST1` read. PDB states the cell once, in the header; it
+    /// applies to every model after it, streamed or indexed.
+    cryst1: Option<Cryst1Record>,
 }
 
 impl PdbReader<Box<dyn ReadSeek>> {
@@ -649,6 +680,13 @@ impl<R: BufRead + Seek> TrajectoryReader for PdbReader<R> {
                 &mut self.reader,
                 Box::new(PdbIndexBuilder::new()),
             )?;
+            // The header before the first model: its `CRYST1` is every
+            // model's cell.
+            if self.cryst1.is_none()
+                && let Some(first) = offsets.first()
+            {
+                self.cryst1 = header_cryst1(&mut self.reader, first.byte_offset)?;
+            }
             self.index = Some(offsets);
         }
         Ok(())
@@ -660,7 +698,11 @@ impl<R: BufRead + Seek> TrajectoryReader for PdbReader<R> {
             return Ok(None);
         };
         let bytes = crate::io::frame_index::frame_bytes(&mut self.reader, at)?;
-        read_pdb(bytes.as_slice()).map(Some)
+        let mut frame = read_pdb(bytes.as_slice())?;
+        if frame.simbox.is_none() {
+            add_simbox_from_cryst1(&mut frame, self.cryst1.as_ref())?;
+        }
+        Ok(Some(frame))
     }
 
     fn len(&mut self) -> std::io::Result<usize> {
@@ -669,18 +711,37 @@ impl<R: BufRead + Seek> TrajectoryReader for PdbReader<R> {
     }
 }
 
+/// The `CRYST1` of the header: the first `end` bytes of `reader`, before the
+/// first model.
+fn header_cryst1<R: BufRead + Seek>(
+    reader: &mut R,
+    end: u64,
+) -> std::io::Result<Option<Cryst1Record>> {
+    reader.seek(SeekFrom::Start(0))?;
+    let mut header = Vec::new();
+    reader.take(end).read_to_end(&mut header)?;
+    for line in String::from_utf8_lossy(&header).lines() {
+        if let Some(cryst) = parse_cryst1_record(line)? {
+            return Ok(Some(cryst));
+        }
+    }
+    Ok(None)
+}
+
 impl<R: BufRead> PdbReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
             index: None,
+            cryst1: None,
         }
     }
 
     fn read_single_frame(&mut self) -> std::io::Result<Option<Frame>> {
         let mut atoms = Vec::new();
         let mut conects = Vec::new();
-        let mut cryst1 = None;
+        // The header's cell carries over to every model after it.
+        let mut cryst1 = self.cryst1.clone();
         let mut line = String::new();
 
         loop {
@@ -692,7 +753,8 @@ impl<R: BufRead> PdbReader<R> {
 
             if is_endmdl(trimmed) || is_end(trimmed) {
                 break;
-            } else if let Some(cryst) = parse_cryst1_record(&line) {
+            } else if let Some(cryst) = parse_cryst1_record(&line)? {
+                self.cryst1 = Some(cryst.clone());
                 cryst1 = Some(cryst);
             } else if let Some(atom) = parse_atom_record(&line)? {
                 atoms.push(atom);
@@ -732,9 +794,10 @@ impl<R: BufRead> FrameReader for PdbReader<R> {
 // Writer
 // ============================================================================
 
-/// A multi-model PDB writer: the first [`FrameWriter::write`] writes the
-/// `CRYST1` record of that frame, and every write one `MODEL n` … `ENDMDL`
-/// block — what [`PdbReader`] reads back model by model.
+/// A multi-model PDB writer: every [`FrameWriter::write`] writes one
+/// `MODEL n` … `ENDMDL` block, the frame's `CRYST1` inside it — what
+/// [`PdbReader`] reads back model by model, random access included: a model
+/// read on its own carries its cell.
 ///
 /// The writer ends no model with `END`: it cannot know which model is the
 /// last. A one-frame PDB file with `END` is [`write_pdb`]'s.
@@ -755,9 +818,6 @@ impl<W: Write> FrameWriter for PdbWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        if self.models == 0 {
-            write_cryst1(&mut self.writer, frame)?;
-        }
         self.models += 1;
         write_model(&mut self.writer, self.models, frame)?;
         self.writer.flush()
@@ -1073,6 +1133,7 @@ fn write_model<W: Write>(
     frame: &impl FrameAccess,
 ) -> std::io::Result<()> {
     writeln!(writer, "MODEL     {:>4}", serial)?;
+    write_cryst1(writer, frame)?;
     write_atom_conect_records(writer, frame)?;
     writeln!(writer, "ENDMDL")
 }
@@ -1352,7 +1413,9 @@ mod tests {
 
     #[test]
     fn test_parse_cryst1_record() {
-        let cryst = parse_cryst1_record(SAMPLE_CRYST1_LINE).expect("Failed to parse CRYST1");
+        let cryst = parse_cryst1_record(SAMPLE_CRYST1_LINE)
+            .unwrap()
+            .expect("Failed to parse CRYST1");
         assert!((cryst.a - 50.0).abs() < 0.001);
         assert!((cryst.b - 60.0).abs() < 0.001);
         assert!((cryst.c - 70.0).abs() < 0.001);
@@ -1764,6 +1827,81 @@ END\n";
             frames.push(f);
         }
         frames
+    }
+
+    fn cryst1_line(lengths: [f64; 3], angles: [f64; 3]) -> String {
+        format!(
+            "CRYST1{:9.3}{:9.3}{:9.3}{:7.2}{:7.2}{:7.2} {:<11}{:>4}\n",
+            lengths[0], lengths[1], lengths[2], angles[0], angles[1], angles[2], "P 1", 1
+        )
+    }
+
+    /// A boxed multi-model file keeps its box on every model, indexed or
+    /// streamed: the writer puts `CRYST1` inside each `MODEL`, and the one
+    /// header `CRYST1` other writers put before the first `MODEL` applies to
+    /// every model too.
+    #[test]
+    fn every_model_of_a_boxed_file_keeps_the_box() {
+        use crate::io::reader::TrajectoryReader;
+        let cell = crate::core::Cell::LengthsAngles {
+            lengths: [20.0, 30.0, 40.0],
+            angles: [90.0; 3],
+        };
+        let mut frames = read_all_models(MULTI_PDB);
+        for f in &mut frames {
+            f.simbox = Some(SimBox::new(cell, [0.0; 3], [true; 3]).unwrap());
+        }
+        let mut out = Vec::new();
+        let mut writer = PdbWriter::create(&mut out).unwrap();
+        for f in &frames {
+            writer.write(f).unwrap();
+        }
+        drop(writer);
+        let header_once = format!("{}{MULTI_PDB}", cryst1_line([20.0, 30.0, 40.0], [90.0; 3]));
+        for (what, text) in [("written", out), ("header once", header_once.into_bytes())] {
+            let mut reader = PdbReader::open(&text).unwrap();
+            for i in 0..2 {
+                let frame = reader.read_frame(i).unwrap().unwrap();
+                let lengths = frame
+                    .simbox
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{what}: model {i} lost its box"))
+                    .lengths();
+                assert!(
+                    (lengths[1] - 30.0).abs() < 1e-6,
+                    "{what}: model {i}: {lengths:?}"
+                );
+            }
+            let streamed = read_all_models(std::str::from_utf8(&text).unwrap());
+            assert_eq!(streamed.len(), 2, "{what}");
+            assert!(
+                streamed.iter().all(|f| f.simbox.is_some()),
+                "{what}: a streamed model lost its box"
+            );
+        }
+    }
+
+    /// A `CRYST1` field that holds text is refused by name: a length never
+    /// reads as "no box", an angle never as 90°.
+    #[test]
+    fn a_malformed_cryst1_field_is_refused() {
+        let good = cryst1_line([20.0, 30.0, 40.0], [90.0, 90.0, 60.0]);
+        let atom = "ATOM      1  N   ALA A   1       1.000   2.000   3.000  1.00 20.00           N  \nEND\n";
+        assert!(
+            read_pdb(format!("{good}{atom}").as_bytes())
+                .unwrap()
+                .simbox
+                .is_some()
+        );
+        for (field, bad) in [("  60.00", "  abc  "), ("   30.000", "   3x.000")] {
+            let text = format!("{}{atom}", good.replace(field, bad));
+            assert_ne!(text, format!("{good}{atom}"));
+            let err = read_pdb(text.as_bytes()).unwrap_err().to_string();
+            assert!(
+                err.contains("CRYST1") && err.contains(bad.trim()),
+                "{field:?}: {err}"
+            );
+        }
     }
 
     #[test]

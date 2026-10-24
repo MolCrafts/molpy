@@ -237,7 +237,7 @@ impl AtomColumns {
             .type_refs
             .iter()
             .map(|t| t.resolve(&label_to_id))
-            .collect();
+            .collect::<std::io::Result<_>>()?;
 
         let mut block = Block::new();
         insert_column_of_length(
@@ -354,28 +354,35 @@ impl TopologyTerm {
 // Atoms line → columns
 // ============================================================================
 
-fn resolve_layout(
-    tokens: &[&str],
-    known: Option<AtomStyleLayout>,
-    style_known: bool,
-) -> std::io::Result<AtomStyleLayout> {
-    let mut layout = match known {
-        Some(l) => l,
-        None => layout_from_column_count(tokens.len())?,
-    };
-
-    // charge vs molecular when style unknown and col count is 6 or 9.
-    if !style_known && (tokens.len() == 6 || tokens.len() == 9) && tokens.len() >= 3 {
-        let token2 = tokens[2];
-        let looks_like_charge = is_noninteger_float_token(token2) || !is_int_token(token2);
-        let looks_like_molecular = is_int_token(tokens[1]) && is_int_token(token2);
-        if looks_like_molecular && !looks_like_charge {
-            layout = layout_for_atom_style("molecular").unwrap();
-        } else if looks_like_charge {
-            layout = layout_for_atom_style("charge").unwrap();
+/// The layout of an `Atoms` section that states no style, from one of its
+/// rows: the column count decides, and at 6 or 9 columns `charge` against
+/// `molecular` is told by the third token (a charge that is not an integer).
+/// Named, so a later row that does not fit can say which layout it did not
+/// fit. One row decides for the whole section, as one `atom_style` does in
+/// LAMMPS.
+fn guess_layout(tokens: &[&str]) -> std::io::Result<(AtomStyleLayout, &'static str)> {
+    let n = tokens.len();
+    let by_count = layout_from_column_count(n)?;
+    let name = match n {
+        5 | 8 => "atomic",
+        7 | 10 => "full",
+        _ => {
+            let token2 = tokens[2];
+            let looks_like_charge = is_noninteger_float_token(token2) || !is_int_token(token2);
+            let looks_like_molecular = is_int_token(tokens[1]) && is_int_token(token2);
+            if looks_like_molecular && !looks_like_charge {
+                "molecular"
+            } else {
+                "charge"
+            }
         }
-    }
-    Ok(layout)
+    };
+    let layout = match name {
+        "molecular" => layout_for_atom_style(name)
+            .ok_or_else(|| invalid_data(format!("atom_style `{name}` has no layout")))?,
+        _ => by_count,
+    };
+    Ok((layout, name))
 }
 
 fn push_atom_line(
@@ -796,8 +803,10 @@ fn parse_atoms_streamed<R: BufRead>(
 ) -> std::io::Result<AtomColumns> {
     let mut cols = AtomColumns::with_capacity(n_atoms);
     let mut line = String::new();
-    let known = style_hint.and_then(layout_for_atom_style);
-    let style_known = known.is_some();
+    // The stated style, or — once, from the first row — a guess and its name.
+    let mut layout: Option<(AtomStyleLayout, Option<&'static str>)> = style_hint
+        .and_then(layout_for_atom_style)
+        .map(|l| (l, None));
 
     while cols.len() < n_atoms {
         line.clear();
@@ -809,8 +818,28 @@ fn parse_atoms_streamed<R: BufRead>(
             continue;
         }
         let tokens = tokenize(trimmed);
-        let layout = resolve_layout(&tokens, known, style_known)?;
-        push_atom_line(&mut cols, &tokens, layout)?;
+        let (section_layout, guessed) = match layout {
+            Some(decided) => decided,
+            None => {
+                let (l, name) = guess_layout(&tokens)?;
+                layout = Some((l, Some(name)));
+                (l, Some(name))
+            }
+        };
+        if let Some(style) = guessed {
+            // One row decided the section's layout; a row the same guess
+            // reads otherwise is the mixed file no guess can read.
+            let (_, row_style) = guess_layout(&tokens)?;
+            if row_style != style {
+                return Err(invalid_data(format!(
+                    "Atoms row `{trimmed}` reads as atom_style `{row_style}`, but the section \
+                     has no `# style` comment and its layout was taken from its first row as \
+                     `{style}`: state the style (`Atoms # {row_style}`, or \
+                     `LammpsDataReader::with_atom_style`)"
+                )));
+            }
+        }
+        push_atom_line(&mut cols, &tokens, section_layout)?;
     }
     if cols.len() > 0 && cols.len() < n_atoms {
         return Err(invalid_data(format!(
@@ -941,7 +970,7 @@ fn insert_topology_block(
             })?;
             member_cols[i].push(idx);
         }
-        types.push(term.type_ref.resolve(label_to_id));
+        types.push(term.type_ref.resolve(label_to_id)?);
     }
 
     let mut block = Block::new();
@@ -1010,7 +1039,7 @@ fn build_frame(mut parsed: ParsedDataFile) -> std::io::Result<Frame> {
         let n = parsed.atoms.len();
         parsed.atoms.mass.values.resize(n, 0.0);
         for (i, tref) in parsed.atoms.type_refs.iter().enumerate() {
-            let tid = tref.resolve(&label_to_id);
+            let tid = tref.resolve(&label_to_id)?;
             parsed.atoms.mass.values[i] =
                 parsed.type_masses.get(&tid).copied().ok_or_else(|| {
                     invalid_data(format!(
@@ -2711,6 +2740,23 @@ mod atom_style_tests {
         );
     }
 
+    /// Without a style comment the `Atoms` layout is decided once, from the
+    /// first row, and every later row is read by it: a row that does not fit
+    /// is refused with the hint, never re-guessed into another layout.
+    #[test]
+    fn an_atoms_section_without_a_style_has_one_layout() {
+        let text = concat!(
+            "LAMMPS data file\n\n2 atoms\n1 atom types\n\n",
+            "0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n",
+            "Atoms\n\n1 1 0 0.1 0.2 0.3\n2 1 -0.5 0.4 0.5 0.6\n",
+        );
+        let err = read_lammps_data(text.as_bytes()).unwrap_err().to_string();
+        assert!(
+            err.contains("molecular") && err.contains("atom_style"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn nine_columns_without_hint_is_molecular() {
         let text = concat!(
@@ -3534,6 +3580,21 @@ Bonds
             .copied()
             .collect();
         assert_eq!(ids, [1, 2, 2]);
+    }
+
+    /// A type label no `* Type Labels` section declares is refused by name,
+    /// never read as type 1.
+    #[test]
+    fn an_undeclared_type_label_is_refused() {
+        for (row, edited, label) in [
+            ("3 1 2 0.4 0 1 0\n", "3 1 HX 0.4 0 1 0\n", "HX"),
+            ("1 1 1 2\n", "1 OW-HX 1 2\n", "OW-HX"),
+        ] {
+            let text = LABELLED.replace(row, edited);
+            assert_ne!(text, LABELLED, "{label}");
+            let err = read_lammps_data(text.as_bytes()).unwrap_err().to_string();
+            assert!(err.contains(label), "{label}: {err}");
+        }
     }
 
     #[test]

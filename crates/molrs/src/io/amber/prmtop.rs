@@ -299,8 +299,8 @@ fn decode_angles(pointers: &[i64], atom_types: &[String]) -> Result<Vec<AngleRow
 ///   holds every term. A quartet tleap gave two different sets of terms is
 ///   two types, the second `<quartet>@<n>`
 ///   (`prmtop_tables::proper_type_names`). It is oriented as the force-field reader names it:
-///   reversed when [`TypeName::reads_reversed`] says its types are, atoms and
-///   name together. Counts therefore match the torsions, not the cosine terms.
+///   reversed when [`TypeName::reads_reversed`] says its types are, atoms,
+///   name and phase together. Counts therefore match the torsions, not the cosine terms.
 /// - An improper (negative 4th pointer) keeps its prmtop atom order: AMBER
 ///   puts the central atom third, and reversing it names a different term.
 ///   A single-term improper is one row; a multi-term one (several rows on one
@@ -1840,9 +1840,9 @@ c3  c3  c3  c3
     /// whose `DIHEDRALS_INC_HYDROGEN` table is `torsions` (raw prmtop pointers,
     /// 5 per row). Its two proper quartets are `0-1-2-3` and `1-2-3-4`.
     ///
-    /// Both quartets carry the type name `hc-c3-os-c3`: the force-field reader
-    /// orients a proper so that its second type is not after its third
-    /// (`c3 ≤ os`), so `1-2-3-4` (`c3-os-c3-hc`) reads as `4-3-2-1`.
+    /// The reader orients each proper with `TypeName::reads_reversed` on the
+    /// whole quartet, the same order as the phase sign. `hc-c3-os-c3` reverses
+    /// and `c3-os-c3-hc` does not, so both quartets are stored as `c3-os-c3-hc`.
     pub(crate) fn chain5_prmtop(torsions: &str) -> String {
         let nphih = torsions.split_whitespace().count() / 5;
         format!(

@@ -16,6 +16,8 @@
 //! * `Ok(None)` — the column does **not** exist. This is a normal, expected
 //!   outcome because molrs schemas are flexible (e.g. LAMMPS data has no
 //!   `element`). Callers handle it with a simple `if let Some(..)`.
+//!   [`BlockRef::has`] is the same split as a bool: `Ok(false)` is absence,
+//!   and a dropped block is [`FfiError::InvalidBlockHandle`], not `Ok(false)`.
 //! * `Err(DTypeMismatch)` — the column **exists but has the wrong dtype**
 //!   for the accessor called. Almost always a schema-level caller bug.
 //! * `Err(InvalidBlockHandle)` / `Err(NonContiguous)` — structural errors
@@ -98,8 +100,11 @@ impl FrameRef {
     }
 
     /// True if the frame has a block at `key`.
-    pub fn has_block(&self, key: &str) -> bool {
-        self.with(|f| f.contains_key(key)).unwrap_or(false)
+    ///
+    /// `Ok(false)` is a live frame that lacks `key`. A handle whose frame was
+    /// dropped is [`FfiError::InvalidFrameId`], never `Ok(false)`.
+    pub fn has_block(&self, key: &str) -> Result<bool, FfiError> {
+        self.with(|f| f.contains_key(key))
     }
 
     /// Clone the simbox out of the frame (if any).
@@ -174,7 +179,9 @@ impl BlockRef {
         self.with(|b| b.keys().map(|s| s.to_string()).collect())
     }
 
-    /// `true` if the column exists.
+    /// `Ok(true)` if the column exists. `Ok(false)` is a live block that
+    /// lacks `key`. A handle whose block was dropped is
+    /// [`FfiError::InvalidBlockHandle`], never `Ok(false)`.
     pub fn has(&self, key: &str) -> Result<bool, FfiError> {
         self.with(|b| b.contains_key(key))
     }
@@ -304,5 +311,18 @@ mod tests {
         let stale = frame.clone();
         frame.drop_frame().unwrap();
         assert!(matches!(stale.box_clone(), Err(FfiError::InvalidFrameId)));
+    }
+
+    #[test]
+    fn has_block_on_a_dropped_frame_is_not_absence() {
+        let frame = frame_with_atoms();
+        assert!(frame.has_block("atoms").unwrap());
+        assert!(!frame.has_block("bonds").unwrap());
+        let stale = frame.clone();
+        frame.drop_frame().unwrap();
+        assert!(matches!(
+            stale.has_block("atoms"),
+            Err(FfiError::InvalidFrameId)
+        ));
     }
 }

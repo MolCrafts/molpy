@@ -1,4 +1,4 @@
-"""Unit test for the ``molpy`` facade module (``src/molpy/__init__.py``)."""
+"""Unit test for the ``molpy`` facade module (``python/molpy/__init__.py``)."""
 
 from __future__ import annotations
 

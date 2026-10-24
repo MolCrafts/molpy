@@ -17,7 +17,7 @@ NOT review the core algorithms or the manual prose.
 - A new handle type crossing the ABI needs its capsule name added in
   `crates/molrs-ffi/src/abi.rs` and a layout snapshot entry; a binding that
   spells a capsule string itself is a violation.
-- Python stub: `molpy/molpy/_core.pyi` must match the module; `types` gate
+- Python stub: `molpy/python/molpy/_core.pyi` must match the module; `types` gate
   runs mypy on it plus `stubtest molpy._core` with
   `molpy/stubtest-allowlist.txt`. A new pyclass/method without a stub entry
   fails there. pyclasses carry `#[pyclass(module = "molpy.<sub>")]`.
@@ -39,7 +39,7 @@ NOT review the core algorithms or the manual prose.
 
 ## Procedure
 
-1. Scope: `crates/molrs-ffi`, `molpy/src`, `molpy/molpy/_core.pyi`,
+1. Scope: `crates/molrs-ffi`, `molpy/src`, `molpy/python/molpy/_core.pyi`,
    `molwasm/src`, `molc/src`, `molcxx/src` in the diff.
 2. For each changed core API, check every binding that exposes the same
    concept: same name shape, same units, same error semantics.

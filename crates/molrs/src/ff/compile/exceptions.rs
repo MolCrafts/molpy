@@ -16,7 +16,7 @@ use crate::ff::potential::{bond_classes, end_pairs};
 use molrs::core::Frame;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOML};
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::core::schema::block_names::{ATOMS, BONDS, DIHEDRALS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, BONDS, DIHEDRALS, PAIR_OVERRIDES, PAIRS};
 use molrs::op::F;
 
 /// What the compiler routes through the exceptions kernel for one frame.
@@ -52,6 +52,11 @@ pub(crate) enum Vdw<'f> {
 
 /// How the compiler prices the frame's 1-4 exceptions under `ff`.
 ///
+/// `overlay` reads `pair_overrides` when the frame has no `pairs` block —
+/// the neighbour-driven door. [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)
+/// passes `false`: a bonded field must not grow an exceptions kernel from
+/// an overlay that is not an evaluation list.
+///
 /// # Errors
 ///
 /// A `dihedral charmm` `w` outside `[0, 1]`; `w > 0` beside `special_bonds`
@@ -59,11 +64,13 @@ pub(crate) enum Vdw<'f> {
 /// Coulomb style (all three LAMMPS's own errors); an override column that is
 /// not float, holds a non-finite value, or names one pair twice; and, when
 /// any exception exists, a pair style the exception cannot stand in for.
-pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String> {
+pub(crate) fn plan(ff: &ForceField, frame: &Frame, overlay: bool) -> Result<Exceptions, String> {
     let wsum = dihedral_weights(ff, frame)?;
-    let (cells, override_rows) = override_cells(frame)?;
-    let rows_ij = pair_ends(frame);
+    let source = exception_source(frame, overlay);
+    let (cells, override_rows) = override_cells(source)?;
+    let rows_ij = pair_ends(frame, source);
     check_one_four(ff, frame, &wsum, &cells, &rows_ij)?;
+    let block = source.map(|(name, _)| name).unwrap_or(PAIRS);
 
     let mut entries: BTreeMap<(usize, usize), (F, Option<usize>)> = BTreeMap::new();
     for (&key, &w) in &wsum {
@@ -75,7 +82,7 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
         let e = entries.entry(key).or_insert((0.0, None));
         if e.1.is_some() {
             return Err(format!(
-                "pairs: atoms {} and {} carry per-pair overrides on two rows; a pair \
+                "{block}: atoms {} and {} carry per-pair overrides on two rows; a pair \
                  has one set of exception parameters",
                 key.0, key.1
             ));
@@ -126,6 +133,29 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
         Vec::with_capacity(n),
     );
     for (&(i, j), &(w, row)) in &entries {
+        // An overlay row on a 1-2 or 1-3 that `special_bonds` excludes is the
+        // row the list builder refuses. Pricing it here would be the other answer.
+        if block == PAIR_OVERRIDES && row.is_some() {
+            if let Some(class) = classes
+                .as_ref()
+                .and_then(|c| c.get(&(i.min(j), i.max(j))).copied())
+            {
+                let slot = match class {
+                    1 => Some(0usize),
+                    2 => Some(1usize),
+                    _ => None,
+                };
+                if let Some(k) = slot {
+                    if sb.lj[k] == 0.0 && sb.coul[k] == 0.0 {
+                        return Err(format!(
+                            "pair_overrides: atoms {i} and {j} carry a per-pair override, and \
+                             the force field's special_bonds exclude that pair (1-2 or 1-3), \
+                             so the override would be dropped"
+                        ));
+                    }
+                }
+            }
+        }
         let cell = row.map(|r| cells[r]).unwrap_or([None; 5]);
         // The class weight is needed only for a pair the dihedral does not
         // price, and only where an override leaves a scale null.
@@ -343,9 +373,25 @@ fn check_weightflag(ff: &ForceField) -> Result<(), String> {
     Ok(())
 }
 
-/// Each `pairs` row's override cells, and the rows that carry any.
-fn override_cells(frame: &Frame) -> Result<(Vec<Cells>, Vec<usize>), String> {
-    let Some(block) = frame.get(PAIRS) else {
+/// `pairs` when present, otherwise `pair_overrides` when `overlay`.
+fn exception_source(frame: &Frame, overlay: bool) -> Option<(&'static str, &molrs::core::Block)> {
+    if let Some(block) = frame.get(PAIRS) {
+        return Some((PAIRS, block));
+    }
+    if overlay {
+        return frame
+            .get(PAIR_OVERRIDES)
+            .map(|block| (PAIR_OVERRIDES, block));
+    }
+    None
+}
+
+/// Each row's override cells of the block [`exception_source`] chose, and
+/// the rows that carry any.
+fn override_cells(
+    source: Option<(&str, &molrs::core::Block)>,
+) -> Result<(Vec<Cells>, Vec<usize>), String> {
+    let Some((name, block)) = source else {
         return Ok((Vec::new(), Vec::new()));
     };
     let n = block.n_rows().unwrap_or(0);
@@ -356,7 +402,7 @@ fn override_cells(frame: &Frame) -> Result<(Vec<Cells>, Vec<usize>), String> {
         };
         let values = col
             .get::<f64>()
-            .ok_or_else(|| format!("pairs: the per-pair override column '{key}' must be float"))?;
+            .ok_or_else(|| format!("{name}: the per-pair override column '{key}' must be float"))?;
         let valid = block.validity(key);
         for r in 0..n {
             if valid.is_some_and(|m| !m[r]) {
@@ -365,7 +411,7 @@ fn override_cells(frame: &Frame) -> Result<(Vec<Cells>, Vec<usize>), String> {
             let v = values[r];
             if !v.is_finite() {
                 return Err(format!(
-                    "pairs row {r}: '{key}' = {v}; a null cell is a validity mask, not a \
+                    "{name} row {r}: '{key}' = {v}; a null cell is a validity mask, not a \
                      non-finite value"
                 ));
             }
@@ -378,9 +424,12 @@ fn override_cells(frame: &Frame) -> Result<(Vec<Cells>, Vec<usize>), String> {
     Ok((cells, rows))
 }
 
-/// `(lo, hi)` of each `pairs` row.
-fn pair_ends(frame: &Frame) -> Vec<(usize, usize)> {
-    end_pairs(frame, PAIRS, ATOMI, ATOMJ)
+/// `(lo, hi)` of each row of the block [`exception_source`] chose.
+fn pair_ends(frame: &Frame, source: Option<(&str, &molrs::core::Block)>) -> Vec<(usize, usize)> {
+    match source {
+        Some((name, _)) => end_pairs(frame, name, ATOMI, ATOMJ),
+        None => Vec::new(),
+    }
 }
 
 /// The force field's van-der-Waals style and Coulomb prefactor

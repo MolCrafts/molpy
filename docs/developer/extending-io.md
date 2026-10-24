@@ -20,11 +20,11 @@ belongs to one format lives in that format's submodule (`mp.io.smiles`,
 Add the parser and writer to molrs and bind them in the Python binding
 (`molpy/src/io/`): a one-frame door at the top of `mp.io` (`read_<fmt>` /
 `write_<fmt>`), and the format's classes — multi-frame reader and writer,
-force-field reader and writer — in a `mp.io.<fmt>` submodule. A new function is listed in `molpy/molpy/io/__init__.py`'s import
+force-field reader and writer — in a `mp.io.<fmt>` submodule. A new function is listed in `molpy/python/molpy/io/__init__.py`'s import
 from `molpy._core` and its `__all__`; a new format module is a file
-`molpy/molpy/io/<fmt>.py` importing its classes from `molpy._core`, imported
-by `molpy/molpy/io/__init__.py`, and its stub entries go into
-`molpy/molpy/_core.pyi` (the `types` gate holds the stub to the module).
+`molpy/python/molpy/io/<fmt>.py` importing its classes from `molpy._core`, imported
+by `molpy/python/molpy/io/__init__.py`, and its stub entries go into
+`molpy/python/molpy/_core.pyi` (the `types` gate holds the stub to the module).
 
 No molpy function coerces paths, re-raises native errors under another type or
 buffers frames for the native writer: the native doors take `os.PathLike`,

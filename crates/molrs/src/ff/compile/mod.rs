@@ -29,7 +29,7 @@ use crate::ff::style_registry::RowSource;
 use crate::ff::style_registry::{Registry, RegistryRef};
 use molrs::core::Frame;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::core::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIR_OVERRIDES, PAIRS};
 
 /// Compiles one [`ForceField`] against typed [`Frame`]s.
 ///
@@ -121,7 +121,11 @@ impl<'a> PotentialCompiler<'a> {
     /// Every pair style prices a `pairs` row only inside its `cutoff`
     /// (`r < cutoff`, with its switch where it defines one), as
     /// [`compile_typed`](Self::compile_typed) and LAMMPS do; ∞ when the style
-    /// states none.
+    /// states none. `pair coul/long/pme`'s real-space erfc follows this list
+    /// when a `pairs` block is present (an exclusion row omitted, a 1-4 row
+    /// at `coulomb14scale`) and is the minimum-image loop inside the kernel
+    /// when the block is absent. The reciprocal sum still reads the frame's
+    /// periodic box.
     ///
     /// The `pairs` block carries the 1-2 / 1-3 weights by whether a row is
     /// there, so a force field that *scales* those classes rather than
@@ -132,14 +136,18 @@ impl<'a> PotentialCompiler<'a> {
     ///
     /// # 1-4 exceptions
     ///
-    /// The pairs a `dihedral charmm` `w` prices and the `pairs` rows carrying
-    /// per-pair override columns are one more member, the exceptions kernel
+    /// The pairs a `dihedral charmm` `w` prices and the rows carrying per-pair
+    /// override columns are one more member, the exceptions kernel
     /// ([`PairExceptions`](crate::ff::potential::pair::PairExceptions)); the
-    /// pair styles see the `pairs` list without the override rows. Both doors
-    /// build it the same way. Precedence per pair: an override cell, else the
-    /// dihedral's `w`, else `special_bonds`. The exceptions kernel is not
-    /// truncated: LAMMPS's `dihedral_style charmm` prices its 1-4 pair at any
-    /// distance, and an OpenMM exception is outside the cutoff method too.
+    /// pair styles see the `pairs` list without the override rows. Precedence
+    /// per pair: an override cell, else the dihedral's `w`, else
+    /// `special_bonds`. This door reads those columns on `pairs` and refuses
+    /// a pair style when they sit only on `pair_overrides` — that block is
+    /// not an evaluation list. [`compile_typed`](Self::compile_typed) reads
+    /// it, so a periodic step still sees the scales. The exceptions kernel
+    /// is not truncated: LAMMPS's `dihedral_style charmm` prices its 1-4
+    /// pair at any distance, and an OpenMM exception is outside the cutoff
+    /// method too.
     pub fn compile(&self, frame: &Frame) -> Result<Potentials, CompileError> {
         // The `pairs` block need not have come from `intramolecular_pairs` — a
         // GROMACS `[ pairs ]` section is read straight off a file — so the
@@ -150,10 +158,26 @@ impl<'a> PotentialCompiler<'a> {
         if let Some(sb) = special {
             sb.compiled_inclusion()?;
         }
+        // An overlay is not the list this door prices. A field with no pair
+        // style still compiles: the overlay is carried when a list is built,
+        // and it must not grow an exceptions kernel on its own.
+        if frame.get(PAIRS).is_none() && frame.get(PAIR_OVERRIDES).is_some() {
+            for style in self.ff.styles() {
+                if category_of(&reg, style)?.is_pair_driven() {
+                    return Err(CompileError::Invalid(
+                        "compile: the frame has pair_overrides and no pairs block, so the \
+                         per-pair scales are not on an evaluation list. Build one with \
+                         intramolecular_pairs before compile"
+                            .into(),
+                    ));
+                }
+            }
+        }
         // The 1-4 exceptions (dihedral charmm `w`, per-pair overrides) are one
         // kernel; the regular pair kernels see the `pairs` list without the
-        // override rows, which is their weight 0.
-        let exceptions = exceptions::plan(self.ff, frame)?;
+        // override rows, which is their weight 0. `false`: do not read an
+        // unexpanded `pair_overrides` block.
+        let exceptions = exceptions::plan(self.ff, frame, false)?;
         let regular = regular_pairs(frame, &exceptions.override_rows)?;
         let mut pots = Potentials::new();
         for style in self.ff.styles() {
@@ -188,10 +212,13 @@ impl<'a> PotentialCompiler<'a> {
     /// resolves them against the **atoms**, so the kernels can answer for
     /// whatever pairs a neighbour search turns up; a pair style needs a
     /// finite `cutoff` here. Over the same pairs, the two doors price the
-    /// same energy: both truncate at the style's `cutoff`. Of
-    /// the `pairs` block it reads only the rows carrying per-pair overrides:
-    /// those pairs go to the exceptions kernel (an indexed member, weight
-    /// `None`), and every pair member's [`PairWeights`] weights them 0.
+    /// same energy: both truncate at the style's `cutoff`. `pair coul/long/pme`'s
+    /// real-space erfc follows the neighbour table; its reciprocal sum still
+    /// reads the periodic box and takes no pair weight. Of the `pairs` block
+    /// this door reads only the rows carrying per-pair overrides,
+    /// or `pair_overrides` when `pairs` is absent: those pairs go to the
+    /// exceptions kernel (an indexed member, weight `None`), and every pair
+    /// member's [`PairWeights`] weights them 0.
     ///
     /// The weights come back per member rather than once, because a force field
     /// may scale close van-der-Waals and electrostatic neighbours differently —
@@ -209,7 +236,7 @@ impl<'a> PotentialCompiler<'a> {
     pub fn compile_typed(&self, frame: &Frame) -> Result<Vec<WeightedTerm>, CompileError> {
         let reg = self.registry();
         let special = self.pair_weights(&reg)?;
-        let exceptions = exceptions::plan(self.ff, frame)?;
+        let exceptions = exceptions::plan(self.ff, frame, true)?;
         let mut out = Vec::new();
         for style in self.ff.styles() {
             // A bonded style contributes nothing when the molecule carries no
@@ -342,8 +369,9 @@ impl<'a> PotentialCompiler<'a> {
         // pair is 1-2 or 1-3 excluded). Skip it rather than letting the kernel ctor
         // fault on the absent/empty block.
         // Which block gates a style is the *kernel's* property, not the
-        // category's: PME is a `pair` style that reads charges and
-        // `exclusions` and never looks at `pairs`, so gating it on `pairs`
+        // category's: PME is a `pair` style whose row source is the atoms,
+        // so an absent `pairs` block still builds the reciprocal sum (and
+        // the real-space loop, when there is no list). Gating it on `pairs`
         // deleted a system's whole long-range electrostatics whenever the
         // caller had not built a pair list.
         let gated =
@@ -691,6 +719,155 @@ mod tests {
         assert!(PotentialCompiler::new(&bonded).compile(&frame).is_ok());
     }
 
+    /// `pair_overrides` is not an evaluation list. `compile` of a pair style
+    /// refuses it and names `intramolecular_pairs`; that function places the
+    /// scale on the bond-graph 1-4, and `compile_typed` prices the pair.
+    #[test]
+    fn an_overlay_without_pairs_is_refused_by_compile_and_seen_by_compile_typed() {
+        use crate::ff::potential::intramolecular_pairs;
+
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "type",
+                Array1::from_vec(vec!["A".to_string(); 4]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        for (key, v) in [
+            ("x", [0.0, 1.5, 3.0, 4.5]),
+            ("y", [0.0; 4]),
+            ("z", [0.0; 4]),
+        ] {
+            atoms
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
+                .unwrap();
+        }
+        let mut bonds = Block::new();
+        bonds
+            .insert(
+                "atomi",
+                Array1::from_vec(vec![0_u64, 1, 2]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        bonds
+            .insert(
+                "atomj",
+                Array1::from_vec(vec![1_u64, 2, 3]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let mut overlay = Block::new();
+        overlay
+            .insert("atomi", Array1::from_vec(vec![0_u64]).into_dyn(), None)
+            .unwrap();
+        overlay
+            .insert("atomj", Array1::from_vec(vec![3_u64]).into_dyn(), None)
+            .unwrap();
+        overlay
+            .insert("lj_scale", Array1::from_vec(vec![0.5_f64]).into_dyn(), None)
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+        frame.insert("pair_overrides", overlay);
+
+        let mut ff = ForceField::new("overlay");
+        ff.set_special_bonds(SpecialBonds::EXCLUDE_12_13);
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
+            .unwrap()
+            .def_type(
+                "A",
+                &["A"],
+                Params::from_iter([("epsilon", 0.1), ("sigma", 3.0)]),
+            )
+            .unwrap();
+        let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
+        let text = err.to_string();
+        assert!(text.contains("intramolecular_pairs"), "{text}");
+        assert!(text.contains("pair_overrides"), "{text}");
+
+        let bare = PotentialCompiler::new(&ForceField::new("bare"))
+            .compile(&frame)
+            .unwrap();
+        assert!(bare.members().is_empty());
+
+        let built = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
+        let (i, j) = (
+            built.get("atomi").unwrap().get::<u64>().unwrap(),
+            built.get("atomj").unwrap().get::<u64>().unwrap(),
+        );
+        let row = (0..i.len()).find(|&r| i[[r]] == 0 && j[[r]] == 3).unwrap();
+        assert!(built.get("is_14").unwrap().get::<bool>().unwrap()[[row]]);
+        assert_eq!(
+            built.get("lj_scale").unwrap().get::<f64>().unwrap()[[row]],
+            0.5
+        );
+
+        let terms = PotentialCompiler::new(&ff).compile_typed(&frame).unwrap();
+        let weights = terms.iter().find_map(|(_, w)| w.as_ref()).unwrap();
+        assert!(
+            weights.replaced().contains(&(0, 3)),
+            "{:?}",
+            weights.replaced()
+        );
+    }
+
+    /// A 1-2 overlay is the row the list builder drops. `compile_typed` refuses
+    /// it too, instead of pricing the excluded pair at the cell's scale.
+    #[test]
+    fn compile_typed_refuses_an_overlay_on_an_excluded_bond() {
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "type",
+                Array1::from_vec(vec!["A".to_string(); 2]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        for (key, v) in [("x", [0.0, 1.5]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])] {
+            atoms
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
+                .unwrap();
+        }
+        let mut bonds = Block::new();
+        bonds
+            .insert("atomi", Array1::from_vec(vec![0_u64]).into_dyn(), None)
+            .unwrap();
+        bonds
+            .insert("atomj", Array1::from_vec(vec![1_u64]).into_dyn(), None)
+            .unwrap();
+        let mut overlay = Block::new();
+        overlay
+            .insert("atomi", Array1::from_vec(vec![0_u64]).into_dyn(), None)
+            .unwrap();
+        overlay
+            .insert("atomj", Array1::from_vec(vec![1_u64]).into_dyn(), None)
+            .unwrap();
+        overlay
+            .insert("lj_scale", Array1::from_vec(vec![0.5_f64]).into_dyn(), None)
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+        frame.insert("pair_overrides", overlay);
+        let mut ff = ForceField::new("overlay");
+        ff.set_special_bonds(SpecialBonds::EXCLUDE_12_13);
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
+            .unwrap()
+            .def_type(
+                "A",
+                &["A"],
+                Params::from_iter([("epsilon", 0.1), ("sigma", 3.0)]),
+            )
+            .unwrap();
+        let err = PotentialCompiler::new(&ff)
+            .compile_typed(&frame)
+            .unwrap_err();
+        assert!(err.to_string().contains("would be dropped"), "{err}");
+    }
+
     fn two_atoms() -> Frame {
         let mut atoms = Block::new();
         for (key, v) in [("x", [0.0, 1.6]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])] {
@@ -812,22 +989,6 @@ mod tests {
         let ff = bond_ff();
         let frame = with_bond(two_atoms(), "XX-XX");
         assert!(PotentialCompiler::new(&ff).compile(&frame).is_err());
-    }
-
-    #[test]
-    fn compile_typed_refuses_a_pair_style_without_a_neighbour_driven_form() {
-        let mut ff = ForceField::new("t");
-        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style(
-            "pair",
-            "coul/long/pme",
-            Params::from_iter([("coulomb", 332.06371), ("cutoff", 9.0)]),
-        )
-        .unwrap();
-        let err = PotentialCompiler::new(&ff)
-            .compile_typed(&two_atoms())
-            .unwrap_err();
-        assert!(err.to_string().contains("neighbour-driven"), "{err}");
     }
 
     /// The pairs of [`straddling`], and which of them are flagged 1-4.

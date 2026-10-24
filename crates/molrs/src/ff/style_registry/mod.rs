@@ -13,9 +13,10 @@
 //!   coordinate or of the atoms' positions
 //!   ([`ScalarForm`], [`CompoundForm`], built
 //!   into the form kernels of [`crate::ff::potential::form_kernel`] — every
-//!   built-in whose energy is such a function), or a constructor that
-//!   builds a whole kernel (`pair coul/long/pme`, `cmap charmm`; `dihedral
-//!   rb` is a built-in priced by its expression alone);
+//!   built-in whose energy is such a function, including the real-space
+//!   erfc of `pair coul/long/pme`), or a constructor that builds the rest
+//!   of a kernel (PME's reciprocal-space sum, `cmap charmm`'s splines;
+//!   `dihedral rb` is a built-in priced by its expression alone);
 //! * the [`Registry`] refuses anything that does not conform
 //!   ([`conformance`], [`IrError`]) and seals the built-ins;
 //! * [`compile_expression`] compiles a style's Lepton `expression` (the
@@ -97,10 +98,13 @@ pub type KernelConstructor = fn(
 /// is a property of the **kernel**, not of its category.
 ///
 /// PME is the case that proves it: registered under `pair` because that is
-/// where an electrostatic style belongs, it reads per-atom charges and
-/// `exclusions` and never looks at `pairs`. Gated on `pairs`, it was skipped
-/// outright for any system whose caller had not built a pair list — deleting
-/// the entire long-range electrostatics, silently, to exactly zero.
+/// where an electrostatic style belongs, its reciprocal sum reads per-atom
+/// charges and `exclusions`. Its row source is the atoms, so an absent
+/// `pairs` block still builds it. Gated on `pairs`, it was skipped outright
+/// for any system whose caller had not built a pair list — deleting the
+/// entire long-range electrostatics, silently, to exactly zero. A present
+/// `pairs` block prices the real-space erfc term over that list; it does
+/// not gate the style.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RowSource {
     /// The category's own topology block: `bonds`, `angles`, `dihedrals`,
@@ -171,9 +175,9 @@ pub enum Kernel {
     /// Tier 2: a batch N-body function of positions, built into
     /// [`CompoundTerms`].
     Compound(Arc<dyn CompoundForm>),
-    /// Tier 3: a constructor that builds the whole [`ForceTerm`] itself — a
-    /// kernel no form carries (PME's reciprocal-space sum, CMAP's splined
-    /// grids).
+    /// Tier 3: a constructor that builds the whole [`ForceTerm`] itself.
+    /// PME's reciprocal-space sum and CMAP's splined grids are built here.
+    /// PME's real-space erfc term is the pair form beside the reciprocal sum.
     Constructor {
         compiled: KernelConstructor,
         /// The neighbour-driven form of a pair style, and the special-bonds
@@ -661,7 +665,8 @@ impl Registry {
     /// Every built-in category and style, sealed.
     ///
     /// The kernels are the built-in kernels (`BuiltinKernels`: forms, and
-    /// the two constructors no form carries), each with its spec from
+    /// the constructors for PME's reciprocal sum and CMAP's splines), each
+    /// with its spec from
     /// [`builtin_styles`]; a spec without a kernel is priced by its
     /// expression or prices nothing (`dihedral rb`, `drude harmonic`, `atom
     /// full`, …). A test holds the two tables to one set of names.

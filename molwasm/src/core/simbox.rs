@@ -162,6 +162,15 @@ pub(crate) fn triple(op: &str, name: &str, v: &[F]) -> Result<[F; 3], JsValue> {
         .map_err(|_| JsValue::from_str(&format!("{op}: {name} must be 3 values, got {}", v.len())))
 }
 
+/// Three flags as the `Pbc` array `new Box` takes: `[boolean, boolean, boolean]`.
+pub(crate) fn js_pbc(flags: [bool; 3]) -> JsPbc {
+    flags
+        .iter()
+        .map(|&f| JsValue::from_bool(f))
+        .collect::<js_sys::Array>()
+        .unchecked_into()
+}
+
 /// The `[x, y, z]` periodicity flags of a `Pbc` array: three booleans, no
 /// coercion.
 pub(crate) fn pbc3(op: &str, pbc: &JsPbc) -> Result<[bool; 3], JsValue> {
@@ -293,34 +302,25 @@ impl Box {
         NDArray::from_vec(self.inner.origin().to_vec(), std::boxed::Box::new([3]))
     }
 
-    /// Return the box's 3×3 cell matrix `h` as a `NDArray` with shape
-    /// `[9]`, **column-major** (column j of `h` is the j-th lattice
-    /// vector). Suitable for direct consumption by `marchingCubes` and
-    /// other code that expects the cell as a flat 3×3 column-major
-    /// `Float64Array`.
+    /// The box's 3×3 cell matrix `h` as a `NDArray` of shape `[9]`,
+    /// **row-major** `h[row][col]` with the lattice vectors as columns — the
+    /// layout `Cell.matrix` takes, so `Cell.matrix(box.h().toCopy())` rebuilds
+    /// the cell. A consumer that wants the vectors contiguous (a column-major
+    /// `Float64Array`) transposes on its side.
     ///
     /// # Returns
     ///
-    /// `NDArray` of length 9: `[h00, h10, h20, h01, h11, h21, h02, h12, h22]`,
+    /// `NDArray` of length 9: `[h00, h01, h02, h10, h11, h12, h20, h21, h22]`,
     /// in angstrom (A).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const cell = box.h().toCopy(); // Float64Array, length 9
-    /// // col0 = a-vector = cell[0..3]
+    /// const h = box.h().toCopy(); // Float64Array, length 9, row-major
+    /// const a = [h[0], h[3], h[6]]; // the first lattice vector is column 0
     /// ```
     pub fn h(&self) -> NDArray {
-        let h = self.inner.matrix();
-        // Column-major, to match the marching-cubes consumer's expectation:
-        // iterate (col, row) so the flat output is [h[0][0], h[1][0], h[2][0],
-        // h[0][1], …].
-        let mut flat = Vec::with_capacity(9);
-        for j in 0..3 {
-            for row in &h {
-                flat.push(row[j]);
-            }
-        }
+        let flat: Vec<F> = self.inner.matrix().iter().flatten().copied().collect();
         NDArray::from_vec(flat, std::boxed::Box::new([9]))
     }
 
@@ -338,27 +338,22 @@ impl Box {
     /// ```js
     /// const L = box.lengths().toCopy(); // Float64Array [10, 10, 10]
     /// ```
-    /// Return the per-axis periodic boundary flags as a `Uint8Array`
-    /// of length 3 (`[px, py, pz]`, 1 = periodic, 0 = open).
+    /// The per-axis periodic boundary flags, `[x, y, z]` booleans: the `Pbc`
+    /// `new Box` takes, so a box rebuilds from its own `pbc()`.
     ///
-    /// Renderers that respect PBC (isosurface marching cubes,
-    /// bond minimum-image, atom wrap-around) need this to decide
-    /// whether to wrap coordinates across the cell.
+    /// Renderers that respect PBC (isosurface marching cubes, bond
+    /// minimum-image, atom wrap-around) read this to decide whether to wrap
+    /// coordinates across the cell.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const pbc = box.pbc(); // Uint8Array [1, 1, 1] for fully periodic
-    /// const fullyPeriodic = pbc[0] === 1 && pbc[1] === 1 && pbc[2] === 1;
+    /// const pbc = box.pbc(); // [true, true, true] for fully periodic
+    /// const fullyPeriodic = pbc.every(Boolean);
     /// ```
     #[wasm_bindgen(js_name = pbc)]
-    pub fn pbc(&self) -> js_sys::Uint8Array {
-        let p = self.inner.pbc();
-        let arr = js_sys::Uint8Array::new_with_length(3);
-        arr.set_index(0, p[0] as u8);
-        arr.set_index(1, p[1] as u8);
-        arr.set_index(2, p[2] as u8);
-        arr
+    pub fn pbc(&self) -> JsPbc {
+        js_pbc(self.inner.pbc())
     }
 
     pub fn lengths(&self) -> NDArray {
@@ -515,11 +510,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn pbc(flags: [bool; 3]) -> JsPbc {
-        flags
-            .iter()
-            .map(|&f| JsValue::from_bool(f))
-            .collect::<js_sys::Array>()
-            .unchecked_into()
+        super::js_pbc(flags)
     }
 
     fn assert_eq_array(actual: &JsFloatArray, expected: &[F]) {
@@ -574,6 +565,28 @@ pub(crate) mod tests {
         let delta_mi = cube.delta(&a, &b, true).expect("delta mi").to_copy();
         let delta_no = cube.delta(&a, &b, false).expect("delta no").to_copy();
         assert!(delta_mi.get_index(0).abs() < delta_no.get_index(0).abs());
+    }
+
+    /// `h()` is the layout `Cell.matrix` takes and `pbc()` is what `new Box`
+    /// takes: a box rebuilds from its own accessors, triclinic included.
+    #[wasm_bindgen_test]
+    fn a_box_rebuilds_from_its_own_accessors() {
+        // Row-major: `b` tilted along x.
+        let h = [10.0, 2.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0];
+        let sim_box = WasmBox::new(
+            &Cell::matrix(&h).unwrap(),
+            &[0.0; 3],
+            &pbc([true, true, false]),
+        )
+        .unwrap();
+        let flat = sim_box.h().to_copy();
+        assert_eq_array(&flat, &h);
+        let flags: JsPbc = JsValue::from(sim_box.pbc()).unchecked_into();
+        let rebuilt = WasmBox::new(&Cell::matrix(&flat.to_vec()).unwrap(), &[0.0; 3], &flags)
+            .expect("a box rebuilds from h() and pbc()");
+        assert_eq_array(&rebuilt.h().to_copy(), &h);
+        let flags: js_sys::Array = JsValue::from(sim_box.pbc()).unchecked_into();
+        assert_eq!(flags.get(2).as_bool(), Some(false));
     }
 
     #[wasm_bindgen_test]

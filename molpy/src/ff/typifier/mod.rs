@@ -331,14 +331,20 @@ impl PyTypifier {
 ///     Styles to declare, in order.
 /// pairs : sequence of (style, name, endpoints, params), optional
 ///     Pair rows to define.
+/// special_bonds : (lj, coul), optional
+///     1-2 / 1-3 / 1-4 weights, each a length-3 sequence. Adopted when the
+///     output has declared none. Two declared triples that differ raise
+///     ``ValueError`` and change nothing. Omitted, the output's weights stay.
+///     A sequence of the wrong length raises ``ValueError``.
 ///
 /// Notes
 /// -----
 /// An annotation is a ``str``, ``bool``, ``int`` or ``float`` (stamped, defines
 /// nothing), or a type: ``(style, name, endpoints, params)``, which stamps
-/// ``name`` and every param and defines the type ``name`` on ``endpoints``
-/// (atom-type names; empty for an atom type) under the style. The name is
-/// never read for endpoints. Param values are numbers or strings.
+/// ``name`` and every number or string param and defines the type ``name``
+/// on ``endpoints`` (atom-type names; empty for an atom type) under the
+/// style. An array param (a cmap ``grid``) stays on the type. The name is
+/// never read for endpoints. Param values are numbers, strings or arrays.
 #[pyclass(
     module = "molpy.ff.typifier",
     name = "TypeAssignment",
@@ -401,14 +407,22 @@ fn prefix_err(py: Python<'_>, err: PyErr, context: &str) -> PyErr {
 impl PyTypeAssignment {
     #[new]
     #[pyo3(
-        signature = (nodes, links = None, *, styles = Vec::new(), pairs = Vec::new()),
-        text_signature = "(nodes, links=None, *, styles=(), pairs=())"
+        signature = (
+            nodes,
+            links = None,
+            *,
+            styles = Vec::new(),
+            pairs = Vec::new(),
+            special_bonds = None
+        ),
+        text_signature = "(nodes, links=None, *, styles=(), pairs=(), special_bonds=None)"
     )]
     fn new(
         nodes: &Bound<'_, PyAny>,
         links: Option<&Bound<'_, PyAny>>,
         styles: Vec<(String, String, Bound<'_, PyDict>)>,
         pairs: Vec<(String, String, Vec<String>, Bound<'_, PyDict>)>,
+        special_bonds: Option<([f64; 3], [f64; 3])>,
     ) -> PyResult<Self> {
         let mut inner = TypeAssignment {
             nodes: Self::rows(nodes)?,
@@ -442,6 +456,9 @@ impl PyTypeAssignment {
         for (style, name, endpoints, params) in pairs {
             let params = params_from_dict(Some(&params))?;
             inner.pairs.push((style, name, endpoints, params));
+        }
+        if let Some((lj, coul)) = special_bonds {
+            inner.special_bonds = Some(molrs::ff::ir::SpecialBonds { lj, coul });
         }
         Ok(Self { inner })
     }
