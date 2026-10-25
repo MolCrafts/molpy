@@ -135,25 +135,26 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame, overlay: bool) -> Result<Exce
     for (&(i, j), &(w, row)) in &entries {
         // An overlay row on a 1-2 or 1-3 that `special_bonds` excludes is the
         // row the list builder refuses. Pricing it here would be the other answer.
-        if block == PAIR_OVERRIDES && row.is_some() {
-            if let Some(class) = classes
+        if block == PAIR_OVERRIDES
+            && row.is_some()
+            && let Some(class) = classes
                 .as_ref()
                 .and_then(|c| c.get(&(i.min(j), i.max(j))).copied())
+        {
+            let slot = match class {
+                1 => Some(0usize),
+                2 => Some(1usize),
+                _ => None,
+            };
+            if let Some(k) = slot
+                && sb.lj[k] == 0.0
+                && sb.coul[k] == 0.0
             {
-                let slot = match class {
-                    1 => Some(0usize),
-                    2 => Some(1usize),
-                    _ => None,
-                };
-                if let Some(k) = slot {
-                    if sb.lj[k] == 0.0 && sb.coul[k] == 0.0 {
-                        return Err(format!(
-                            "pair_overrides: atoms {i} and {j} carry a per-pair override, and \
-                             the force field's special_bonds exclude that pair (1-2 or 1-3), \
-                             so the override would be dropped"
-                        ));
-                    }
-                }
+                return Err(format!(
+                    "pair_overrides: atoms {i} and {j} carry a per-pair override, and \
+                     the force field's special_bonds exclude that pair (1-2 or 1-3), \
+                     so the override would be dropped"
+                ));
             }
         }
         let cell = row.map(|r| cells[r]).unwrap_or([None; 5]);
