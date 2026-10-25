@@ -17,8 +17,8 @@ use super::valence::atomic_number;
 
 /// Tetrahedral stereochemistry at an atom.
 ///
-/// `Clockwise` and `CounterClockwise` are the clock sense of the
-/// [reference order](tetrahedral_reference), seen from its first substituent.
+/// `Clockwise` and `CounterClockwise` are the clock sense of the reference
+/// order, seen from its first substituent.
 /// That is the bond neighbors in bond order when all four are atoms. It is
 /// not RDKit `CHI_TETRAHEDRAL_CW`, and it is not the SMILES `@@` glyph: `@`
 /// and `@@` are this same clock after the string's own neighbor permutation.
@@ -192,8 +192,8 @@ pub(crate) fn priority_substituent(mol: &Atomistic, subs: &[NodeId]) -> Option<N
 /// Infer tetrahedral chirality for every potential stereocentre from 3-D
 /// coordinates.
 ///
-/// The sign of the chiral volume uses the four atoms of
-/// [`tetrahedral_reference`]. For a centre whose four neighbors are atoms and
+/// The sign of the chiral volume uses the four atoms of the reference order.
+/// For a centre whose four neighbors are atoms and
 /// whose `h_count` is absent or zero, that is the bond-neighbor order. The
 /// label is geometric, not CIP-ranked.
 ///

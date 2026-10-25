@@ -122,7 +122,7 @@ pub enum SmilesErrorKind {
     /// Two directional substituents of one double-bond atom are marked on the
     /// same side (`C(/F)(/Cl)=C/F`). Opposite marks agree: they are one
     /// configuration. A ring digit that disagrees with itself is
-    /// [`RingBondConflict`], not this.
+    /// [`Self::RingBondConflict`], not this.
     BondStereoConflict,
     /// Graph → IR / IR → string emit failure (message is the reason).
     Emit(String),

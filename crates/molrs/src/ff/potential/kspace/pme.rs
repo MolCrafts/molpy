@@ -948,7 +948,7 @@ impl PairDriven for PmeTerms {
 ///   exclusions are omitted. The distances are raw coordinate differences,
 ///   as for every other compiled pair style, so a periodic frame whose list
 ///   is only intramolecular does not price intermolecular pairs on this
-///   door — [`pair_coul_long_pme_typed`] does, over the neighbour table.
+///   door — `pair_coul_long_pme_typed` does, over the neighbour table.
 ///   With no `pairs` block the real-space term stays the minimum-image loop
 ///   in this kernel, so the energy is not dropped.
 ///
