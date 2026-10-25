@@ -1,6 +1,6 @@
 name: release
 
-# A `v*` tag on MolCrafts/molrs: guard -> build -> every channel. crates.io
+# A `v*` tag on MolCrafts/molpy: guard -> build -> every channel. crates.io
 # (molcrafts-molrs), npm (@molcrafts/molwasm), PyPI (molcrafts-molpy: desktop abi3 wheels + the
 # Pyodide wheel), and the GitHub Release with the C API archives (lib +
 # header + LICENSE + sha256).

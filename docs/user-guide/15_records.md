@@ -302,4 +302,4 @@ In the browser, `@molcrafts/molwasm` reads records from bytes:
 `system()`, `meta()`) and `new MrecReader(source)` decodes trajectory frames,
 each over a file map, a packed `*.mrec.zip`'s bytes, or a lazy
 range-request store. See the
-[package README](https://github.com/MolCrafts/molrs/tree/master/molwasm#trajectory-stores-mrec).
+[package README](https://github.com/MolCrafts/molpy/tree/master/molwasm#trajectory-stores-mrec).

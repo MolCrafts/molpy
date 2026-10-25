@@ -8,7 +8,7 @@
 <p><strong>A multi-language toolkit for molecular systems</strong></p>
 
 <p>
-  <a href="https://github.com/MolCrafts/molrs/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/test.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI"></a>
+  <a href="https://github.com/MolCrafts/molpy/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/MolCrafts/molpy/test.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI"></a>
   <a href="https://pypi.org/project/molcrafts-molpy/"><img alt="PyPI" src="https://img.shields.io/pypi/v/molcrafts-molpy?style=flat-square&logo=pypi&logoColor=white&label=PyPI"></a>
   <a href="https://crates.io/crates/molcrafts-molrs"><img alt="crates.io" src="https://img.shields.io/crates/v/molcrafts-molrs?style=flat-square&logo=rust&logoColor=white&label=crates.io"></a>
   <a href="https://pypi.org/project/molcrafts-molpy/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/molcrafts-molpy?style=flat-square&logo=python&logoColor=white"></a>
@@ -64,7 +64,7 @@ crate that depends on `molrs`.
 | Python in the browser | `await micropip.install("molcrafts-molpy")` | `import molpy as mp` |
 | Rust | `cargo add molcrafts-molrs` | `use molrs::…` |
 | JavaScript | `npm install @molcrafts/molwasm` | the wasm-bindgen API |
-| C | `molc-*.tar.gz` from [releases](https://github.com/MolCrafts/molrs/releases) | `#include "molc.h"` |
+| C | `molc-*.tar.gz` from [releases](https://github.com/MolCrafts/molpy/releases) | `#include "molc.h"` |
 | C++ | build `molcxx/` | the CXX bridge |
 
 `core`, `perceive`, `op` and `optimize` are always compiled. Name the Cargo
@@ -84,8 +84,8 @@ optional, and only for the programs molpy still shells out to.
 `rust-toolchain.toml` pins the toolchain.
 
 ```bash
-git clone https://github.com/MolCrafts/molrs.git
-cd molrs
+git clone https://github.com/MolCrafts/molpy.git
+cd molpy
 uvx pre-commit install
 uv --directory molpy sync --extra dev
 scripts/check.sh verify

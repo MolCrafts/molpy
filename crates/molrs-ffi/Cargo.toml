@@ -5,8 +5,8 @@ edition = "2024"
 authors = ["MolCrafts"]
 description = "FFI layer for molrs with handle-based abstractions"
 license = "BSD-3-Clause"
-repository = "https://github.com/MolCrafts/molrs"
-homepage = "https://github.com/MolCrafts/molrs"
+repository = "https://github.com/MolCrafts/molpy"
+homepage = "https://github.com/MolCrafts/molpy"
 
 [lib]
 name = "molrs_ffi"

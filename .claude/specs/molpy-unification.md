@@ -38,7 +38,7 @@ molpy/                     the project repository (today's molrs repo, renamed)
 
 | Today | End state |
 |---|---|
-| repo `MolCrafts/molrs` + repo `MolCrafts/molpy` | repo `MolCrafts/molpy` (the molrs repo, renamed) |
+| repo `MolCrafts/molpy` + repo `MolCrafts/molpy` | repo `MolCrafts/molpy` (the molrs repo, renamed) |
 | Python dist `molcrafts-molrs` (`import molrs`, native `molrs._native`) | gone, no shim |
 | Python dist `molcrafts-molpy` (pure Python) | `molcrafts-molpy`, a maturin abi3 wheel; native module `molpy._core` |
 | `molrs-python/` | folded into `molpy/` (its pyo3 crate is `molpy/Cargo.toml` + `molpy/src/`) |
@@ -336,7 +336,7 @@ release (0.19) until 04.
 
 ## 5. 05-repo-rename
 
-- Archive or delete MolCrafts/molpy, then rename MolCrafts/molrs to
+- Archive or delete MolCrafts/molpy, then rename MolCrafts/molpy to
   MolCrafts/molpy.
 - Re-point the PyPI / crates.io / npm Trusted Publishing repository
   bindings, the Cloudflare Pages project (root `.`), the fork remotes and the

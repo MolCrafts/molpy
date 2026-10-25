@@ -1,6 +1,6 @@
 # Telechelic chain
 
-**Script:** [`examples/topology/06_telechelic.py`](https://github.com/MolCrafts/molrs/blob/dev/molpy/examples/topology/06_telechelic.py)
+**Script:** [`examples/topology/06_telechelic.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/06_telechelic.py)
 
 End groups are one-port units at the ends of a path: `CAPA` (`C[>]`) joins the first `EO`'s `<`, and `CAPB` (`[<]OC`) joins the last `EO`'s `>`.
 

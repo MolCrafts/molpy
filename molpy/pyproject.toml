@@ -72,10 +72,10 @@ mrec = "molpy.io.mrec:MrecMetricReader"
 mlp_jsonl = "molpy.io.mlp_jsonl:MlpJsonlMetricReader"
 
 [project.urls]
-Homepage = "https://github.com/MolCrafts/molrs/tree/dev/molpy"
+Homepage = "https://github.com/MolCrafts/molpy/tree/dev/molpy"
 Documentation = "https://docs.molcrafts.org/molpy/"
-Repository = "https://github.com/MolCrafts/molrs.git"
-Issues = "https://github.com/MolCrafts/molrs/issues"
+Repository = "https://github.com/MolCrafts/molpy.git"
+Issues = "https://github.com/MolCrafts/molpy/issues"
 
 # A mixed Rust/Python project: Cargo.toml + src/ (pyo3) build molpy._core.
 # The import package is python/molpy. The version is Cargo.toml's.

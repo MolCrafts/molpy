@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@molcrafts/molwasm.svg)](https://www.npmjs.com/package/@molcrafts/molwasm)
 
-WebAssembly bindings for the [molrs](https://github.com/MolCrafts/molrs) molecular modeling toolkit.
+WebAssembly bindings for the [molrs](https://github.com/MolCrafts/molpy) molecular modeling toolkit.
 
 Full documentation lives at <https://docs.molcrafts.org/molrs/>. The package
 ships its TypeScript declarations (`molrs.d.ts`); the

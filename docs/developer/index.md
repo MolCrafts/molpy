@@ -39,5 +39,5 @@ Ordered from plug-in interfaces (implement a subclass, register a handler) to co
 
 ## Issue Tracking and Discussion
 
-- Bug reports and feature requests: <https://github.com/MolCrafts/molrs/issues>
-- Design discussions: <https://github.com/MolCrafts/molrs/discussions>
+- Bug reports and feature requests: <https://github.com/MolCrafts/molpy/issues>
+- Design discussions: <https://github.com/MolCrafts/molpy/discussions>

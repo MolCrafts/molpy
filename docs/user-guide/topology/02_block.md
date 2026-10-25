@@ -1,6 +1,6 @@
 # Block / sequence copolymer
 
-**Script:** [`examples/topology/02_block.py`](https://github.com/MolCrafts/molrs/blob/dev/molpy/examples/topology/02_block.py)
+**Script:** [`examples/topology/02_block.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/02_block.py)
 
 A sequence is a path whose sites name different units. `{[#EO]|6[#PO]|4}` is six `EO` then four `PO`; any order can be written out site by site.
 

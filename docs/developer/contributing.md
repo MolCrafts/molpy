@@ -4,12 +4,12 @@ This page describes the workflow for contributing code, tests, or documentation 
 
 ## Before you start
 
-Search [existing issues](https://github.com/MolCrafts/molrs/issues) to avoid duplicating work. Read the [code of conduct](https://github.com/MolCrafts/molrs/blob/dev/molpy/CODE_OF_CONDUCT.md).
+Search [existing issues](https://github.com/MolCrafts/molpy/issues) to avoid duplicating work. Read the [code of conduct](https://github.com/MolCrafts/molpy/blob/dev/CODE_OF_CONDUCT.md).
 
 
 ## Workflow
 
-molpy lives in the [molrs repository](https://github.com/MolCrafts/molrs), at `molpy/`. Fork that repository, clone your fork, and create a branch from `dev`. Branch names should indicate the type of change: `feature/morse-potential`, `fix/pdb-reader-crash`, `docs/typifier-guide`.
+The project repository is [MolCrafts/molpy](https://github.com/MolCrafts/molpy). The Python binding lives at `molpy/`. Fork that repository, clone your fork, and create a branch from `dev`. Branch names should indicate the type of change: `feature/morse-potential`, `fix/pdb-reader-crash`, `docs/typifier-guide`.
 
 Implement the change with tests. Run local checks before pushing:
 

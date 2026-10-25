@@ -14,8 +14,8 @@ edition = "2024"
 rust-version = "1.91"
 license = "BSD-3-Clause"
 authors = ["MolCrafts"]
-repository = "https://github.com/MolCrafts/molrs"
-homepage = "https://github.com/MolCrafts/molrs"
+repository = "https://github.com/MolCrafts/molpy"
+homepage = "https://github.com/MolCrafts/molpy"
 
 # Every binder root repeats these four keys verbatim (a standalone workspace
 # does not inherit them), so released wheels, C libs and the crate build alike.

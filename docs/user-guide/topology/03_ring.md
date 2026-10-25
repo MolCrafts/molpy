@@ -1,6 +1,6 @@
 # Macrocycle
 
-**Script:** [`examples/topology/03_ring.py`](https://github.com/MolCrafts/molrs/blob/dev/molpy/examples/topology/03_ring.py)
+**Script:** [`examples/topology/03_ring.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/03_ring.py)
 
 A ring bond closes the path: `{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}` bonds the last unit back to the first.
 

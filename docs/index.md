@@ -18,7 +18,7 @@ hero:
       href: https://pypi.org/project/molcrafts-molpy/
       alt: Python versions
     - img: https://img.shields.io/github/stars/MolCrafts/molpy?style=flat&color=c8841d
-      href: https://github.com/MolCrafts/molrs/tree/dev/molpy
+      href: https://github.com/MolCrafts/molpy/tree/dev/molpy
       alt: GitHub stars
   actions:
     - label: molrs

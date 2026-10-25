@@ -1,6 +1,6 @@
 # Linear homopolymer
 
-**Script:** [`examples/topology/01_linear.py`](https://github.com/MolCrafts/molrs/blob/dev/molpy/examples/topology/01_linear.py)
+**Script:** [`examples/topology/01_linear.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/01_linear.py)
 
 A path of identical units is the simplest topology: `{[#EO]|10}` is ten `EO` sites, each bonded to the next.
 

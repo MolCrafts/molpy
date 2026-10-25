@@ -6,8 +6,8 @@ rust-version = "1.91"
 authors = ["MolCrafts"]
 license = "BSD-3-Clause"
 description = "The Python binding of the molpy project: the native module molpy._core"
-repository = "https://github.com/MolCrafts/molrs"
-homepage = "https://github.com/MolCrafts/molrs"
+repository = "https://github.com/MolCrafts/molpy"
+homepage = "https://github.com/MolCrafts/molpy"
 
 [lib]
 name = "molpy"

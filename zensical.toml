@@ -4,7 +4,7 @@ site_name = "MolPy"
 # redirects here). Trailing slash required so
 # absolute URLs in sitemap/canonical match the product prefix.
 site_url = "https://docs.molcrafts.org/molpy/"
-repo_url = "https://github.com/MolCrafts/molrs"
+repo_url = "https://github.com/MolCrafts/molpy"
 repo_name = "MolCrafts/molpy"
 site_description = "molpy: one project, a Rust core (molrs), and a binding for each language."
 copyright = "Copyright &copy; 2024 - 2026 MolCrafts Team"
@@ -212,7 +212,7 @@ accent_soft = "rgba(2, 132, 199, 0.14)"  # secondary — soft fill behind it
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"
-link = "https://github.com/MolCrafts/molrs"
+link = "https://github.com/MolCrafts/molpy"
 
 # Declaring markdown_extensions replaces Zensical defaults — keep the standard
 # set, then add MolVis / MolPlot fences from the shared theme.

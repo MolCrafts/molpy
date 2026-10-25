@@ -5,8 +5,8 @@ edition = "2024"
 authors = ["MolCrafts"]
 license = "BSD-3-Clause"
 description = "C API for molrs, enabling C/C++ integration"
-repository = "https://github.com/MolCrafts/molrs"
-homepage = "https://github.com/MolCrafts/molrs"
+repository = "https://github.com/MolCrafts/molpy"
+homepage = "https://github.com/MolCrafts/molpy"
 
 [lib]
 name = "molc"

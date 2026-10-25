@@ -1,6 +1,6 @@
 # The Rust Core (molrs)
 
-molpy's native classes are the Rust core's, [molrs](https://github.com/MolCrafts/molrs/tree/dev/crates/molrs):
+molpy's native classes are the Rust core's, [molrs](https://github.com/MolCrafts/molpy/tree/dev/crates/molrs):
 a column store and compute kernels, compiled into the wheel as `molpy._core`
 and published in the subsystem module named after their Rust owner
 (`mp.core` is `molrs::core`, `mp.compute` is `molrs::compute`). `mp.Frame` and

@@ -7,7 +7,7 @@ objects are live views over stable handles in those worlds.
 !!! note "Discuss before you build"
     A new stored node or relation kind changes the molrs schema, Rust graph
     algorithms, Python bindings, frame projection, and I/O formatters. Open a
-    [GitHub issue](https://github.com/MolCrafts/molrs/issues) before implementing it.
+    [GitHub issue](https://github.com/MolCrafts/molpy/issues) before implementing it.
 
 ## What can be extended in Python
 

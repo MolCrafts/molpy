@@ -42,6 +42,6 @@ follow. Please read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before contributing
 
 ## Questions?
 
-- **General questions:** [GitHub Discussions](https://github.com/MolCrafts/molrs/discussions)
-- **Bug reports:** [GitHub Issues](https://github.com/MolCrafts/molrs/issues)
+- **General questions:** [GitHub Discussions](https://github.com/MolCrafts/molpy/discussions)
+- **Bug reports:** [GitHub Issues](https://github.com/MolCrafts/molpy/issues)
 - **Documentation:** [docs.molcrafts.org/molpy](https://docs.molcrafts.org/molpy/)

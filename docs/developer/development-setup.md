@@ -21,8 +21,8 @@ project: `molpy/Cargo.toml` + `molpy/src/` build the native module
 `molpy._core`, and `molpy/python/molpy/` is the package.
 
 ```bash
-git clone https://github.com/MolCrafts/molrs.git
-cd molrs
+git clone https://github.com/MolCrafts/molpy.git
+cd molpy
 uvx pre-commit install
 uv --directory molpy sync --extra dev   # builds molpy in place (editable)
 cd molpy && uv run pytest               # the Python suite
