@@ -1,13 +1,19 @@
 ---
 title: MolPy
-description: A Python toolkit for building, editing, and parameterizing complex molecular systems.
+description: MolPy is the Python toolkit that ties molecular modeling together.
 hide:
   - navigation
   - toc
 hero:
   kicker: MolPy Manual
   title: MolPy
-  description: Build, edit, and parameterize complex molecular systems in Python.
+  description: Molecular modeling in Python.
+  actions:
+    - label: Get started
+      href: getting-started/quickstart/
+      style: primary
+    - label: Examples
+      href: getting-started/examples/
   install:
     label: Install
     command: pip install molcrafts-molpy
@@ -21,254 +27,167 @@ hero:
     - img: https://img.shields.io/github/stars/MolCrafts/molpy?style=flat&color=c8841d
       href: https://github.com/MolCrafts/molpy
       alt: GitHub stars
-  actions:
-    - label: Get started
-      href: tutorials/
-      style: primary
-    - label: Browse examples
-      href: getting-started/examples/
-    - label: API reference
-      href: api/
 ---
 
 <h1 class="molcrafts-sr-only">MolPy</h1>
 
-<div class="molcrafts-manual-home" markdown>
+<div class="molcrafts-manual-home molpy-home" markdown>
 
-<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
+<section class="molpy-band molpy-intro" markdown>
 
-<div class="molcrafts-manual-section__header" markdown>
+MolPy is the Python toolkit that ties molecular modeling together: structures,
+force fields and trajectories in one model, passed cleanly between builders,
+engines and analyses.
 
-<span class="molcrafts-manual-eyebrow">Parameterize</span>
+</section>
 
-## Typed and relaxed
+<section class="molpy-band molpy-modules" markdown>
 
-Coordinates, force-field types, and a minimized geometry in a few calls.
+<div class="molpy-module" markdown>
 
-[Typifier guide →](user-guide/06_typifier/)
+<div class="molpy-module__copy" markdown>
+
+### [Build](user-guide/02_assembly.md)
+
+<code class="molpy-module__name">mp.builder</code>
+
+Molecules from SMILES, polymers from CGsmiles, crystals and nanotubes.
 
 </div>
 
 ```python
 import molpy as mp
 
-# SMILES → 3D
-mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
-mol, _ = mp.conformer.Conformer(seed=42).generate(mol)
+drug = mp.io.smiles.read_smiles("CC(=O)Nc1ccc(O)cc1").to_atomistic()
+drug, _ = mp.conformer.Conformer(seed=42).generate(drug)  # paracetamol, 3D
 
-# OPLS-AA typing
+tube = mp.builder.CarbonTubeBuilder(10, 10, length=50.0, periodic=True)
+```
+
+</div>
+
+<div class="molpy-module" markdown>
+
+<div class="molpy-module__copy" markdown>
+
+### [Force fields](user-guide/06_typifier.md)
+
+<code class="molpy-module__name">mp.ff</code>
+
+OPLS-AA and GAFF atom types, their parameters, energies and forces.
+
+</div>
+
+```python
 typifier = mp.ff.typifier.OplsAaTypifier()
-frame = typifier.typify(mol).to_frame()
-ff = typifier.forcefield()
-
-# minimize
-potentials = mp.ff.compile.PotentialCompiler(ff).compile(frame)
-frame, report = mp.optimize.Lbfgs(potentials, fmax=0.05).minimize(frame)
+frame = typifier.typify(drug).to_frame()  # OPLS-AA atom types
+ff = typifier.forcefield()  # and their parameters
 ```
 
-</section>
+</div>
 
-<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
+<div class="molpy-module" markdown>
 
-<div class="molcrafts-manual-section__header" markdown>
+<div class="molpy-module__copy" markdown>
 
-<span class="molcrafts-manual-eyebrow">Assemble</span>
+### [Read and write](user-guide/11_io.md)
 
-## Any architecture
+<code class="molpy-module__name">mp.io</code>
 
-Define a unit once; a CGsmiles string sets the shape — chain, ring, star.
-
-[Assembly guide →](user-guide/02_assembly/)
+Structures and trajectories in the formats your other tools speak.
 
 </div>
 
 ```python
-# a unit with two ports
-eo = mp.conformer.Conformer(seed=42).generate(
-    mp.io.smiles.read_smiles_fragment("[<]OCC[>]").to_template()
-)[0]
-assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
+from pathlib import Path
 
-def build(cgsmiles):
-    sites = mp.io.cgsmiles.read_cgsmiles(cgsmiles).to_coarsegrain()
-    return assembler.assemble(sites, mp.Atomistic)
-
-# shape from CGsmiles
-chain = build("{[#EO]|10}")
-ring = build("{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}")
+mp.io.write_gro(Path("paracetamol.gro"), frame)
+again = mp.io.read_gro(Path("paracetamol.gro"))
 ```
 
-</section>
+</div>
 
-<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
+<div class="molpy-module" markdown>
 
-<div class="molcrafts-manual-section__header" markdown>
+<div class="molpy-module__copy" markdown>
 
-<span class="molcrafts-manual-eyebrow">Materials</span>
+### [Engines](user-guide/12_engine.md)
 
-## Beyond molecules
+<code class="molpy-module__name">mp.engine</code>
 
-Nanotubes and graphene sheets, bonded across the periodic boundary.
-
-[Nanostructures guide →](user-guide/04_nanostructures/)
+A typed system handed to GROMACS, LAMMPS or OpenMM as ready inputs.
 
 </div>
 
 ```python
-from molpy.builder import CarbonTubeBuilder, GrapheneBuilder
-
-# (10,10) nanotube
-tube = CarbonTubeBuilder(10, 10, length=50.0, periodic=True)
-cnt = tube.build()
-cnt.box = tube.cell(vacuum=12.0)
-
-# graphene sheet
-sheet = GrapheneBuilder(8, 8, periodic_xy=True).build()
-```
-
-</section>
-
-<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
-
-<div class="molcrafts-manual-section__header" markdown>
-
-<span class="molcrafts-manual-eyebrow">Simulate</span>
-
-## Engine-ready inputs
-
-LAMMPS, GROMACS, CP2K, and OpenMM inputs from one system and force field.
-
-[Engines guide →](user-guide/12_engine/)
-
-</div>
-
-```python
-frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
-# molecule IDs
-frame["atoms"]["mol_id"] = (
-    mp.Topology.from_frame(frame).connected_components() + 1
-)
-# cutoffs
-ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
-ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-
-lammps = mp.engine.LammpsEngine(check_executable=False)
-lammps.generate_inputs(frame, ff, "./lammps")
+frame.box = mp.Box.cube(40.0)  # Å
 
 gromacs = mp.engine.GromacsEngine(check_executable=False)
-gromacs.generate_inputs(frame, ff, "./gromacs")
+files = gromacs.generate_inputs(frame, ff, "paracetamol_md")
 ```
 
-</section>
+</div>
 
-<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
+<div class="molpy-module" markdown>
 
-<div class="molcrafts-manual-section__header" markdown>
+<div class="molpy-module__copy" markdown>
 
-<span class="molcrafts-manual-eyebrow">Analyze</span>
+### [Analysis](compute/index.md)
 
-## Analysis in place
+<code class="molpy-module__name">mp.compute</code>
 
-RDF, diffusion, order parameters, and spectra, in compiled code.
-
-[Compute section →](compute/)
+Structure, dynamics and spectra from the trajectories that come back.
 
 </div>
 
 ```python
-from molpy.compute import Rdf
+pairs = mp.core.NeighborList(6.0)
+pairs.build(tube.build().coords, tube.cell(vacuum=12.0))
 
-# 8 Å neighbor list
-nl = mp.core.NeighborList(8.0)
-nl.build(frame.coords, frame.box)
-
-# g(r)
-rdf = Rdf(n_bins=50, r_max=8.0, r_min=0.0).compute(pairs=[nl.neighbors()])
+rdf = mp.compute.Rdf(n_bins=120, r_max=6.0, r_min=0.0).accumulator()
+rdf.push(pairs.neighbors())
+g = rdf.finish().rdf  # g(r) across the nanotube wall
 ```
 
-</section>
-
-<section class="molcrafts-manual-section molcrafts-manual-section--body-col" markdown>
-
-<div class="molcrafts-manual-section__header" markdown>
-
-<span class="molcrafts-manual-eyebrow">Ecosystem</span>
-
-## One shared structure
-
-[molpack](https://docs.molcrafts.org/molpack/),
-[molvis](https://github.com/MolCrafts/molvis), and
-[molmcp](https://github.com/MolCrafts/molmcp) read it directly. Drag to rotate.
-
 </div>
 
-<figure id="fig-aspirin" class="molcrafts-figure" markdown>
-<div class="molcrafts-figure__body">
-    <!-- XYZ must start on the same line as <template> (no leading blank line). -->
-    <molvis-viewer format="xyz" representation="ball-and-stick" controls="view" height="260px">
-      <template data-molvis-source>21
-name=aspirin Connct="[0,4,0,11,1,10,1,20,2,10,3,11,4,5,4,6,5,7,5,10,6,8,6,13,7,9,7,14,8,9,8,15,9,16,11,12,12,17,12,18,12,19]"
-O   1.2333   0.5540   0.7792
-O  -0.6952  -2.7148  -0.7502
-O   0.7958  -2.1843   0.8685
-O   1.7813   0.8105  -1.4821
-C  -0.0857   0.6088   0.4403
-C  -0.7927  -0.5515   0.1244
-C  -0.7288   1.8464   0.4133
-C  -2.1426  -0.4741  -0.2184
-C  -2.0787   1.9238   0.0706
-C  -2.7855   0.7636  -0.2453
-C  -0.1409  -1.8536   0.1477
-C   2.1094   0.6715  -0.3113
-C   3.5305   0.5996   0.1635
-H  -0.1851   2.7545   0.6593
-H  -2.7247  -1.3605  -0.4564
-H  -2.5797   2.8872   0.0506
-H  -3.8374   0.8238  -0.5090
-H   3.7290   1.4184   0.8593
-H   4.2045   0.6969  -0.6924
-H   3.7105  -0.3659   0.6426
-H  -0.2555  -3.5916  -0.7337</template>
-    </molvis-viewer>
-  </div>
+</section>
 
-**Figure 1.** Aspirin in molvis.
+<section class="molpy-band molpy-gallery" markdown>
+
+## From crystals to polymers
+
+<div class="molpy-gallery__grid">
+<figure class="molpy-tile">
+<div class="molpy-tile__stage"><molvis-viewer src="series/showcase/rock_salt.pdb" format="pdb" representation="ball-and-stick" controls="context-menu" background="#14291d" width="100%" height="100%"></molvis-viewer></div>
+<figcaption><a href="user-guide/04_nanostructures/#bulk-crystals-from-a-cif">Rock salt</a></figcaption>
 </figure>
+<figure class="molpy-tile">
+<div class="molpy-tile__stage"><molvis-viewer src="series/showcase/aspirin.pdb" format="pdb" representation="ball-and-stick" controls="context-menu" background="#14291d" width="100%" height="100%"></molvis-viewer></div>
+<figcaption><a href="user-guide/07_conformers/">Aspirin</a></figcaption>
+</figure>
+<figure class="molpy-tile">
+<div class="molpy-tile__stage"><molvis-viewer src="series/showcase/star.pdb" format="pdb" representation="ball-and-stick" controls="context-menu" background="#14291d" width="100%" height="100%"></molvis-viewer></div>
+<figcaption><a href="user-guide/topology/04_star/">Star polymer</a></figcaption>
+</figure>
+<figure class="molpy-tile">
+<div class="molpy-tile__stage"><molvis-viewer src="series/showcase/nanotube.pdb" format="pdb" representation="ball-and-stick" controls="context-menu" background="#14291d" width="100%" height="100%"></molvis-viewer></div>
+<figcaption><a href="user-guide/04_nanostructures/">Carbon nanotube</a></figcaption>
+</figure>
+</div>
 
 </section>
 
-<section class="molcrafts-manual-section molcrafts-manual-section--body-col" markdown>
+<section class="molpy-band molpy-resources" markdown>
 
-<div class="molcrafts-manual-section__header" markdown>
+## Learning resources
 
-<span class="molcrafts-manual-eyebrow">Where to start</span>
-
-## Start here
-
+<div class="molpy-resources__grid">
+<div class="molpy-resource"><h3><a href="tutorials/">Tutorials</a></h3><ul><li><a href="getting-started/installation/">Installation</a></li><li><a href="getting-started/quickstart/">Quickstart</a></li><li><a href="tutorials/02_block_and_frame/">Block and Frame</a></li><li><a href="tutorials/04_force_field/">Force Field</a></li><li><a href="tutorials/05_trajectory/">Trajectory</a></li></ul></div>
+<div class="molpy-resource"><h3><a href="user-guide/">Guides</a></h3><ul><li><a href="user-guide/02_assembly/">Polymer assembly</a></li><li><a href="user-guide/06_typifier/">Force-field typing</a></li><li><a href="user-guide/09_packing/">Packing a box</a></li><li><a href="user-guide/12_engine/">Simulation engines</a></li><li><a href="user-guide/11_io/">File I/O</a></li></ul></div>
+<div class="molpy-resource"><h3><a href="compute/">Compute</a></h3><ul><li><a href="compute/rdf/">Radial distribution</a></li><li><a href="compute/msd/">Diffusion (MSD)</a></li><li><a href="compute/hbond/">Hydrogen bonds</a></li><li><a href="compute/order/">Order parameters</a></li><li><a href="compute/spectra/">Spectra</a></li></ul></div>
+<div class="molpy-resource"><h3><a href="api/">Reference</a></h3><ul><li><a href="api/">API Reference</a></li><li><a href="getting-started/examples/">Example gallery</a></li><li><a href="tutorials/glossary/">Glossary</a></li><li><a href="getting-started/faq/">FAQ</a></li></ul></div>
 </div>
-
-<dl class="molcrafts-link-list">
-<div>
-<dt><a href="getting-started/quickstart/">Quickstart</a></dt>
-<dd>SMILES to LAMMPS input, end to end.</dd>
-</div>
-<div>
-<dt><a href="tutorials/">Tutorials</a></dt>
-<dd>The data model, chapter by chapter.</dd>
-</div>
-<div>
-<dt><a href="user-guide/">Guides</a></dt>
-<dd>One recipe per task.</dd>
-</div>
-<div>
-<dt><a href="compute/">Compute</a></dt>
-<dd>Trajectory analysis and its theory.</dd>
-</div>
-<div>
-<dt><a href="api/">API Reference</a></dt>
-<dd>Every public class and function.</dd>
-</div>
-</dl>
 
 </section>
 

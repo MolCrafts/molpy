@@ -119,9 +119,11 @@ Under a percent apart. Run the identical test on a `np.cumsum` random walk and
 the two halves disagree wildly and grow with length — the pathology this page
 attributes to un-decomposed ions.
 
-Two practical notes. Compute the variance in two passes (mean first, then
-deviations) rather than as $\langle M^2\rangle - \langle M\rangle^2$, which
-cancels catastrophically when the mean is large. And check the three Cartesian
+Two practical notes. `StaticDielectric` computes the variance in two passes
+(mean first, then deviations) rather than as
+$\langle M^2\rangle - \langle M\rangle^2$, which cancels catastrophically
+when the mean is large; do the same in any variance you compute yourself. And
+check the three Cartesian
 components separately — `epsilon_axes` holds them: in an isotropic liquid they
 must agree, and a persistent difference means the box is not equilibrated or a
 field is leaking in from somewhere.
@@ -449,7 +451,7 @@ at least easy to spot.
     nanoseconds with Ewald electrostatics; the reference trajectory behind these
     pages is monatomic argon, for which $\mathbf{M} \equiv 0$. Add a measured
     spectrum when a polar reference trajectory exists under
-    `scripts/docs_series/`.
+    `molpy/scripts/docs_series/`.
 
 ## When it goes wrong
 

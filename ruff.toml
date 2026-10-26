@@ -1,0 +1,12 @@
+# Python lint for this repository (molrs-python/, scripts/), run by
+# `scripts/check.sh ruff` at commit time and in CI. One rule: text-mode file
+# I/O must name its encoding. Without it Python decodes with the locale --
+# UTF-8 on Linux and macOS, cp1252 on Windows -- so a read that passes every
+# Linux hook fails only on CI's Windows leg (PLW1514 is a preview rule;
+# explicit-preview-rules keeps every other preview rule off).
+target-version = "py312"
+
+[lint]
+preview = true
+explicit-preview-rules = true
+select = ["PLW1514"]

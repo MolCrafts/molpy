@@ -3,12 +3,12 @@
 Locators for the data files bundled with MolPy — built-in force fields
 (`tip3p.xml`, an OpenMM XML; `clp.xml`, the CL&P typing force field read by
 `mp.ff.typifier.OplsAaTypifier(path)`) and other packaged assets. The CL&Pol
-Drude table ships with molrs (`mp.ff.params.clpol_polarizability()`). These helpers
+Drude table is built in (`mp.builder.DrudeBuilder().polarizability`). These helpers
 return filesystem paths you can hand to a reader; they do not parse anything
 themselves. Available via `import molpy as mp`
 (`mp.resources.get_path("forcefield/tip3p.xml")`).
 
-OPLS-AA is not a bundled file: it ships with molrs and comes from
+OPLS-AA is not a bundled file: it is built in and comes from
 `mp.ff.typifier.OplsAaTypifier()` — `.source_forcefield()` returns every OPLS-AA type,
 `.forcefield()` only the types assigned by the last `.typify(...)`.
 
@@ -23,9 +23,9 @@ OPLS-AA is not a bundled file: it ships with molrs and comes from
 ```python
 import molpy as mp
 
-ff = mp.io.read_openmm_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
+ff = mp.io.openmm_xml.OpenmmXmlReader().read(mp.resources.get_path("forcefield/tip3p.xml"))
 
-opls = mp.ff.typifier.OplsAaTypifier().source_forcefield() # all OPLS-AA types, from molrs
+opls = mp.ff.typifier.OplsAaTypifier().source_forcefield() # all OPLS-AA types
 ```
 
 ---

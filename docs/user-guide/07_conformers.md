@@ -32,13 +32,13 @@ you can generate several independent conformers from the same graph.
 
 ## Constructor parameters
 
-`mp.conformer.Conformer` is the native conformer generator (`molrs.conformer.Conformer`),
-`Conformer(speed="medium", add_hydrogens=True, seed=None)`; an empty molecule
-is refused with `ValueError`:
+`mp.conformer.Conformer` is the native conformer generator (`molpy.conformer.Conformer`),
+`Conformer(add_hydrogens=True, seed=None)`; an empty molecule is refused with
+`ValueError`. The pipeline itself is fixed — ETKDG embedding, then an MMFF94
+cleanup minimization — so the constructor only says what to feed it:
 
 | Parameter | Meaning |
 |---|---|
-| `speed` | Speed/quality trade-off for the embedding + refinement passes. Faster settings do fewer refinement steps. |
 | `add_hydrogens` | Whether to fill valences with explicit hydrogens before embedding (the same edit as `mp.perceive.add_hydrogens`). Leave on unless your graph already carries all H. |
 | `seed` | RNG seed for the stochastic embedding. **Set it for reproducible geometries** — omitting it gives a different conformer each run. |
 
@@ -49,12 +49,14 @@ Charged atoms must already carry the canonical integer `"formal_charge"` key
 
 `ConformerReport` aggregates the run:
 
-- `final_energy` — energy of the returned structure.
+- `final_energy` — the MMFF94 energy of the returned structure, or `None` when
+  MMFF94 does not cover the molecule and the cleanup was skipped (a warning
+  says so).
 - `stages` — a list of `ConformerStageReport`, one per pipeline stage.
 - `warnings` — any non-fatal issues raised during generation.
 
 Each `ConformerStageReport` records `stage`, `steps`, `converged`,
-`energy_before`, `energy_after`, and `elapsed_ms`:
+`energy_before` and `energy_after`:
 
 ```python
 for s in report.stages:
@@ -66,7 +68,7 @@ for s in report.stages:
 ```
 
 A stage that reports `converged = False` means it exhausted its step budget —
-the geometry is usable but not fully relaxed; try a slower `speed`.
+the geometry is usable but not fully relaxed.
 
 ## Pitfalls
 

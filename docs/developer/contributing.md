@@ -4,18 +4,17 @@ This page describes the workflow for contributing code, tests, or documentation 
 
 ## Before you start
 
-Search [existing issues](https://github.com/MolCrafts/molpy/issues) to avoid duplicating work. Read the [code of conduct](https://github.com/MolCrafts/molpy/blob/master/CODE_OF_CONDUCT.md).
+Search [existing issues](https://github.com/MolCrafts/molpy/issues) to avoid duplicating work. Read the [code of conduct](https://github.com/MolCrafts/molpy/blob/dev/CODE_OF_CONDUCT.md).
 
 
 ## Workflow
 
-Fork the repository, clone your fork, and create a branch from `master`. Branch names should indicate the type of change: `feature/morse-potential`, `fix/pdb-reader-crash`, `docs/typifier-guide`.
+The project repository is [MolCrafts/molpy](https://github.com/MolCrafts/molpy). The Python binding lives at `molpy/`. Fork that repository, clone your fork, and create a branch from `dev`. Branch names should indicate the type of change: `feature/morse-potential`, `fix/pdb-reader-crash`, `docs/typifier-guide`.
 
 Implement the change with tests. Run local checks before pushing:
 
 ```bash
-python scripts/check.py lint
-uv run --extra dev python -m pytest tests/ -n auto
+scripts/check.sh python      # from the repository root
 ```
 
 Open a pull request with a clear summary. The PR description should include what changed, why, and how to verify it.
@@ -42,10 +41,12 @@ A good description answers five questions:
 
 ## Documentation expectations
 
-When behavior changes, update the relevant docs in `docs/`. The three doc layers have different standards:
+When behavior changes, update the relevant docs in `docs/`. The doc layers have different standards:
 
-- **Concepts** (human-first) — narrative explanation with code after context
-- **Guides** (human-first) — end-to-end workflows with runnable code
+- **Tutorials** (human-first) — narrative explanation with code after context
+- **Guides** and **Compute** (human-first) — end-to-end workflows with runnable code
 - **API Reference** (agent-first) — quick-reference tables + mkdocstrings auto-generation
+
+The manual is executable: the `docs` gate runs every ```` ```python ```` block of a page, top to bottom, against the current API. A block that cannot run in the docs environment starts with `# docs: skip — <reason>`, naming the missing program or package.
 
 If the change adds a new public symbol, it should appear in the appropriate API page. If it changes user-facing behavior, the relevant guide or concept page should be updated.

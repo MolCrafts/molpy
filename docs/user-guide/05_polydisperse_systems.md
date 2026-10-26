@@ -37,7 +37,7 @@ library = {
 
 
 def mass(atoms):
-    return sum(Element(a.get("element")).mass for a in atoms)
+    return sum(Element.by_number(a.get("atomic_number")).mass for a in atoms)
 
 
 # The mass a unit adds to a chain: its template minus the handles that leave.
@@ -129,6 +129,7 @@ The four panels below overlay sampled histograms against their theoretical curve
 
 
 ```python
+# docs: skip — needs matplotlib, which is not a molpy runtime/doc dependency
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
@@ -287,7 +288,7 @@ atomistic_chains = []
 for chain in sz_chains[:n_chains]:
     notation = "{[#HEAD]" + "".join(f"[#{m}]" for m in chain.monomers) + "[#TAIL]}"
     sites = mp.io.cgsmiles.read_cgsmiles(notation).to_coarsegrain()
-    atomistic_chains.append(assembler.assemble(sites, mp.Atomistic))
+    atomistic_chains.append(assembler.assemble(sites))
 
 for chain, built in zip(sz_chains, atomistic_chains):
     print(
@@ -354,16 +355,13 @@ for chain in typed_chains:
 packed = GencanPack().with_seed(42).run(targets, max_loops=200).frame  # carries mol_id
 packed.box = mp.Box(mp.core.Cell.lengths([box_length] * 3))
 
-# the pair cutoff is a run setting: you declare it, molpy never invents one
-ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
-ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-
+# the pair styles carry the 12 Å cutoff the OPLS-AA typifier declares
 Path("05_output").mkdir(exist_ok=True)
-mp.io.write_lammps_data("05_output/system.data", packed)
+mp.io.write_lammps_data(Path("05_output/system.data"), packed)
 # the input script states `units` before `read_data`; LAMMPS refuses a second
 # `units` line once the box exists, so the include leaves it out
-mp.io.write_lammps_forcefield(
-    "05_output/system.ff", ff, packed, skip_units=True
+mp.io.lammps.LammpsForcefieldWriter(packed, skip_units=True).write(
+    Path("05_output/system.ff"), ff
 )
 print(f"packed: {packed['atoms'].n_rows} atoms, box: {box_length:.1f} A")
 ```
@@ -379,7 +377,7 @@ Writing the data file is only half the story. To actually run the simulation, LA
 
 **A `Script` is an immutable value — a name, its text and an optional path —** that can be saved to disk without executing anything. This separation matters: you can inspect, modify, and version-control the script before committing to a run. When you are ready, `engine.run()` writes the script to the working directory and launches `lmp -in input.lmp -log log.lammps -screen none`.
 
-The code below builds a minimal equilibration protocol for the packed system. It reads the `system.data` and `system.ff` written above. The include already declares every style, the mixing rule (geometric, as OPLS-AA defines it) and `special_bonds`, so the script does not repeat them: a `pair_style` of another kind issued after the include would discard the pair coefficients it just set. The script states `units` itself, which is why the include was written with `skip_units=True`. For long-range electrostatics, write the include with `write_lammps_forcefield(..., skip_pair_style=True)` too and declare `pair_style` and `kspace_style` in the script before `include`, as the [AmberTools guide](13_ambertools_integration.md) does; the include still sets the mixing rule and `special_bonds`.
+The code below builds a minimal equilibration protocol for the packed system. It reads the `system.data` and `system.ff` written above. The include already declares every style, the mixing rule (geometric, as OPLS-AA defines it) and `special_bonds`, so the script does not repeat them: a `pair_style` of another kind issued after the include would discard the pair coefficients it just set. The script states `units` itself, which is why the include was written with `skip_units=True`. For long-range electrostatics, write the include with `mp.io.lammps.LammpsForcefieldWriter(frame, skip_pair_style=True)` too and declare `pair_style` and `kspace_style` in the script before `include`, as the [AmberTools guide](13_ambertools_integration.md) does; the include still sets the mixing rule and `special_bonds`.
 
 
 ```python
@@ -444,7 +442,7 @@ Input script written to: 05_output/input.lmp
 
 ## The notation describes one chain; the ensemble is code
 
-MolPy reads CGsmiles (`mp.io.cgsmiles.CgSmilesIr`), and every chain above passed through it: the units are CGsmiles fragments and each sampled sequence is a CGsmiles string. What a CGsmiles string does not hold is the ensemble — the monomer weights, the chain-length distribution and the target system mass. Those stay ordinary Python objects (`WeightedSequenceGenerator`, a distribution, `SystemPlanner`), which are easier to inspect, debug and parameterise than a single string. BigSMILES and G-BigSMILES are not parsed.
+MolPy reads CGsmiles (`mp.io.cgsmiles.read_cgsmiles`), and every chain above passed through it: the units are CGsmiles fragments and each sampled sequence is a CGsmiles string. What a CGsmiles string does not hold is the ensemble — the monomer weights, the chain-length distribution and the target system mass. Those stay ordinary Python objects (`WeightedSequenceGenerator`, a distribution, `SystemPlanner`), which are easier to inspect, debug and parameterise than a single string. BigSMILES and G-BigSMILES are not parsed.
 
 ## Troubleshooting
 

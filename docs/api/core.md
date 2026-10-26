@@ -1,10 +1,10 @@
 # Core
 
 Foundational data structures for molecular systems. All available via
-`import molpy as mp`. `mp.core` mirrors molrs's core, `molrs.core`, by identity, in one
-module (`mp.core.Cuboid is molrs.core.Cuboid`). The data classes you handle
-directly are promoted to the root as the same objects (`mp.Frame is
-mp.core.Frame is molrs.core.Frame`, `mp.Box`, `mp.Atomistic`, …); everything
+`import molpy as mp`. `mp.core` is the whole data model
+in one module. The data classes you handle directly are promoted to the root
+as the same objects (`mp.Frame is mp.core.Frame`, `mp.Box`,
+`mp.Atomistic`, …); everything
 else is `mp.core.<Name>`. molpy's additions here are the column selectors and
 the trajectory splitters, both in `mp.core` beside the `Block` and
 `Trajectory` they act on. Perception (`SmartsPattern`, `perceive_rings`, `add_hydrogens`, …) is
@@ -22,7 +22,7 @@ the trajectory splitters, both in `mp.core` beside the `Block` and
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
 | `mp.ff.forcefield.ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
 | `NodeRef` / `RelationRef` / `Refs` | Live handles onto graph nodes / relations and collections of them (an `Atom` is a node view, a `Bond` a relation view) | Code generic over node / relation kinds | Everyday atom / bond editing |
-| `Cuboid` / `Sphere` / `HalfSpace` / … / `Region` | Geometric regions (`mask(block)`, `region(block)`, `&` / `\|` / `~` into a `Region`) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
+| `Cuboid` / `Sphere` / `HalfSpace` / … / `Region` | Geometric regions (`contains(points)`, `mask(block)`, `distance(points)`, `&` / `\|` / `~` into a `Region`) | Spatial selection, packing restraints | Non-geometric masks (use a `ColumnSelector` / `MaskPredicate`) |
 | `UnitRegistry` / `UnitPreset` | Unit registry (with `k_B` and reduced LJ units) and named presets (`real`, `metal`, `openmm`, …) | Unit conversions and custom presets | Unit-agnostic array math |
 
 ## Canonical examples
@@ -37,9 +37,9 @@ o = mol.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0)
 h = mol.add_atom(atomic_number=1, x=0.957, y=0.0, z=0.0)
 mol.add_bond(o, h)
 mol.generate_topology(gen_angle=True) # writes angles on mol; returns counts added
-# bulk reads: mol.atoms["x"] / mol.xyz — no full view materialization
+# bulk reads: mol.atoms["x"] — one column across every atom, no per-atom views
 
-# Block + Frame: tabular snapshot. `meta` is a dict of Python scalars.
+# Block + Frame: tabular snapshot. `meta` takes a dict of Python scalars.
 frame = mp.Frame(
  blocks={"atoms": {"element": ["O", "H"], "x": [0.0, 0.957]}},
  meta={"timestep": 0},
@@ -84,11 +84,11 @@ cc = ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=536.0, r0=1.52
 
 ::: molpy.ff.forcefield.ForceFieldType
 
-::: molpy.ff.compile.PotentialCompiler
+::: molpy.ff.PotentialCompiler
 
 ### Frame and Block
 
-Re-exported from the native core — `mp.Frame is molrs.core.Frame`:
+Re-exported from the native core — `mp.Frame is molpy.core.Frame`:
 
 ::: molpy.Frame
 

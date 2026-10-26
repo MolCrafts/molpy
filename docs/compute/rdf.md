@@ -90,7 +90,7 @@ closer than that. This is the repulsive wall of the interatomic potential, and
 it is the reason liquids are nearly incompressible. Every atom carries an
 exclusion zone that nothing else enters.
 
-**A sharp peak at 3.68 Å, reaching $g = 2.89$.** Almost three times as many
+**A sharp peak at 3.68 Å, reaching $g = 2.91$.** Almost three times as many
 neighbours sit at this distance as chance would put there. This is the first
 coordination shell — the atoms in direct contact. Its position is not arbitrary.
 Argon is modelled here as a Lennard-Jones fluid with collision diameter
@@ -99,7 +99,7 @@ $2^{1/6}\sigma = 3.82$ Å. The peak sits just inside the bottom of the pair
 potential well: atoms settle where the energy is lowest, pushed slightly closer
 by the pressure of the surrounding fluid.
 
-**A dip to $g \approx 0.59$, flat from 5.3 to 5.4 Å.** Depleted, not empty. Atoms in the first shell
+**A dip to $g \approx 0.61$, flat from 5.2 to 5.5 Å.** Depleted, not empty. Atoms in the first shell
 are in the way, so this separation is awkward to occupy.
 
 **A broad second peak at 7.08 Å, only $g = 1.27$.** The second shell, roughly
@@ -161,7 +161,7 @@ between the first peak and the first minimum of $g(r)$ is the first
 coordination shell.
 </figure>
 
-For this argon, $n$ at the first minimum (5.33 Å) is **12.4**. A close-packed crystal has
+For this argon, $n$ at the first minimum (5.28 Å) is **12.2**. A close-packed crystal has
 exactly 12 nearest neighbours. So each atom in the liquid is packed as
 tightly as it would be in a solid — it has kept its neighbours and lost only the
 long-range order. That one number is the physical content of the whole curve,
@@ -175,9 +175,10 @@ defensible definition of "in contact" for [Cluster](cluster.md),
 
 `Rdf` histograms distances that a [`NeighborList`](neighborlist.md) has already
 found, so the two are always used together. The constructor fixes the
-measurement — how many bins, over which range $[r_\min, r_\max)$ — and
-`compute` takes the data: one pair source per frame. `Rdf` never sees the frame
-itself; the box it normalises by travels with the pair table, which recorded
+measurement — how many bins, over which range $[r_\min, r_\max)$. `Rdf` is a
+**stream**: `accumulator()` hands out an accumulator, each frame's pair source
+is pushed into it, and `finish()` reads the averaged $g(r)$. `Rdf` never sees
+the frame itself; the box it normalises by travels with the pair table, which recorded
 the box it was searched in. Build the frame first:
 
 ```python
@@ -204,7 +205,9 @@ from molpy.compute import Rdf
 nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
-result = Rdf(n_bins=160, r_max=8.0, r_min=0.0).compute(pairs=[nlist])
+accumulator = Rdf(n_bins=160, r_max=8.0, r_min=0.0).accumulator()
+accumulator.push(nlist)
+result = accumulator.finish()
 
 r, g = result.bin_centers, result.rdf
 peaks = r[g > 0.1]
@@ -216,25 +219,28 @@ $a/\sqrt{2} = 3.72$, $a = 5.26$, $a\sqrt{3/2} = 6.44$, and $a\sqrt{2} = 7.44$ Å
 The peaks land on them. A crystal gives sharp spikes at the lattice distances
 and never decays to 1 — exactly the third row of the table above.
 
-`pairs` is a **list**, one entry per frame, and `Rdf` averages over it, so a
-trajectory is the same call with a longer list. Each entry may be a
-materialised table or the built search itself; handing over a built
-`NeighborList` lets `Rdf` stream its pairs into the histogram without ever
-storing them, which matters once a frame holds millions of pairs. Because a
-search is rebuilt in place, give each frame its own `NeighborList` when you
-stream:
+Push one pair source per frame and `Rdf` averages over them, so a trajectory
+is the same loop with more pushes; the accumulator keeps only the running
+histogram, whatever the trajectory length. Each push may be a materialised
+table or the built search itself; handing over a built `NeighborList` lets
+`Rdf` stream its pairs into the histogram without ever storing them, which
+matters once a frame holds millions of pairs. A push folds the pairs at once,
+so one search can be rebuilt in place for the next frame:
 
 ```python
 frames = [frame, frame]                        # in practice, your trajectory
-searches = []
+search = mp.core.NeighborList(8.0)
+streamed = Rdf(n_bins=160, r_max=8.0, r_min=0.0).accumulator()
 for f in frames:
-    search = mp.core.NeighborList(8.0)
     search.build(f.coords, f.box)
-    searches.append(search)
-averaged = Rdf(n_bins=160, r_max=8.0, r_min=0.0).compute(pairs=searches)
+    streamed.push(search)
+averaged = streamed.finish()
 print(averaged.n_frames)                       # -> 2
 print(np.allclose(averaged.rdf, result.rdf))   # -> True
 ```
+
+`finish()` does not consume the accumulator: read it mid-run to watch the
+curve converge, then keep pushing.
 
 The result object carries `bin_centers`, `bin_edges`, `rdf`, the cumulative
 pair count `n_r`, and the bookkeeping (`n_frames`, `n_points`, `volume`) needed
@@ -262,13 +268,13 @@ Those are the FCC shells exactly: 12 nearest neighbours, then 6 more, then 24
 more — 12, 18, 42. Because the crystal's $g(r)$ is a set of isolated spikes,
 $n(R)$ is a staircase, and any $R$ in the flat region between two shells gives
 the same integer. Run the identical four lines on the argon liquid and you get
-the 12.4 quoted above; the only difference is that the liquid's steps are
+the 12.2 quoted above; the only difference is that the liquid's steps are
 rounded, so *where* you evaluate matters.
 
 The argon curve in Figure 1 is the same calculation on a longer trajectory:
 
 ```python
-# docs: skip — runs a 30 ps MD trajectory (minutes, not seconds)
+# docs: skip — needs the docs_series package (molpy/scripts) and a 30 ps MD run
 from docs_series.run import argon_trajectory
 from docs_series.structure import radial_distribution
 

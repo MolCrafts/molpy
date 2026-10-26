@@ -93,7 +93,7 @@ print(list(atoms_with_r.keys())) # ['element', 'x', 'y', 'z']
 
 ## Renaming columns
 
-`Block.rename()` changes a column key in place and keeps the column where it was. `FieldFormatter` uses it to translate between format-specific and canonical field names at an I/O boundary.
+`Block.rename()` changes a column key in place and keeps the column where it was, which is how a format-specific field name becomes its canonical one at an I/O boundary.
 
 ```python
 b = mp.Block({"q": [0.1, -0.2], "x": [1.0, 2.0]})

@@ -95,8 +95,8 @@ reading rather than skipping:
 | 3.0 | 0.00 | 2.34 | 0 |
 | 4.5 | 8.94 | 7.91 | 1.13 |
 | 6.0 | 16.33 | 18.74 | 0.87 |
-| 8.5 | 52.96 | 53.28 | 0.99 |
-| 14.0 | 237.70 | 238.08 | 1.00 |
+| 8.5 | 52.97 | 53.28 | 0.99 |
+| 14.0 | 237.71 | 238.08 | 1.00 |
 
 Below 3.2 Å the list finds **nothing at all**: no two argon atoms are ever that
 close, which is the excluded core of [$g(r)$](rdf.md) seen from a different
@@ -107,7 +107,7 @@ the ideal-gas estimate is good to a percent.
 
 There is a useful cross-check hiding in that table. At $r_c = 5$ Å the list
 gives 11.05 neighbours per atom; integrating $g(r)$ on the [RDF](rdf.md) page
-gives a coordination number $n(5.0) = 11.05$. Two different calculations, over
+gives a coordination number $n(5.0) = 11.06$. Two different calculations, over
 different frames, agreeing to better than 0.1 %.
 
 For planning work: 11 neighbours per atom at 5 Å, 53 at 8.5 Å, 238 at 14 Å.
@@ -203,7 +203,7 @@ point) rather than half-shell, and the computes read that mode from the table.
 
 ## When it goes wrong
 
-**`TypeError: argument 'box': 'None' is not an instance of 'Box'`.**
+**`TypeError: … 'None' is not an instance of 'Box'`.**
 The frame has no box. Neighbour search needs to know how space wraps. Set
 `frame.box = mp.Box(mp.core.Cell.lengths([L] * 3))`.
 
@@ -218,7 +218,7 @@ You are treating the list as containing both $(i,j)$ and $(j,i)$. It does not.
 The table is a snapshot. Coordinates that change invalidate it; call
 `nl.build(...)` (or `nl.update(new_coords)` in the same box) and take a new
 `nl.neighbors()` per frame. This is why the trajectory-averaging computes take
-one pair source per frame (`Rdf(...).compute(pairs=[...])`), never a frame.
+one pair source per frame (`Rdf(...).accumulator().push(pairs)`), never a frame.
 
 **Memory blows up on a big system.**
 Pairs scale as $N\rho r_c^3$. Shrink the cutoff before anything else.

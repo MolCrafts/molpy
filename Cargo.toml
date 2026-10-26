@@ -1,0 +1,41 @@
+[workspace]
+members = ["crates/molrs"]
+# The ABI layer (crates/molrs-ffi) and every language binding — molpy (Python),
+# molwasm, molc, molcxx — are standalone workspace roots with their own
+# `[workspace]`. Address them by `--manifest-path <dir>/Cargo.toml`, never `-p`.
+exclude = ["crates/molrs-ffi"]
+resolver = "3"
+
+[workspace.package]
+# Keep standalone binding manifests and Python metadata on this version.
+# Downstream consumers pin the major.minor ABI line; release history is in tags.
+version = "0.20.0"
+edition = "2024"
+rust-version = "1.91"
+license = "BSD-3-Clause"
+authors = ["MolCrafts"]
+repository = "https://github.com/MolCrafts/molpy"
+homepage = "https://github.com/MolCrafts/molpy"
+
+# Every binder root repeats these four keys verbatim (a standalone workspace
+# does not inherit them), so released wheels, C libs and the crate build alike.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = "symbols"
+
+# Local builds (dev + test, which inherits dev). Full DWARF on a 293k-line
+# crate is what makes rustc's incremental cache 1.4 GB per feature set; when
+# that cache is not in page cache, reading it back over this repo's Lustre
+# filesystem costs 40 s on a one-file edit. Line tables keep `file:line` in
+# backtraces -- the only debug info a failing unit test needs -- at ~1/3.4 the
+# cache size (measured: 1.4 GB -> 417 MB, rebuild 6.9 s -> 6.2 s). Dependencies
+# are not stepped through locally, so they get none.
+# Every standalone binder root repeats this block; a standalone workspace does
+# not inherit it.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

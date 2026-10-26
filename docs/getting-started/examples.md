@@ -25,7 +25,7 @@ typed = typifier.typify(mol) # assign force-field types
 ff = typifier.forcefield() # the parameters it assigned
 
 frame = typed.to_frame() # simulation-ready columnar arrays
-# mp.io.write_lammps_data(...) + mp.io.write_lammps_forcefield(path, ff, frame)
+# mp.io.write_lammps_data(path, frame) + mp.io.lammps.LammpsForcefieldWriter(frame).write(path, ff)
 # write system.data + system.ff (set frame.box and a per-atom mol_id first —
 # see the Quickstart).
 ```
@@ -95,23 +95,23 @@ string, and `mp.builder.Assembler` with `mp.builder.GrowthPlacer` grows it into 
 
 | Docs | Examples |
 |------|----------|
-| [`user-guide/topology/`](../user-guide/topology/index.md) | `examples/topology/` |
+| [`user-guide/topology/`](../user-guide/topology/index.md) | `molpy/examples/topology/` |
 | `01_linear.md` … `06_telechelic.md` | `01_linear.py` … `06_telechelic.py` |
 
 ```bash
-cd examples
+cd molpy/examples
 python topology/01_linear.py
 ```
 
 Minimal linear chain, ten EO units:
 
 ```python
-# run from examples/topology/ or put that dir on PYTHONPATH
+# run from molpy/examples/topology/ or put that dir on PYTHONPATH
 import molpy as mp
 from eo_kit import library
 
 sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|10}").to_coarsegrain()
-chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
 ```
 
 See also: [Polymer Topologies](../user-guide/topology/index.md) ·
@@ -163,11 +163,11 @@ plan = planner.plan_system(np.random.default_rng(42))
 print(f"Planned {len(plan.chains)} chains") # reproducible chain population
 
 # Each planned chain is a unit sequence; written as CGsmiles it is a site graph.
-from eo_kit import library  # examples/topology/
+from eo_kit import library  # molpy/examples/topology/
 
 first = plan.chains[0]
 sites = mp.io.cgsmiles.read_cgsmiles("{" + "".join(f"[#{m}]" for m in first.monomers) + "}").to_coarsegrain()
-chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
 ```
 
 See also: [Polydisperse Systems](../user-guide/05_polydisperse_systems.md) ·

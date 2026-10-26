@@ -1,0 +1,69 @@
+<ForceField name="OPLS-AA" version="0.1.0" combining_rule="geometric">
+  <AtomTypes>
+    <Type name="opls_135" class="CT" element="C" mass="12.01100" def="[C;X4](C)(H)(H)H" desc="alkane CH3" doi="10.1021/ja9621760" />
+    <Type name="opls_136" class="CT" element="C" mass="12.01100" def="[C;X4](C)(C)(H)H" desc="alkane CH2" doi="10.1021/ja9621760" />
+    <Type name="opls_140" class="HC" element="H" mass="1.00800" def="H[C;X4]" desc="alkane H" doi="10.1021/ja9621760" />
+    <Type name="opls_154" class="OH" element="O" mass="15.9994" def="[O;X2](H)([C])" desc="all-atom O: mono alcohols" doi="10.1021/ja9621760" />
+    <Type name="opls_155" class="HO" element="H" mass="1.00800" def="H[O;%opls_154]" desc="all-atom H(O): mono alcohols, OP(=O)2" doi="10.1021/ja9621760" />
+    <Type name="opls_157" class="CT" element="C" mass="12.01100" def="[C;X4]([H])([H])([*])[O;%opls_154]" desc="all-atom C: CH3 and CH2, alcohols" overrides="opls_136, opls_159, opls_158" doi="10.1021/ja9621760" />
+  </AtomTypes>
+  <HarmonicBondForce>
+    <Bond class1="CT" class2="CT" length="0.1529" k="224262.4" />
+    <Bond class1="CT" class2="HC" length="0.109" k="284512.0" />
+    <Bond class1="CT" class2="OH" length="0.141" k="267776.0" />
+    <Bond class1="HO" class2="OH" length="0.0945" k="462750.4" />
+  </HarmonicBondForce>
+  <HarmonicAngleForce>
+    <Angle class1="CT" class2="CT" class3="CT" angle="1.966986067" k="488.273" />
+    <Angle class1="CT" class2="CT" class3="HC" angle="1.93207948196" k="313.8" />
+    <Angle class1="CT" class2="CT" class3="OH" angle="1.91113553093" k="418.4" />
+    <Angle class1="HC" class2="CT" class3="HC" angle="1.88146493365" k="276.144" />
+    <Angle class1="HC" class2="CT" class3="OH" angle="1.91113553093" k="292.88" />
+    <Angle class1="CT" class2="OH" class3="HO" angle="1.89368223841" k="460.24" />
+  </HarmonicAngleForce>
+  <RBTorsionForce>
+    <Proper class1="CT" class2="CT" class3="CT" class4="CT" c0="2.9288" c1="-1.4644" c2="0.2092" c3="-1.6736" c4="0.0" c5="0.0" />
+    <Proper class1="CT" class2="CT" class3="CT" class4="HC" c0="0.6276" c1="1.8828" c2="0.0" c3="-2.5104" c4="0.0" c5="0.0" />
+    <Proper class1="CT" class2="CT" class3="CT" class4="OH" c0="2.87441" c1="0.58158" c2="2.092" c3="-5.54799" c4="0.0" c5="0.0" />
+    <Proper class1="CT" class2="CT" class3="OH" class4="HO" c0="-0.4435" c1="3.83255" c2="0.72801" c3="-4.11705" c4="0.0" c5="0.0" />
+    <Proper class1="HC" class2="CT" class3="CT" class4="HC" c0="0.6276" c1="1.8828" c2="0.0" c3="-2.5104" c4="0.0" c5="0.0" />
+    <Proper class1="HC" class2="CT" class3="CT" class4="OH" c0="0.97905" c1="2.93716" c2="0.0" c3="-3.91622" c4="0.0" c5="0.0" />
+    <Proper class1="HC" class2="CT" class3="OH" class4="HO" c0="0.9414" c1="2.8242" c2="0.0" c3="-3.7656" c4="0.0" c5="0.0" />
+    <Proper class1="OH" class2="CT" class3="CT" class4="OH" c0="18.96607" c1="-18.96607" c2="0.0" c3="0.0" c4="0.0" c5="0.0" />
+  </RBTorsionForce>
+  <NonbondedForce coulomb14scale="0.5" lj14scale="0.5">
+    <Atom type="opls_135" charge="-0.18" sigma="0.35" epsilon="0.276144" />
+    <Atom type="opls_136" charge="-0.12" sigma="0.35" epsilon="0.276144" />
+    <Atom type="opls_140" charge="0.06" sigma="0.25" epsilon="0.12552" />
+    <Atom type="opls_154" charge="-0.683" sigma="0.312" epsilon="0.71128" />
+    <Atom type="opls_155" charge="0.418" sigma="1.0" epsilon="0.0" />
+    <Atom type="opls_157" charge="0.145" sigma="0.35" epsilon="0.276144" />
+  </NonbondedForce>
+  <Residues>
+    <Residue name="MOL">
+      <Atom name="C1" type="opls_135" />
+      <Atom name="C2" type="opls_136" />
+      <Atom name="C3" type="opls_157" />
+      <Atom name="O" type="opls_154" />
+      <Atom name="H11" type="opls_140" />
+      <Atom name="H12" type="opls_140" />
+      <Atom name="H13" type="opls_140" />
+      <Atom name="H21" type="opls_140" />
+      <Atom name="H22" type="opls_140" />
+      <Atom name="H31" type="opls_140" />
+      <Atom name="H32" type="opls_140" />
+      <Atom name="HO" type="opls_155" />
+      <Bond atomName1="C1" atomName2="C2" />
+      <Bond atomName1="C2" atomName2="C3" />
+      <Bond atomName1="C3" atomName2="O" />
+      <Bond atomName1="C1" atomName2="H11" />
+      <Bond atomName1="C1" atomName2="H12" />
+      <Bond atomName1="C1" atomName2="H13" />
+      <Bond atomName1="C2" atomName2="H21" />
+      <Bond atomName1="C2" atomName2="H22" />
+      <Bond atomName1="C3" atomName2="H31" />
+      <Bond atomName1="C3" atomName2="H32" />
+      <Bond atomName1="O" atomName2="HO" />
+    </Residue>
+  </Residues>
+</ForceField>

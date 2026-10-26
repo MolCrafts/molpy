@@ -1,15 +1,15 @@
 # Config
 
-Layered configuration for the engines and wrappers, built on
+Layered configuration for the engines and AmberTools programs, built on
 [molcfg](https://docs.molcrafts.org/molcfg/).
 
 ## Quick reference
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `load_config` | Merge the four layers (`defaults` → `user` → `project` → `run`), validate, freeze | Getting the config an engine or wrapper runs with |
-| `tool_settings` | One tool's resolved settings (any `"engine.<name>"` / `"wrapper.<name>"`), each with the layer and key it came from | Inspecting what a tool will run |
-| `ToolSettings` | `executable`, `env`, `env_manager`, `conda_executable`, `launcher`, `env_vars`, `timeout`, `sources` | Reading resolved settings |
+| `load_config` | Merge the four layers (`defaults` → `user` → `project` → `run`), validate, freeze | Getting the config an engine or AmberTools program runs with |
+| `tool_settings` | One tool's resolved settings (any `"engine.<name>"` / `"ambertools.<name>"`), each with the layer and key it came from | Inspecting what a tool will run |
+| `ToolSettings` | `tool`, `executable`, `env`, `env_manager`, `conda_executable`, `launcher`, `env_vars`, `timeout`, `sources` | Reading resolved settings |
 | `user_config_path` | `~/.molcrafts/molpy/config/config.toml` (`MOLCRAFTS_HOME` moves it) | Finding the user layer's file |
 | `PROJECT_CONFIG_NAME` | `molpy.toml`, the project layer's file name | Finding the project layer's file |
 | `LAYERS` | `("defaults", "user", "project", "run")` | Naming a layer |
@@ -30,10 +30,10 @@ print(settings.sources["env"])  # ('defaults', 'engine.env') unless a file sets 
 ## Key behavior
 
 - Tables: `[conda]` (`executable`), `[engine]` and `[engine.<name>]`;
-  `[wrapper]` and `[wrapper.<name>]`. Any table under a group is a tool's —
+  `[ambertools]` and `[ambertools.<name>]`. Any table under a group is a tool's —
   the built-in tools are the tool tables of `DEFAULTS` (`lammps`, `gromacs`,
-  `openmm`, `cp2k`; `antechamber`, `tleap`, `parmchk2`, `prepgen`,
-  `sander`), and a third-party engine or wrapper reads its own the same way
+  `openmm`, `cp2k`; `antechamber`, `tleap`, `parmchk2`, `prepgen`), and a
+  third-party engine reads its own the same way
 - `DEFAULTS` is the one place a default is stated, a built-in tool's
   executable included
 - Keys: `executable`, `env`, `env_manager` (`"conda"` / `"venv"`),
@@ -48,7 +48,7 @@ print(settings.sources["env"])  # ('defaults', 'engine.env') unless a file sets 
 ## Related
 
 - [Guide: Configure and Log a Run](../user-guide/14_configure_and_log.md)
-- [API: Engine](engine.md) · [API: Wrapper](wrapper.md)
+- [API: Engine](engine.md) · [API: Tool](tool.md)
 
 ---
 

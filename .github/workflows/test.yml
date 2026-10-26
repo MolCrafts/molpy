@@ -1,21 +1,21 @@
 name: test
 
-# The tests a laptop cannot run: every OS. Static checks (ruff, ty, the
-# workflow scheme) run only locally, at pre-commit and in the pre-push
-# `scripts/check.py verify`; this workflow does not repeat them. The unit
-# suite runs once per leg against the partners built from the commits
-# scripts/partners.py pins in .github/partners.env, in two tiers
+# The tests a laptop cannot run: every OS. Static checks (fmt, ruff, clippy,
+# rustdoc, workflows, partners) run only locally, at pre-commit and in the
+# pre-push `scripts/check.sh verify`; this workflow does not repeat them.
+# Each job is a scripts/check.sh test gate, run once, in two tiers
 # (`test / context` decides):
 #
-#   fast  a feature-branch push to MolCrafts: Linux, Python 3.12.
+#   fast  a feature-branch push to MolCrafts: core Rust tests, the Python
+#         suite on Linux, and the stubs and docs on its wheel.
 #   full  every push to a fork (proven before its pull request), dev, master
-#         on MolCrafts, pull requests and dispatches: Linux,
-#         macOS and Windows on 3.12; Linux additionally checks 3.14.
-# OS and interpreter coverage use four legs instead of six.
+#         on MolCrafts, pull requests and dispatches:
+#         + ffi/cxx/ext, the Python OS matrix, C API (Linux, Windows), WASM
+#         and molrec's conformance suite (mrec).
 #
-# The strict docs build runs in the Linux 3.12 leg, after its tests, in the
-# same environment: the molrs it imports is the one that leg built and
-# tested, not a second compile.
+# One dev-profile wheel per OS, built and tested once by `test / python`. The
+# Linux one is uploaded and `test / docs` and `test / mrec` install that same
+# file instead of compiling the extension again.
 'on':
   push:
     branches:
@@ -29,7 +29,7 @@ name: test
 permissions:
   contents: read
 
-# Independent workflow/event/ref groups; feature pushes supersede older runs.
+# One group per file, workflow, event and ref; only a feature ref cancels its superseded runs.
 concurrency:
   group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
@@ -38,70 +38,144 @@ defaults:
   run:
     shell: bash
 
-env:
-  # uv builds molrs through maturin's PEP 517 hook; this makes that cargo
-  # build --locked as well.
-  MATURIN_PEP517_ARGS: --locked
-  # Every text-mode open without encoding= warns, and pytest's "error" filter
-  # fails it: it would decode with cp1252 on Windows only (pyproject.toml).
-  PYTHONWARNDEFAULTENCODING: "1"
-
 jobs:
   # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
   context:
     permissions:
       contents: read
     name: test
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@01317cbc43f961ab14c35d51d48c081a1acfe815
 
+  rust:
+    name: test / rust
+    needs: context
+    if: needs.context.outputs.skip-pr != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          cache: native
+      - run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx' || '' }}
+      # The counts in the run and pull request summary; report only. No
+      # coverage here: instrumenting the build is the nightly's job.
+      - name: Report
+        if: ${{ !cancelled() }}
+        uses: MolCrafts/molcrafts-ci/actions/report@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          title: test / rust
+          cargo-test: .ci-out/cargo-test.log
+
+  # abi3-py312: one native artifact per OS, so one Python per OS.
   python:
-    name: test / python (${{ matrix.os }}, ${{ matrix.python }})
+    name: test / python (${{ matrix.os }})
     needs: context
     if: needs.context.outputs.skip-pr != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.context.outputs.tier == 'full' && '[{"os":"ubuntu-latest","python":"3.12"},{"os":"ubuntu-latest","python":"3.14"},{"os":"macos-latest","python":"3.12"},{"os":"windows-latest","python":"3.12"}]' || '[{"os":"ubuntu-latest","python":"3.12"}]') }}
+        os: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
-          python-version: ${{ matrix.python }}
-      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
-      # molrs/rust-toolchain.toml pins the compiler that builds the molrs wheel.
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+          cache: python
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
+      # The molpy wheel is written to .ci-out/wheel and kept: the file this
+      # step tested is the file the Linux leg uploads.
+      - env:
+          MOLPY_WHEEL_DIR: .ci-out/wheel
+        run: scripts/check.sh --report .ci-out python
+      - if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v7
         with:
-          toolchain-dir: ../molrs
-          cache: molrs-python
-          workspaces: ../molrs/molrs-python -> ../target
-      - name: Direct dependencies
-        env:
-          UV_PYTHON: ${{ matrix.python }}
-        run: python scripts/check.py dependencies
-      # The pre-push test gate, plus what the report reads: JUnit and coverage.
-      - name: Unit tests
-        env:
-          UV_PYTHON: ${{ matrix.python }}
-        run: python scripts/check.py --report .ci-out test
-      # Counts and coverage in the run and pull request summary; report only.
+          name: tested-wheel-linux
+          path: .ci-out/wheel/*.whl
+          if-no-files-found: error
+          retention-days: 1
+      # The counts and the Python layer's coverage in the run and pull
+      # request summary; report only.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+        uses: MolCrafts/molcrafts-ci/actions/report@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
-          title: test / python (${{ matrix.os }}, ${{ matrix.python }})
+          title: test / python (${{ matrix.os }})
           junit: .ci-out/junit.xml
           coverage: .ci-out/coverage.json
-      # The site as Cloudflare Pages builds it, zensical --strict: any warning
-      # (an unresolved mkdocstrings reference included) fails. Cloudflare
-      # Pages deploys it from MolCrafts itself, so no job here deploys. The
-      # user-guide notebooks are executed by scripts/render_notebooks.py when
-      # they change, and their rendered pages are committed.
-      - name: Docs
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
-        env:
-          UV_PYTHON: ${{ matrix.python }}
-        run: python scripts/check.py docs
+
+  # The stubs held to the tested wheel (`types`: mypy + stubtest), then the
+  # manual as Cloudflare Pages builds it — every python block run, --strict:
+  # any warning fails. Cloudflare Pages deploys it from MolCrafts itself (its
+  # Git integration), so no job here deploys. The API reference imports the
+  # tested wheel.
+  docs:
+    name: test / docs
+    needs: [context, python]
+    if: needs.context.outputs.skip-pr != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: actions/download-artifact@v8
+        with:
+          name: tested-wheel-linux
+          path: .ci-out/wheel
+      - name: Stubs and docs on the tested wheel
+        run: |
+          MOLPY_TESTED_WHEEL=$(ls "$PWD"/.ci-out/wheel/molcrafts_molpy-*.whl)
+          export MOLPY_TESTED_WHEEL
+          scripts/check.sh types docs
+
+  capi:
+    name: test / capi${{ matrix.os == 'windows-latest' && ' (windows-latest)' || '' }}
+    needs: context
+    if: needs.context.outputs.skip-pr != 'true' && needs.context.outputs.tier == 'full'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          cache: capi
+      # Visual Studio is multi-config; use the same configuration for build/test.
+      - run: scripts/check.sh capi
+
+  wasm:
+    name: test / wasm
+    needs: context
+    if: needs.context.outputs.skip-pr != 'true' && needs.context.outputs.tier == 'full'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          cache: wasm
+      - uses: ./.github/actions/setup-wasm
+      - run: scripts/check.sh wasm
+
+  # molrec's conformance suite through molpy.io's *.mrec doors, molrec at the
+  # immutable commit declared in .github/partners.env, on the tested wheel.
+  mrec:
+    name: test / mrec
+    needs: [context, python]
+    if: needs.context.outputs.skip-pr != 'true' && needs.context.outputs.tier == 'full'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: actions/download-artifact@v8
+        with:
+          name: tested-wheel-linux
+          path: .ci-out/wheel
+      - name: Conformance on the tested wheel
+        run: |
+          MOLPY_TESTED_WHEEL=$(ls "$PWD"/.ci-out/wheel/molcrafts_molpy-*.whl)
+          export MOLPY_TESTED_WHEEL
+          scripts/check.sh mrec
 
   workflow-policy:
     name: test / workflows
@@ -112,4 +186,17 @@ jobs:
       contents: read
     steps:
     - uses: actions/checkout@v7
-    - uses: MolCrafts/molcrafts-ci/actions/check-workflows@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+    - uses: MolCrafts/molcrafts-ci/actions/check-workflows@01317cbc43f961ab14c35d51d48c081a1acfe815
+
+  # The one check branch rules require (molci rulesets): it runs whatever
+  # happened before it and fails unless every job succeeded or was skipped.
+  result:
+    name: test / result
+    needs: [context, rust, python, docs, capi, wasm, mrec, workflow-policy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: echo "$RESULTS" | jq -e 'all(.[]; . == "success" or . == "skipped")'

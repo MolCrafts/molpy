@@ -163,7 +163,8 @@ you do not.
 
 `n_raw_samples` counts the tuples you passed and `histogram.binned` how many of
 them fell inside the axis. `density_sin_corrected` is `None` for a distance,
-because the sin correction applies only to angles and dihedrals.
+because the sin correction applies only to angles: a signed dihedral has no
+solid-angle Jacobian, so it is `None` for a dihedral too.
 
 For an angular distribution, the same pattern over the natural range in radians:
 

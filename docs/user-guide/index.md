@@ -15,7 +15,7 @@ Several guides use polymers as the working example — a demonstration domain, n
 
 ## Polymer Topologies
 
-From one ethylene-oxide kit to every architecture the site-graph assembler supports. Each page pairs with `examples/topology/<same-name>.py`.
+From one ethylene-oxide kit to every architecture the site-graph assembler supports. Each page pairs with `molpy/examples/topology/<same-name>.py`.
 
 - [**Section home**](topology/index.md) — units, topology, assembly; port rules; the kit
 - [Linear](topology/01_linear.md) · [Block](topology/02_block.md) · [Ring](topology/03_ring.md) · [Star](topology/04_star.md) · [Comb](topology/05_comb.md) · [Telechelic](topology/06_telechelic.md)
@@ -35,8 +35,8 @@ From one ethylene-oxide kit to every architecture the site-graph assembler suppo
 ## Export & Engines
 
 - [File I/O](11_io.md) — reading and writing molecular data, trajectories, log files, and force-field formats
-- [Simulation Engines](12_engine.md) — generating input decks for LAMMPS, CP2K, and OpenMM, and running them from Python
-- [Configure and Log a Run](14_configure_and_log.md) — one `molpy.toml` for every engine's and wrapper's executable, environment and launcher, and the structured log each run leaves
+- [Simulation Engines](12_engine.md) — generating input decks for LAMMPS, GROMACS, and OpenMM, and running them (and CP2K) from Python
+- [Configure and Log a Run](14_configure_and_log.md) — one `molpy.toml` for every engine's and AmberTools program's executable, environment and launcher, and the structured log each run leaves
 
 ## Tools & Ecosystem
 

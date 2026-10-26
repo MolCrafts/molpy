@@ -1,0 +1,183 @@
+"""Unit tests for polydisperse distribution implementations."""
+
+import numpy as np
+import pytest
+import molpy as mp
+
+
+class TestDpDistribution:
+    def test_runtime_protocol_accepts_dp_capability(self):
+        assert isinstance(
+            mp.builder.UniformPolydisperse(1, 2), mp.builder.DpDistribution
+        )
+
+
+class TestMassDistribution:
+    def test_runtime_protocol_accepts_mass_capability(self):
+        assert isinstance(
+            mp.builder.SchulzZimmPolydisperse(1000.0, 2000.0),
+            mp.builder.MassDistribution,
+        )
+
+
+# ---- UniformPolydisperse Tests ----
+
+
+class TestUniformPolydisperse:
+    def test_sample_in_range(self):
+        dist = mp.builder.UniformPolydisperse(min_dp=5, max_dp=15)
+        rng = np.random.default_rng(42)
+        samples = [dist.sample_dp(rng) for _ in range(100)]
+        assert all(5 <= s <= 15 for s in samples)
+
+    def test_sample_single_value(self):
+        dist = mp.builder.UniformPolydisperse(min_dp=7, max_dp=7)
+        rng = np.random.default_rng(0)
+        assert dist.sample_dp(rng) == 7
+
+    def test_pmf_inside_range(self):
+        dist = mp.builder.UniformPolydisperse(min_dp=1, max_dp=10)
+        dp_arr = np.arange(1, 11)
+        pmf = dist.dp_pmf(dp_arr)
+        assert pmf.sum() == pytest.approx(1.0, abs=1e-10)
+        assert np.all(pmf == pytest.approx(0.1, abs=1e-10))
+
+    def test_pmf_outside_range(self):
+        dist = mp.builder.UniformPolydisperse(min_dp=5, max_dp=10)
+        dp_arr = np.array([1, 2, 3, 4, 11, 12])
+        pmf = dist.dp_pmf(dp_arr)
+        assert np.all(pmf == 0.0)
+
+    def test_validation_min_dp(self):
+        with pytest.raises(ValueError, match="min_dp must be >= 1"):
+            mp.builder.UniformPolydisperse(min_dp=0, max_dp=10)
+
+    def test_validation_max_lt_min(self):
+        with pytest.raises(ValueError, match="max_dp.*must be >= min_dp"):
+            mp.builder.UniformPolydisperse(min_dp=10, max_dp=5)
+
+    def test_satisfies_dp_protocol(self):
+        dist = mp.builder.UniformPolydisperse(min_dp=1, max_dp=10)
+        assert isinstance(dist, mp.builder.DpDistribution)
+
+
+# ---- PoissonPolydisperse Tests ----
+
+
+class TestPoissonPolydisperse:
+    def test_sample_positive(self):
+        dist = mp.builder.PoissonPolydisperse(lambda_param=10.0)
+        rng = np.random.default_rng(42)
+        samples = [dist.sample_dp(rng) for _ in range(100)]
+        assert all(s >= 1 for s in samples)
+
+    def test_mean_dp(self):
+        dist = mp.builder.PoissonPolydisperse(lambda_param=20.0)
+        rng = np.random.default_rng(42)
+        samples = [dist.sample_dp(rng) for _ in range(1000)]
+        mean = sum(samples) / len(samples)
+        assert mean == pytest.approx(20.0, abs=3.0)
+
+    def test_pmf_normalized(self):
+        dist = mp.builder.PoissonPolydisperse(lambda_param=5.0)
+        dp_arr = np.arange(1, 50)
+        pmf = dist.dp_pmf(dp_arr)
+        assert pmf.sum() == pytest.approx(1.0, abs=0.01)
+
+    def test_pmf_zero_for_nonpositive(self):
+        dist = mp.builder.PoissonPolydisperse(lambda_param=5.0)
+        dp_arr = np.array([0, -1, -5])
+        pmf = dist.dp_pmf(dp_arr)
+        assert np.all(pmf == 0.0)
+
+    def test_validation(self):
+        with pytest.raises(ValueError, match="lambda_param must be > 0"):
+            mp.builder.PoissonPolydisperse(lambda_param=0.0)
+
+    def test_satisfies_dp_protocol(self):
+        assert isinstance(
+            mp.builder.PoissonPolydisperse(lambda_param=5.0), mp.builder.DpDistribution
+        )
+
+
+# ---- FlorySchulzPolydisperse Tests ----
+
+
+class TestFlorySchulzPolydisperse:
+    def test_sample_positive(self):
+        dist = mp.builder.FlorySchulzPolydisperse(a=0.5)
+        rng = np.random.default_rng(42)
+        samples = [dist.sample_dp(rng) for _ in range(100)]
+        assert all(s >= 1 for s in samples)
+
+    def test_pmf_positive_for_valid_dp(self):
+        dist = mp.builder.FlorySchulzPolydisperse(a=0.3)
+        dp_arr = np.arange(1, 20)
+        pmf = dist.dp_pmf(dp_arr)
+        assert np.all(pmf > 0)
+
+    def test_pmf_zero_for_nonpositive(self):
+        dist = mp.builder.FlorySchulzPolydisperse(a=0.5)
+        dp_arr = np.array([0, -1])
+        pmf = dist.dp_pmf(dp_arr)
+        assert np.all(pmf == 0.0)
+
+    def test_validation_bounds(self):
+        with pytest.raises(ValueError, match="a must be in"):
+            mp.builder.FlorySchulzPolydisperse(a=0.0)
+        with pytest.raises(ValueError, match="a must be in"):
+            mp.builder.FlorySchulzPolydisperse(a=1.0)
+        with pytest.raises(ValueError, match="a must be in"):
+            mp.builder.FlorySchulzPolydisperse(a=-0.5)
+
+    def test_satisfies_dp_protocol(self):
+        assert isinstance(
+            mp.builder.FlorySchulzPolydisperse(a=0.5), mp.builder.DpDistribution
+        )
+
+
+# ---- SchulzZimmPolydisperse Tests ----
+
+
+class TestSchulzZimmPolydisperse:
+    def test_sample_positive(self):
+        dist = mp.builder.SchulzZimmPolydisperse(Mn=1000.0, Mw=2000.0)
+        rng = np.random.default_rng(42)
+        samples = [dist.sample_mass(rng) for _ in range(100)]
+        assert all(s > 0 for s in samples)
+
+    def test_mean_mass(self):
+        dist = mp.builder.SchulzZimmPolydisperse(Mn=1000.0, Mw=2000.0)
+        rng = np.random.default_rng(42)
+        samples = [dist.sample_mass(rng) for _ in range(5000)]
+        mean = sum(samples) / len(samples)
+        # Mean of Gamma(z, theta) = z * theta = Mn
+        assert mean == pytest.approx(1000.0, rel=0.1)
+
+    def test_pdi(self):
+        dist = mp.builder.SchulzZimmPolydisperse(Mn=1000.0, Mw=2000.0)
+        assert dist.PDI == pytest.approx(2.0)
+
+    def test_pdf_positive_for_positive_mass(self):
+        dist = mp.builder.SchulzZimmPolydisperse(Mn=1000.0, Mw=2000.0)
+        mass_arr = np.linspace(100, 5000, 50)
+        pdf = dist.mass_pdf(mass_arr)
+        assert np.all(pdf > 0)
+
+    def test_pdf_zero_for_nonpositive(self):
+        dist = mp.builder.SchulzZimmPolydisperse(Mn=1000.0, Mw=2000.0)
+        mass_arr = np.array([0.0, -100.0])
+        pdf = dist.mass_pdf(mass_arr)
+        assert np.all(pdf == 0.0)
+
+    def test_validation(self):
+        with pytest.raises(ValueError, match="Mw.*must be greater than Mn"):
+            mp.builder.SchulzZimmPolydisperse(Mn=2000.0, Mw=1000.0)
+        with pytest.raises(ValueError, match="Mw.*must be greater than Mn"):
+            mp.builder.SchulzZimmPolydisperse(Mn=1000.0, Mw=1000.0)
+
+    def test_satisfies_mass_protocol(self):
+        assert isinstance(
+            mp.builder.SchulzZimmPolydisperse(Mn=1000.0, Mw=2000.0),
+            mp.builder.MassDistribution,
+        )

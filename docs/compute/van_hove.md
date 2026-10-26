@@ -76,7 +76,7 @@ encoding:
 **Figure 1.** Self part of the Van Hove function for liquid argon, from the
 reference run (seed 0, 88.3 K), at
 four lags. The distribution starts narrow and spreads; its root-mean-square
-width grows from 0.22 Å at 0.1 ps to 2.62 Å at 6 ps.
+width grows from 0.23 Å at 0.1 ps to 2.77 Å at 6 ps.
 </figure>
 
 Every curve is a normalized probability distribution — they all integrate to 1,
@@ -144,7 +144,10 @@ density in $r$ and integrates to 1, and its second moment reproduces the MSD:
 r, dr = result.r_centers, result.dr
 print(np.round((result.g_self * dr).sum(axis=1), 6))      # -> [1. 1. 1.]
 second = (r**2 * result.g_self * dr).sum(axis=1)
-msd = Msd(max_lag=150).compute(positions=positions, dt=1.0).values[result.lags, 0]
+accumulator = Msd(max_lag=150).accumulator()
+for frame_positions in positions:
+    accumulator.push(frame_positions, dt=1.0)
+msd = accumulator.finish().values[result.lags, 0]
 print(np.round(second / msd, 3))                          # -> [1.004 1.001 1.001]
 ```
 

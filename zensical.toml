@@ -6,7 +6,7 @@ site_name = "MolPy"
 site_url = "https://docs.molcrafts.org/molpy/"
 repo_url = "https://github.com/MolCrafts/molpy"
 repo_name = "MolCrafts/molpy"
-site_description = "A Python toolkit for building, editing, and parameterizing complex molecular systems."
+site_description = "MolPy: the Python toolkit that ties molecular modeling together."
 copyright = "Copyright &copy; 2024 - 2026 MolCrafts Team"
 docs_dir = "docs"
 site_dir = "site"
@@ -20,7 +20,7 @@ site_dir = "site"
 # scripts/render_notebooks.py (Zensical does not run notebooks at build time);
 # the nav points at the generated *.md pages below.
 nav = [
-  { "Home" = "index.md" },
+  { "molpy" = "index.md" },
 
   { "Tutorials" = [
     "tutorials/index.md",
@@ -37,7 +37,6 @@ nav = [
       { "Force Field" = "tutorials/04_force_field.md" },
       { "Trajectory" = "tutorials/05_trajectory.md" },
       { "Selector" = "tutorials/06_selector.md" },
-      { "Wrapper and Adapter" = "tutorials/07_wrapper_and_adapter.md" },
       { "Coarse-Grained Structure" = "tutorials/08_coarsegrain.md" },
       { "Units" = "tutorials/09_units.md" },
     ] },
@@ -77,6 +76,7 @@ nav = [
     ] },
     { "Export & Engines" = [
       { "File I/O" = "user-guide/11_io.md" },
+      { "Records (*.mrec)" = "user-guide/15_records.md" },
       { "Simulation Engines" = "user-guide/12_engine.md" },
       { "Configure and Log a Run" = "user-guide/14_configure_and_log.md" },
     ] },
@@ -147,8 +147,7 @@ nav = [
     { "Potentials" = "api/potential.md" },
     # I/O and integration
     { "I/O" = "api/io.md" },
-    { "Adapter" = "api/adapter.md" },
-    { "Wrapper" = "api/wrapper.md" },
+    { "Tool" = "api/tool.md" },
     # High-level operations
     { "Engine" = "api/engine.md" },
     { "Config" = "api/config.md" },
@@ -168,15 +167,18 @@ nav = [
     ] },
     { "Architecture" = [
       { "Architecture Overview" = "developer/architecture-overview.md" },
-      { "molrs Backend" = "developer/molrs-backend.md" },
+      { "The Rust Core" = "developer/rust-core.md" },
+      { "Force-Field IR" = "developer/forcefield-ir.md" },
+      { "Minimum-Image Convention" = "developer/mic-matrix.md" },
+      { "Attribution" = "developer/attribution.md" },
     ] },
     { "Extending MolPy" = [
       { "Adding a Compute Operation" = "developer/extending-compute.md" },
       { "Adding an I/O Format" = "developer/extending-io.md" },
-      { "Adding a Wrapper or Adapter" = "developer/extending-integration.md" },
       { "Extending Typifiers" = "developer/extending-typifiers.md" },
       { "Extending the Data Model" = "developer/extending-core.md" },
       { "Extending the Force Field" = "developer/extending-forcefield.md" },
+      { "Extending the Force-Field IR" = "developer/extending-forcefield-ir.md" },
     ] },
   ] },
 ]
@@ -254,7 +256,8 @@ custom_fences = [
 default_handler = "python"
 
 [project.plugins.mkdocstrings.handlers.python]
-# Load molrs when resolving ``molpy.Frame → molrs.core.Frame`` re-exports.
+# The native classes live in the compiled molpy._core and are published under
+# their subsystem modules (``module = "molpy.core"``, …); load them for real.
 load_external_modules = true
 
 [project.plugins.mkdocstrings.handlers.python.options]
@@ -266,5 +269,5 @@ separate_signature = true
 heading_level = 3
 merge_init_into_class = true
 filters = ["!^_"]
-# Pre-load molrs so alias targets for Frame/Block resolve during collection.
-preload_modules = ["molrs"]
+# Pre-load molpy so alias targets for Frame/Block resolve during collection.
+preload_modules = ["molpy"]

@@ -66,12 +66,11 @@ integrations are needed.
 ### …RDKit?
 
 RDKit is the reference open-source cheminformatics toolkit — SMILES, conformer
-generation, substructure search. MolPy interoperates with it (see the
-[adapter layer](../api/adapter.md)) and extends beyond molecular graphs:
+generation, substructure search. MolPy reads and writes the same SMILES, and
+extends beyond molecular graphs:
 
 * **Simulation-centric structures**: periodic boxes, bonded MD topology, multiphase assemblies.
 * **System-level operations**: polymers, packing, and reactions are outside RDKit's scope.
-* **Interoperability**: RDKit molecules convert to and from MolPy objects through the optional `molpy.adapter.to_rdkit` / `from_rdkit`.
 
 RDKit manages chemical graphs; MolPy manages molecular *systems* headed for
 simulation.
@@ -104,6 +103,6 @@ right tool for every task:
 
 * **Multi-terabyte trajectory post-processing** — use MDAnalysis or MDTraj; MolPy's compute layer targets per-system analysis, not massive campaign pipelines.
 * **Quantum chemistry** — use PySCF, ASE with a QM calculator, or Gaussian/ORCA. MolPy does no electronic structure.
-* **Pure cheminformatics** — use RDKit directly. MolPy's SMILES / SMARTS parsing, substructure matching and conformer generation are native and aimed at building simulation systems, not at descriptor or fingerprint work; reach RDKit's own algorithms through the [adapter layer](../api/adapter.md).
+* **Pure cheminformatics** — use RDKit directly. MolPy's SMILES / SMARTS parsing, substructure matching and conformer generation are native and aimed at building simulation systems, not at descriptor or fingerprint work.
 * **High-throughput screening** — MolPy builds individual systems with full control; screening thousands of candidates belongs in workflow engines and CADD stacks.
 * **Running simulation campaigns** — MolPy generates inputs and can launch engines, but execution management belongs to the engines themselves and tools like Signac or AiiDA.

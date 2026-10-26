@@ -37,7 +37,9 @@ def unit(body: str) -> mp.Atomistic:
 eo = unit("[<]OCC[>]")  # -O-CH2-CH2-
 print(eo.n_atoms, eo.n_ports)  # 9 2
 for port in eo.ports:
-    print(port.anchor["element"], port.handle_atom["element"], port["port_kind"])
+    anchor = mp.Element.by_number(port.anchor["atomic_number"]).symbol
+    handle = mp.Element.by_number(port.handle_atom["atomic_number"]).symbol
+    print(anchor, handle, port["port_kind"])
 # O H <
 # C H >
 ```
@@ -57,7 +59,7 @@ A label restricts a port further: `[>g]` joins only `[<g]`, which is how a comb 
 grafts off the backbone. The bond orders must agree as well. When a bond forms, both
 handles are removed and their partial charges fold onto the anchors, so the net charge of
 the product is the sum of the units' charges. A molecule you already have gets ports with
-`def_port(anchor, handle_atom, kind, label="", order=1)`.
+`add_port(anchor, handle_atom, kind, label="", order=1)`.
 
 ## Topologies are site graphs
 
@@ -89,7 +91,7 @@ handle, pointing back along that bond.
 
 ```python
 sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|10}").to_coarsegrain()
-chain = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+chain = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites)
 print(chain.n_atoms, chain.n_ports)  # 72 2
 ```
 
@@ -100,7 +102,7 @@ between units, ring closures and overlaps are not adjusted; they are left to rel
 
 When the sites come from a CG simulation, the copies must sit where the beads were. Match
 the bead pattern of one repeat unit with `mp.perceive.SubgraphMatcher`, turn each match into a site
-with `mp.builder.Coarsener`, and assemble with `mp.builder.SitePlacer` (each copy's centre of mass on its
+with `mp.builder.Coarsener`, and assemble with `mp.builder.SitePlacer` (each copy's centroid on its
 site) and `mp.builder.AxisOrienter` (each copy turned to its site's axis and bonds).
 
 The toy model below is a five-unit PMMA chain with two beads per repeat unit: a backbone
@@ -111,20 +113,19 @@ cg = mp.CoarseGrain()
 previous = None
 for i in range(5):
     side = (-1) ** i
-    backbone = cg.def_bead(bead_type="1", mass=41.0, x=2.5 * i, y=0.4 * side, z=0.0)
-    ester = cg.def_bead(bead_type="2", mass=59.0, x=2.5 * i, y=3.0 * side, z=0.0)
-    cg.def_cgbond(backbone, ester)
+    backbone = cg.add_bead(bead_type="1", mass=41.0, x=2.5 * i, y=0.4 * side, z=0.0)
+    ester = cg.add_bead(bead_type="2", mass=59.0, x=2.5 * i, y=3.0 * side, z=0.0)
+    cg.add_bond(backbone, ester)
     if previous is not None:
-        cg.def_cgbond(previous, backbone)
+        cg.add_bond(previous, backbone)
     previous = backbone
 
 groups = mp.perceive.SubgraphMatcher(mp.io.cgsmiles.read_cgsmiles("{[#1][#2]}").to_coarsegrain()).find(cg)
 sites = mp.builder.Coarsener(cg).coarsen(groups, ["MMA"] * len(groups))
 
 mma = unit("[<]CC([>])(C)C(=O)OC")
-pmma = mp.builder.Assembler({"MMA": mma}, mp.builder.SitePlacer(), mp.builder.AxisOrienter()).assemble(
-    sites, mp.Atomistic
-)
+assembler = mp.builder.Assembler({"MMA": mma}, mp.builder.SitePlacer(), mp.builder.AxisOrienter())
+pmma = assembler.assemble(sites)
 print(pmma.n_atoms, pmma.n_ports)  # 77 2
 ```
 
@@ -165,7 +166,7 @@ Every atom of the world gets two integer ids:
 ```python
 sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|3}").to_coarsegrain()
 sites.merge(mp.io.cgsmiles.read_cgsmiles("{[#EO]|4}").to_coarsegrain())
-two = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+two = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites)
 atoms = two.to_frame()["atoms"]
 print(sorted(set(atoms["frag_id"].tolist())))  # [0, 1, 2, 3, 4, 5, 6]
 print(sorted(set(atoms["mol_id"].tolist())))  # [1, 2]
@@ -173,10 +174,11 @@ print(sorted(set(atoms["mol_id"].tolist())))  # [1, 2]
 
 ## Choosing the output class
 
-`assemble(sites, cls)` builds the world as the class you name: `mp.Atomistic` for atomistic
-units, `mp.CoarseGrain` when the units are themselves CG templates (every node carries a
-`bead_type`), and `mp.MolGraph` when `cls` is omitted. Pass the class you intend to use next; the
-typifiers, writers and minimisers take an `mp.Atomistic`.
+`assemble(sites)` builds the world as the graph type of the library's templates: an
+`mp.Atomistic` library gives an `mp.Atomistic` world, `mp.CoarseGrain` templates (the units are
+themselves CG models) give an `mp.CoarseGrain`, and `mp.MolGraph` templates an `mp.MolGraph`.
+Every template of one library must be of the same type. Build the units as the class you intend
+to use next; the typifiers, writers and minimisers take an `mp.Atomistic`.
 
 ## Polydisperse systems
 

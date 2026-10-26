@@ -60,6 +60,8 @@ Parameters are keywords: numbers go to the numeric parameters, strings
 import molpy as mp
 
 ff = mp.ff.forcefield.ForceField(name="tutorial", units="real")
+# The 1-2 / 1-3 / 1-4 pair weights (LJ, then Coulomb) are stated, never assumed.
+ff.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 0.8333])
 
 # "full" corresponds to LAMMPS atom_style full (charge + molecule ID per atom)
 atom_style = ff.def_style("atom", "full")
@@ -90,18 +92,25 @@ angle_style.def_type("HC-CT-HC", hc, ct, hc, k=33.0, theta0=107.8)
 dihedral_style = ff.def_style("dihedral", "opls")
 dihedral_style.def_type("HC-CT-CT-HC", hc, ct, ct, hc, k1=0.0, k2=0.0, k3=0.3, k4=0.0)
 
-# 12-6 Lennard-Jones (LAMMPS: lj/cut); one self pair per atom type
-pair_style = ff.def_style("pair", "lj/cut")
+# 12-6 Lennard-Jones (LAMMPS: lj/cut); one self pair per atom type. Where a
+# pair style stops is the force field's to declare: its cutoff, in Å.
+pair_style = ff.def_style("pair", "lj/cut", {"cutoff": 10.0})
 pair_style.def_type("CT", ct, epsilon=0.066, sigma=3.50)
 pair_style.def_type("HC", hc, epsilon=0.030, sigma=2.50)
 pair_style.def_type("OH", oh, epsilon=0.170, sigma=3.12)
 
-# The atom types carry charges: their Coulomb term is a pair style too.
-ff.def_style("pair", "coul/cut")
+# The atom types carry charges: their Coulomb term is a pair style too. Its
+# electrostatic constants are declared, never defaulted (real units:
+# kcal·Å/(mol·e²), in vacuum).
+ff.def_style("pair", "coul/cut", {"coulomb": 332.06371, "dielectric": 1.0, "cutoff": 10.0})
 ```
 
 `pair_style.def_type(name, itom)` with no second atom type is the self pair of
-`itom`; `pair_style.def_type(name, itom, jtom)` is an explicit cross pair.
+`itom`; `pair_style.def_type(name, itom, jtom)` is an explicit cross pair. A
+pair style that has a cutoff must state it — a typifier states its force
+field's convention (OPLS-AA 12 Å, GAFF 10 Å), a hand-built field states its
+own, and `float("inf")` prices every pair. A style already defined takes a new
+value through `style.set(cutoff=12.0)`.
 
 At this point the force field is a complete data structure. No numerical kernel has been created yet. Everything is still readable and editable.
 
@@ -110,14 +119,15 @@ At this point the force field is a complete data structure. No numerical kernel 
 
 Before any export, inspect the force field as data. A file can be syntactically valid and still contain wrong parameters.
 
-Individual types expose their parameters through dictionary access.
+Individual types expose their parameters as one dict, `params`; `set(...)`
+writes them.
 
 ```python
-print(f"CT mass={ct['mass']}, charge={ct['charge']}")
-print(f"CT element={ct.get('element')}")
+print(f"CT mass={ct.params['mass']}, charge={ct.params['charge']}")
+print(f"CT element={ct.params.get('element')}")
 
 bt = bond_style.get_type_by_name("CT-OH")
-print(f"CT-OH: k={bt['k']}, r0={bt['r0']}")
+print(f"CT-OH: k={bt.params['k']}, r0={bt.params['r0']}")
 ```
 
 A full listing of all styles and types gives a global snapshot of the model state.
@@ -138,16 +148,23 @@ Name-based lookup targets a specific style or type directly.
 ```python
 bs = ff.get_style("bond", "harmonic")
 ct_ct = bs.get_type_by_name("CT-CT")
-print(f"CT-CT k={ct_ct['k']}")
+print(f"CT-CT k={ct_ct.params['k']}")
 ```
 
 
 ## Evaluating as Potentials
 
 Evaluation is the first strict integrity test of the model.
-`mp.ff.compile.PotentialCompiler(ff)` compiles the force field against a typed `Frame`:
+`mp.ff.PotentialCompiler(ff)` compiles the force field against a typed `Frame`:
 an `atoms` block with coordinates and a `type` column, plus bonded blocks
-(`bonds`, `angles`, …) whose `type` column names force-field types. The
+(`bonds`, `angles`, …) whose `type` column names force-field types. The pair
+styles price every pair of atoms. The pairs a force field weighs otherwise —
+the 1-2, 1-3 and 1-4 neighbours its `special_bonds` scale — are the frame's
+**special pairs**, a `pairs` block of one row per pair with its `n_bonds`.
+They are topology, like the angles and dihedrals: a typifier writes them, and
+`Atomistic.generate_topology()` generates them for a molecule you build. A
+frame whose bonds have no special pairs is refused, since compiling it would
+price a bonded pair's van der Waals and Coulomb terms at full strength. The
 numerical kernels run in the native Rust core.
 
 ```python
@@ -156,12 +173,13 @@ frame = mp.Frame(
     blocks={
         "atoms": {"x": [0.0, 1.2], "y": [0.0, 0.0], "z": [0.0, 0.0], "type": ["CT", "HC"]},
         "bonds": {"atomi": [0], "atomj": [1], "type": ["CT-HC"]},
+        # Its one special pair: the bonded 1-2 pair, which special_bonds excludes.
+        "pairs": {"atomi": [0], "atomj": [1], "n_bonds": [1]},
     }
 )
 
-pots = mp.ff.compile.PotentialCompiler(ff).compile(frame)
-energy = pots.calc_energy(frame)
-forces = pots.calc_forces(frame)
+pots = mp.ff.PotentialCompiler(ff).compile(frame)
+energy, forces = pots.evaluate(frame)
 print(f"energy = {energy}")
 print(f"forces =\n{forces}")
 ```
@@ -177,13 +195,15 @@ Once the model is internally consistent, serialization becomes an interface prob
 ### GROMACS
 
 ```python
-mp.io.write_top_forcefield("system.itp", ff, precision=4)
+from pathlib import Path
+
+mp.io.gromacs.GromacsTopForcefieldWriter(precision=4).write(Path("system.itp"), ff)
 ```
 
 ### XML
 
 ```python
-mp.io.write_openmm_forcefield("system.xml", ff, precision=6)
+mp.io.openmm_xml.OpenmmXmlWriter(precision=6).write(Path("system.xml"), ff)
 ```
 
 ### LAMMPS
@@ -191,22 +211,20 @@ mp.io.write_openmm_forcefield("system.xml", ff, precision=6)
 A LAMMPS include holds the coefficients a system uses, so the writer takes the
 typed frame as well: every type label of the frame is looked up in the force
 field by its exact name, and types no label uses are not written. Its
-`pair_style` line needs a cutoff, and a cutoff is a run setting, not a force
-field parameter — so you declare it on the pair style yourself; molpy never
-invents one. (GROMACS keeps its cutoffs in the `.mdp`, so the GROMACS writer
-does not write a style-level cutoff; `GromacsEngine.generate_inputs` writes it
-into the `.mdp` instead.)
+`pair_style` line carries the cutoff the pair styles declare. (GROMACS keeps
+its cutoffs in the `.mdp`, so the GROMACS writer does not write a style-level
+cutoff; `GromacsEngine.generate_inputs` writes it into the `.mdp` instead.)
 
 ```python
-ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
-ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-print(mp.io.write_lammps_forcefield_str(ff, frame, precision=4))
+buf = bytearray()
+mp.io.lammps.LammpsForcefieldWriter(frame, precision=4).write(buf, ff)
+print(buf.decode())
 ```
 
 
 ## When to move beyond built-in styles
 
-Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: declare the new style in Python (`class Fene(mp.ff.style_registry.StyleDeclaration)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
+Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: register the new style from Python (`mp.ff.style_registry.GlobalRegistry().register_style("bond", "fene", ...)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
 
 See [Extending Force Field](../developer/extending-forcefield.md) for the full extension recipe.
 

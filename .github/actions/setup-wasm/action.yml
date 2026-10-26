@@ -1,0 +1,27 @@
+name: setup-wasm
+description: >
+  Node, wasm-pack and the wasm-opt release scripts/check.sh pins (apt's
+  binaryen is too old for current rustc wasm). The Rust side is setup-rust:
+  rust-toolchain.toml carries the wasm32-unknown-unknown target.
+inputs:
+  registry-url:
+    description: npm registry to authenticate against (release only)
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+        registry-url: ${{ inputs.registry-url }}
+    # A binary install; `cargo install wasm-pack` is a 1-2 min cold compile.
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: wasm-pack@0.15.0
+    - shell: bash
+      run: |
+        set -euo pipefail
+        VER=$(sed -n 's/^BINARYEN_VERSION=//p' scripts/check.sh)
+        curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-x86_64-linux.tar.gz" \
+          | sudo tar -xz -C /usr/local --strip-components=1
+        wasm-opt --version

@@ -167,15 +167,17 @@ adding a constant that integrates without bound.
 
 `Vacf` is configured with the longest lag it reports, `max_lag`, which counts
 **frames, not femtoseconds**: fifty lags at a 10 fs frame spacing reach 500 fs,
-and the result has `max_lag + 1` lags because lag 0 is included. The data goes
-to `compute`: the velocities and the frame spacing `dt`, which sets the lag
-axis `lag_times`.
+and the result has `max_lag + 1` lags because lag 0 is included. `Vacf` is a
+**stream**: `accumulator()` hands out an accumulator, each frame's velocities
+are pushed into it in order with the frame spacing `dt`, which sets the lag
+axis `lag_times`, and `finish()` reads the curve. Memory holds the first and
+last `max_lag` frames and running totals, however long the trajectory.
 
-The velocities are a `(n_frames, n_dof)` series — one column per Cartesian
-degree of freedom. A `(T, N, 3)` velocity trajectory is reshaped to
-`(T, 3N)`, which is free in NumPy. `Vacf` correlates every column with its own
-past and averages the columns *after* correlating, so the curve is the memory
-of a typical atom along a typical axis:
+Each frame is pushed as an `(n_dof, 1)` column — one row per Cartesian degree
+of freedom. A frame's `(N, 3)` velocities become `(3N, 1)` with
+`v.reshape(-1, 1)`, which is free in NumPy. `Vacf` correlates every degree of
+freedom with its own past and averages them *after* correlating, so the curve
+is the memory of a typical atom along a typical axis:
 
 $$
 C(\tau) = \big\langle v_{i\alpha}(t)\,v_{i\alpha}(t+\tau)\big\rangle_{i,\,\alpha,\,t}
@@ -194,7 +196,10 @@ from molpy.compute import Vacf
 rng = np.random.default_rng(0)
 velocities = rng.normal(0.0, 0.02, size=(2000, 64, 3))   # Å/fs, (T, N, 3)
 
-vacf = Vacf(max_lag=50).compute(velocities=velocities.reshape(2000, -1), dt=10.0)
+accumulator = Vacf(max_lag=50).accumulator()
+for v in velocities:                                      # one (64, 3) frame at a time
+    accumulator.push(v.reshape(-1, 1), dt=10.0)
+vacf = accumulator.finish()
 print(vacf.n_lags, vacf.n_channels)                       # -> 51 1
 print(round(float(vacf.values[0, 0]), 6))                 # -> 0.000401
 ```
@@ -213,7 +218,7 @@ White noise has no memory. Real velocities do, and that difference is the whole
 measurement.
 
 Two conventions sit underneath that curve, and both are configuration. The
-first is what to do with each column's time mean: by default `Vacf` subtracts
+first is what to do with each degree of freedom's time mean: by default `Vacf` subtracts
 it before correlating (`mean="subtract"`), and `mean="keep"` correlates the
 velocities exactly as given. The next section is about why that choice decides
 the Green–Kubo answer. The second is how each lag is averaged: by default every
@@ -250,7 +255,7 @@ correlating.
 
 ### Subtracting the mean costs a finite run part of $D$
 
-Subtracting each column's time mean makes the correlation immune to a constant
+Subtracting each degree of freedom's time mean makes the correlation immune to a constant
 drift, but over a finite run it is not free. An atom that diffused a distance
 $\Delta r$ in a run of length $T$ has a time-mean velocity $\Delta r/T$ along
 each axis, and that is real motion, not drift. Removing it lowers every lag of
@@ -265,9 +270,10 @@ is the Green–Kubo integrand itself, and that is what every figure and number o
 this page uses. It is the same compute with one convention changed:
 
 ```python
-vacf_kept = Vacf(max_lag=50, mean="keep").compute(
-    velocities=velocities.reshape(2000, -1), dt=10.0
-)
+kept = Vacf(max_lag=50, mean="keep").accumulator()
+for v in velocities:
+    kept.push(v.reshape(-1, 1), dt=10.0)
+vacf_kept = kept.finish()
 running_kept = CumulativeTrapezoid().compute(correlation=vacf_kept, channel=0)
 D_kept = Plateau(0.8, 1.0).compute(correlation=running_kept, channel=0).value
 print(round(float(vacf_kept.values[0, 0]), 6))            # -> 0.000401
@@ -330,7 +336,7 @@ polarizability fluxes.
 **Sampling sets your frequency ceiling.** The Nyquist limit is
 $\tilde{\nu}_{\max} \approx 16678/(\Delta t/\mathrm{fs})$ cm⁻¹. At $\Delta t =
 10$ fs — the spacing used for argon — that is 1668 cm⁻¹, fine for a monatomic
-liquid whose motion is all below 100 cm⁻¹, but hopeless for O–H stretches near
+liquid whose motion lies below about 150 cm⁻¹, but hopeless for O–H stretches near
 3600 cm⁻¹. Those need sub-femtosecond dumps.
 
 ## When it goes wrong

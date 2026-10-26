@@ -1,0 +1,171 @@
+[package]
+name = "molcrafts-molrs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Molecular simulation toolkit: core data structures, IO, trajectory analysis, force fields, SMILES, and 3D conformer generation (feature-gated modules)"
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
+categories = ["science"]
+# The generator example is a repository tool, not part of the published crate.
+exclude = ["examples/"]
+# No integration-test or bench targets: behaviour is tested in `#[cfg(test)]`
+# modules next to the code (`cargo test --lib`). One example target: the OPLS
+# parameter generator, a tool, not a test; excluded from the package.
+autotests = false
+autobenches = false
+autoexamples = false
+
+# docs.rs builds the public API with every sub-system enabled — the same set
+# as `cargo mrs-doc`, so the record-file doors (`filesystem`) and `stream`
+# are documented too.
+[package.metadata.docs.rs]
+features = ["full", "filesystem", "stream"]
+
+[lib]
+name = "molrs"
+
+# `cargo mrs-gen-opls --gromacs <dir>` regenerates src/ff/params/oplsaa.rs.
+[[example]]
+name = "gen_opls_params"
+required-features = ["ff"]
+
+[dev-dependencies]
+tempfile = "3.0"
+# The OPLS generator's input pin (shares `digest 0.10` with the lockfile).
+sha2 = "0.11"
+
+[features]
+# Default = core only (`op`, `core`, `perceive`, `optimize`'s engine) plus
+# `rayon`. Every sub-system is opt-in: a downstream crate compiles what it names
+# and nothing else, instead of all of molrs unless it remembers
+# `default-features = false`. `rayon` stays on because it is a pure-Rust
+# performance knob with no API surface; `filesystem` does not, because it links
+# the C zstd/blosc codecs and `zip`. wasm / Pyodide opt out of `rayon` with
+# `default-features = false`. The binders turn on `full` (and `filesystem`,
+# `stream`) themselves.
+default = ["rayon"]
+# Full bundle (every sub-system). Not `stream` (tokio + WebSocket) and not the
+# `filesystem` / `rayon` knobs.
+full = ["io", "compute", "smiles", "ff", "conformer", "voronoi", "md", "builder"]
+
+# Sub-system modules (each gates its module + its unique optional deps).
+# Structure builders (graphene, nanotubes, self-avoiding walks); no unique deps.
+builder   = []
+io        = ["dep:flate2"]
+# `smiles` gates the line notations' shared grammar (`line_notation`): the
+# SMILES format in `io::smiles` and the SMARTS matcher (`perceive::smarts`)
+# both compile from it.
+smiles    = ["io"]
+# Trajectory analysis. Owns its FFT (time correlations, spectra) through
+# rustfft directly.
+compute   = ["dep:rustfft"]
+# Radical (Laguerre) Voronoi tessellation + domain/void analysis. Native
+# pure-Rust (WASM-clean); lives in the `compute` module.
+voronoi   = ["compute"]
+# `ff` types atoms with `perceive::smarts`, which compiles from `line_notation`.
+# With `ff` on, the force-field file formats of `io` (over
+# `roxmltree` for XML) compiles too; `ff` itself reads no file.
+ff        = ["io", "smiles", "dep:rustfft", "dep:roxmltree"]
+# `conformer` depends on the `ff` module.
+conformer = ["ff"]
+# In-process MD: integrators and force providers (the kernels are
+# `ff::potential`). Pair search is core NeighborList. Python composer / hooks live in molpy. Consumes
+# the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`; its
+# kinetic observables (kinetic energy, centre-of-mass velocity) are `compute`'s.
+md        = ["ff", "compute"]
+# serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox)
+# and `Serialize` for the compute outputs (the WASM binding's results). No new
+# deps — serde is already always-on; the feature enables the impls, and
+# ndarray's for the outputs' array fields.
+serde     = ["ndarray/serde"]
+# Live Frame streaming — MolRec-aligned MessagePack/JSON encoding, plus native
+# WebSocket transport. On WASM only the wire codec is compiled. Not in `full`.
+stream    = ["serde", "dep:rmp-serde", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util"]
+
+# Core knobs.
+rayon      = ["dep:rayon"]
+# Codecs are contract surface, not a nicety. Every other Zarr implementation
+# compresses by default -- zarr-python writes zstd -- so a build without them
+# cannot read the ecosystem it belongs to, whatever the layout says. Two
+# tiers, because the C-backed ones cannot cross-compile to wasm32:
+#
+#   zarr         base + the pure-Rust codecs. Everywhere, wasm included.
+#   zarr-codecs  adds zstd and blosc, which bind C. Native only.
+#
+# `sharding` is in the base tier deliberately: molrec bounds a store's file
+# count with it, and a reader that cannot open a shard cannot open the store.
+#
+# `zstd` is in molrec's must-decode set, so the base tier decodes it too: a
+# pure-Rust decoder (`ruzstd`) registered with zarrs as the `zstd` codec
+# (`io/mrec/zarr_storage/zstd_decode.rs`). It is registered only without `zarr-codecs`,
+# whose C-backed codec owns the name and also encodes. `numcodecs.shuffle`
+# needs nothing: zarrs builds it on every target.
+#
+# A record's `forcefield` section validates its style tables against the
+# force-field IR's vocabulary (`ff::ir` categories and table columns, the
+# mixing and 1-4 rules), so the record codec (`io::mrec`) needs `ff`.
+zarr       = ["ff", "dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose", "dep:ruzstd", "dep:inventory"]
+zarr-codecs = ["zarr", "zarrs/zstd", "zarrs/blosc"]
+filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem", "dep:zip", "dep:zarrs_zip"]
+
+[dependencies]
+# Always-on (core foundation).
+ndarray    = "0.17"
+slotmap    = "1"
+smallvec   = "1"
+serde      = { version = "1", features = ["derive"] }
+# `preserve_order`: the Zarr schema pin and group attributes are JSON objects
+# whose key order is the declared block / column / meta order.
+serde_json = { version = "1", features = ["preserve_order"] }
+# Insertion order of frame blocks, block columns and metadata (`Frame`,
+# `Block`, `MetaMap`, graph components). Always-on because `core` is.
+# `serde` so the frame wire form carries keys in that order.
+indexmap   = { version = "2", features = ["serde"] }
+# `lgamma` (Wigner / spherical harmonics) and `erf`/`erfc` (PME) — none of
+# them is in Rust's std on any target.
+libm       = "0.2"
+# Storage-width scalars for columns. Distinct from [`F`]/[`I`]/[`Idx`]: those
+# are domain aliases (compute scalar, small integer, identifier). A column
+# that arrived as f32 or i64 has to leave as the same width.
+half        = { version = "2", default-features = false, features = ["num-traits", "std"] }
+num-complex = "0.4"
+# Seeded RNG for structure builders (`builder` SARW) and for
+# compute/conformer stochastic paths. Always-on so `builder` is always compiled.
+rand       = "0.10"
+
+# Feature-gated optional deps — a build with a sub-system OFF does not compile
+# that sub-system's unique dependency.
+rayon          = { version = "1.12", optional = true }                                              # core/ff/compute parallelism (default)
+zarrs          = { version = "0.23", optional = true, default-features = false, features = ["ndarray"] }  # zarr trajectories (core+io)
+ruzstd         = { version = "0.9", optional = true, default-features = false, features = ["std"] }    # zarr: pure-Rust zstd decode (wasm32)
+inventory      = { version = "0.3", optional = true }                                               # zarr: registers the ruzstd codec with zarrs
+flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
+rustfft        = { version = "6", optional = true }                                                 # ff + compute
+roxmltree      = { version = "0.21", optional = true }                                              # ff (io's force-field XML readers)
+rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
+# `io/mrec/zarr_storage/pack.rs` and nothing else: `zip` writes the `.mrec.zip` a closed
+# directory store packs into, `zarrs_zip` reads it back. Both hang on
+# `filesystem`, so a build without that feature compiles neither — which is
+# what keeps them out of the wasm graph. `zip` is built with default-features
+# off: only method 0 (Stored) is ever written, so none of its compression
+# backends (bzip2/lzma/zstd/aes) are compiled.
+zip            = { version = "9", optional = true, default-features = false }                       # filesystem (pack.rs)
+zarrs_zip      = { version = "0.5", optional = true }                                               # filesystem (pack.rs)
+
+# WebSocket streaming is native-only. On wasm32, `--no-default-features
+# --features stream` builds the wire codec without pulling tokio/tungstenite.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio              = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio-tungstenite  = { version = "0.30", optional = true }
+futures-util       = { version = "0.3", optional = true, default-features = false, features = ["sink"] }
+
+# wasm32 has no OS RNG: `rand`'s transitive `getrandom` needs the `wasm_js`
+# backend to build for the browser target. Target-gated so native builds are
+# unaffected. Mirrors molwasm.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }

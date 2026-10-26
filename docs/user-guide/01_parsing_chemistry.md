@@ -15,12 +15,13 @@ and stereochemistry. SMARTS asks *"what structural pattern should I match?"* and
 encodes logical constraints rather than physical atoms — it never builds a
 structure.
 
-There is no parser *function* to look up: you name the type you want.
-`mp.io.smiles.SmilesIr` gives you the parsed SMILES (`to_atomistic()` makes it a
-graph), `SmartsPattern` gives you a compiled query, `CgSmilesIr` gives you a
-parsed CGsmiles string.
+Each notation has one entry point, and each returns a type you keep working with.
+`mp.io.smiles.read_smiles` gives you the parsed SMILES as a `SmilesIr`
+(`to_atomistic()` makes it a graph), `mp.perceive.SmartsPattern` gives you a
+compiled query, `mp.io.cgsmiles.read_cgsmiles` gives you a parsed CGsmiles string
+as a `CgSmilesIr`.
 
-> **Polymer notations.** CGsmiles is read by `mp.io.cgsmiles.CgSmilesIr`
+> **Polymer notations.** CGsmiles is read by `mp.io.cgsmiles.read_cgsmiles`
 > ([below](#cgsmiles-describes-units-and-how-they-join)); it is how units and
 > polymer topologies are written for [Assembly](02_assembly.md). BigSMILES and
 > G-BigSMILES are not parsed.
@@ -38,7 +39,7 @@ import molpy as mp
 mol = mp.io.smiles.read_smiles("CC(=O)OCC").to_atomistic() # ethyl acetate
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 
-elements = [atom.get("element") for atom in mol.atoms]
+elements = [mp.Element.by_number(atom.get("atomic_number")).symbol for atom in mol.atoms]
 print(elements)
 ```
 
@@ -107,26 +108,26 @@ print([atom.get("is_aromatic") for atom in benzene.atoms])
 ```
 
 ```text
-[1, 1, 1, 1, 1, 1]
+[True, True, True, True, True, True]
 ```
 
 
 `mp.perceive.assign_aromaticity()` **re-derives** the flag from the ring and its
 bonds rather than trusting the notation, so a Kekulé structure written with
-explicit double bonds comes out aromatic too:
+explicit double bonds comes out aromatic too. It edits the molecule in place:
 
 
 ```python
 kekule = mp.io.smiles.read_smiles("C1=CC=CC=C1").to_atomistic()
 print("as written:  ", [atom.get("is_aromatic") for atom in kekule.atoms])
 
-perceived = mp.perceive.assign_aromaticity(kekule)
-print("re-perceived:", [atom.get("is_aromatic") for atom in perceived.atoms])
+mp.perceive.assign_aromaticity(kekule)  # in place
+print("re-perceived:", [atom.get("is_aromatic") for atom in kekule.atoms])
 ```
 
 ```text
 as written:   [None, None, None, None, None, None]
-re-perceived: [1, 1, 1, 1, 1, 1]
+re-perceived: [True, True, True, True, True, True]
 ```
 
 
@@ -146,13 +147,13 @@ print(f"query atoms: {query.n_query_atoms}, max bond depth: {query.max_bond_dept
 ethanol = mp.perceive.add_hydrogens(mp.io.smiles.read_smiles("CCO").to_atomistic())
 print("matches ethanol:", query.has_match(ethanol))
 for match in query.find_matches(ethanol):
- print(" matched atom handles:", match.atoms)
+ print(" matched atoms:", match.atoms)
 ```
 
 ```text
 query atoms: 2, max bond depth: 1
 matches ethanol: True
- matched atom handles: [4294967298, 4294967299]
+ matched atoms: [<Atom 4294967298: C>, <Atom 4294967299: O>]
 ```
 
 
@@ -185,12 +186,13 @@ ir = mp.io.cgsmiles.read_cgsmiles("{[#EO]|3}.{#EO=[<]OCC[>]}")
 eo = ir.templates()["EO"]  # the unit: a ported template
 print(f"EO template: {eo.n_atoms} atoms, {eo.n_ports} ports")
 for port in eo.ports:
-    anchor, handle = port.anchor.get("element"), port.handle_atom.get("element")
+    anchor = mp.Element.by_number(port.anchor.get("atomic_number")).symbol
+    handle = mp.Element.by_number(port.handle_atom.get("atomic_number")).symbol
     print(f"  port {port.get('port_kind')}: anchor {anchor}, leaving {handle}")
 
 sites = ir.to_coarsegrain()  # the topology: one site per unit
 bead_types = [bead.get("bead_type") for bead in sites.beads]
-print(f"site graph: {bead_types}, {len(sites.cgbonds)} bonds")
+print(f"site graph: {bead_types}, {len(sites.bonds)} bonds")
 
 chain = ir.to_atomistic()  # the whole molecule, descriptors consumed as bonds
 print(f"to_atomistic(): {chain.n_atoms} heavy atoms, {len(chain.bonds)} bonds")

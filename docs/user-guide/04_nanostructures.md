@@ -1,7 +1,7 @@
 # Nanostructures
 
-Nanotubes and graphene sheets are built by `mp.builder`, whose
-`CarbonTubeBuilder` and `GrapheneBuilder` are molrs's. `CarbonTubeBuilder`
+Nanotubes and graphene sheets are built by `mp.builder`'s
+`CarbonTubeBuilder` and `GrapheneBuilder`. `CarbonTubeBuilder`
 rolls an exact graphene lattice into a single-wall carbon nanotube;
 `GrapheneBuilder` emits a flat honeycomb sheet. Each `build()` returns the
 structure as a `Frame`; `mp.Atomistic.from_frame` makes it an editable graph.
@@ -9,7 +9,7 @@ The tube's shape is fixed when the builder is constructed;
 unit-cell enumeration, seam closure, and connectivity are implementation
 details.
 
-Bulk crystals are molpy's `Lattice`, built from a CIF or from a cell and a
+Bulk crystals are `mp.builder.Lattice`, built from a CIF or from a cell and a
 basis; see [Bulk crystals from a CIF](#bulk-crystals-from-a-cif).
 
 ## Zigzag, armchair, and chiral tubes
@@ -43,7 +43,7 @@ periodic = mp.Atomistic.from_frame(builder.build())
 box = builder.cell(vacuum=12.0)
 
 assert box.pbc.tolist() == [False, False, True]
-assert all(len(periodic.incident_relations(atom.handle, "bonds")) == 3 for atom in periodic.atoms)
+assert all(len(periodic.neighbors(atom)) == 3 for atom in periodic.atoms)
 ```
 
 The two are separate products because a molecular graph is topology and
@@ -90,8 +90,35 @@ group's operators; `mp.io.read_cif` keeps the operators in
 the whole conventional cell:
 
 ```python
-# docs: skip — reads an offline CIF; Lattice.from_cif is unit-tested with fixtures
-frame = mp.io.read_cif("NaCl.cif")  # Fm-3m: Na1 at 4a, Cl1 at 4b
+from pathlib import Path
+
+# A minimal rock-salt CIF: Na1 at 4a, Cl1 at 4b, and the four F-centring
+# operators (the rest of Fm-3m maps these two sites onto themselves).
+Path("NaCl.cif").write_text("""data_NaCl
+_cell_length_a 5.64
+_cell_length_b 5.64
+_cell_length_c 5.64
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_symmetry_space_group_name_H-M 'F m -3 m'
+loop_
+_symmetry_equiv_pos_as_xyz
+'x,y,z'
+'x,y+1/2,z+1/2'
+'x+1/2,y,z+1/2'
+'x+1/2,y+1/2,z'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 Na 0.0 0.0 0.0
+Cl1 Cl 0.5 0.5 0.5
+""")
+
+frame = mp.io.read_cif(Path("NaCl.cif"))  # a path, not a bare str
 salt = mp.builder.Lattice.from_cif(frame)
 assert len(salt.basis) == 8  # 4 Na + 4 Cl per conventional cell
 

@@ -56,24 +56,32 @@ Keep functions under 50 lines and focused on one task. Keep files under 800 line
 
 Use `snake_case` for functions and variables, `PascalCase` for classes, `UPPER_CASE` for constants. Canonical data-field names such as `element`, `charge`, and `mol_id` are defined in [Naming Conventions](../tutorials/naming-conventions.md); do not introduce local variants in developer docs or extension examples. Use MolPy-specific terms precisely: `topology` means the bond graph (not "connections"), `atom type` means the force field identifier (not "kind").
 
-molpy follows molrs's naming rules (`tests/test_public_paths.py` checks the module and class names):
+molpy follows the project's naming rules (`AGENTS.md`):
+
+- **No module name starts with `_`.** What is public is what an `__all__`
+  lists; a module no `__all__` lists (`molpy.engine.lammps`) is an
+  implementation module, reached through its package's names
+  (`mp.engine.LammpsEngine`).
 
 - **A name states its job.** No module is named after a container word —
   `data`, `base`, `types`, `common`, `utils`, `helpers`, `env` — public or
   private: the bundled files are `molpy.resources`, the engine base class lives
-  in `engine/_engine.py`, the wrapper environment in `wrapper/_environment.py`.
+  in `engine/engine.py`, a tool's environment in `tool/environment.py`.
   Classes and functions follow (`EnvironmentSpec`, `tool_settings`,
   `TypeAssignment`, `source_forcefield`).
 - **Acronyms are cased as words**: `LammpsEngine`, `OpenmmEngine`,
-  `TleapWrapper`, `SmilesIr`, `CgBond`, `Rdf`, `Msd`,
+  `SmilesIr`, `CgBond`, `Rdf`, `Msd`,
   `Lbfgs`, `PairLjCut`. numpy's `DType` and `HBond` (H is the element) keep
   their spelling.
 - **Counts are `n_*`** (numpy / freud): `n_atoms`, `n_pairs`, `n_rings()`,
   `n_query_atoms` — never `num_*`.
-- **One door per file format**, named after the format:
-  `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`, `_str` / `_bytes` /
-  `_trajectory` for text, bytes and multi-frame input; no door picks a format
-  from a file extension.
+- **One door per file format and direction** on `mp.io`, named after the
+  format: `read_<fmt>[_<what>](source)` / `write_<fmt>[_<what>](sink, frame)`.
+  A source is an `os.PathLike`, `bytes` or `mp.io.Text` (a bare `str` is
+  refused), a sink an `os.PathLike` or a `bytearray`. Multi-frame and
+  force-field formats are classes in the format's submodule
+  (`mp.io.pdb.PdbReader`, `mp.io.lammps.LammpsForcefieldWriter`); no door
+  picks a format from a file extension.
 
 
 ## Type hints
@@ -98,7 +106,7 @@ Use Google-style docstrings for public functions and classes. Include `Args`, `R
 
 ## Formatting
 
-Ruff is the single source of truth for formatting and linting. Run `ruff format src tests` and `ruff check src` before committing. Pre-commit hooks enforce this automatically.
+Ruff is the single source of truth for formatting and linting. From `molpy/`, run `uv run --no-sync ruff format python tests` and `uv run --no-sync ruff check python tests` before committing. The `python` gate checks the format; the `ruff` gate (`scripts/check.sh ruff`, also a pre-commit hook) lints the whole repository.
 
 
 ## Ready-to-commit checklist
@@ -110,6 +118,6 @@ A change is ready when:
 - [ ] Core APIs mutate in place intentionally; helpers do not mutate caller-owned inputs
 - [ ] Tests cover the changed behavior
 - [ ] Public APIs have type hints and docstrings
-- [ ] `ruff format --check src tests` passes
-- [ ] `ruff check src` passes
+- [ ] `ruff format --check python tests` passes
+- [ ] `ruff check python tests` passes
 - [ ] `pre-commit run --all-files` passes

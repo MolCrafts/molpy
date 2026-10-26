@@ -1,0 +1,54 @@
+# stubtest allowlist for molpy._core (scripts/check.sh types).
+#
+# Only structural exemptions belong here: a name the stub must spell
+# differently from the runtime because a single-file stub cannot spell it
+# any other way. A signature or a member that disagrees with the extension
+# is fixed in molpy/_core.pyi, never listed here.
+
+# Stub-only type aliases: annotation vocabulary for type checkers. A
+# `type X = ...` statement has no runtime object, and the extension exports
+# none of them.
+molpy._core.Annotation
+molpy._core.ArrayBool
+molpy._core.ArrayF
+molpy._core.ArrayI32
+molpy._core.ArrayI64
+molpy._core.ArrayU32
+molpy._core.ArrayU8
+molpy._core.AssignmentParamValue
+molpy._core.AtdParameterSet
+molpy._core.BccParameterSet
+molpy._core.BondKindName
+molpy._core.ColumnKey
+molpy._core.ColumnMapping
+molpy._core.FeatureMatrix
+molpy._core.FrozenMetaValue
+molpy._core.GaffParameterSet
+molpy._core.ParamInput
+molpy._core.ParamValue
+molpy._core.Partition
+molpy._core.PathInput
+molpy._core.PropValue
+molpy._core.RegionLike
+
+# The extension's submodules (`_native.keys`, `_native.mrec`, …) are declared
+# as classes: a single-file stub has no other way to describe a submodule;
+# the modules that copy their names (molpy.core.keys, .schema, .constants)
+# are checked through their own stubs.
+molpy._core.constants
+molpy._core.ir
+molpy._core.keys
+molpy._core.md
+molpy._core.mrec
+molpy._core.op
+molpy._core.schema
+molpy._core.style_registry
+
+# The runtime `__all__` lists the extension's exports; the stub's public
+# names add the stub-only aliases above, so the stub declares no `__all__`.
+molpy._core.__all__
+
+# `Typifier` is `Generic[_TGraph]` in the stub; the runtime class answers
+# subscription through pyo3's `generic`, a `__class_getitem__` the stub's
+# Generic base supplies without spelling it.
+molpy._core.Typifier.__class_getitem__

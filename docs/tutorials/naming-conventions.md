@@ -70,7 +70,7 @@ on read. `mp.core.schema.column(key)` is the authoritative table.
 
 Format-specific aliases such as LAMMPS `q` and `mol` exist only at the I/O boundary. Readers canonicalize them to `charge` and `mol_id`; writers localize them back when required by the target format.
 
-**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention. Readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `mp.io.read_openmm_forcefield` hands back Å and kcal/mol.
+**Units.** `mass` is in amu, `charge` in elementary-charge units, and lengths (`x/y/z`, the box) are always Å: a reader of an nm format (GROMACS) converts at its boundary, and no binding converts again. The columns hold raw numbers with no unit attached, so a coordinate you write yourself must already be in Å. Force-field readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `mp.io.openmm_xml.OpenmmXmlReader` hands back Å and kcal/mol.
 
 #### Bond Topology (`bonds`)
 
@@ -81,6 +81,8 @@ The `bonds` namespace stores bond connectivity using separate index arrays for s
 | `atomi` | uint64 array | Bond source atom indices |
 | `atomj` | uint64 array | Bond target atom indices |
 | `type` | string array | Bond type labels (optional) |
+| `bond_type` | uint64 array | Chemical bond class: 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic (optional) |
+| `bond_number` | uint64 array | Bond number of the Kekulé structure, 0 unknown to 4 quadruple (optional) |
 
 #### Angle Topology (`angles`)
 
@@ -123,8 +125,10 @@ The vocabulary also names `constraints` (`atomi`, `atomj`, optional `r0`),
 `drudes` (`atomi` the core, `atomj` its Drude particle), `virtual_sites`
 (`atomi` the site, built from `atomj` … `atoml`; trailing endpoints may be
 null) and, on a coarse-grained frame, `members` (`ibead` → `atoms`, and `atom`
-into the all-atom block its declared target names). Their endpoint columns are
-`uint64` row indices like the bonded blocks above.
+into the all-atom block its declared target names), plus `cmaps` (`atomi` …
+`atomm`), and the special pairs `pairs` (`atomi`, `atomj`, with `n_bonds` the
+pair's bond distance). Their endpoint columns are `uint64` row indices like
+the bonded blocks above.
 
 ### Namespace Naming Conventions
 
@@ -156,7 +160,7 @@ The namespace and naming convention addresses two complementary problems: data o
 
 At the type safety level, MolPy deliberately avoids using the same field name for both indices and references. While names such as `atom_i` or `atom1` are common in other libraries, they tend to blur the distinction between "position in a table" and "object in memory". By using `atomi` and `atomj` at the Frame level and `itom` and `jtom` at the Entity level, the code makes this distinction visible at the point of use and enforceable through type checking or runtime validation.
 
-This separation prevents subtle bugs where a field silently changes meaning depending on context. Such bugs become especially problematic when adding serialization, caching, multiprocessing, or cross-language bindings, since the interchange format must operate on indices while the in-process API operates on object references. The Frame-level design is fully serializable to JSON, Arrow, and HDF5, and it is language-agnostic, making it straightforward to implement equivalent data structures in Rust, C++, or TypeScript. It aligns naturally with the data layouts expected by MD engines such as LAMMPS, which operate on indexed atom tables rather than pointer-based object graphs.
+This separation prevents subtle bugs where a field silently changes meaning depending on context. Such bugs become especially problematic when adding serialization, caching, multiprocessing, or cross-language bindings, since the interchange format must operate on indices while the in-process API operates on object references. The Frame-level design is fully serializable (a `*.mrec` record stores it column for column), and it is language-agnostic, making it straightforward to implement equivalent data structures in Rust, C++, or TypeScript. It aligns naturally with the data layouts expected by MD engines such as LAMMPS, which operate on indexed atom tables rather than pointer-based object graphs.
 
 At the same time, the Entity-level design supports the fluent and expressive APIs needed for interactive molecular construction, where graph traversal and chemical reasoning require direct access to atom properties without repeated index lookups. By keeping the two layers separate and enforcing explicit conversion at boundaries, MolPy avoids the common pitfall of "universal" data structures that try to serve both purposes but end up being awkward for both.
 
@@ -195,8 +199,8 @@ These conversions must be explicit and localized at the boundary between Frame a
 
 ### Names in the Python API
 
-The API itself follows the same rules as molrs, whose names molpy re-exports
-by identity:
+The API itself follows the same rules as the Rust core, whose names it
+publishes:
 
 - **Acronyms are cased as words.** `mp.engine.LammpsEngine`,
   `mp.engine.OpenmmEngine`, `mp.io.smiles.SmilesIr`, `mp.CgBond`,
@@ -209,15 +213,18 @@ by identity:
   `utils`, `helpers`, `env`): a module says what it holds — the bundled files
   are `mp.resources`, the CL&Pol LJ scaling is `mp.ff.clpol_scaling`.
 - **One I/O door per format**: `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`
-  (`read_pdb`, `read_lammps_data`, `read_top_forcefield`), with `_str`,
-  `_bytes` and `_trajectory` for text, bytes and every frame of a multi-frame
-  file.
+  (`read_pdb`, `read_lammps_data`, `write_lammps_dump`) for one frame; every
+  frame of a multi-frame file, and force-field files, go through the format
+  module's reader and writer classes (`mp.io.pdb.PdbReader`,
+  `mp.io.gromacs.GromacsTopForcefieldReader`). There are no `_str` / `_bytes`
+  variants: a source is a path, `bytes`, or `mp.io.Text` for text in memory,
+  and a sink is a path or a `bytearray`.
 
 ```python
-assert mp.io.read_smiles_str("CCO").n_atoms == 3
+assert mp.io.smiles.read_smiles("CCO").to_atomistic().n_atoms == 3
 assert mp.perceive.SmartsPattern("[#6][#8]").n_query_atoms == 2
 ```
 
 ### For contributors
 
-When extending MolPy, treat this scheme as a hard invariant: Frame/Block topology always uses `atomi/atomj/atomk/atoml` (indices); Entity topology always uses `endpoints` (and a bond's `itom` / `jtom`), which are atom views; convert explicitly at the boundary, never mix the two inside one object. The rationale (type-safety, serialization to JSON/Arrow/HDF5, and cross-language backends) is covered in the [Developer Guide](../developer/index.md).
+When extending MolPy, treat this scheme as a hard invariant: Frame/Block topology always uses `atomi/atomj/atomk/atoml` (indices); Entity topology always uses `endpoints` (and a bond's `itom` / `jtom`), which are atom views; convert explicitly at the boundary, never mix the two inside one object. The rationale (type-safety, serialization, and cross-language backends) is covered in the [Developer Guide](../developer/index.md).

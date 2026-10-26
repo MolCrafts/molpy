@@ -7,9 +7,10 @@ frames in time order without inventing a second data model?
 is still one frame — blocks, metadata, optional box. Time stacks snapshots; it
 does not replace them.
 
-What it is **not**: a lazy file cursor. Seekable readers live under
-`molpy.io` trajectory readers; construct a `Trajectory` when you want
-an in-memory sequence with `len`, indexing, and slicing.
+What it is **not**: a lazy file cursor. Seekable readers are the
+multi-frame reader classes of `mp.io` (`mp.io.lammps.LammpsDumpReader`, …);
+construct a `Trajectory` when you want an in-memory sequence with `len`,
+indexing, and slicing.
 
 ## Building a trajectory from a list
 
@@ -34,8 +35,8 @@ print(traj[0]["atoms"]["x"])  # [0.]
 ## Frames are materialized
 
 The constructor copies every frame into the native container, so frames from a
-generator are listed first. Use `molpy.io.read_lammps_dump_trajectory` or
-`molpy.io.read_xyz_trajectory` when data must remain lazy and seekable on disk.
+generator are listed first. Use `mp.io.lammps.LammpsDumpReader` or
+`mp.io.xyz.XyzReader` when data must remain lazy and seekable on disk.
 
 ```python
 def make_frames(n):

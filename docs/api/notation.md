@@ -2,8 +2,8 @@
 
 Chemical string notation, parsed by the native core. Three notations are supported —
 SMILES, CGsmiles and SMARTS — and each is reached through a **type**; the reader
-entry points are `read_smiles(text)` and `read_cgsmiles(text)`. Every notation type mirrors
-its molrs owner — SMILES in `mp.io.smiles` (`mp.io.smiles.SmilesIr`), CGsmiles in
+entry points are `read_smiles(text)` and `read_cgsmiles(text)`. Every notation type lives
+in the module of its Rust owner — SMILES in `mp.io.smiles` (`mp.io.smiles.SmilesIr`), CGsmiles in
 `mp.io.cgsmiles` (`mp.io.cgsmiles.CgSmilesIr`),
 SMARTS in `mp.perceive` (`mp.perceive.SmartsPattern`).
 

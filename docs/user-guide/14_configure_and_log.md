@@ -6,14 +6,14 @@ simulates the system names neither.
 
 ---
 
-## The settings an engine or wrapper reads live in one place
+## The settings an engine or AmberTools program reads live in one place
 
 Every engine (`LammpsEngine`, `GromacsEngine`, `OpenmmEngine`, `Cp2kEngine`)
-and every AmberTools wrapper (antechamber, tleap, parmchk2, prepgen, sander)
+and every AmberTools program (antechamber, tleap, parmchk2, prepgen)
 runs an external program. What it needs to know about that program is not
 part of the science:
 
-| Setting | Meaning | Engines | Wrappers |
+| Setting | Meaning | Engines | AmberTools |
 |---------|---------|:-------:|:--------:|
 | `executable` | the program, a name looked up in the environment or a path | ✓ | ✓ |
 | `env`, `env_manager` | the conda env (name or prefix) or venv prefix it lives in; `"conda"` or `"venv"` | ✓ | ✓ |
@@ -23,11 +23,11 @@ part of the science:
 
 These are settings in molpy's configuration (`molpy.config`, built on
 [molcfg](https://docs.molcrafts.org/molcfg/)), not constructor arguments. A
-tool reads its own table — `[engine.lammps]`, `[wrapper.tleap]` — and falls
-back to its group's, `[engine]` or `[wrapper]`, for any key its table leaves
+tool reads its own table — `[engine.lammps]`, `[ambertools.tleap]` — and falls
+back to its group's, `[engine]` or `[ambertools]`, for any key its table leaves
 unset. `[conda] executable` names the `conda` that `conda run` invokes. A
-third-party engine or wrapper reads its own table the same way: any table
-under `[engine]` or `[wrapper]` is a tool's.
+third-party engine or AmberTools program reads its own table the same way: any table
+under `[engine]` or `[ambertools]` is a tool's.
 
 ## Four layers, later winning
 
@@ -43,7 +43,7 @@ Each key is taken from the last layer that sets it; tables such as
 missing file is skipped. An unknown key or a value of the wrong type is
 refused when the configuration loads, with the key and the files read in the
 message — a typo never silently falls back to a default. (A table under
-`[engine]` or `[wrapper]` names a tool, built-in or third-party, so it is
+`[engine]` or `[ambertools]` names a tool, built-in or third-party, so it is
 the keys inside it that are checked.)
 
 ## One file drives the run
@@ -72,7 +72,7 @@ launcher = ["srun", "--ntasks=16"]
 env = "gromacs-2024"
 env_manager = "conda"
 
-[wrapper]                         # every AmberTools program
+[ambertools]                         # every AmberTools program
 env = "AmberTools25"
 env_manager = "conda"
 """,
@@ -94,12 +94,12 @@ print(lammps.timeout, lammps.env_vars)  # 7200.0 {'OMP_NUM_THREADS': '1'}
 print(lammps.sources["launcher"])  # ('project', 'engine.lammps.launcher')
 print(lammps.sources["timeout"])  # ('project', 'engine.timeout')
 
-tleap = tool_settings(config, "wrapper.tleap")
+tleap = tool_settings(config, "ambertools.tleap")
 print(tleap.env, tleap.env_manager)  # AmberTools25 conda
-print(tleap.sources["executable"])  # ('defaults', 'wrapper.tleap.executable')
+print(tleap.sources["executable"])  # ('defaults', 'ambertools.tleap.executable')
 ```
 
-The engines and wrappers take that configuration as it is. Nothing else in
+The engines and AmberTools programs take that configuration as it is. Nothing else in
 the script mentions a binary, an environment or a launcher:
 
 ```python
@@ -139,13 +139,13 @@ order (`history`), and of the last one (`source`).
 
 ## Every run is logged as structured records
 
-The engines and wrappers log through [mollog](https://docs.molcrafts.org/mollog/),
+The engines and AmberTools programs log through [mollog](https://docs.molcrafts.org/mollog/),
 one logger per subsystem:
 
 | Logger | Emits |
 |--------|-------|
 | `molpy.engine.lammps`, `.gromacs`, `.openmm`, `.cp2k` | every subprocess (and, at DEBUG, each `conda run … which` executable lookup); `inputs written` from `generate_inputs`; `relaxation finished` / `relaxation output missing` from LAMMPS `minimize` / `md` |
-| `molpy.wrapper.antechamber`, `.tleap`, `.parmchk2`, `.prepgen`, `.sander` | every subprocess; `step output missing` when a step exits 0 without its file |
+| `molpy.ambertools.antechamber`, `.tleap`, `.parmchk2`, `.prepgen` | every subprocess; `step output missing` when a step exits 0 without its file |
 | `molpy.config` | `config loaded` (the layers read), `tool settings resolved` (each setting's source), at DEBUG |
 
 A subprocess is `process started` (DEBUG), then `process finished` (INFO) or
@@ -154,9 +154,9 @@ A subprocess is `process started` (DEBUG), then `process finished` (INFO) or
 list), `cwd`, `returncode`, `elapsed_s`, `timeout_s`, and for GROMACS `step`
 (`grompp` or `mdrun`).
 
-Whatever went wrong, the exception is one `molpy.wrapper.ToolError`: a
+Whatever went wrong, the exception is one `molpy.tool.ToolError`: a
 missing executable, a program that cannot start, a timeout, a non-zero exit
-(engines and wrappers check it by default) or a step's missing output. It
+(engines and AmberTools programs check it by default) or a step's missing output. It
 carries `tool` (`"engine.lammps"`), `returncode` (`None` when the program
 never exited on its own) and `tail`, the last lines of the program's stderr,
 stdout or log file.
@@ -199,6 +199,8 @@ water = mp.Frame(
 )
 water.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ff = mp.ff.forcefield.ForceField("tip3p", units="real")
+# A rigid water has no 1-4 pairs: every 1-2 / 1-3 pair is excluded.
+ff.set_special_bonds([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
 atoms = ff.def_style("atom", "full")
 ow = atoms.def_type("OW", mass=15.999, charge=-0.834, element="O")
 hw = atoms.def_type("HW", mass=1.008, charge=0.417, element="H")
@@ -228,7 +230,7 @@ relaxed = lmp.minimize(water, ff, workdir=project / "minimize")
 {"timestamp": "…", "level": "INFO", "logger_name": "molpy.engine.lammps", "message": "process finished", "command": ["srun", "--ntasks=16", "lmp_mpi", "-in", "system.in", "-log", "log.lammps", "-screen", "none"], "cwd": "14_output/minimize", "returncode": 0, "elapsed_s": 41.7}
 ```
 
-Levels follow the logger tree: `mollog.get_logger("molpy.wrapper").set_level("WARNING")`
+Levels follow the logger tree: `mollog.get_logger("molpy.ambertools").set_level("WARNING")`
 keeps the AmberTools programs to failures while the engines still report
 each run; `mollog.get_logger("molpy").set_level("ERROR")` silences molpy
 except for failures.
@@ -238,5 +240,5 @@ except for failures.
 ## See also
 
 - [Simulation Engines](12_engine.md) — what each engine writes and runs
-- [PEO–LiTFSI with AmberTools](13_ambertools_integration.md) — the AmberTools wrappers driven from a `[wrapper]` table
-- API: [`molpy.config`](../api/config.md), [`molpy.engine`](../api/engine.md), [`molpy.wrapper`](../api/wrapper.md)
+- [PEO–LiTFSI with AmberTools](13_ambertools_integration.md) — the AmberTools programs driven from a `[ambertools]` table
+- API: [`molpy.config`](../api/config.md), [`molpy.engine`](../api/engine.md), [`molpy.tool`](../api/tool.md)

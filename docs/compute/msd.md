@@ -177,11 +177,14 @@ already know. A random walk with independent Gaussian steps of width $\sigma$
 per Cartesian direction has $\mathrm{MSD}(\tau) = 3\sigma^2\,\tau/\Delta t$
 exactly, so $D = \sigma^2 / (2\Delta t)$.
 
-`Msd` is configured with the longest lag it should report, in frames, and is
-then handed the data: an `(n_frames, n_atoms, 3)` array of positions and the
-time `dt` between frames. What comes back is a `TimeCorrelation` — the lag
-axis `lag_times` in the unit of `dt`, and `values[lag, channel]` with one
-channel, the curve averaged over atoms and time origins:
+`Msd` is configured with the longest lag it should report, in frames. It is a
+**stream**: `accumulator()` hands out an accumulator, each frame's
+`(n_atoms, 3)` positions are pushed into it in order together with the time
+`dt` between frames, and `finish()` reads the curve. Memory stays bounded by
+`max_lag`, however long the trajectory. What comes back is a
+`TimeCorrelation` — the lag axis `lag_times` in the unit of `dt`, and
+`values[lag, channel]` with one channel, the curve averaged over atoms and time
+origins:
 
 ```python
 import numpy as np
@@ -191,7 +194,10 @@ rng = np.random.default_rng(0)
 sigma, dt = 0.1, 2.0                                  # Å per step, fs per frame
 walk = np.cumsum(rng.normal(0.0, sigma, size=(400, 50, 3)), axis=0)
 
-msd = Msd(max_lag=100).compute(positions=walk, dt=dt)
+accumulator = Msd(max_lag=100).accumulator()
+for positions in walk:                                # one (50, 3) frame at a time
+    accumulator.push(positions, dt=dt)
+msd = accumulator.finish()
 print(msd.n_lags, msd.n_channels)                     # -> 101 1
 print(msd.lag_times[:3])                              # -> [0. 2. 4.]
 print(round(float(msd.values[1, 0]), 4), round(3 * sigma**2, 4))  # -> 0.03 0.03
@@ -240,19 +246,20 @@ check the window really was linear before quoting the slope.
 In practice, dynamics dumps are already written that way: LAMMPS
 `dump … xu yu zu` (or `x y z ix iy iz` that you unwrap once on read), GROMACS
 with no-jump, etc. The compute does not read frames: you read the coordinate
-columns out of each frame and stack them into the `(n_frames, n_atoms, 3)`
-array it takes. A normal analysis pipeline is therefore:
+columns out of each frame and push them, one frame at a time. A normal
+analysis pipeline over a dump of `xu yu zu` columns is therefore:
 
 ```python
 # docs: skip — needs your own trajectory file
-import numpy as np
-from molpy.io import read_lammps_dump_trajectory
+from pathlib import Path
+import molpy as mp
 from molpy.compute import Msd
 
-frames = read_lammps_dump_trajectory("run.lammpstrj").read_all()
-positions = np.stack([frame.coords for frame in frames])   # (T, N, 3), unwrapped
-boxes = [frame.box for frame in frames]
-msd = Msd(max_lag=2000).compute(positions=positions, dt=10.0, boxes=boxes)
+accumulator = Msd(max_lag=2000).accumulator()
+for frame in mp.io.lammps.LammpsDumpReader(Path("run.lammpstrj")):
+    unwrapped = frame["atoms"]["xu", "yu", "zu"]               # (N, 3)
+    accumulator.push(unwrapped, dt=10.0, simbox=frame.box)
+msd = accumulator.finish()
 ```
 
 `dt` is whatever interval your dump used, in fs. The figure on this page was
@@ -264,9 +271,9 @@ recorded as a jump of nearly a full box length $L$. Those fake jumps dominate
 the average: the curve loses any clean ballistic → diffusive shape and levels
 off near a meaningless $\sim L^{2}/2$ set by the box size, not by the physics.
 
-That is why `boxes` is worth passing. With the per-frame boxes in hand, `Msd`
-checks every frame-to-frame step, and a step longer than half the box is
-refused rather than averaged:
+That is why each frame's box is worth passing, as `simbox=`. With it in hand,
+the accumulator checks every frame-to-frame step, and a step longer than half
+the box is refused rather than averaged:
 
 ```python
 import molpy as mp
@@ -274,12 +281,20 @@ import molpy as mp
 box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
 wrapped = walk[:50, :4] + 5.0
 wrapped[25:, 0, 0] -= 10.0              # atom 0 "re-enters" through the far face
-boxes = [box] * len(wrapped)
-try:
-    Msd(max_lag=10).compute(positions=wrapped, dt=dt, boxes=boxes)
-except ValueError as error:
-    print("refused:", "wrapped" in str(error))        # -> refused: True
+
+checked = Msd(max_lag=10).accumulator()
+for positions in wrapped[:25]:          # frames 0-24 are continuous
+    checked.push(positions, dt=dt, simbox=box)
+print(checked.n_frames)                               # -> 25
 ```
+
+Pushing frame 25, `checked.push(wrapped[25], dt=dt, simbox=box)`, raises
+
+```text
+ValueError: item 0 moved more than half the box between frames 24 and 25: the trajectory is wrapped; unwrap it before a displacement analysis
+```
+
+and a refused frame leaves the accumulator exactly as it was.
 
 `Unwrap` recovers the continuous path. Given the int32 image flags of a dump
 (`images=`), it uses them; given only the boxes, it follows each atom by the
@@ -288,9 +303,12 @@ minimum image between consecutive frames:
 ```python
 from molpy.compute import Unwrap
 
+boxes = [box] * len(wrapped)
 continuous = Unwrap().compute(positions=wrapped, boxes=boxes)
-msd_ok = Msd(max_lag=10).compute(positions=continuous, dt=dt, boxes=boxes)
-print(msd_ok.n_lags)                                  # -> 11
+accumulator_ok = Msd(max_lag=10).accumulator()
+for positions in continuous:
+    accumulator_ok.push(positions, dt=dt, simbox=box)
+print(accumulator_ok.finish().n_lags)                 # -> 11
 ```
 
 Following by continuity is only correct while nothing moves half a box between
@@ -311,8 +329,10 @@ time-correlation engine; what you tune is how the average is taken.
 For a diffusion coefficient, keep `origins="all"`. With $T$ frames the
 first-origin estimator, $\langle|\mathbf{r}(t)-\mathbf{r}(0)|^2\rangle$, has
 exactly one sample per atom at every lag, while the all-origins one has
-$T - \tau$ of them, and it costs $\mathcal{O}(T\log T)$ because it goes through
-an FFT. Use `"first"` only when you want the literal displacement from the
+$T - \tau$ of them. The stream pairs each new frame with the last `max_lag`
+frames it keeps, so the extra samples cost $\mathcal{O}(T \cdot
+\text{max\_lag})$ time and no more than $\mathcal{O}(\text{max\_lag})$ frames of
+memory. Use `"first"` only when you want the literal displacement from the
 start of the run.
 
 `reduction="per_component"` is the quick anisotropy check — in a bulk liquid
@@ -320,16 +340,19 @@ the three channels agree, under confinement they do not. `per_item` gives one
 channel per atom, which is how you split an MSD by species after the fact:
 
 ```python
-per_atom = Msd(max_lag=100, reduction="per_item").compute(positions=walk, dt=dt)
-per_axis = Msd(max_lag=100, reduction="per_component").compute(positions=walk, dt=dt)
-print(per_atom.n_channels, per_axis.n_channels)       # -> 50 3
+per_atom = Msd(max_lag=100, reduction="per_item").accumulator()
+per_axis = Msd(max_lag=100, reduction="per_component").accumulator()
+for positions in walk:
+    per_atom.push(positions, dt=dt)
+    per_axis.push(positions, dt=dt)
+print(per_atom.finish().n_channels, per_axis.finish().n_channels)   # -> 50 3
 ```
 
 ## When it goes wrong
 
 **MSD is enormous and jagged from the very first lag.**
-Wrapped coordinates. Pass `boxes=` so the compute refuses them, and run
-`Unwrap` first. See above.
+Wrapped coordinates. Push each frame with `simbox=` so the accumulator
+refuses them, and run `Unwrap` first. See above.
 
 **MSD bends downward at long lag, or turns noisy and non-monotonic.**
 Too few time origins out there. Fit well inside the trajectory — a common rule
@@ -351,7 +374,7 @@ diffusing particle drags the surrounding fluid with it, and under periodic
 boundaries it also drags the fluid around all of its own periodic images, which
 holds it back. The resulting error shrinks only as $1/L$, so it does not go away
 quickly. Compare against other simulations at the same box size, or apply the
-Yeh–Hummer correction below.
+Yeh–Hummer correction cited below.
 
 **The centre of mass of the whole system drifts.**
 Any net momentum adds a spurious ballistic $\propto \tau^2$ term at long times.

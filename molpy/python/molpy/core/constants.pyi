@@ -1,0 +1,63 @@
+"""Type stub of :mod:`molpy.core.constants`, whose names the module copies
+from ``molpy._core.constants`` at import time. The ``types`` gate's
+stubtest holds this list to the runtime's."""
+
+__all__ = [
+    "AMBER_CHARGE_FACTOR",
+    "AMBER_COULOMB",
+    "AMBER_SCEE",
+    "AMBER_SCNB",
+    "AMBER_VELOCITY_TO_ANGSTROM_PER_PS",
+    "ATOMIC_MASS_CONSTANT",
+    "AVOGADRO",
+    "BOHR_RADIUS",
+    "BOLTZMANN",
+    "CHARMM_COULOMB",
+    "COULOMB_CONSTANT",
+    "COULOMB_METAL",
+    "COULOMB_REAL",
+    "ELEMENTARY_CHARGE",
+    "GAS_CONSTANT",
+    "GROMACS_ONE_4PI_EPS0",
+    "HARTREE_ENERGY",
+    "MMFF_COULOMB",
+    "MMFF_MDYNE_A_TO_KCAL_MOL",
+    "OPENMM_ONE_4PI_EPS0",
+    "OPLS_COULOMB_14",
+    "OPLS_LJ_14",
+    "PARMCHK2_PI",
+    "PLANCK",
+    "SECOND_RADIATION_CONSTANT",
+    "SPEED_OF_LIGHT",
+    "UFF_COULOMB",
+    "VACUUM_DIELECTRIC",
+]
+
+AMBER_CHARGE_FACTOR: float
+AMBER_COULOMB: float
+AMBER_SCEE: float
+AMBER_SCNB: float
+AMBER_VELOCITY_TO_ANGSTROM_PER_PS: float
+ATOMIC_MASS_CONSTANT: float
+AVOGADRO: float
+BOHR_RADIUS: float
+BOLTZMANN: float
+CHARMM_COULOMB: float
+COULOMB_CONSTANT: float
+COULOMB_METAL: float
+COULOMB_REAL: float
+ELEMENTARY_CHARGE: float
+GAS_CONSTANT: float
+GROMACS_ONE_4PI_EPS0: float
+HARTREE_ENERGY: float
+MMFF_COULOMB: float
+MMFF_MDYNE_A_TO_KCAL_MOL: float
+OPENMM_ONE_4PI_EPS0: float
+OPLS_COULOMB_14: float
+OPLS_LJ_14: float
+PARMCHK2_PI: float
+PLANCK: float
+SECOND_RADIATION_CONSTANT: float
+SPEED_OF_LIGHT: float
+UFF_COULOMB: float
+VACUUM_DIELECTRIC: float

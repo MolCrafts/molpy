@@ -1,0 +1,50 @@
+# One shared build cache for every workspace root in this repo (root workspace,
+# crates/molrs-ffi, molpy, molwasm, molc, molcxx). `build.target-dir` is
+# resolved relative to this config file, so any cargo invocation with cwd under
+# this repo lands in <repo>/target regardless of which sub-workspace it builds.
+# Fingerprints include (rustc, features, profile), so invocations from
+# different roots cannot cross-contaminate — identical units compile once.
+# CARGO_TARGET_DIR (env) still overrides when set.
+[build]
+target-dir = "target"
+
+# Canonical command set for the root workspace.
+#
+# Every human, hook, CI step and agent invocation goes through these aliases
+# (the gates themselves are scripts/check.sh).
+# The reason is not brevity: a cargo invocation that spells the feature list
+# differently resolves a *different* feature set, which is a different
+# fingerprint, which compiles all 293k lines of `molcrafts-molrs` again and
+# leaves another ~420 MB incremental cache in target/. `cargo test <filter>`
+# with no flags is exactly that mistake — it drops `stream`/`serde` and adds
+# the doctest and bin targets, so "run one test" costs a full rebuild.
+#
+# With the aliases, only the filter after `--` varies, so the crate is compiled
+# once and every later run is a filter over the same test binary:
+#
+#     cargo mrs-test                       # all unit tests (~5 s)
+#     cargo mrs-test -- ff::potential      # just that module (~0.1 s, no rebuild)
+#
+# Legitimate builds of molcrafts-molrs in this repo, and no others:
+#   1. this set — `full,filesystem,stream` (+ molrs's default `rayon`; molrs
+#      itself defaults to core only, so the sub-systems are named here) for every root
+#      workspace command: build, check, clippy, test, doc, and `mrs-gen-opls`.
+#      The generator links this same library unit; it adds exactly one example
+#      unit (`example-gen_opls_params`), and `mrs-check` / `mrs-clippy
+#      --all-targets` add their check units for it;
+#   2. `full,filesystem,rayon,serde` — what molc and molcxx link
+#      (`serde`: the C API's force-field JSON is the core section's serde
+#      form). They must not ship `stream` (tokio + tungstenite in a C
+#      archive), so this set stays separate on purpose;
+#   3. molrs-ffi's `default-features = false` minimal set;
+#   4. the wasm32 build of molwasm.
+# Anything else in target/debug/.fingerprint/molcrafts-molrs-* is drift.
+[alias]
+mrs-build   = ["build",  "-p", "molcrafts-molrs", "--features", "full,filesystem,stream"]
+mrs-check   = ["check",  "-p", "molcrafts-molrs", "--all-targets", "--features", "full,filesystem,stream"]
+mrs-clippy  = ["clippy", "-p", "molcrafts-molrs", "--all-targets", "--features", "full,filesystem,stream"]
+mrs-test    = ["test",   "-p", "molcrafts-molrs", "--lib", "--features", "full,filesystem,stream"]
+mrs-doctest = ["test",   "--doc", "-p", "molcrafts-molrs", "--features", "full,filesystem,stream"]
+mrs-doc     = ["doc",    "-p", "molcrafts-molrs", "--no-deps", "--features", "full,filesystem,stream"]
+# Regenerate crates/molrs/src/ff/params/oplsaa.rs: `cargo mrs-gen-opls --gromacs <dir>`.
+mrs-gen-opls = ["run",  "-p", "molcrafts-molrs", "--example", "gen_opls_params", "--features", "full,filesystem,stream", "--"]

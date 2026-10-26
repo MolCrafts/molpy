@@ -1,0 +1,261 @@
+"""The ``cmap`` category and array-valued params across the FFI seam.
+
+A cmap type names five atom types (two consecutive dihedrals) and carries its
+correction table as the array param ``grid``. Array params cross as float64
+numpy arrays, compare exactly, survive the ``forcefield`` section and a
+``*.mrec`` store, and pickle; a frame's ``cmaps`` block renumbers
+``atomi`` … ``atomm``.
+"""
+
+from __future__ import annotations
+
+import pickle
+from pathlib import Path
+
+import molpy as mp
+import numpy as np
+import pytest
+
+
+def _lammps_include(
+    ff: mp.ff.forcefield.ForceField, frame: mp.core.Frame, **options: object
+) -> str:
+    """The LAMMPS force-field include ``ff`` writes for ``frame``."""
+    buf = bytearray()
+    mp.io.lammps.LammpsForcefieldWriter(frame, **options).write(buf, ff)  # type: ignore[arg-type]
+    return buf.decode()
+
+
+ENDS = ("C", "NH1", "CT1", "C2", "NH2")
+
+
+def _grid(n: int = 24, scale: float = 0.125) -> np.ndarray:
+    return scale * np.arange(n * n, dtype=np.float64).reshape(n, n)
+
+
+def _cmap_ff(grid: np.ndarray | None = None) -> mp.ff.forcefield.ForceField:
+    ff = mp.ff.forcefield.ForceField("charmm", units="real")
+    atoms = ff.def_style("atom", "full")
+    ends = [atoms.def_type(name, mass=12.0) for name in ENDS]
+    ff.def_style("cmap", "charmm").def_type(
+        "-".join(ENDS), *ends, grid=_grid() if grid is None else grid
+    )
+    return ff
+
+
+def test_a_cmap_style_takes_five_endpoints_and_a_grid() -> None:
+    ff = _cmap_ff()
+    style = ff.get_style("cmap", "charmm")
+    assert isinstance(style, mp.ff.forcefield.CmapStyle)
+    (cmap,) = style.get_types()
+    assert isinstance(cmap, mp.ff.forcefield.CmapType)
+    assert cmap.category == "cmap"
+    assert [t.name for t in cmap.endpoints] == list(ENDS)
+    assert (cmap.itom.name, cmap.mtom.name) == ("C", "NH2")
+    grid = cmap.params["grid"]
+    assert isinstance(grid, np.ndarray) and grid.dtype == np.float64
+    np.testing.assert_array_equal(grid, _grid())
+    assert ff.get_types(mp.ff.forcefield.CmapType) == [cmap]
+    assert ff.get_styles("cmap") == [style]
+
+
+def test_an_array_param_is_taken_from_any_numeric_array_or_nested_list() -> None:
+    ff = _cmap_ff(grid=[[1, 2], [3, 4]])
+    (cmap,) = ff.get_types("cmap")
+    np.testing.assert_array_equal(cmap.params["grid"], [[1.0, 2.0], [3.0, 4.0]])
+    assert cmap.params["grid"].dtype == np.float64
+    cmap.set(grid=np.zeros((3, 3), dtype=np.int32))
+    assert (
+        cmap.params["grid"].shape == (3, 3) and cmap.params["grid"].dtype == np.float64
+    )
+    with pytest.raises(TypeError):
+        cmap.set(grid=[[1.0, 2.0], [3.0]])
+    # A 0-d array is a number.
+    cmap.set(scale=np.float64(0.5))
+    assert cmap.params["scale"] == 0.5
+
+
+def test_a_restatement_compares_its_arrays_exactly() -> None:
+    ff = _cmap_ff()
+    style = ff.get_style("cmap", "charmm")
+    ends = ff.get_style("atom", "full").get_types()
+    name = "-".join(ENDS)
+    style.def_type(name, *ends, grid=_grid())
+    nudged = _grid()
+    nudged[3, 4] = np.nextafter(nudged[3, 4], np.inf)
+    with pytest.raises(ValueError):
+        style.def_type(name, *ends, grid=nudged)
+    with pytest.raises(TypeError):
+        style.def_type("short", *ends[:4], grid=_grid())
+
+
+def test_a_cmap_grid_round_trips_through_the_section_and_a_store(
+    tmp_path: Path,
+) -> None:
+    ff = _cmap_ff()
+    section = mp.io.mrec.ForceFieldSection.from_forcefield(ff)
+    table = section.table("cmap", "charmm")
+    assert list(table["mtom"]) == ["NH2"]
+    assert table["grid"].shape == (1, 24, 24)
+
+    path = tmp_path / "ff.mrec"
+    mp.io.write_mrec(path, forcefield=ff)
+    back = mp.io.mrec.MrecFile(path).forcefield().to_forcefield()
+    (cmap,) = back.get_types("cmap")
+    assert cmap.params["grid"].tobytes() == _grid().tobytes()
+
+
+def test_a_grid_the_section_cannot_hold_is_refused() -> None:
+    with pytest.raises(ValueError, match="cmap grid"):
+        mp.io.mrec.ForceFieldSection.from_forcefield(_cmap_ff(grid=np.zeros((2, 3))))
+
+
+def test_a_cmap_force_field_pickles_with_its_grid() -> None:
+    ff = _cmap_ff()
+    back = pickle.loads(pickle.dumps(ff, protocol=pickle.HIGHEST_PROTOCOL))
+    (cmap,) = back.get_types("cmap")
+    assert cmap.params["grid"].tobytes() == _grid().tobytes()
+    assert [t.name for t in cmap.endpoints] == list(ENDS)
+
+
+def _two_cmaps() -> mp.core.Frame:
+    return mp.core.Frame(
+        {
+            "atoms": {"x": np.arange(6, dtype=np.float64)},
+            "cmaps": {
+                key: np.array([i, i + 1], dtype=np.uint64)
+                for i, key in enumerate(["atomi", "atomj", "atomk", "atoml", "atomm"])
+            }
+            | {"type": np.array(["c1", "c2"])},
+        }
+    )
+
+
+def test_a_cmaps_block_renumbers_atomi_through_atomm(tmp_path: Path) -> None:
+    assert [str(key) for key in mp.core.keys.ENDPOINTS][-1] == "atomm"
+    assert str(mp.core.keys.ATOMM) == "atomm"
+    assert mp.core.schema.CMAPS == "cmaps"
+    assert mp.core.schema.relation_endpoints("cmaps", [])[-1] == ("atomm", "atoms")
+    frame = _two_cmaps()
+    frame.validate()
+
+    out = frame.subset([1, 2, 3, 4, 5])
+    assert list(out["cmaps"]["atomm"]) == [4]
+    assert list(out["cmaps"]["type"]) == ["c2"]
+    two = frame.replicate(2)
+    assert list(two["cmaps"]["atomm"]) == [4, 5, 10, 11]
+
+    path = tmp_path / "cmaps.mrec"
+    mp.io.write_mrec(path, frame=frame)
+    back = mp.io.mrec.MrecFile(path).frame()
+    assert list(back["cmaps"]["atomm"]) == [4, 5]
+
+
+# ── CMAP crossterms: assign_cmaps, the kernel, LAMMPS fix cmap I/O ──────────
+
+ALANINE = (
+    Path(__file__).resolve().parents[3]
+    / "crates/molrs/src/ff/potential/cmap/testdata/charmm36_alanine.cmap"
+)
+ALA = ("C", "NH1", "CT1", "C", "NH1")
+
+# Five backbone atoms, φ ≈ −60°, ψ ≈ −40°.
+BACKBONE = np.array(
+    [
+        [0.3, 1.4, 0.2],
+        [0.0, 0.0, 0.0],
+        [1.46, 0.0, 0.0],
+        [2.0, -0.8, 1.2],
+        [3.3, -0.9, 1.3],
+    ]
+)
+
+
+def _number_lines(text: str) -> list[str]:
+    return [
+        line.rstrip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _alanine_ff() -> mp.ff.forcefield.ForceField:
+    (row,) = mp.io.lammps.LammpsForcefieldReader().read_cmap(ALANINE).get_types("cmap")
+    ff = mp.ff.forcefield.ForceField("charmm", units="real")
+    atoms = ff.def_style("atom", "full")
+    by_name = {name: atoms.def_type(name, mass=12.0) for name in set(ALA)}
+    ff.def_style("cmap", "charmm").def_type(
+        "ala", *(by_name[name] for name in ALA), grid=row.params["grid"]
+    )
+    return ff
+
+
+#: The backbone's elements, in atom order (C, N, CA, C, N).
+BACKBONE_Z = (6, 7, 6, 6, 7)
+
+
+def _backbone() -> mp.core.Atomistic:
+    """The five backbone atoms, typed, with the two dihedrals a CMAP spans."""
+    mol = mp.core.Atomistic()
+    atoms = [
+        mol.add_atom(atomic_number=z, type=name, x=x, y=y, z=zc, charge=0.0, mol_id=1)
+        for z, name, (x, y, zc) in zip(BACKBONE_Z, ALA, BACKBONE.tolist(), strict=True)
+    ]
+    mol.add_dihedral(*atoms[:4])
+    mol.add_dihedral(*atoms[1:])
+    return mol
+
+
+def test_read_lammps_cmap_names_rows_by_crossterm_type() -> None:
+    ff = mp.io.lammps.LammpsForcefieldReader().read_cmap(ALANINE)
+    assert ff.units == "real"
+    (row,) = ff.get_types("cmap")
+    assert row.name == "1"
+    assert row.params["grid"].shape == (24, 24)
+    assert row.params["grid"][0, 0] == 0.12679
+
+
+def test_assign_cmaps_builds_the_block_the_kernel_prices() -> None:
+    ff, mol = _alanine_ff(), _backbone()
+    assert ff.assign_cmaps(mol) == 1
+    frame = mol.to_frame()
+    cmaps = frame["cmaps"]
+    assert [int(cmaps[k][0]) for k in ("atomi", "atomm")] == [0, 4]
+    assert list(cmaps["type"]) == ["ala"]
+    compiler = mp.ff.PotentialCompiler(ff)
+    energy, forces = compiler.compile(frame).evaluate(frame)
+    assert np.isfinite(energy) and energy != 0.0
+    np.testing.assert_allclose(forces.reshape(-1, 3).sum(axis=0), 0.0, atol=1e-10)
+
+
+def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
+    ff, mol = _alanine_ff(), _backbone()
+    ff.assign_cmaps(mol)
+    frame = mol.to_frame()
+    del frame["dihedrals"]
+
+    cmap = tmp_path / "charmm.cmap"
+    mp.io.lammps.LammpsForcefieldWriter(frame).write_cmap(cmap, ff)
+    assert _number_lines(cmap.read_text(encoding="utf-8")) == _number_lines(
+        ALANINE.read_text(encoding="utf-8")
+    )
+
+    include = _lammps_include(ff, frame, skip_pair_style=True, cmap_file="charmm.cmap")
+    assert "fix cmap all cmap charmm.cmap\nfix_modify cmap energy yes\n" in include
+    with pytest.raises(ValueError, match="cmap_file"):
+        _lammps_include(ff, frame, skip_pair_style=True)
+
+    # A data file states a mass per atom type and the writer derives none:
+    # the CHARMM masses of C / NH1 / CT1, in atom order.
+    atoms = frame["atoms"]
+    atoms.insert("mass", np.array([12.011, 14.007, 12.011, 12.011, 14.007]))
+    frame["atoms"] = atoms
+    data = tmp_path / "data.lmp"
+    mp.io.write_lammps_data(data, frame)
+    assert "\n1 crossterms\n" in data.read_text(encoding="utf-8")
+    back = mp.io.read_lammps_data(data)
+    assert [int(back["cmaps"][k][0]) for k in ("atomi", "atomm", "type_id")] == [
+        0,
+        4,
+        1,
+    ]

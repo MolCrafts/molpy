@@ -6,5 +6,5 @@
 *.toml text eol=lf
 *.lock text eol=lf
 
-# Test inputs retain their exact bytes on every host.
-tests/tests-data/** -text
+# Byte-exact conformance inputs must not undergo newline conversion.
+crates/molrs/src/ff/testdata/builtin_conformance/** -text

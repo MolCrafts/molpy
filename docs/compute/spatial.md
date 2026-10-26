@@ -22,10 +22,11 @@ binned. Each frame:
 1. Take the reference atoms — three or more atoms that define the molecule's
    geometry.
 2. Superimpose them onto a fixed **template** by a rigid rotation and
-   translation. This is the Kabsch algorithm, which finds the rotation
-   minimizing the RMS deviation from the template.
+   translation: a least-squares superposition (Horn's quaternion solution of
+   the Kabsch problem), which finds the rotation minimizing the RMS deviation
+   from the template.
 3. Apply that same rotation to every target atom nearby, after
-   minimum-image unwrapping about the reference centre of mass.
+   minimum-image unwrapping about the centroid of the reference atoms.
 4. Add the rotated target positions to a 3-D voxel grid.
 
 The result, divided by the bulk density,
@@ -51,7 +52,7 @@ one; every lobe moves, and nothing warns you.
     every neighbour you observe. The reference trajectory behind the other
     compute pages is monatomic argon, which has no body frame at all. A sketched
     lobe diagram would teach the wrong thing about how much sampling this needs.
-    Add a figure when a molecular trajectory exists under `scripts/docs_series/`.
+    Add a figure when a molecular trajectory exists under `molpy/scripts/docs_series/`.
 
 ## Computing it
 
@@ -78,7 +79,7 @@ frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ```
 
 `RegularGrid.centered(extent, dims)` lays `dims` voxels over a box of total
-width `extent` centred on the reference's centre of mass, so a width of 12 Å
+width `extent` centred on the centroid of the reference atoms, so a width of 12 Å
 reaches $\pm 6$ Å:
 
 ```python
@@ -108,7 +109,7 @@ random gas is pure counting noise. Real use means thousands of frames, passed
 as longer lists.
 
 Keep `target` disjoint from `reference`. The reference atoms are binned like any
-other target if you list them, landing exactly on their template positions,
+other target if you list them, landing exactly on the (centred) template geometry,
 and they put spurious spikes at the centre of the map.
 
 The result carries `counts` (raw), `density` (per unit volume, averaged over
@@ -122,7 +123,7 @@ per-voxel mean body-frame direction of `head − tail`.
 
 **`g_sdf` is enormous — hundreds or thousands.**
 Too few samples in too many voxels. With one frame and a $16^3$ grid, a single
-neighbour in a 0.05 Å³ voxel produces a huge ratio. Add frames, or coarsen the
+neighbour in a 0.42 Å³ voxel produces a huge ratio. Add frames, or coarsen the
 grid.
 
 **Everything is zero.**

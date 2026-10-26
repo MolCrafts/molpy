@@ -46,8 +46,8 @@ encoding:
 </div>
 
 **Figure 1.** Cluster count and largest-cluster size against the neighbour
-cutoff, for one configuration of the reference argon run (seed 0, 88.3 K).
-Nothing about the configuration changes across
+cutoff, averaged over five configurations of the reference argon run, 6 ps
+apart (seed 0, 88.3 K). Nothing about the configurations changes across
 this plot — only the definition of "connected".
 </figure>
 

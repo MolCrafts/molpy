@@ -127,8 +127,10 @@ the [Msd](msd.md) of a one-item trajectory, number for number:
 ```python
 from molpy.compute import Msd
 
-as_msd = Msd(max_lag=100).compute(positions=p_cation[:, None, :], dt=10.0)
-print(np.allclose(as_msd.values, l_same.values))           # -> True
+accumulator = Msd(max_lag=100).accumulator()
+for p in p_cation:                                         # one (1, 3) item per frame
+    accumulator.push(p[None, :], dt=10.0)
+print(np.allclose(accumulator.finish().values, l_same.values))   # -> True
 ```
 
 As always the compute returns the raw $L_{\alpha\beta}(\tau)$ curve; the slope
@@ -144,7 +146,7 @@ the atoms (`Unwrap`) before summing.
     charged multi-species trajectory, which the argon reference system is not.
     Synthetic curves would only display the coupling that was typed into them —
     as the 0.6 above does. This page gets a figure when a charged reference
-    trajectory exists under `scripts/docs_series/`.
+    trajectory exists under `molpy/scripts/docs_series/`.
 
 ## When it goes wrong
 

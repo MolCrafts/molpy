@@ -1,0 +1,8 @@
+# Floating `stable`: every MolCrafts project builds with the latest stable Rust
+# (workspace decision, 2026-10-23). The molrs-ffi ABI fingerprint hashes
+# `rustc -V`, so molpy and molpack must be built by one toolchain — keep this
+# file identical across the sibling repos.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]

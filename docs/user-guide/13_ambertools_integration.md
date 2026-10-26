@@ -20,10 +20,10 @@ Type TFSI natively with AM1-BCC charges, build GAFF PEO chains from one antecham
     which tleap # should print a path
     ```
 
-    `Am1BccModel`, `AmberPolymerBuilder` and MolPy's AmberTools typifiers activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. Which environment they activate is a setting of molpy's configuration, shared by every AmberTools program (`[wrapper]`; see [Configure and Log a Run](14_configure_and_log.md)). Put it in `molpy.toml` next to your scripts:
+    `Am1BccModel`, `AmberPolymerBuilder` and MolPy's AmberTools typifiers activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. Which environment they activate is a setting of molpy's configuration, shared by every AmberTools program (`[ambertools]`; see [Configure and Log a Run](14_configure_and_log.md)). Put it in `molpy.toml` next to your scripts:
 
     ```toml
-    [wrapper]
+    [ambertools]
     env = "AmberTools25"
     env_manager = "conda"
     ```
@@ -42,12 +42,12 @@ types and parameter values tleap gives the same molecule, and antechamber
 the AmberTools pipeline: it is cut by prepgen and joined by tleap, and its
 force field is read back from tleap's prmtop.
 
-The two force fields merge. molrs's `ForceField.merge` compares what each
+The two force fields merge. `ForceField.merge` compares what each
 style prices (defaults filled in, within a relative 1e-6), and native GAFF
 names its terms and rounds its estimates as tleap's prmtop does, so a type or
 term the chain and TFSI share (`c3`) is one definition.
-Every GAFF entry point takes `parameter_set` (`"gaff"` or `"gaff2"`, as
-molrs names it); it has no default, so name the same set for every
+Every GAFF entry point takes `parameter_set` (`"gaff"` or `"gaff2"`); it has
+no default, so name the same set for every
 component.
 
 A polymer is not typed as one molecule. You build one oligomer in which the head, chain and tail monomers are already bonded, and you say how prepgen cuts it (`AmberCut`: the atoms each residue omits, and the atom across each junction). `AmberPolymerBuilder` then runs antechamber and parmchk2 on that oligomer, prepgen for each cut, and tleap `sequence`. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and `LammpsEngine` writes the LAMMPS deck.
@@ -132,6 +132,15 @@ a chain and a tail residue (`AmberCut`: the atoms each residue omits, and
 the atom across each junction), spreading the omitted charge over the atoms
 it keeps; the builder does not edit the prepi afterwards. tleap `sequence`
 joins the residues.
+
+Each residue needs a name of at most three characters, the width of a PDB
+residue name, and no two residues may share one. By default the builder
+derives it from the bead type: the first three characters for the chain
+residue, `H` or `T` and the first two for the head and tail (`HPE`, `PEO`,
+`TPE` for `PEO`). Two bead types with a common prefix would derive the same
+name; the later one in the library then ends in a digit or letter instead
+(`HP0`), and the builder's `residues` lists every name it chose. To name a
+residue yourself, give its cut a `resname`.
 
 `AmberPieces` writes the oligomer from three SMILES — head, repeat and tail,
 each in backbone order — and the three cuts with it: each residue keeps its
@@ -268,7 +277,7 @@ print(sorted(deck))  # ['data', 'init', 'input', 'settings']
 `LammpsEngine().run(deck["input"], workdir=output_dir / "lammps")` runs it;
 it is the starting point for the equilibration you add to `body`. The four
 terms `GaffTypifier` estimated for TFSI (it marks them `estimated`, with the
-penalty, method and analog) export like any other: every molrs writer skips
+penalty, method and analog) export like any other: every writer skips
 the provenance and writes the parameters.
 
 ## When the AmberTools typifiers are still the route
@@ -298,12 +307,8 @@ read back from tleap's prmtop, is kept for what it alone does:
 | tleap fails on the chain | A junction term missing from the leaprc (`leaprc.gaff2` here); the error carries tleap's output. The connection atoms are the ones in the oligomer you cut |
 | `ValueError: … still has N ports` | `TleapTypifier` was given a template. A polymer goes through `AmberPolymerBuilder` |
 | Polymer assembly fails | The site graph is one path of at least two sites, and every bead type has an oligomer and a cut for the residue that site uses |
-| `ValueError: … both make tleap residue …` | Residue names are the first characters of the bead type (`HPE`, `PEO`, `TPE` for `PEO`); give the bead types distinct prefixes |
+| `ValueError: … both name tleap residue …` | Two cuts give the same `resname`; every residue name is distinct across the library |
 | Force field merge conflict | Every component names the same `parameter_set`; a type you define yourself (Li⁺) does not reuse a GAFF type name |
 | Packing fails | Increase box size or reduce molecule count |
 
-The raw subprocess wrappers (`AntechamberWrapper`, `Parmchk2Wrapper`,
-`TleapWrapper`, …) stay in `molpy.wrapper` for scripts that drive the
-executables directly.
-
-See also: [Force Field Typification](06_typifier.md), [Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md).
+See also: [Force Field Typification](06_typifier.md), [Tool](../api/tool.md).

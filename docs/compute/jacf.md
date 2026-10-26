@@ -115,8 +115,8 @@ integral = plateau.value                  # e² Å² / fs
 
 Quote the plateau, not the last point, and look at `plateau.std` before you
 believe it. The [VACF](vacf.md) page shows the same procedure with a real
-curve, where reading the integral 400 fs too early gives an answer 40 % too
-high; exactly the same trap applies here.
+curve, where reading the integral at 400 fs, before the negative lobe, gives
+an answer 38 % too high; exactly the same trap applies here.
 
 Each lag is divided by the number of time origins that reach it
 (`normalization="unbiased"`, the default). `"biased"` divides by the number of
@@ -154,7 +154,7 @@ page, because of the $1/3$ against $1/6$. The $1/3$ is already inside it.
     behind these pages has $\mathbf{J} \equiv 0$. Rather than plot filtered
     noise, this page defers to [VACF](vacf.md), which shows the identical
     "integrate to the plateau" figure with real data. A dedicated figure follows
-    a charged reference trajectory in `scripts/docs_series/`.
+    a charged reference trajectory in `molpy/scripts/docs_series/`.
 
 ## When it goes wrong
 

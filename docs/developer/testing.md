@@ -1,22 +1,35 @@
 # Testing
 
-MolPy uses pytest. Tests live under `tests/`, mirroring the package structure
-(`src/molpy/io/data/lammps.py` → `tests/test_io/test_data/test_lammps.py`) with no
-`__init__.py` files (`--import-mode=importlib`). Fixture files are small,
-committed under `tests/tests-data/<format>/`, and reached through the
-`TEST_DATA_DIR` fixture; nothing is downloaded.
+MolPy's Rust core is tested by unit tests next to the code
+(`#[cfg(test)]` modules in `crates/molrs/src/**`, run with `cargo mrs-test`),
+and the Python binding by pytest. The Python tests live under
+`molpy/tests/`, mirroring the package structure
+(`molpy/python/molpy/engine/lammps.py` → `molpy/tests/test_engine/test_lammps.py`;
+the former native-binding suite is `molpy/tests/test_bindings/`) with no
+`__init__.py` files (`--import-mode=importlib`), and warnings are errors.
+Fixture files are small, committed under `molpy/tests/tests-data/<format>/`,
+and reached through the `TEST_DATA_DIR` fixture; nothing is downloaded.
 
 
 ## Running tests
 
 ```bash
-uv run --extra dev python -m pytest tests/ -n auto                         # the CI command
-uv run --extra dev python -m pytest tests/test_io/test_data/test_lammps.py # one file
-uv run --extra dev python -m pytest tests/ -k "lammps"                     # keyword filter
+scripts/check.sh python                        # the CI command: build the wheel, run the suite
+cd molpy
+uv run --no-sync pytest tests/test_engine/test_lammps.py   # one file, on the installed wheel
+uv run --no-sync pytest tests/ -k "lammps"                 # keyword filter
+cargo mrs-test -- io::lammps                   # one Rust module
 ```
 
-The suite is pure unit tests: wrappers and engines mock `subprocess`; they never
-require LAMMPS, AmberTools, or RDKit on the machine (packing is molpack, pure wheel).
+Run `pytest`, never `python -m pytest`: the latter prepends the working
+directory to `sys.path`, and the suite must import only the installed wheel,
+which carries the native `molpy._core`.
+
+The suite is pure unit tests: the engines and the AmberTools programs mock
+`subprocess`; nothing requires LAMMPS, GROMACS, OpenMM or AmberTools on the
+machine (packing is molpack, pure wheel), and nothing is skipped for their
+absence: a test that can only run where a program is installed runs nowhere
+CI looks, so it is not written.
 
 
 ## What to test
@@ -28,9 +41,22 @@ Every new behavior needs a test. Cover four categories:
 3. **Error handling** — does it raise the right exception with wrong input?
 4. **Bug fix** — a unit test of the corrected behaviour that fails without the fix
 
+A test checks correctness: what code computes, writes, raises or refuses.
 What is *not* a unit test and does not belong in `tests/`: an end-to-end
-pipeline, a number captured from another program, a check that molpy returns
-what molrs returns, a grep over source text, a large corpus file.
+pipeline, a doc snippet run as a test, a number captured from another
+program, a check that the Python binding returns what the Rust core returns, a grep or AST scan
+over source text, a check of code style, naming or where a module lives, a
+check that an API is absent or has a particular signature, a large corpus
+file.
+
+## Reach the public API the way the manual does
+
+A test of the public API writes what a user writes: `import molpy as mp`,
+then `mp.<subsystem>.<Name>` (`mp.engine.LammpsEngine`, `mp.io.read_pdb`,
+`mp.Frame`). A broken export then fails the test that uses it. An internal
+helper is imported from its implementation module
+(`from molpy.engine.lammps import _splice_coords`). `tests/test_init.py`
+checks that every name an `__all__` lists can be taken.
 
 For MolPy-specific code, two additional patterns are important:
 
@@ -48,25 +74,20 @@ def test_typify_does_not_mutate():
 
 ```python
 def test_pdb_round_trip(tmp_path):
-    write_pdb(tmp_path / "out.pdb", frame)
-    restored = read_pdb(tmp_path / "out.pdb")
+    mp.io.write_pdb(tmp_path / "out.pdb", frame)
+    restored = mp.io.read_pdb(tmp_path / "out.pdb")
     assert restored["atoms"].n_rows == frame["atoms"].n_rows
 ```
 
 
-## Wrappers, engines, and docs
+## External programs, engines, and docs
 
-- **Wrappers / engines**: mock `subprocess` and assert argv / script *literals*
-  written to disk. Never launch antechamber, tleap, or lmp in unit tests.
-- **Real-program tests** are the exception, and each skips unless its programs
-  are installed (`shutil.which`, else `$AMBERHOME/bin`): the GroPoB polymer
-  (`tests/test_builder/test_polymer/test_amber_gropob.py`), the AmberTools
-  routes (`tests/test_ambertools/test_real_programs.py`: AM1-BCC, native GAFF
-  against tleap, quoted paths) and the engine runs. They pin that a faked
-  test's stand-in still matches the real program.
-- **Doc code blocks** are not executed by the test gate. Blocks that shell out
-  or need offline artifacts still declare `# docs: skip — <reason>` as the first
-  non-empty line so a reader knows they are not runnable as-is.
+- **Engines / AmberTools programs**: mock `subprocess` and assert argv /
+  script *literals* written to disk. Never launch antechamber, tleap, or lmp
+  in unit tests.
+- **Doc code blocks** are not tests. The manual is kept executable against
+  the current API; a block that shells out or needs a program the docs
+  environment lacks declares `# docs: skip — <reason>` as its first line.
 
 
 ## Writing good tests

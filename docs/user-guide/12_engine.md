@@ -10,7 +10,7 @@ You have built a molecular system, typed its atoms, and exported the coordinate 
 
 **An Engine is MolPy's adapter between Python data objects and a specific MD program — it knows how to write engine-readable input files and how to invoke the executable.**
 
-What the engine module does not do is equally important. It does not build molecules, assign atom types, or analyze trajectories, and it formats no file itself: the structure and force-field files come from molrs's writers (`mp.io`). Each engine has **one** input writer, `generate_inputs`, which calls those writers and adds the control files that tell the MD program what physics to simulate and where to find them.
+What the engine module does not do is equally important. It does not build molecules, assign atom types, or analyze trajectories, and it formats no file itself: the structure and force-field files come from molpy's writers (`mp.io`). Each engine has **one** input writer, `generate_inputs`, which calls those writers and adds the control files that tell the MD program what physics to simulate and where to find them.
 
 ---
 
@@ -29,15 +29,15 @@ This separation is intentional. It lets you inspect and hand-edit the generated 
 ### LAMMPS: the whole deck from a typed frame
 
 `generate_inputs` writes four files: the data file, the force-field settings
-(molrs's include: every `*_style` line the frame's types use, their
+(the force-field include: every `*_style` line the frame's types use, their
 coefficients, `special_bonds`, `pair_modify`), an init with `units`,
 `atom_style`, `boundary` and `neighbor`, and the input script that includes
 them and runs a starter minimise + NVT body (`body=` replaces it). The init
 states the data file's own `atom_style` and `units`: `atom_style=None` (the
 default) is the style the frame's atom columns hold (`full` with `mol_id` and
 `charge`, `atomic` with neither; `mp.io.lammps.infer_lammps_atom_style`), and
-`units=` (`real`, `metal` or `lj`; any other is refused) is what molrs
-converts both the data file and the coefficients to. A frame
+`units=` (`real`, `metal` or `lj`; any other is refused) is what both the
+data file and the coefficients are converted to. A frame
 with a periodic box gets `boundary p p p`; one without (an
 `Atomistic.to_frame()`) gets a shrink-wrapped, non-periodic deck.
 
@@ -48,7 +48,7 @@ water = mp.Frame(
     blocks={
         "atoms": {
             "type": ["OW", "HW", "HW"],
-            "element": ["O", "H", "H"],
+            "atomic_number": [8, 1, 1],
             "charge": [-0.834, 0.417, 0.417],
             "mol_id": [1, 1, 1],
             "x": [0.0, 0.9572, -0.24],
@@ -57,11 +57,15 @@ water = mp.Frame(
         },
         "bonds": {"atomi": [0, 0], "atomj": [1, 2], "type": ["OW-HW"] * 2},
         "angles": {"atomi": [1], "atomj": [0], "atomk": [2], "type": ["HW-OW-HW"]},
+        # The special pairs: two O-H (1-2) and the H-H (1-3).
+        "pairs": {"atomi": [0, 0, 1], "atomj": [1, 2, 2], "n_bonds": [1, 1, 2]},
     }
 )
 water.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 
 ff = mp.ff.forcefield.ForceField("tip3p", units="real")
+# A rigid water has no 1-4 pairs: every 1-2 / 1-3 pair is excluded.
+ff.set_special_bonds([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
 atoms = ff.def_style("atom", "full")
 ow = atoms.def_type("OW", mass=15.999, charge=-0.834, element="O")
 hw = atoms.def_type("HW", mass=1.008, charge=0.417, element="H")
@@ -86,12 +90,14 @@ files = gmx.generate_inputs(water, ff, "./gromacs_run", temperature=300.0)
 print(sorted(files))  # ['gro', 'input', 'nvt', 'top']
 ```
 
-The `.top` is the whole topology `mp.io.write_top_system`
+The `.top` is the whole topology `mp.io.gromacs.GromacsTopForcefieldWriter().write_system`
 writes: the force field's directives, one `[ moleculetype ]` per molecule
 (by the atoms' `mol_id`) with each row's parameters, `[ system ]` and
 `[ molecules ]` — what `grompp -p` reads. GROMACS excludes every pair within
-three bonds, so the frame carries its angles (and dihedrals:
-`Atomistic.generate_topology`). `files["input"]` is `em.mdp`;
+three bonds, so the writer checks that against the frame's special pairs
+(`pairs`, which a typifier or `Atomistic.generate_topology` writes with the
+angles and dihedrals) and refuses a frame whose pairs it would price
+otherwise. `files["input"]` is `em.mdp`;
 `run(Script.from_path(files["input"]))` grompp's
 the `.mdp` against the `.gro` and `.top`, then mdrun's it (under the engine's
 `launcher`). Each later stage starts from the structure the stage before it
@@ -119,7 +125,7 @@ computes it without periodic images (`NoCutoff` by default,
 it, by name, before any file is written: a long-range Coulomb style
 (LAMMPS's PPPM), OpenMM's `PME`, `Ewald` and `CutoffPeriodic`, and NPT. GROMACS
 refuses a box-free frame altogether: its Verlet cutoff scheme simulates
-periodic systems only, so a molecule in vacuum is given a box larger than
+periodic systems only, so a molecule in vacuum needs a box larger than
 itself plus twice the cutoff.
 
 ### Nonbonded settings are the force field's
@@ -138,7 +144,7 @@ argument overrides it:
 
 A 12 Å `lj/cut` + `coul/cut` force field therefore runs at 12 Å with cut-off
 Coulomb in all three. OpenMM's cutoff methods add a reaction field (its
-`NonbondedForce` has no plain truncated Coulomb), and molrs's GROMACS and
+`NonbondedForce` has no plain truncated Coulomb), and the GROMACS and
 OpenMM writers do not yet hold `coul/long/pme`.
 
 ### LAMMPS: writing a control script by hand
@@ -182,7 +188,7 @@ script.save("./submit/input.lmp")
 # -> ./submit/input.lmp written
 ```
 
-The include written by `mp.io.write_lammps_forcefield` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, write the include with `skip_pair_style=True` and declare the pair style in the script before `include`). Because the script states `units` before `read_data`, write the include with `skip_units=True`: LAMMPS refuses a `units` line once the box exists. The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
+The include written by `mp.io.lammps.LammpsForcefieldWriter` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, build the writer with `skip_pair_style=True` and declare the pair style in the script before `include`). Because the script states `units` before `read_data`, build the writer with `skip_units=True`: LAMMPS refuses a `units` line once the box exists. The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.lammps.LammpsForcefieldWriter` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
 
 `Script.from_path` is the mirror image — it reads an existing file as is, to save elsewhere or pass to `run()`.
 
@@ -192,7 +198,7 @@ script = Script.from_path("./submit/input.lmp")
 
 ### OpenMM: letting the engine build the files
 
-OpenMM's workflow is more tightly integrated because the three required files are interdependent: the Python driver script embeds the filenames of the PDB and XML force field, and `createSystem` matches every residue of the PDB against a `<Residue>` template of the XML by its atom names. Rather than assembling these by hand, `OpenmmEngine.generate_inputs()` accepts MolPy's own data objects and writes all three files consistently: the PDB with `mp.io.write_pdb`, the XML with `mp.io.write_openmm_system` (the force field plus the PDB's residue templates).
+OpenMM's workflow is more tightly integrated because the three required files are interdependent: the Python driver script embeds the filenames of the PDB and XML force field, and `createSystem` matches every residue of the PDB against a `<Residue>` template of the XML by its atom names. Rather than assembling these by hand, `OpenmmEngine.generate_inputs()` accepts MolPy's own data objects and writes all three files consistently: the PDB with `mp.io.write_pdb`, the XML with `mp.io.openmm_xml.OpenmmXmlWriter().write_system` (the force field plus the PDB's residue templates).
 
 The simulation is a dataclass — `OpenmmSimulationConfig`, passed as the keyword-only `simulation=` — whose fields document their units explicitly. It is validated when it is built (an unknown `ensemble`, `nonbonded_method` or `constraints`, such as `"nvt"` or `"EWALD"`, raises `ValueError`, from `from_json` too) and round-trips through JSON, which makes it easy to store alongside the generated files for reproducibility. `NVE` runs a `VerletIntegrator` from velocities drawn at `temperature`; `minimize` writes the minimised coordinates to `output_pdb`.
 
@@ -246,7 +252,7 @@ if result.stderr:
     print(result.stderr[:500])
 ```
 
-`check=True` (the default) makes `run()` raise `molpy.wrapper.ToolError` on a non-zero exit code. The error carries the tool (`error.tool == "engine.lammps"`), the exit code (`error.returncode`) and the tail of the program's stderr or, when nothing was captured, its log file (`error.tail` — `log.lammps` for LAMMPS, `cp2k.out` for CP2K). A missing executable, a program that cannot start and a timeout raise the same error. Set `check=False` during automated parameter scans where you want to continue after a failed run and inspect the log file yourself.
+`check=True` (the default) makes `run()` raise `molpy.tool.ToolError` on a non-zero exit code. The error carries the tool (`error.tool == "engine.lammps"`), the exit code (`error.returncode`) and the tail of the program's stderr or, when nothing was captured, its log file (`error.tail` — `log.lammps` for LAMMPS, `cp2k.out` for CP2K). A missing executable, a program that cannot start and a timeout raise the same error. Set `check=False` during automated parameter scans where you want to continue after a failed run and inspect the log file yourself.
 
 ### Executables, launchers and environments are configuration
 
@@ -283,7 +289,7 @@ result = LammpsEngine(config=config).run(script, workdir="./smoke")
 
 [Configure and Log a Run](14_configure_and_log.md) has the four layers
 (package defaults, `~/.molcrafts/molpy/config/config.toml`, `molpy.toml`,
-the run), the keys every engine and wrapper reads, and the log records each
+the run), the keys every engine and AmberTools program reads, and the log records each
 run leaves.
 
 ### Conda environment activation
@@ -341,7 +347,7 @@ Use generate-only when you are submitting to a cluster scheduler, when you want 
 
 ## Adding a new engine takes a table and two methods
 
-Every engine subclasses `Engine`, names its configuration table in `tool`, and implements two methods: `_get_default_extension()`, the file extension of an unpathed input script, and `_execute(run_dir, input_file, *, capture_output, check)`, which builds the command with `self.command(...)` and starts it with `self.run_command(...)`. The shared tool core (`molpy.wrapper.Tool`) resolves the settings, environment, executable, launcher, environment variables, time limit and logger; `Engine.run` writes the scripts. An engine that writes its own input set adds one `generate_inputs`, calling molrs's writers for every file it does not template itself. Its settings are the `[engine.<tool>]` table of any configuration layer — molpy accepts a table for any engine name — and its default executable is `_default_executable()` (the built-in engines state theirs in `molpy.config.DEFAULTS`).
+Every engine subclasses `Engine`, names its configuration table in `tool`, and implements two methods: `_get_default_extension()`, the file extension of an unpathed input script, and `_execute(run_dir, input_file, *, capture_output, check)`, which builds the command with `self.command(...)` and starts it with `self.run_command(...)`. The shared tool core (`molpy.tool.Tool`) resolves the settings, environment, executable, launcher, environment variables, time limit and logger; `Engine.run` writes the scripts. An engine that writes its own input set adds one `generate_inputs`, calling molpy's writers for every file it does not template itself. Its settings are the `[engine.<tool>]` table of any configuration layer — molpy accepts a table for any engine name — and its default executable is `_default_executable()` (the built-in engines state theirs in `molpy.config.DEFAULTS`).
 
 ```python
 from pathlib import Path
@@ -368,7 +374,7 @@ class NamdEngine(Engine):
         )
 ```
 
-`command` prepends the conda wrapper and the launcher; `run_command` applies the environment variables and the time limit, logs the run, and raises `ToolError` on failure.
+`command` prepends the conda prefix and the launcher; `run_command` applies the environment variables and the time limit, logs the run, and raises `ToolError` on failure.
 
 ---
 

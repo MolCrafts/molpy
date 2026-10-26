@@ -1,24 +1,26 @@
 name: release
 
-# A `v*` tag on MolCrafts/molpy: guard -> the published-ranges check -> the
-# pure-Python sdist + wheel to PyPI (trusted publishing) -> the GitHub
-# Release.
+# A `v*` tag on MolCrafts/molpy: guard -> build -> every channel. crates.io
+# (molcrafts-molrs), npm (@molcrafts/molwasm), PyPI (molcrafts-molpy: desktop abi3 wheels + the
+# Pyodide wheel), and the GitHub Release with the C API archives (lib +
+# header + LICENSE + sha256).
 #
-# No lint and no test matrix here: the tagged commit was already proven, by
+# No lint and no test suite here: the tagged commit was already proven, by
 # the pre-push gate and by test.yml's full tier on master. `release / guard`
 # reads that commit's `test / *` check runs and refuses a commit whose CI is
-# not green. The one test this workflow runs is a different dependency set:
-# every partner range molpy declares -- molcrafts-molrs on molpy's
-# major.minor, molcrafts-mollog and molcrafts-molcfg -- must already have a
-# release on PyPI (docs/developer/release-process.md;
-# scripts/check_partners_on_pypi.py), and `release / published` runs the
-# suite once, on Linux and the lowest supported Python, against the partners
-# from PyPI, exactly what the wheel declares (`--no-sources` drops the
-# ../molrs, ../mollog and ../molcfg path sources dev builds from).
+# not green; then this workflow only builds and publishes. `cargo publish`
+# verifies the crate tarball, once.
 #
 # A dispatch is the dry run, on any branch, fork or upstream: the same guard
-# (any green `test / *` runs of the commit), published check and build, no
-# upload and no Release. Only a tag push on MolCrafts uploads.
+# (any green `test / *` runs of the commit) and builds, `cargo publish
+# --dry-run` and `npm pack --dry-run`, and no upload anywhere. Building and uploading are separate jobs: every upload job
+# (release / crate, npm, pypi, github) runs only when `release / context`
+# says `publish` (a `v*` tag pushed to MolCrafts), and tests no raw event or
+# ref. Every upload skips a version the registry already has, so a partial
+# release is retried by re-running the tag's run.
+#
+# Trusted publishing names this file, release.yml, and one environment per
+# registry: crates-io, npm, pypi. A dispatch never enters an environment.
 'on':
   push:
     tags:
@@ -28,7 +30,7 @@ name: release
 permissions:
   contents: read
 
-# Independent workflow/event/ref groups; feature pushes supersede older runs.
+# One group per file, workflow, event and ref; a run is never cancelled.
 concurrency:
   group: release-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
@@ -43,7 +45,7 @@ jobs:
     permissions:
       contents: read
     name: release
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@01317cbc43f961ab14c35d51d48c081a1acfe815
 
   guard:
     name: release / guard
@@ -59,20 +61,21 @@ jobs:
         with:
           fetch-depth: 0
       - name: The tag is the package version, on master
-        if: github.event_name == 'push'
+        if: needs.context.outputs.publish == 'true'
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' src/molpy/version.py | head -n1)
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
+          python3 scripts/versions.py
       # The commit's test.yml run, instead of running it again. A tag waits
-      # for every job of the full tier to have succeeded on this SHA (pushed
-      # to master first); a dispatch, for whatever `test / *` runs the commit
+      # for `test / result` (every job of the full tier) to have succeeded on
+      # this SHA (pushed to master first); a dispatch, for whatever `test / *` runs the commit
       # has. Any failed run fails the release; a re-run's newer result wins.
       - name: The commit's CI is green
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ needs.context.outputs.publish }}
           REQUIRED: >-
-            test / context|test / python (ubuntu-latest, 3.12)|test / python (ubuntu-latest, 3.14)|test / python (macos-latest, 3.12)|test / python (windows-latest, 3.12)
+            test / result
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys, time
@@ -108,47 +111,190 @@ jobs:
               time.sleep(60)
           PY
 
-  # The declared PyPI ranges, once: Linux, the requires-python floor.
-  published:
-    if: needs.context.outputs.skip-pr != 'true'
-    name: release / published (ubuntu-latest, 3.12)
-    needs:
-    - context
-    - guard
+  # The crate as crates.io would take it: package and verify, upload nothing.
+  # Dispatch only; on a tag, `release / crate`'s publish is that verification.
+  crate-check:
+    name: release / crate (dry run)
+    needs: [context, guard]
+    if: needs.context.outputs.skip-pr != 'true' && (needs.context.outputs.publish != 'true')
     runs-on: ubuntu-latest
-    env:
-      PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
-        with:
-          python-version: "3.12"
-      - run: python scripts/check_partners_on_pypi.py
-      - env:
-          UV_PYTHON: "3.12"
-        run: python scripts/check.py published
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - name: The crate ships the repository's LICENSE
+        run: |
+          cmp LICENSE crates/molrs/LICENSE
+          cargo package --list --locked --manifest-path crates/molrs/Cargo.toml | grep -qx LICENSE
+      - run: cargo publish --dry-run --locked --manifest-path crates/molrs/Cargo.toml
 
-  build:
+  crate:
+    name: release / crate
+    needs: [context, guard]
+    if: needs.context.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - name: The crate ships the repository's LICENSE
+        run: |
+          cmp LICENSE crates/molrs/LICENSE
+          cargo package --list --locked --manifest-path crates/molrs/Cargo.toml | grep -qx LICENSE
+      - id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path crates/molrs/Cargo.toml | jq -r '.packages[0].version')
+          # crates.io rejects a request without a User-Agent.
+          if curl -sfL -A "molrs-release/1.0" "https://crates.io/api/v1/crates/molcrafts-molrs/$VERSION" >/dev/null; then
+            echo "molcrafts-molrs@$VERSION is already on crates.io"
+            exit 0
+          fi
+          set +e
+          OUT=$(cargo publish --locked --manifest-path crates/molrs/Cargo.toml 2>&1)
+          CODE=$?
+          set -e
+          printf '%s\n' "$OUT"
+          # Index lag after a successful earlier publish.
+          [ "$CODE" -eq 0 ] || printf '%s\n' "$OUT" | grep -qiE 'already exists|already uploaded' || exit "$CODE"
+
+  # The npm package, built and packed as npm would take it; the upload job
+  # publishes exactly this directory.
+  npm-pack:
     if: needs.context.outputs.skip-pr != 'true'
-    name: release / build
+    name: release / npm (dry run)
     needs:
     - context
     - guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
-          python-version: "3.14"
-      - run: python scripts/check.py package
+          cache: release-wasm
+      - uses: ./.github/actions/setup-wasm
+      - working-directory: molwasm
+        run: wasm-pack build --release --target bundler --scope molcrafts --out-name molwasm -- --locked
+      - working-directory: molwasm/pkg
+        run: npm pack --dry-run
       - uses: actions/upload-artifact@v7
         with:
-          name: dist
-          path: dist
+          name: npm-pkg
+          path: molwasm/pkg
+
+  npm:
+    name: release / npm
+    needs: [context, guard, npm-pack]
+    if: needs.context.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-wasm
+        with:
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-pkg
+          path: molwasm/pkg
+      # setup-node's registry-url exports a placeholder NODE_AUTH_TOKEN that
+      # would override OIDC; empty, npm >= 11.5 publishes through the id-token.
+      - working-directory: molwasm/pkg
+        env:
+          NODE_AUTH_TOKEN: ""
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already on npm"
+          else
+            npm publish --access public --provenance
+          fi
+
+  # Desktop abi3 wheels, one interpreter each. macOS arm64 and x64 are
+  # separate wheels (PyPI rejected universal2 fat wheels).
+  wheels:
+    if: needs.context.outputs.skip-pr != 'true'
+    name: release / wheels (${{ matrix.artifact }})
+    needs:
+    - context
+    - guard
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: "", artifact: linux-x64, manylinux: auto }
+          # manylinux 2_28, not `auto`: zarrs pulls blosc-src -> snappy_src,
+          # whose C++ wants -std=c++14, which the manylinux2014 aarch64 cross
+          # g++ lacks. The wheel needs glibc >= 2.28.
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, artifact: linux-aarch64, manylinux: "2_28" }
+          - { os: macos-latest, target: aarch64-apple-darwin, artifact: macos-arm64, manylinux: auto }
+          - { os: macos-latest, target: x86_64-apple-darwin, artifact: macos-x64, manylinux: auto }
+          - { os: windows-latest, target: "", artifact: windows, manylinux: auto }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          python-version: "3.14"
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          cache: release-py-${{ matrix.artifact }}
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: molpy
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          command: build
+          args: --release --locked --out dist
+          sccache: "true"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ matrix.artifact }}
+          path: molpy/dist
+
+  # The Pyodide / Emscripten wheel for micropip: no host filesystem, no zarr.
+  pyodide:
+    if: needs.context.outputs.skip-pr != 'true'
+    name: release / wheels (pyodide)
+    needs:
+    - context
+    - guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          python-version: "3.14"
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          targets: wasm32-unknown-emscripten
+          cache: release-py-pyodide
+      - uses: pypa/cibuildwheel@v4.3.1
+        env:
+          CIBW_PLATFORM: pyodide
+          CIBW_BUILD: cp314-pyodide_wasm32
+          CIBW_TEST_SKIP: "*"
+          CIBW_ENVIRONMENT_PYODIDE: MATURIN_PEP517_ARGS=--no-default-features
+          # Host rustc/cargo stay visible to maturin under pyodide-build.
+          CIBW_XBUILD_TOOLS: rustc cargo rustup
+          CIBW_BEFORE_BUILD_PYODIDE: rustup target add wasm32-unknown-emscripten
+        with:
+          package-dir: molpy
+          output-dir: molpy/dist-pyodide
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-pyodide
+          path: molpy/dist-pyodide
 
   pypi:
     name: release / pypi
-    needs: [context, guard, published, build]
+    needs: [context, guard, wheels, pyodide]
     if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: pypi
@@ -157,17 +303,62 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: dist
           path: dist
+          pattern: wheels-*
+          merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           skip-existing: true
-          print-hash: true
+
+  # The C ABI deliverable for external C / C++ / HPC consumers: libmolc
+  # (cdylib + staticlib) and the cbindgen header molc/include/molc.h.
+  capi:
+    if: needs.context.outputs.skip-pr != 'true'
+    name: release / capi (${{ matrix.artifact }})
+    needs:
+    - context
+    - guard
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: "", artifact: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: "", artifact: linux-aarch64 }
+          - { os: macos-latest, target: aarch64-apple-darwin, artifact: macos-arm64 }
+          - { os: macos-latest, target: x86_64-apple-darwin, artifact: macos-x64 }
+          - { os: windows-latest, target: "", artifact: windows-x64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          targets: ${{ matrix.target }}
+          cache: release-capi-${{ matrix.artifact }}
+      - name: Build and package (lib + header + LICENSE + sha256)
+        run: |
+          target=${{ matrix.target }}
+          cargo build --locked --release --manifest-path molc/Cargo.toml ${target:+--target "$target"}
+          VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path molc/Cargo.toml | jq -r '.packages[0].version')
+          OUT="molc-${VERSION}-${{ matrix.artifact }}"
+          LIBDIR="target/${target:+$target/}release"
+          mkdir -p "stage/$OUT"
+          cp molc/include/molc.h LICENSE "stage/$OUT/"
+          found=0
+          for f in libmolc.dylib libmolc.so libmolc.a molc.dll molc.dll.lib molc.lib; do
+            if [ -f "$LIBDIR/$f" ]; then cp "$LIBDIR/$f" "stage/$OUT/"; found=1; fi
+          done
+          [ "$found" -eq 1 ]
+          tar -C stage -czf "$OUT.tar.gz" "$OUT"
+          sha256sum "$OUT.tar.gz" > "$OUT.tar.gz.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: capi-${{ matrix.artifact }}
+          path: molc-*.tar.gz*
 
   github:
     name: release / github
-    needs: [context, pypi]
+    needs: [context, guard, capi]
     if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -175,12 +366,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: dist
-          path: dist
+          path: assets
+          pattern: capi-*
+          merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+                 --notes "Documentation: https://docs.molcrafts.org/molrs/"
+          gh release upload "$GITHUB_REF_NAME" assets/* --clobber

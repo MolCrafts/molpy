@@ -34,12 +34,11 @@ creation — and it is the only writer of `forcefield()`.
 | `ElementTypifier` | `type` labels from element symbols; defines no force field | Writers that need labels on an untyped molecule |
 | `AtdTypifier` | `AtdTypifier(parameter_set="gaff2")`: antechamber's atom-type tables (`gaff`, `gaff2`, `amber`, `bcc`, …) evaluated natively — atom types only, no charges or parameters | GAFF / GAFF2 or BCC atom types without running antechamber |
 | `GaffTypifier` | `GaffTypifier(parameter_set="gaff2")`: GAFF / GAFF2 bonded terms and parameters, natively, for atoms `AtdTypifier` already typed (exact `gaff.dat` rows, wildcards, or `parmchk2`-style estimates marked `estimated`) | GAFF / GAFF2 parameters without AmberTools |
-| `AntechamberTypifier` | `AntechamberTypifier(parameter_set="gaff2")`: antechamber → parmchk2 → tleap for one complete molecule; needs AmberTools | An antechamber charge method other than AM1-BCC / ABCG2; exporting an estimated GAFF term while molrs's LAMMPS / GROMACS writers refuse it |
+| `AntechamberTypifier` | `AntechamberTypifier(parameter_set="gaff2")`: antechamber → parmchk2 → tleap for one complete molecule; needs AmberTools | An antechamber charge method other than AM1-BCC / ABCG2 |
 | `TleapTypifier` | `TleapTypifier(parameter_set="gaff2")`: tleap alone over a finished graph that already carries AMBER types and charges (a graph with ports is refused); needs AmberTools | Extra frcmod parameters on top of the leaprc |
 
-Every name is on `mp.ff.typifier`, which mirrors `molrs.ff.typifier` (the
-native typifiers are the molrs objects) and adds the two AmberTools
-typifiers. GAFF / GAFF2 is typed natively by `AtdTypifier` then
+Every name is on `mp.ff.typifier`: the native typifiers and the two
+AmberTools typifiers. GAFF / GAFF2 is typed natively by `AtdTypifier` then
 `GaffTypifier`; that is the default route, and it assigns the types and
 parameter values tleap does for the same set. Its AM1-BCC charges come from
 `mp.ff.charge.Am1BccModel`: sqm's AM1 charges (through antechamber `-c mul`),
@@ -49,11 +48,11 @@ them. A native GAFF force field merges with one read from tleap's prmtop, an
 chain is typed natively too. The AmberTools typifiers read tleap's prmtop
 back; they are for what only that pipeline does: parameters of your own on
 top of the leaprc (`TleapTypifier`) and antechamber's other charge methods
-(`AntechamberTypifier`). molrs 0.18.0's LAMMPS and GROMACS writers refuse the
-`estimated` parameter `GaffTypifier` puts on a term it estimated, so such a
-molecule is exported through `AntechamberTypifier` for now. Every GAFF entry
+(`AntechamberTypifier`). The engine writers pass over the `estimated`
+provenance `GaffTypifier` puts on a term it estimated, so a natively typed
+molecule exports as is. Every GAFF entry
 point takes the same required `parameter_set` (`"gaff"` or `"gaff2"`, no
-default). The AmberTools typifiers shell out through `molpy.wrapper`; see
+default). The AmberTools typifiers shell out through [`mp.tool`](tool.md); see
 [Optional external tools](../getting-started/external-tools.md#ambertools-gaff-parameters).
 A GAFF polymer is not typed by joining typed monomers (each join folds the
 leaving group's charge onto its anchor): build it with
@@ -92,8 +91,8 @@ frame = typed_mol.to_frame()
 ## Writing a typifier
 
 Implement `assign` and stop. It returns a `TypeAssignment`: one annotation mapping per
-node, positional against `graph.atoms`, and per link class one mapping per row,
-positional against `graph.links.exact_bucket(cls)`. A type annotation is
+node, positional against `graph.atoms`, and per relation class one mapping per
+row, positional against that relation's rows (`graph.bonds`, `graph.angles`, …). A type annotation is
 `(style, name, endpoints, params)`: it stamps `name` and every param, and
 defines the type `name` on `endpoints` (atom-type names, empty for an atom
 type). The name is never parsed — the endpoints are required. `styles` declares
@@ -103,7 +102,7 @@ each style used; `pairs` adds `(style, name, endpoints, params)` pair rows.
 class Tip3pTypifier(mp.ff.typifier.Typifier):
     """TIP3P water: OW / HW atoms and one OW-HW bond type."""
 
-    SITES = {"O": ("OW", 15.999, -0.834), "H": ("HW", 1.008, 0.417)}
+    SITES = {8: ("OW", 15.999, -0.834), 1: ("HW", 1.008, 0.417)}  # by atomic number
 
     def source_forcefield(self):
         return mp.ff.forcefield.ForceField("tip3p", units="real")  # the output declares real units
@@ -111,16 +110,17 @@ class Tip3pTypifier(mp.ff.typifier.Typifier):
     def assign(self, graph):
         nodes = []
         for atom in graph.atoms:
-            name, mass, charge = self.SITES[atom["element"]]
+            name, mass, charge = self.SITES[atom["atomic_number"]]
             nodes.append({"type": ("full", name, (), {"mass": mass}), "charge": charge})
         bonds = [
             {"type": ("harmonic", "OW-HW", ["OW", "HW"], {"k": 450.0, "r0": 0.9572})}
-            for _ in graph.links.exact_bucket(mp.Bond)
+            for _ in graph.bonds
         ]
         return mp.ff.typifier.TypeAssignment(
             nodes,
             {mp.Bond: bonds},
-            styles=[("atom", "full", {}), ("bond", "harmonic", {}), ("pair", "lj/cut", {})],
+            # a pair style states its cutoff: the typifier declares its convention
+            styles=[("atom", "full", {}), ("bond", "harmonic", {}), ("pair", "lj/cut", {"cutoff": 10.0})],
             pairs=[
                 ("lj/cut", "OW", ["OW"], {"epsilon": 0.1521, "sigma": 3.1507}),
                 ("lj/cut", "HW", ["HW"], {"epsilon": 0.0, "sigma": 0.0}),
@@ -131,7 +131,7 @@ class Tip3pTypifier(mp.ff.typifier.Typifier):
 tip3p = Tip3pTypifier()
 water = tip3p.typify(mp.io.smiles.read_smiles("[H]O[H]").to_atomistic())
 assert [bond["type"] for bond in water.bonds] == ["OW-HW", "OW-HW"]
-assert tip3p.forcefield().get_style("bond", "harmonic").get_type_by_name("OW-HW")["k"] == 450.0
+assert tip3p.forcefield().get_style("bond", "harmonic").get_type_by_name("OW-HW").params["k"] == 450.0
 ```
 
 ## Related

@@ -1,11 +1,11 @@
 # Extending the Data Model
 
-MolPy's graph data model is backed directly by molrs. `Atomistic` and
+MolPy's graph data model is backed directly by the Rust core. `Atomistic` and
 `CoarseGrain` are native worlds; `Atom`, `Bond`, `Bead`, and the other Python
 objects are live views over stable handles in those worlds.
 
 !!! note "Discuss before you build"
-    A new stored node or relation kind changes the molrs schema, Rust graph
+    A new stored node or relation kind changes the core schema, Rust graph
     algorithms, Python bindings, frame projection, and I/O formatters. Open a
     [GitHub issue](https://github.com/MolCrafts/molpy/issues) before implementing it.
 
@@ -37,17 +37,16 @@ intern live views on integer access and support column-style field reads
 
 ## Adding a stored graph kind
 
-There is intentionally no `TypeBucket.register_type` hook. A real new kind
-requires, in order:
+No Python hook registers a new kind. A real new kind requires, in order:
 
-1. Define its storage and relation arity in molrs.
+1. Define its storage and relation arity in the Rust core (`crates/molrs/src/core/`).
 2. Teach native copy/merge/extract/topology and Frame projection about it.
-3. Expose a native view class and graph factory in molrs.
-4. Export it from `molrs.core`; molpy's mirror
-   of molrs's core (`molpy/core/__init__.py`) star-imports it with its
-   `__all__`, so `mp.core.<Name>` follows with no molpy edit. Promote it to the
-   root only if it is a data class a user handles directly.
-5. Update relevant readers/writers and add Rust, binding, and molpy integration tests.
+3. Expose a native view class and graph factory in the binding (`molpy/src/core/`).
+4. Export it from `molpy.core`: add it to the import from `molpy._core` and
+   to `__all__` in `molpy/python/molpy/core/__init__.py`, and declare it in
+   `molpy/python/molpy/_core.pyi`. Promote it to the root only if it is a data
+   class a user handles directly.
+5. Update relevant readers/writers and add Rust unit tests next to the code and binding seam tests (`molpy/tests/test_bindings/`).
 
 If the concept is only an annotation, prefer a typed field on an existing node
 or relation. For example, the assembler records which site an atom came from in
@@ -55,9 +54,9 @@ or relation. For example, the assembler records which site an atom came from in
 
 ## Checklist
 
-- [ ] The data has one owner in molrs; no Python mirror or `_inner` facade.
+- [ ] The data has one owner in the Rust core; no Python mirror or `_inner` facade.
 - [ ] Handles remain stable across live views and writes update the world.
 - [ ] Native copy/merge/extract and Frame round trips cover the new kind.
-- [ ] PyO3 exports and type stubs are updated before molpy uses the API.
+- [ ] PyO3 exports and type stubs are updated before Python code uses the API.
 - [ ] MolPy re-exports the native type.
-- [ ] Rust, molrs-python, and molpy integration tests all pass.
+- [ ] The Rust and Python suites pass (`scripts/check.sh verify`).

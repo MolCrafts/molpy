@@ -1,6 +1,6 @@
 # I/O
 
-`mp.io` mirrors `molrs.io`. Single-frame formats have `read_<format>(source)`
+`mp.io` is every file reader and writer. Single-frame formats have `read_<format>(source)`
 and `write_<format>(sink, frame)` functions. Pass a `pathlib.Path` for a file,
 `bytes` or `mp.io.Text(text)` for in-memory input, and a `bytearray` for
 in-memory output. A bare string cannot identify whether it is a path or file
@@ -10,11 +10,11 @@ example `mp.io.lammps.LammpsDumpReader(path)` and
 
 | Data | API |
 |------|-----|
-| Structure files | `read_pdb` / `write_pdb`, `read_mol2` / `write_mol2`, `read_gro` / `write_gro`, `read_xyz` / `write_xyz`, `read_lammps_data` / `write_lammps_data`, plus CIF, CUBE, XSF, POSCAR, SDF and AMBER readers |
+| Structure files | `read_pdb` / `write_pdb`, `read_mol2` / `write_mol2`, `read_gro` / `write_gro`, `read_xyz` / `write_xyz`, `read_lammps_data` / `write_lammps_data`, `read_cif` / `write_cif`, `read_cube` / `write_cube`, `read_xsf` / `write_xsf`, `read_poscar` / `write_poscar`, plus SDF, CHGCAR, STL and AMBER (`read_inpcrd`, `read_prmtop`, `read_ac`, `read_prep` / `write_prep`) readers |
 | Force fields | `mp.io.lammps.LammpsForcefieldReader` / `LammpsForcefieldWriter`; `mp.io.gromacs.GromacsTopForcefieldReader` / `GromacsTopForcefieldWriter`; corresponding classes in `amber`, `openmm_xml` and `xml` |
-| Trajectories | `<Format>Reader` / `<Format>Writer` in `pdb`, `gro`, `xyz`, `lammps`, `dcd`, `trr` and `xtc` |
+| Trajectories | `<Format>Reader` / `<Format>Writer` in `pdb`, `gro`, `xyz`, `lammps`, `dcd`, `trr`, `xtc`, `cif` and `mol2`; `SdfReader` and `CubeReader` in `sdf` and `cube` |
 | SMILES and CGsmiles | `mp.io.smiles.read_smiles(text)`, `mp.io.cgsmiles.read_cgsmiles(text)` |
-| Scientific records | `mp.io.write_mrec(path, frame=..., trajectory=..., forcefield=...)`, `mp.io.mrec.MrecFile(path)`, `mp.io.mrec.MrecReader(path)` |
+| Scientific records | `mp.io.write_mrec(sink, frame=..., trajectory=..., forcefield=...)`, `mp.io.mrec.MrecFile(path)`, `mp.io.mrec.MrecReader(path)` |
 | Wire frames | `mp.io.read_wire_frame` / `mp.io.write_wire_frame` |
 | Logs and metrics | `mp.io.read_lammps_log`; molpy's `lammps.LammpsLogMetricReader`, `mrec.MrecMetricReader` and `mlp_jsonl.MlpJsonlMetricReader` |
 
@@ -59,6 +59,14 @@ Every reader enforces a viewer's request the same way:
 from pathlib import Path
 import molpy as mp
 
+# a PDB file to read: one embedded water
+water, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+    mp.io.smiles.read_smiles("O").to_atomistic()
+)
+water_frame = water.to_frame()
+mp.Element.fill_symbols(water_frame)  # PDB writes element symbols, not atomic numbers
+mp.io.write_pdb(Path("molecule.pdb"), water_frame)
+
 frame = mp.io.read_pdb(Path("molecule.pdb"))
 mp.io.write_pdb(Path("copy.pdb"), frame)
 
@@ -83,7 +91,7 @@ restored = mp.io.mrec.MrecFile(record).frame()
 
 ### mrec (scientific records)
 
-`mp.io.write_mrec(path, frame=..., system=..., trajectory=..., forcefield=...)`
+`mp.io.write_mrec(sink, frame=..., system=..., trajectory=..., forcefield=...)`
 writes a record. `mp.io.mrec.MrecFile(path)` reads its `sections()`, `meta()`,
 `frame()`, `system()` and `forcefield()`. `mp.io.mrec.MrecReader(path)` reads
 trajectory frames lazily.

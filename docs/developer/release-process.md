@@ -1,139 +1,79 @@
 # Release Process
 
-This page is the practical checklist for cutting a MolPy release.
+Releases are cut from `master` of MolCrafts/molpy, the project repository;
+MolCrafts/molrs is retired. 0.20.0 is the first release of the unified
+project, and the downstream repositories move to it after that release
+(the repository's `.claude/specs/molpy-unification.md`, link 04). The last
+releases before it were 0.19.0 (`v0.19.0`) of the two former repositories.
 
+One version and one tag cover the whole project.
 
-## Version source of truth
+## Before the first release from MolCrafts/molpy
 
-Version metadata lives in `src/molpy/version.py`. Update both fields before release:
+The registries trusted the former repositories, so each needs, once:
 
-```python
-version = "X.Y.Z"
-release_date = "YYYY-MM-DD"
-```
+- crates.io `molcrafts-molrs`: a trusted publisher for MolCrafts/molpy,
+  workflow `release.yml`, environment `crates-io`;
+- npm `@molcrafts/molwasm`: a new package. npm configures trusted
+  publishing only on a package that exists, so its first version is
+  published by hand, then the trusted publisher (MolCrafts/molpy,
+  `release.yml`, environment `npm`) is added;
+- PyPI `molcrafts-molpy`: its trusted publisher already names MolCrafts/molpy,
+  `release.yml` and environment `pypi`;
+- the GitHub environments `crates-io` and `npm` on MolCrafts/molpy (`pypi`
+  and `pypi-nightly` exist).
 
-### molrs co-release: major.minor only
+## One version
 
-MolPy and [molrs](https://github.com/MolCrafts/molrs) share a **major.minor**
-line when co-released. Patch may drift.
+One version appears in:
 
-| Mechanism | Rule |
-|-----------|------|
-| `pyproject.toml` | `molcrafts-molrs>=X.Y.0,<X.(Y+1)` (not `==X.Y.Z`), derived from `version`: `tests/test_version.py` fails until a minor bump moves the pin with it |
-| Import-time check | `check_molrs_version()` accepts any installed molrs with the same major.minor |
-| Release gate | `release.yml` requires the tagged commit's `test / *` checks to be green, runs `scripts/check_partners_on_pypi.py` (a published release in every partner range: molrs on that minor line, mollog and molcfg in theirs), then one `published` run on Linux, Python 3.12, against the partners from PyPI (`uv run --no-sources`) |
+- `[workspace.package].version` in `Cargo.toml`, inherited by `crates/molrs/`;
+- `version`, and the `molcrafts-molrs` / `molcrafts-molrs-ffi` dependency
+  versions, in the standalone manifests `crates/molrs-ffi/`, `molpy/`,
+  `molwasm/`, `molc/` and `molcxx/Cargo.toml`. molpy's wheel takes its
+  version from `molpy/Cargo.toml`, and npm's `package.json` is generated
+  from `molwasm/Cargo.toml` by wasm-pack;
+- the `molcrafts-molrs*` entries of every committed `Cargo.lock`;
+- the version-pinned examples in `README.md` and this manual
+  (`version = "X.Y"` dependency lines).
 
-**Order:** ship molrs first (`master` + tag `vX.Y.Z` + publish), then land molpy
-APIs that need the new surface. Editable local molrs does not count as a release.
-There is no hand-written `CHANGELOG.md` and no release-notes page; the history
-is git.
+## Local verification
 
-### development pins partner commits; a release tests PyPI
-
-Development builds use the molrs commit pinned in `.github/partners.env`: `pyproject.toml`'s
-`[tool.uv.sources]` builds `molcrafts-molrs` from the sibling `../molrs`, which
-CI and the hooks check out at the commit `scripts/partners.py` resolves
-(`.github/partners.env`; see [Development Setup](development-setup.md)). That
-table only steers uv; the wheel declares the minor-line range alone.
-
-mollog and molcfg are partners too, pinned to full commits
-(`[tool.uv.sources]` builds them from `../mollog` / `../molcfg`) and declared
-by major range (`molcrafts-mollog>=1.3.1,<2`). A molpy that needs a new
-mollog or molcfg API waits for that release: mollog and molcfg ship before
-molpy, and molpy's lower bound moves to it.
-
-A release keeps the table and is judged against PyPI instead. The tagged
-commit has already been tested on every OS by `test.yml`, so `release.yml`
-does not repeat that matrix: its guard refuses a commit whose `test / *`
-checks are not green. It then checks that every declared partner range has a
-published release (`scripts/check_partners_on_pypi.py`) and runs the suite
-once, on Linux with Python 3.12, with `uv run --no-sources`, i.e. against the
-partners from PyPI, exactly what users of the wheel get. `uv.lock` (which
-records the dev build's partners) is not used there.
-
-
-
-## Pre-release checks
-
-Run all three validation steps locally before creating the release branch.
+Run the pre-push gate from the repository root:
 
 ```bash
-uv run --extra dev python -m pytest tests/ -n auto   # tests pass
-uv run --extra doc zensical build --clean            # docs build
-python -m build && twine check dist/*                # package is valid
+scripts/check.sh verify
 ```
 
+It is the script, on the pinned `rust-toolchain.toml` compiler, that the prek
+hooks and the CI workflows call. No gate compiles the crates.io archive:
+`cargo publish` in `release.yml` verifies it once, and the dispatch dry run
+(`cargo publish --dry-run`) rehearses that. Inspect
+`cargo package --list --manifest-path crates/molrs/Cargo.toml` for files left
+out.
 
-## Release workflow
+## Publishing
 
-**master is branch-protected**, and the release/publish workflow refuses a tag
-that is not reachable from `master`. So the release commit must land on `master`
-**before** the tag is pushed — otherwise you get an orphan tag and the publish
-job fails. Order matters:
+`.github/workflows/release.yml` holds every channel:
 
-```bash
-# 1. Bump version.py on dev, commit (history lives in git, no CHANGELOG).
-# 2. Get the release commit onto master via a PR (direct pushes are rejected):
-gh pr create --base master --head dev --title "Release vX.Y.Z"
-gh pr merge --merge            # after checks pass
+- crates.io: `molcrafts-molrs`;
+- npm: `@molcrafts/molwasm`;
+- PyPI: `molcrafts-molpy`, as desktop abi3 wheels and the Pyodide wheel;
+- the GitHub Release, carrying the C API archives.
 
-# 3. Only after master has the release commit, tag it and push the tag:
-git fetch main master
-git tag -a vX.Y.Z -m "Release vX.Y.Z"    # on the merged master commit
-git push main vX.Y.Z
-```
+| run | what it does |
+| --- | --- |
+| `v*` tag on MolCrafts | `release / guard` (tag = `v` + the workspace version, on `master`; every job of the commit's full `test.yml` tier succeeded), the builds, then every upload. No lint or test run of its own: the commit was proven before the tag |
+| dispatch (any branch, fork or upstream) | the dry run: the same guard, the builds, `cargo publish --dry-run` and `npm pack --dry-run`; no upload and no Release |
 
-Do **not** `git push <remote> master --tags`: if the protected-master push is
-rejected, the tag still goes out as an orphan and publish refuses it.
+1. Finish the checks and review the release diff. Push it to `master` and
+   wait for its `test.yml` run: the tag's guard reads it.
+2. Dispatch **release** on the branch for a rehearsal (a fork is fine).
+3. Merge the reviewed revision into `master`, then create and push `vX.Y.Z`,
+   matching `[workspace.package].version`.
+4. Wait for **release** to finish, then smoke-test the published artifacts.
 
-On tag push (`v*`), GitHub Actions runs `.github/workflows/release.yml`. It
-checks that the tag is `v` + `molpy.version.version` on `master` and that the
-commit's `test / *` checks are green, runs the suite once (Linux, Python 3.12)
-against the partners from PyPI, builds the sdist and wheel, publishes them to
-PyPI, and creates the GitHub Release. Dispatching **release** on a branch (a
-fork is fine) is the dry run: the same guard, published run and build, no
-upload.
-PyPI's trusted publisher names `release.yml` and the `pypi` environment.
-
-
-## Nightly releases
-
-Nightlies are **independent** of the tagged release flow above. They ship to a
-separate PyPI project, `molcrafts-molpy-nightly`, and never touch the stable
-`molcrafts-molpy`.
-
-- **Trigger:** every push to the `nightly` branch of MolCrafts/molpy, or a
-  dispatch of `.github/workflows/nightly.yml` on that branch. (Its scheduled
-  run on `master` only measures tests and coverage for the CI dashboard.)
-- **Versioning:** the workflow reads the current `molpy.version.version` and
-  appends a UTC timestamp → `X.Y.Z.dev<YYYYMMDDHHMM>` (a PEP 440 dev release).
-  No manual version bump or tag is needed; do **not** edit `version.py` for a
-  nightly.
-- **Distribution rename:** the build rewrites the PyPI name to
-  `molcrafts-molpy-nightly` in-flight (the commit on `nightly` is unchanged).
-- **Publishing:** PyPI Trusted Publishing (OIDC) into the `pypi-nightly`
-  GitHub Environment — no API token, no required reviewers (so nightlies never
-  block on manual approval).
-
-To cut a nightly, fast-forward `nightly` to the commit you want and push:
-
-```bash
-git push origin master:nightly      # or push your integration branch onto nightly
-```
-
-Install a nightly with `pip install --pre molcrafts-molpy-nightly`. It imports
-as `molpy` and therefore conflicts with the stable package — test it in a
-dedicated virtual environment.
-
-
-## Hotfix
-
-For critical fixes on a released version:
-
-```bash
-git checkout -b hotfix/vX.Y.Z vA.B.C
-# fix, test, update version.py
-git commit -am "fix: ..."
-git tag -a vX.Y.Z -m "Hotfix vX.Y.Z"
-git push origin --tags
-```
+Every upload skips a version the registry already has: retry a partial
+release by re-running the tag's run. Trusted publishing on crates.io, PyPI
+and npm names the workflow file `release.yml` and one environment per
+registry: `crates-io`, `npm` and `pypi`.
