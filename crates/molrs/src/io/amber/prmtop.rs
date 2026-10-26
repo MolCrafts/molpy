@@ -600,11 +600,20 @@ fn molecule_ids(
     Ok(Some(mol_id))
 }
 
-fn build_exclusions_block(
+/// The pairs `(i < j)` of `NUMBER_EXCLUDED_ATOMS` / `EXCLUDED_ATOMS_LIST`
+/// (sander's excluded pairs, the 1-4 pairs among them); `None` when the file
+/// has neither section. `0` placeholders are dropped.
+pub(crate) fn excluded_pairs(
     sections: &HashMap<String, Vec<String>>,
-    nnb: i64,
-    n_atoms: usize,
-) -> Result<Option<Block>> {
+) -> Result<Option<Vec<(usize, usize)>>> {
+    let pointers_lines = sections
+        .get("POINTERS")
+        .ok_or_else(|| invalid_data("missing POINTERS section"))?;
+    let meta_map = read_pointers(pointers_lines)?;
+    let n_atoms = *meta_map
+        .get("n_atoms")
+        .ok_or_else(|| invalid_data("n_atoms missing after POINTERS"))? as usize;
+    let nnb = *meta_map.get("NNB").unwrap_or(&0);
     let has_numex = sections.contains_key("NUMBER_EXCLUDED_ATOMS");
     let has_list = sections.contains_key("EXCLUDED_ATOMS_LIST");
     if !has_numex && !has_list {
@@ -672,10 +681,13 @@ fn build_exclusions_block(
             "NUMBER_EXCLUDED_ATOMS sums to {cursor}, expected NNB={nnb}"
         )));
     }
-    let mut block = Block::new();
-    insert_column(&mut block, keys::ATOMI, atomi)?;
-    insert_column(&mut block, keys::ATOMJ, atomj)?;
-    Ok(Some(block))
+    Ok(Some(
+        atomi
+            .into_iter()
+            .zip(atomj)
+            .map(|(a, b)| (a as usize, b as usize))
+            .collect(),
+    ))
 }
 
 fn apply_box(frame: &mut Frame, sections: &HashMap<String, Vec<String>>, ifbox: i64) -> Result<()> {
@@ -765,7 +777,6 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
         .get("n_atoms")
         .ok_or_else(|| invalid_data("n_atoms missing after POINTERS"))? as usize;
     let n_res = *meta_map.get("NRES").unwrap_or(&0) as usize;
-    let nnb = *meta_map.get("NNB").unwrap_or(&0);
     let ifbox = meta_map.get("IFBOX").copied().unwrap_or(0);
     refuse_unsupported(sections, &meta_map)?;
     check_dead_int_section(sections, "JOIN_ARRAY", n_atoms)?;
@@ -857,7 +868,6 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
     let tree = a4_exact(sections, "TREE_CHAIN_CLASSIFICATION", n_atoms)?;
     let gb_radius = floats_n(sections, "RADII", n_atoms)?;
     let gb_screen = floats_n(sections, "SCREEN", n_atoms)?;
-    let exclusions = build_exclusions_block(sections, nnb, n_atoms)?;
 
     // Connectivity (inc + without H).
     let mut bond_ptrs = section_ints(sections, "BONDS_INC_HYDROGEN")?;
@@ -953,9 +963,6 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
     frame.insert("dihedrals", build_dihedral_block(&propers)?);
     if !impropers.is_empty() {
         frame.insert("impropers", build_dihedral_block(&impropers)?);
-    }
-    if let Some(excl) = exclusions {
-        frame.insert("exclusions", excl);
     }
     if let Some(cmaps) = cmaps {
         frame.insert(block_names::CMAPS, cmaps);
@@ -1705,60 +1712,36 @@ c3  c3  c3  c3
 
     #[test]
     fn exclusions_rows_are_zero_based_ordered_pairs() {
-        let frame = frame_from(LITFSI_HEAD);
-        let excl = frame
-            .get("exclusions")
-            .expect("prmtop must produce the exclusions block PME already reads");
+        let pairs = excluded(LITFSI_HEAD)
+            .unwrap()
+            .expect("the exclusion sections");
         // NNB = 65 entries, two of which are the `0` placeholders of the two
         // atoms that exclude nothing (F3, index 14; Li, index 15).
-        assert_eq!(excl.n_rows(), Some(63));
-        let atomi = excl
-            .get("atomi")
-            .and_then(|c| c.get::<u64>())
-            .expect("exclusions.atomi");
-        let atomj = excl
-            .get("atomj")
-            .and_then(|c| c.get::<u64>())
-            .expect("exclusions.atomj");
-        for row in 0..63 {
-            assert!(
-                atomi[[row]] < atomj[[row]],
-                "row {row}: {} !< {}",
-                atomi[[row]],
-                atomj[[row]]
-            );
-            assert!(
-                atomj[[row]] <= 14,
-                "row {row} references a non-existent partner"
-            );
+        assert_eq!(pairs.len(), 63);
+        for (row, &(a, b)) in pairs.iter().enumerate() {
+            assert!(a < b, "row {row}: {a} !< {b}");
+            assert!(b <= 14, "row {row} references a non-existent partner");
         }
         // File numbers are 1-based: atom 1 excludes 2..8 -> (0,1)..(0,7).
-        assert_eq!((atomi[[0]], atomj[[0]]), (0, 1));
-        assert_eq!((atomi[[6]], atomj[[6]]), (0, 7));
-        assert_eq!((atomi[[7]], atomj[[7]]), (1, 2));
-        assert_eq!((atomi[[62]], atomj[[62]]), (13, 14));
+        assert_eq!(pairs[0], (0, 1));
+        assert_eq!(pairs[6], (0, 7));
+        assert_eq!(pairs[7], (1, 2));
+        assert_eq!(pairs[62], (13, 14));
+    }
+
+    /// The excluded pairs of the prmtop `text`.
+    fn excluded(text: &str) -> Result<Option<Vec<(usize, usize)>>> {
+        excluded_pairs(&parse_flag_sections(text.as_bytes()).unwrap())
     }
 
     #[test]
-    fn exclusions_all_zero_list_is_an_empty_block() {
+    fn exclusions_all_zero_list_is_no_pair() {
         let text = star4_prmtop(
             4,
             "       1       1       1       1",
             "       0       0       0       0",
         );
-        let frame = frame_from(&text);
-        let excl = frame
-            .get("exclusions")
-            .expect("an all-placeholder list still yields a schema-typed empty block");
-        assert_eq!(excl.n_rows(), Some(0));
-        assert!(
-            excl.get("atomi").and_then(|c| c.get::<u64>()).is_some(),
-            "atomi column must exist"
-        );
-        assert!(
-            excl.get("atomj").and_then(|c| c.get::<u64>()).is_some(),
-            "atomj column must exist"
-        );
+        assert_eq!(excluded(&text).unwrap(), Some(Vec::new()));
     }
 
     #[test]
@@ -1769,7 +1752,7 @@ c3  c3  c3  c3
             STAR4_NUMEX,
             "       2       3       4       3       4       4",
         );
-        let err = refusal_from(&text);
+        let err = excluded(&text).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         let msg = err.to_string();
         assert!(msg.contains("NNB"), "message {msg:?} must name NNB");

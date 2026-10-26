@@ -1406,17 +1406,29 @@ class FragmentScaling:
     def alpha(self) -> float: ...
     @property
     def polarizable(self) -> bool: ...
+    def k_ij(self, other: FragmentScaling, r: float) -> float: ...
 
-def compute_k_ij(fr_i: FragmentScaling, fr_j: FragmentScaling, r: float) -> float: ...
-def fragment_table() -> dict[str, FragmentScaling]: ...
-def scale_lj(
-    ff: ForceField,
-    fragments: dict[
-        str, tuple[list[str], list[tuple[float, float, float]], list[float]]
-    ],
-    fragment_table: dict[str, FragmentScaling] | None = None,
-    scale_sigma: bool = False,
-) -> ForceField: ...
+class ClpolScaling:
+    """CL&Pol's SAPT-derived Lennard-Jones scaling: its fragment table (CL&Pol's
+    own when ``fragments`` is ``None``) and whether it scales σ."""
+
+    def __new__(
+        cls,
+        fragments: dict[str, FragmentScaling] | None = None,
+        *,
+        scale_sigma: bool = False,
+    ) -> Self: ...
+    @property
+    def fragments(self) -> dict[str, FragmentScaling]: ...
+    @property
+    def scale_sigma(self) -> bool: ...
+    def apply(
+        self,
+        ff: ForceField,
+        fragment_atoms: dict[
+            str, tuple[list[str], list[tuple[float, float, float]], list[float]]
+        ],
+    ) -> ForceField: ...
 
 class MolGraph:
     """Domain-agnostic ECS *world* with ``int`` handles.
@@ -1621,16 +1633,17 @@ class Atomistic:
         gen_angle: bool = True,
         gen_dihedral: bool = True,
         gen_improper: bool = False,
+        gen_pairs: bool = True,
         clear_existing: bool = False,
-    ) -> tuple[int, int, int]: ...
+    ) -> tuple[int, int, int, int]: ...
     # --- terms (every other relation block) ---
     def declare_term(self, block: str, arity: int) -> None:
         """Declare a term block the Frame schema does not define."""
     def add_term(
         self, block: str, atoms: Iterable[Atom], /, **props: PropValue
     ) -> RelationRef:
-        """Add a row to the term block ``block`` (``cmaps``, ``exclusions``,
-        …) over ``atoms``; a block with typed methods is refused."""
+        """Add a row to the term block ``block`` (``cmaps``, ``pairs``, …)
+        over ``atoms``; a block with typed methods is refused."""
     def del_term(self, term: RelationRef) -> None: ...
     def del_terms(self, terms: Iterable[RelationRef]) -> None:
         """Delete terms of ONE block; atomic."""
@@ -2425,7 +2438,6 @@ class keys:
     ID: Key
     IMAGES: list[Key]
     IMPROPER_TYPE_LABELS: Key
-    IS_14: Key
     IX: Key
     IY: Key
     IZ: Key
@@ -2434,6 +2446,7 @@ class keys:
     MUX: Key
     MUY: Key
     MUZ: Key
+    N_BONDS: Key
     NAME: Key
     OCCUPANCY: Key
     QUAT: list[Key]
@@ -2579,10 +2592,8 @@ class schema:
     CONSTRAINTS: str
     DIHEDRALS: str
     DRUDES: str
-    EXCLUSIONS: str
     IMPROPERS: str
     MEMBERS: str
-    PAIR_OVERRIDES: str
     PAIRS: str
     VIRTUAL_SITES: str
     TOPOLOGY: tuple[str, ...]
@@ -3769,6 +3780,8 @@ class DrudeBuilder:
         *,
         drude_prefix: str = "D",
     ) -> Self: ...
+    @property
+    def polarizability(self) -> dict[str, dict[str, float]]: ...
     def apply(self, mol: Atomistic) -> Atomistic: ...
 
 @final
@@ -4015,11 +4028,9 @@ class ForceField:
     @property
     def special_bonds(self) -> tuple[list[float], list[float]] | None: ...
     def set_special_bonds(self, lj: Sequence[float], coul: Sequence[float]) -> None: ...
-    def materialize_one_four(self, frame: Frame) -> int:
-        """Write the 1-4 pairs of ``frame`` as per-pair override cells on its
-        ``pairs`` block (``epsilon``/``sigma`` from the 1-4 parameters when
-        ``lj/charmm`` declares ``one_four="epsilon14"``, the scales from
-        ``special_bonds``); return the number of rows filled."""
+    def assign_cmaps(self, mol: Atomistic) -> int:
+        """Replace ``mol``'s ``cmaps`` terms by the crossterms its dihedrals
+        and this force field's ``cmap`` rows define; return their number."""
     def materialize_params(self, frame: Frame, *, prefix: str) -> dict[str, list[str]]:
         """Write the parameters this force field gives each row of ``frame``
         (relation blocks by ``type``; ``atoms`` by ``atoms.type`` under every
@@ -4061,9 +4072,9 @@ class Style:
     def get_type_by_name(self, name: str) -> ForceFieldType | None: ...
     @property
     def params(self) -> dict[str, ParamValue]: ...
-    def __getitem__(self, key: str, /) -> ParamValue | None: ...
-    def __setitem__(self, key: str, value: ParamInput, /) -> None:
-        """Set one style-level param (``Style::set_param``)."""
+    def set(self, **params: ParamInput) -> None:
+        """Set style-level params (``Style::set_param``), every value checked
+        before any is written: ``style.set(cutoff=12.0)``."""
     def del_type(self, name: str) -> int:
         """Remove the type ``name`` (``Style::del_type``); the count removed,
         ``0`` or ``1``."""
@@ -4152,12 +4163,8 @@ class ForceFieldType:
     def category(self) -> str: ...
     @property
     def params(self) -> dict[str, ParamValue]: ...
-    def __getitem__(self, key: str, /) -> ParamValue | None: ...
-    def get(self, key: str, default: Any = None) -> Any: ...
-    def __contains__(self, key: str, /) -> bool: ...
-    def __setitem__(self, key: str, value: ParamInput, /) -> None: ...
-    def keys(self) -> list[str]: ...
-    def items(self) -> list[tuple[str, ParamValue]]: ...
+    def set(self, **params: ParamInput) -> None:
+        """Set params, every value checked before any is written."""
     @property
     def endpoints(self) -> tuple[AtomType, ...]: ...
 
@@ -4483,23 +4490,22 @@ class Potentials:
     def push(self, potential: PairLjCut | Potentials | _PotentialLike) -> None: ...
     def evaluate(self, arg: Frame | ArrayF) -> tuple[float, ArrayF]:
         """Energy and forces (``Potential::evaluate``): ``(energy, forces)``,
-        forces ``(N, 3)``. ``arg`` is a :class:`Frame` (a deferred collection
-        binds its topology first) or flat ``[x0, y0, z0, ...]`` coordinates."""
+        forces ``(N, 3)``. ``arg`` is a :class:`Frame` (its ``atoms``
+        coordinates) or flat ``[x0, y0, z0, ...]`` coordinates."""
 
 class PotentialCompiler:
     """Compiles a ``ForceField`` into evaluable kernels.
 
     Owns a copy of the force field taken at construction; later edits to that
-    ``ForceField`` do not reach it. ``compile(frame)`` binds a typed frame now;
-    ``defer()`` returns ``Potentials`` that bind the frame they are evaluated
-    on; ``compile_typed(frame)`` builds the kernels of a neighbour-driven (MD)
-    evaluation. Both doors price a pair only inside its style's ``cutoff``
-    (``r < cutoff``, as LAMMPS; ∞ when the style states none).
+    ``ForceField`` do not reach it. ``compile(frame)`` binds a typed frame,
+    pricing every pair of atoms; ``compile_typed(frame)`` builds the kernels
+    of a neighbour-driven (MD) evaluation. Both weigh a pair by the frame's
+    special pairs (``pairs``) and price it only inside its style's declared
+    ``cutoff`` (``r < cutoff``, as LAMMPS).
     """
 
     def __new__(cls, forcefield: ForceField) -> Self: ...
     def compile(self, frame: Frame) -> Potentials: ...
-    def defer(self) -> Potentials: ...
     def compile_typed(self, frame: Frame) -> WeightedTerms: ...
 
 class Lbfgs:
@@ -4774,20 +4780,6 @@ class GasteigerModel:
     def __init__(self) -> None: ...
     def needs_equivalencing(self) -> bool: ...
     def assign(self, mol: Atomistic, qm: ArrayF | None = None) -> ArrayF: ...
-
-def clpol_polarizability() -> dict[str, dict[str, float]]:
-    """CL&Pol Drude parameters per atom type (``m_D``, ``q_D_sign``, ``k_D``,
-    ``alpha``, ``a_thole``): the shipped ``alpha.ff`` table."""
-
-def assign_cmaps(mol: Atomistic, forcefield: ForceField) -> int: ...
-def intramolecular_pairs(
-    frame: Frame,
-    forcefield: ForceField,
-    neighbors: Neighbors | None = None,
-) -> Block:
-    """The special-bonds pair list (``atomi`` / ``atomj`` / ``is_14``) of a
-    typed frame under ``forcefield``'s declared weights; candidates from
-    ``neighbors`` when given, else every ``i < j`` pair."""
 
 # ---------------------------------------------------------------------------
 # Record / Trajectory / Observables
@@ -7029,54 +7021,54 @@ class ir:
 
 class style_registry:
     """The ``_core.style_registry`` submodule (``molrs::ff::style_registry``),
-    surfaced as :mod:`molpy.ff.style_registry`: register a category or a
-    style — by an expression, a vectorised Python kernel, or both — into the
-    process-wide registry every compile reads."""
+    surfaced as :mod:`molpy.ff.style_registry`."""
 
-    @staticmethod
-    def register_category(
-        name: str,
-        arity: int,
-        *,
-        coordinate: Literal[
-            "compound", "distance", "angle", "dihedral", "improper"
-        ] = "compound",
-        order: Literal["reversible", "ordered", "unordered"] = "reversible",
-    ) -> None: ...
-    @staticmethod
-    def register_style(
-        category: str,
-        name: str,
-        *,
-        params: Sequence[ir.ParamSpec] | Mapping[str, str] | None = None,
-        style_params: Sequence[ir.ParamSpec] | Mapping[str, str] | None = None,
-        expression: str | None = None,
-        kernel: Callable[..., tuple[ArrayF, ArrayF]] | None = None,
-        compound: bool = False,
-        special: Literal["lj", "coul"] | None = None,
-        samples: Sequence[Mapping[str, Any]] | None = None,
-        replace: bool = False,
-        lammps: str | None = None,
-    ) -> None: ...
-    @staticmethod
-    def register_engine_form(
-        engine: str, category: str, name: str, form: str
-    ) -> None: ...
-    @staticmethod
-    def unregister_style(category: str, name: str) -> None: ...
-    @staticmethod
-    def styles(category: str | None = None) -> list[ir.StyleSpec]: ...
-    @staticmethod
-    def categories() -> list[ir.CategorySpec]: ...
-    @staticmethod
-    def evaluate(
-        category: str,
-        name: str,
-        q: npt.ArrayLike | None = None,
-        *,
-        x: npt.ArrayLike | None = None,
-        **params: Any,
-    ) -> tuple[ArrayF, ArrayF]: ...
+    class GlobalRegistry:
+        """The process-wide registry every compile reads: register a category
+        or a style — by an expression, a vectorised Python kernel, or both —
+        list what is registered, evaluate a style on a batch of terms."""
+
+        def __new__(cls) -> Self: ...
+        def register_category(
+            self,
+            name: str,
+            arity: int,
+            *,
+            coordinate: Literal[
+                "compound", "distance", "angle", "dihedral", "improper"
+            ] = "compound",
+            order: Literal["reversible", "ordered", "unordered"] = "reversible",
+        ) -> None: ...
+        def register_style(
+            self,
+            category: str,
+            name: str,
+            *,
+            params: Sequence[ir.ParamSpec] | Mapping[str, str] | None = None,
+            style_params: Sequence[ir.ParamSpec] | Mapping[str, str] | None = None,
+            expression: str | None = None,
+            kernel: Callable[..., tuple[ArrayF, ArrayF]] | None = None,
+            compound: bool = False,
+            special: Literal["lj", "coul"] | None = None,
+            samples: Sequence[Mapping[str, Any]] | None = None,
+            replace: bool = False,
+            lammps: str | None = None,
+        ) -> None: ...
+        def register_engine_form(
+            self, engine: str, category: str, name: str, form: str
+        ) -> None: ...
+        def unregister_style(self, category: str, name: str) -> None: ...
+        def styles(self, category: str | None = None) -> list[ir.StyleSpec]: ...
+        def categories(self) -> list[ir.CategorySpec]: ...
+        def evaluate(
+            self,
+            category: str,
+            name: str,
+            q: npt.ArrayLike | None = None,
+            *,
+            x: npt.ArrayLike | None = None,
+            **params: Any,
+        ) -> tuple[ArrayF, ArrayF]: ...
 
 # ---------------------------------------------------------------------------
 # Exports declared from the compiled module's own signatures.

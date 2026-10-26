@@ -6,7 +6,7 @@ site_name = "MolPy"
 site_url = "https://docs.molcrafts.org/molpy/"
 repo_url = "https://github.com/MolCrafts/molpy"
 repo_name = "MolCrafts/molpy"
-site_description = "molpy: one project, a Rust core (molrs), and a binding for each language."
+site_description = "MolPy: the Python toolkit that ties molecular modeling together."
 copyright = "Copyright &copy; 2024 - 2026 MolCrafts Team"
 docs_dir = "docs"
 site_dir = "site"
@@ -21,7 +21,6 @@ site_dir = "site"
 # the nav points at the generated *.md pages below.
 nav = [
   { "molpy" = "index.md" },
-  { "molrs" = "molrs/index.md" },
 
   { "Tutorials" = [
     "tutorials/index.md",
@@ -168,7 +167,7 @@ nav = [
     ] },
     { "Architecture" = [
       { "Architecture Overview" = "developer/architecture-overview.md" },
-      { "The Rust Core" = "developer/molrs-backend.md" },
+      { "The Rust Core" = "developer/rust-core.md" },
       { "Force-Field IR" = "developer/forcefield-ir.md" },
       { "Minimum-Image Convention" = "developer/mic-matrix.md" },
       { "Attribution" = "developer/attribution.md" },

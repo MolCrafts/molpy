@@ -1,4 +1,4 @@
-# Unified periodic geometry and minimum-image distances
+# Minimum-image convention
 
 Validated locally on 2026-10-17 against ASE 3.29.0, freud-analysis 3.6.1,
 and NumPy 2.5.4. Inputs use seed `20261017`.
@@ -61,24 +61,24 @@ and [reduction conditions](https://docs.ase-lib.org/_modules/ase/geometry/minkow
 | Independent exhaustive images, every PBC mask | 16 rotated cells × 8 masks × 64 vectors = 8,192 | Maximum component error `7.105427357601002e-15` |
 | freud primitive-cell `wrap` | 32 cells × 256 vectors = 8,192 | Maximum component error `9.064080686016496e-6` |
 | freud wrapping and distances inside the common safe cutoff | 32 cells × 128 vectors = 4,096 | Maximum vector-component error `7.817531837872593e-6`; distance comparison also passes |
-| molrs LinkCell, ASE neighbor list, freud AABBQuery | 32 systems of 128 particles | Identical pair sets: 3,263 unique unordered neighbor pairs |
+| The core's LinkCell, ASE neighbor list, freud AABBQuery | 32 systems of 128 particles | Identical pair sets: 3,263 unique unordered neighbor pairs |
 
 The full-PBC campaign includes diagonal cells, rotations, left-handed bases,
 unreduced shears, and a shear of 1000. Unwrapped displacements are constructed
 from fractional coordinates in `[-4,4]`. The exhaustive comparison constructs
 finite integer bounds from the raw periodic basis's dual and an initial
-candidate radius; it does not reuse molrs's reduction or candidate selection.
+candidate radius; it does not reuse the core's reduction or candidate selection.
 
 The freud common-domain campaign uses upper-triangular cells with tilt factors
 in `[-0.25,0.25]` and cutoff `0.2 * min(nearest_plane_distance)`. Its small
 residual discrepancies are consistent with freud's float32 implementation
-versus molrs's float64. ASE accepts lattice vectors as rows, so it receives
-`H.T`; freud's centered-cell wrapping is compared with molrs origin
+versus the core's float64. ASE accepts lattice vectors as rows, so it receives
+`H.T`; freud's centered-cell wrapping is compared with the core's origin
 `-H @ [0.5,0.5,0.5]`.
 
 ## Non-agreements outside common conditions
 
-These are recorded explicitly rather than changing molrs's minimum-distance
+These are recorded explicitly rather than changing the core's minimum-distance
 contract to reproduce another implementation's shortcut.
 
 ### freud wrapping is not a global closest-image solver
@@ -90,7 +90,7 @@ H = [[1, 0.5, 0], [0, 1, 0], [0, 0, 1]]
 d = [0.735, 0.49, 0]
 ```
 
-molrs and ASE's general MIC return `[-0.265, 0.49, 0]` (distance about
+The core and ASE's general MIC return `[-0.265, 0.49, 0]` (distance about
 `0.5570682184`). freud wraps to approximately `[0.735, 0.49, 0]` (distance
 about `0.8833600625`). There are 1,130 such distance disagreements above
 `1e-4` among the 8,192 arbitrary freud campaign vectors. The common safe-cutoff
@@ -98,12 +98,12 @@ and primitive-cell wrapping comparisons pass independently.
 
 This follows freud's [source algorithm](https://github.com/glotzerlab/freud/blob/v3.6.1/freud/box/Box.h):
 `computeDistance` uses fractional-cell `wrap`. It is not evidence of float
-precision loss and is not treated as a molrs failure.
+precision loss and is not treated as a failure of the core.
 
 ### ASE public shortcut on an unreduced basis
 
 For `H = [[100,99,0],[0,1,0],[0,0,100]]` and `d = [1.48,-0.48,0]`,
-molrs and ASE `general_find_mic` return `[0.48,0.52,0]`. Public `find_mic`
+The core and ASE `general_find_mic` return `[0.48,0.52,0]`. Public `find_mic`
 selects its naive shortcut and returns approximately `[1.48,-0.48,0]`.
 This curated counterexample is separate from the random campaign's zero
 public-API disagreements.
@@ -130,110 +130,3 @@ scientific reference packages and the offline generator are not added to the
 default gate or committed as runtime test dependencies. Rust unit tests read
 only the frozen JSON, check the reduction inequalities, and check independent
 hand-written image cases, large shear and partial PBC.
-
-## Rust API migration
-
-Direct construction of `Mic::{Free,Ortho,Triclinic}` is replaced by
-`Mic::free()`, `Mic::ortho(lengths)` or `Mic::new(H,pbc)`. The first two
-construct the same prepared representation. `simplified()` is removed because
-there is no backend variant to simplify. The known sibling molpack checkout
-still pins molrs 0.14 and uses this old method; its caller must drop that method
-when migrating to the 0.18 API. No molpack dependency pins were changed here.
-
-The accompanying core fixes also make `BlockView::to_owned()` and
-`FrameView::to_owned()` return `Result<_, BlockError>`: callers must propagate
-or handle malformed borrowed columns and metadata. Previously those errors
-could silently drop data. `Atomistic::term_arity(block)` exposes the declared
-arity needed to preserve empty custom terms in Python pickles. Structural
-identity now reads `formal_charge`; partial `charge` is not an identity label.
-
-## Verification before polish
-
-- `cargo mrs-test --quiet`: 4,200 passed, 1 existing ignored test.
-- `cargo mrs-doctest --quiet`: 151 passed, 10 ignored examples across the two rustdoc runs.
-- `cargo mrs-clippy -- -D warnings`: passed.
-- `cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings`: passed.
-- `cargo clippy --manifest-path molcxx/Cargo.toml --all-targets -- -D warnings`: passed.
-- `cargo fmt --all --check` and the Python binder's formatting check: passed.
-- molrs Python suite: 1,782 passed, 6 skipped; the existing invalid-schema-cast test emits one NumPy RuntimeWarning, also present at baseline.
-- molpy Python suite: 1,067 passed, 36 skipped.
-- molpy core/tests Ruff checks and formatting: passed.
-
-These are correctness and build checks, not a claim of benchmarked throughput.
-The scientific comparisons used the locally rebuilt Python extension. No
-dependency-version bumps or releases are part of this change.
-
-## Polish review
-
-Scope: molrs `4e51c90b`, molpy `170512d`, and their direct callers.
-
-- Reuse / duplication: observable construction now directly calls the existing
-  `molrs-python/src/core/block.rs::column_from_py`; its forwarding-only helper
-  was removed. Canonical labeling and whole-graph isomorphism share the existing
-  sorted parallel-edge representation, now owned by `GraphView::edge_bundles`.
-  The topology-only subgraph matcher deliberately collapses parallel edges;
-  its semantics differ, so it retains its separate projection while sharing
-  the feasibility check.
-- Placement: Python dtype conversion stays at the binding boundary, and graph
-  label/multiplicity handling stays in the graph snapshot. No dependency or
-  public API was added by polish.
-- Leftovers / API: old MIC variants and `simplified()` have no remaining
-  source callers inside molrs or its binders. Migration notes above also cover
-  fallible borrowed-view conversion. The separately versioned molpack migration
-  remains outside this change.
-- Fixed: the exact graph matcher formerly collapsed parallel edges, allowing
-  a four-cycle with edge multiplicities `[1,3,1,3]` to match `[2,2,2,2]`.
-  A new regression failed before the fix. A second test checks that changing
-  the insertion order of parallel-edge labels preserves isomorphism.
-- Fixed: time monotonicity now compares neighboring values directly. The
-  former subtraction overflowed for finite times `[-1e308,1e308]` and the
-  reverse sequence, raising a warning instead of the documented `ValueError`.
-  Both new cases failed before the fix. An additional regression covers finite
-  time-bin indices above the int64 range.
-
-Verification during polish:
-
-- Baseline `cargo mrs-test --quiet -- core::`: 1,055 passed.
-- Baseline binding `python -m pytest -q tests/test_trajectory.py
-  tests/test_graph_hash.py tests/test_pickle.py tests/test_schema.py`: 52 passed.
-- Baseline molpy `python -m pytest -q tests/test_core/test_selector.py
-  tests/test_core/test_trajectory.py`: 49 passed; after the fixes, 52 passed.
-- `cargo mrs-test --quiet -- core::` after the first graph regression/fix:
-  1,056 passed; the final full run includes both graph regressions.
-- Final `cargo mrs-test --quiet`: 4,202 passed, 1 existing ignored test.
-- `maturin develop --locked --manifest-path Cargo.toml` in `molrs-python`:
-  rebuilt and installed the extension successfully.
-- Binding `python -m pytest -q`: 1,782 passed, 6 skipped, the same
-  intentional invalid-schema-cast NumPy warning as baseline.
-- Binding `python -m mypy python/molrs/_native.pyi` and
-  `python -m mypy.stubtest molpy._core --mypy-config-file pyproject.toml
-  --allowlist stubtest-allowlist.txt --ignore-disjoint-bases`: passed.
-- molpy `python -m pytest -q`: 1,070 passed, 36 skipped.
-- molpy `ruff check src/molpy/core tests/test_core` and
-  `ruff format --check src/molpy/core tests/test_core`: passed.
-- Root `cargo fmt --all --check`, binding
-  `cargo fmt --manifest-path molrs-python/Cargo.toml --check`, and both
-  repositories' `git diff --check`: passed. A formatting invocation initially
-  used this root-relative manifest from the binding directory and failed to
-  locate it; the corrected invocation from the root passed.
-- `cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets
-  -- -D warnings`: passed.
-- `cargo mrs-clippy -- -D warnings`: passed.
-
-Locations (workspace-relative):
-
-- `molrs/molrs/src/core/graph_hash.rs:129` owns the shared edge bundles;
-  canonical labeling calls it at line 333, isomorphism at lines 516–517;
-  regressions start at lines 749 and 770.
-- `molrs/molrs-python/src/core/trajectory.rs:238` calls
-  `molrs/molrs-python/src/core/block.rs:1353` directly.
-- `molpy/src/molpy/core/_splitter.py:95` avoids subtraction;
-  regressions are `molpy/tests/test_core/test_trajectory.py:119` and line 124.
-- `molrs/docs/mic-matrix.md:143` documents borrowed-view API migration.
-
-Ready: yes, for the two reviewed repositories. No material issue remains in
-this scope. The earlier CXX and doctest results above remain applicable;
-polish changes no exported signature or MIC implementation. The offline
-ASE/freud campaigns were not rerun during polish.
-
-Next: none.

@@ -21,8 +21,9 @@ uv run --no-sync pytest tests/ -k "lammps"                 # keyword filter
 cargo mrs-test -- io::lammps                   # one Rust module
 ```
 
-Run `pytest`, never `python -m pytest`: the latter puts the source tree on
-`sys.path` ahead of the built package, which has the native `molpy._core`.
+Run `pytest`, never `python -m pytest`: the latter prepends the working
+directory to `sys.path`, and the suite must import only the installed wheel,
+which carries the native `molpy._core`.
 
 The suite is pure unit tests: the engines and the AmberTools programs mock
 `subprocess`; nothing requires LAMMPS, GROMACS, OpenMM or AmberTools on the
@@ -43,7 +44,7 @@ Every new behavior needs a test. Cover four categories:
 A test checks correctness: what code computes, writes, raises or refuses.
 What is *not* a unit test and does not belong in `tests/`: an end-to-end
 pipeline, a doc snippet run as a test, a number captured from another
-program, a check that molpy returns what molrs returns, a grep or AST scan
+program, a check that the Python binding returns what the Rust core returns, a grep or AST scan
 over source text, a check of code style, naming or where a module lives, a
 check that an API is absent or has a particular signature, a large corpus
 file.

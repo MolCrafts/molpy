@@ -72,8 +72,7 @@ def test_atd_then_gaff_types_and_prices_acetanilide(parameter_set: str) -> None:
     atoms = frame["atoms"]
     atoms.insert("charge", mp.ff.charge.GasteigerModel().assign(typed))
     frame["atoms"] = atoms
-    frame["pairs"] = mp.ff.potential.intramolecular_pairs(frame, ff)
-    energy = mp.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
+    energy = mp.ff.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
     assert math.isfinite(energy)
 
 

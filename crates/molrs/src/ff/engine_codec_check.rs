@@ -25,7 +25,6 @@ use crate::ff::ir::{
     ParamSpec, ParamValue, SpecialClass, StyleSpec,
 };
 use crate::ff::ir::{Params, SpecialBonds};
-use crate::ff::potential::intramolecular_pairs;
 use crate::ff::style_registry::Registry;
 use crate::io::lammps::units::LammpsUnitConverter;
 use crate::io::{lammps::LammpsForcefieldWriter, openmm_xml::OpenmmXmlWriter};
@@ -189,9 +188,10 @@ fn atom_types(ff: &mut ForceField, types: &[(&str, F)]) {
 /// The 1-3 and 1-4 classes are the bond graph's, as an engine's are (OpenMM's
 /// `bondCutoff`), not only the rows the frame's `angles` and `dihedrals`
 /// blocks happen to hold.
-fn with_pairs(ff: &ForceField, mut frame: Frame) -> Frame {
-    let pairs =
-        intramolecular_pairs(&graph_topology(&frame), ff.special_bonds().unwrap(), None).unwrap();
+fn with_pairs(mut frame: Frame) -> Frame {
+    let pairs = molrs::core::Topology::from_frame(&graph_topology(&frame))
+        .unwrap()
+        .pairs_block();
     frame.insert("pairs", pairs);
     frame
 }
@@ -281,17 +281,14 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
     }
     out.push(Case {
         name: "fene",
-        frame: with_pairs(
-            &ff,
-            frame(
-                &["A", "A", "B", "B"],
-                &masses,
-                &[(
-                    "bonds",
-                    &[(&[0, 1], "A-A"), (&[1, 2], "A-B"), (&[2, 3], "B-B")],
-                )],
-            ),
-        ),
+        frame: with_pairs(frame(
+            &["A", "A", "B", "B"],
+            &masses,
+            &[(
+                "bonds",
+                &[(&[0, 1], "A-A"), (&[1, 2], "A-B"), (&[2, 3], "B-B")],
+            )],
+        )),
         ff,
     });
 
@@ -320,7 +317,7 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
     .unwrap();
     out.push(Case {
         name: "smooth",
-        frame: with_pairs(&ff, frame(&["A", "A", "B", "B", "B"], &masses, &[])),
+        frame: with_pairs(frame(&["A", "A", "B", "B", "B"], &masses, &[])),
         ff,
     });
 
@@ -357,14 +354,11 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
     }
     out.push(Case {
         name: "metal",
-        frame: with_pairs(
-            &ff,
-            frame(
-                &["A", "B", "A", "B"],
-                &masses,
-                &[("bonds", &[(&[0, 1], "A-B"), (&[2, 3], "A-B")])],
-            ),
-        ),
+        frame: with_pairs(frame(
+            &["A", "B", "A", "B"],
+            &masses,
+            &[("bonds", &[(&[0, 1], "A-B"), (&[2, 3], "A-B")])],
+        )),
         ff,
     });
 
@@ -394,7 +388,7 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
     }
     out.push(Case {
         name: "morse",
-        frame: with_pairs(&ff, frame(&["A", "B", "A", "B"], &masses, &[])),
+        frame: with_pairs(frame(&["A", "B", "A", "B"], &masses, &[])),
         ff,
     });
 
@@ -474,30 +468,27 @@ pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
     }
     out.push(Case {
         name: "openmm",
-        frame: with_pairs(
-            &ff,
-            frame(
-                &["A", "B", "B", "A", "C", "D"],
-                &masses,
-                &[
-                    (
-                        "bonds",
-                        &[
-                            (&[0, 1], "A-B"),
-                            (&[1, 2], "B-B"),
-                            (&[2, 3], "A-B"),
-                            (&[1, 5], "B-D"),
-                        ],
-                    ),
-                    ("impropers", &[(&[1, 0, 2, 5], "B-A-B-D")]),
-                    ("angles", &[(&[0, 1, 2], "A-B-B"), (&[1, 2, 3], "A-B-B")]),
-                    (
-                        "urey_bradleys",
-                        &[(&[0, 1, 2], "A-B-B"), (&[1, 2, 3], "A-B-B")],
-                    ),
-                ],
-            ),
-        ),
+        frame: with_pairs(frame(
+            &["A", "B", "B", "A", "C", "D"],
+            &masses,
+            &[
+                (
+                    "bonds",
+                    &[
+                        (&[0, 1], "A-B"),
+                        (&[1, 2], "B-B"),
+                        (&[2, 3], "A-B"),
+                        (&[1, 5], "B-D"),
+                    ],
+                ),
+                ("impropers", &[(&[1, 0, 2, 5], "B-A-B-D")]),
+                ("angles", &[(&[0, 1, 2], "A-B-B"), (&[1, 2, 3], "A-B-B")]),
+                (
+                    "urey_bradleys",
+                    &[(&[0, 1, 2], "A-B-B"), (&[1, 2, 3], "A-B-B")],
+                ),
+            ],
+        )),
         ff,
     });
     out
@@ -698,7 +689,7 @@ mod codecs {
                 )
             }
         };
-        let frame = with_pairs(&ff, frame);
+        let frame = with_pairs(frame);
         let frame = at(&frame, &x);
         (ff, frame)
     }
@@ -1161,14 +1152,14 @@ mod codecs {
             Params::from_iter([("cutoff", 10.0), ("delta", 0.0)].iter().copied()),
         )
         .unwrap();
-        let frame = frame(
+        let frame = with_pairs(frame(
             &["B", "A", "B"],
             &[("A", 16.0), ("B", 1.008)],
             &[
                 ("bonds", &[(&[0, 1], "A-B"), (&[1, 2], "A-B")]),
                 ("angles", &[(&[0, 1, 2], "B-A-B")]),
             ],
-        );
+        ));
         (ff, frame)
     }
 

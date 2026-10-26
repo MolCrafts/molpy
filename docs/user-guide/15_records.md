@@ -1,18 +1,17 @@
 # Record files (`*.mrec`)
 
-A molrs **record** is one self-describing package on disk: a `meta` document
+A molpy **record** is one self-describing package on disk: a `meta` document
 plus one or more sections — a snapshot (`frame`), a topology (`system`), a
 frame sequence (`trajectory`), a force field (`forcefield`), observables, or a
 run `status`. It is a directory whose name ends in `.mrec`, with every array
 stored as Zarr V3, and a closed directory can be packed into one
 `*.mrec.zip` file.
 
-molrs writes and reads records by the [molrec](https://docs.molcrafts.org/molrec/)
+molpy writes and reads records by the [molrec](https://docs.molcrafts.org/molrec/)
 contract. The [layout chapter](https://docs.molcrafts.org/molrec/layout/)
-names every group, array and attribute; this page shows how molrs maps onto
-it. The examples are Python, but the Rust `molrs::io::write_mrec` and
-`molrs::io::mrec` classes are the same doors with the same rules, and the WASM
-package reads the same files.
+names every group, array and attribute; this page shows how molpy maps onto
+it. The examples are Python; the browser package reads the same files
+([below](#in-the-browser)).
 
 | What you have | Write | Read |
 | --- | --- | --- |
@@ -147,7 +146,7 @@ On a 3000-atom trajectory moving 0.05 Å per frame, lossless coordinates
 take 24 B/atom/frame; `p = 1e-3` Å takes about 7.6 and `p = 1e-2` Å about
 5.8. Without a declaration nothing is rounded. Memory is never touched: only
 the stored copy is rounded. A store with a declared precision needs a reader
-that decodes zstd and shuffle, as every molrs build does (the WASM package
+that decodes zstd and shuffle, as every molpy build does (the WASM package
 included).
 
 ## Trajectories
@@ -268,36 +267,9 @@ pair: a section restating a pair with other parameters is refused on read.
 `mp.io.write_mrec(path, forcefield=ff)` writes a force-field package with
 no structure at all.
 
-## From Rust and the browser
+## In the browser
 
-The Rust doors have the Python names (features `zarr` and `filesystem`):
-`molrs::io::write_mrec(sink, &record)` writes a whole `MolRec` (a path, or a
-`Vec<u8>` that receives the packed record), and `molrs::io::mrec::MrecFile::open(src)`
-reads it per section (`sections()`, `meta()`, `frame()`, `system()`,
-`forcefield()`, `record()`); `molrs::io::mrec` also holds `pack_mrec_zip`,
-and for streaming `SequenceSchema`, `MrecWriter` and `MrecReader`
-(`MrecReader::open(src)`). Their rustdoc on [docs.rs](https://docs.rs/molcrafts-molrs) carries
-compiled examples.
-
-```rust
-use std::path::Path;
-
-use molrs::io::mrec::{MolRec, MrecFile};
-use molrs::io::write_mrec;
-
-fn main() -> std::io::Result<()> {
-    let mut record = MolRec::new();
-    record.frame = Some(molrs::core::Frame::new());
-    write_mrec(Path::new("water.mrec"), &record)?;
-
-    let file = MrecFile::open(Path::new("water.mrec"))?;
-    let frame = file.frame()?.expect("a frame section");
-    println!("{:?} {}", file.sections()?, frame.len());
-    Ok(())
-}
-```
-
-In the browser, `@molcrafts/molwasm` reads records from bytes:
+`@molcrafts/molwasm` reads records from bytes:
 `new MrecFile(source)` reads one section at a time (`sections()`, `frame()`,
 `system()`, `meta()`) and `new MrecReader(source)` decodes trajectory frames,
 each over a file map, a packed `*.mrec.zip`'s bytes, or a lazy

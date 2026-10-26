@@ -58,7 +58,7 @@ you touch or depend on is prioritized or hard-stopped, never ignored:
 ### Shape
 
 - **OOP by default.** Domain concepts are types with methods
-  (`NeighborList.build`, `ForceField.to_potentials`). Module-level functions
+  (`NeighborList.build`, `ForceField.assign_cmaps`). Module-level functions
   only for true free operations or a format's one-frame door (`read_pdb`).
 - **Primitive, single-responsibility public APIs.** Callers compose:
   construct → configure → one concern → read result. No `run_everything`,

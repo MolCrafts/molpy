@@ -2,9 +2,10 @@
 
 System construction. `mp.builder` holds the native builders —
 site-graph assembly (`Assembler` with its placers and orienter), the
-`Coarsener`, and the graphene / nanotube builders — and adds molpy's own: the
-polymer planning layer, crystals, virtual sites, `PackingTemplate`, and the
-AmberTools polymer builder, which makes a GAFF chain without the assembler:
+`Coarsener`, the graphene / nanotube builders, crystals (`Lattice`, `Site`,
+`SpaceGroup`, `SymOp`) and the virtual-site builders — and adds molpy's own:
+the polymer planning layer, `PackingTemplate`, and the AmberTools polymer
+builder, which makes a GAFF chain without the assembler:
 prepgen cuts one antechamber-typed oligomer and tleap `sequence` joins the
 residues. Every name has one path, `mp.builder.<Name>`; the modules behind it
 are implementation modules, outside `mp.builder.__all__`.
@@ -15,7 +16,7 @@ are implementation modules, outside `mp.builder.__all__`.
 |--------|---------|---------------|
 | `mp.builder.Assembler` | `Assembler(library, placer, orienter=None).assemble(sites)`: one copy of `library[bead_type]` per site of an `mp.CoarseGrain`, each site bond joining one accepting port of each end; returns the world as the library's graph type (`mp.MolGraph`, `mp.Atomistic` or `mp.CoarseGrain`) | Every site-graph build: chains, blocks, rings, stars, combs, backmapping |
 | `mp.builder.GrowthPlacer` | Grows each molecule breadth-first onto its parent's ports; needs no site positions | Topologies from CGsmiles notation |
-| `mp.builder.SitePlacer` | Puts each copy's centre of mass on its site | Sites with positions (a coarsened CG model) |
+| `mp.builder.SitePlacer` | Puts each copy's centroid on its site | Sites with positions (a coarsened CG model) |
 | `mp.builder.AxisOrienter` | Turns each copy onto its site: backbone-to-centre along the site axis and joining atoms along the bonds for chain units; port directions fitted to bond directions for branch units | Backmapping with `SitePlacer` |
 | `mp.io.cgsmiles.CgSmilesIr` | `.templates()` → name → ported `mp.Atomistic`; `.to_coarsegrain()` → site graph | Writing units and topologies |
 | `mp.io.smiles.read_smiles_fragment` | `read_smiles_fragment(body).to_template()` → one ported `mp.Atomistic` from a fragment body | Writing one unit |
@@ -26,8 +27,8 @@ are implementation modules, outside `mp.builder.__all__`.
 | `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` `Frame` + `.cell()` box | Zigzag, armchair, and chiral nanotubes |
 | `GrapheneBuilder` | `GrapheneBuilder(nx, ny, ...)` → `.build()` `Frame` + `.cell()` box | Rectangular graphene honeycomb sheet |
 | `Lattice` / `Site` / `SpaceGroup` | `Lattice(box, basis)`: a `mp.Box` unit cell (lattice vectors are the columns of `box.h`) plus basis sites in fractional coordinates; `Lattice.from_cif(frame)` expands a CIF's asymmetric unit by the operators `read_cif` keeps; `.build(region, repeats=...)` tiles it | Crystals |
-| `mp.core.Cuboid` / `mp.core.Sphere` / `mp.core.HalfSpace` / `mp.core.Region` | Native geometric regions with `mask(block)`, on the molpy root | Selecting a volume, clipping a crystal |
-| `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` | Virtual-site augmentation (Drude parameters from `mp.ff.params.clpol_polarizability`) | Polarizable / 4-site models |
+| `mp.core.Cuboid` / `mp.core.Sphere` / `mp.core.HalfSpace` / `mp.core.Region` | Native geometric regions in `mp.core`, with `mask(block)` | Selecting a volume, clipping a crystal |
+| `DrudeBuilder` / `Tip4pBuilder` | Virtual-site augmentation (Drude parameters: `DrudeBuilder().polarizability`) | Polarizable / 4-site models |
 | `AmberPolymerBuilder` | `AmberPolymerBuilder(library, cuts, parameter_set="gaff2").assemble(sites)` → `AmberBuildResult` (`chain`, `forcefield`, prmtop / inpcrd paths): antechamber (once, `-fo ac`) + parmchk2 on each oligomer, prepgen per residue, tleap `sequence` over a linear site graph; needs AmberTools | GAFF / GAFF2 polymer chains; `forcefield` merges with a natively typed (`GaffTypifier`) small molecule's |
 | `AmberCut` | One prepgen residue: `omit`, `head` / `tail` connection atoms, `pre_head` / `post_tail` (or `*_type`), `charge` | Cutting an oligomer you built |
 | `AmberPieces` | `AmberPieces(head, repeat, tail).oligomer()` → the embedded oligomer and its head / chain / tail cuts, from three SMILES | Writing the oligomer and cuts from SMILES |
@@ -86,7 +87,7 @@ star, comb, telechelic — is the user-guide section
 
 ## Nanostructure topology
 
-The nanostructure builders are molrs's and keep their lattice planning
+The nanostructure builders keep their lattice planning
 private. They expose two products: the structure as a `Frame`, and the
 simulation cell it was laid out in; `mp.Atomistic.from_frame` makes the frame
 a graph.
@@ -134,8 +135,29 @@ basis site labelled `"<name>_<k>"`. Images on a special position collapse
 within `symprec`.
 
 ```python
-# docs: skip — reads an offline CIF; Lattice.from_cif is unit-tested with fixtures
-frame = mp.io.read_cif("NaCl.cif")  # Fm-3m: Na1 at 4a, Cl1 at 4b
+cif = """data_NaCl
+_cell_length_a 5.64
+_cell_length_b 5.64
+_cell_length_c 5.64
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+loop_
+_symmetry_equiv_pos_as_xyz
+x,y,z
+x,y+1/2,z+1/2
+x+1/2,y,z+1/2
+x+1/2,y+1/2,z
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 Na 0.0 0.0 0.0
+Cl1 Cl 0.5 0.5 0.5
+"""  # rock salt: the face-centring translations give the 8-site cell
+frame = mp.io.read_cif(mp.io.Text(cif))
 salt = Lattice.from_cif(frame)
 assert len(salt.basis) == 8
 structure = salt.build(repeats=(4, 4, 4))

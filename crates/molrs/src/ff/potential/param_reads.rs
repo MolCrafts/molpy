@@ -10,6 +10,7 @@
 
 use crate::ff::ir::IrError;
 use crate::ff::ir::Params;
+use crate::ff::ir::StyleSpec;
 use molrs::op::F;
 
 /// `style` lacks `param`: in the type row `type_`, or (`type_` empty) among
@@ -60,16 +61,27 @@ pub(crate) fn style_text<'p>(
         .ok_or_else(|| missing(style, "", key))
 }
 
-/// The `cutoff` of a pair style, as LAMMPS truncates every pair style:
-/// a pair prices only at `r < cutoff`, at both compile doors. Stated, it is
-/// positive; absent — a style whose spec declares none, or whose declared
-/// one has no default and was not stated — it is ∞, and so is the default
-/// of an untruncated style's spec (`lj/cut`, `coul/cut`, …): a field read
-/// from an engine priced with no cutoff (OpenMM `NoCutoff`, a prmtop)
-/// prices every pair.
-pub(crate) fn pair_cutoff(style: &str, params: &Params) -> Result<F, IrError> {
-    let Some(cutoff) = params.get("cutoff").and_then(|v| v.as_num()) else {
+/// The `cutoff` of a pair style, as LAMMPS truncates every pair style: a
+/// pair prices only at `r < cutoff`, at both compile doors.
+///
+/// A style whose spec declares a `cutoff` states it: positive, and `∞` only
+/// as stated (a field priced with no cutoff, OpenMM's `NoCutoff`). Where a
+/// pair style stops is the force field's decision — a typifier declares its
+/// convention, a reader the file's — never a default. A style whose spec
+/// declares none bounds itself (`thole`, `mmff_vdw`): ∞.
+pub(crate) fn pair_cutoff(spec: &StyleSpec, params: &Params) -> Result<F, IrError> {
+    if spec.style_param("cutoff").is_none() {
         return Ok(F::INFINITY);
+    }
+    let style = spec.name.as_ref();
+    let Some(cutoff) = params.get("cutoff").and_then(|v| v.as_num()) else {
+        return Err(bad(
+            style,
+            "",
+            "cutoff",
+            "is not stated: where a pair style stops is the force field's to declare \
+             (`inf` prices every pair)",
+        ));
     };
     if cutoff.is_nan() || cutoff <= 0.0 {
         return Err(bad(
@@ -262,15 +274,44 @@ mod tests {
             .unwrap_err();
         assert_eq!(bad(err), ("lj/cut".to_owned(), "mixing".to_owned()));
 
-        // ∞, the untruncated default, is no neighbour cutoff.
-        let err = neighbour_cutoff_of(Params::new()).unwrap_err();
+        // ∞, stated to price every pair, is no neighbour cutoff.
+        let err = neighbour_cutoff_of(Params::from_iter([("cutoff", F::INFINITY)])).unwrap_err();
         assert!(err.to_string().contains("finite"), "{err}");
     }
 
+    /// A pair style that declares a cutoff states it: unstated is refused by
+    /// name, with what to write, and `inf` prices every pair. A style that
+    /// declares none (`thole`) bounds itself.
+    #[test]
+    fn a_declared_cutoff_is_stated_and_inf_prices_every_pair() {
+        let lj = |style: Params| {
+            ExplicitTerms::new("pair", "lj/cut")
+                .style_params(style)
+                .term(
+                    &[0, 1],
+                    Params::from_iter([("epsilon", 0.2), ("sigma", 1.1)]),
+                )
+                .compile()
+        };
+        let err = lj(Params::new()).map(|_| ()).unwrap_err();
+        assert_eq!(bad(err), ("lj/cut".to_owned(), "cutoff".to_owned()));
+        let err = lj(Params::new()).map(|_| ()).unwrap_err().to_string();
+        assert!(err.contains("`inf`"), "{err}");
+        let r = XYZ[0].hypot(XYZ[1]).hypot(XYZ[2]); // atom 1 sits at the origin
+        let far = lj(Params::from_iter([("cutoff", F::INFINITY)])).unwrap();
+        assert!(far.energy_at(&XYZ) != 0.0, "every pair is priced under inf");
+        let near = lj(Params::from_iter([("cutoff", r * 0.5)])).unwrap();
+        assert_eq!(near.energy_at(&XYZ), 0.0, "a pair past the cutoff is not");
+        let spec = crate::ff::ir::builtin_style("pair", "thole").unwrap();
+        assert_eq!(
+            super::pair_cutoff(spec, &Params::new()).unwrap(),
+            F::INFINITY
+        );
+    }
+
     fn neighbour_cutoff_of(style: Params) -> Result<F, IrError> {
-        let gathered = crate::ff::style_registry::with_global_registry(|r| {
-            r.style("pair", "lj/cut").unwrap().0.gather(&style, &[])
-        })?;
+        let gathered = crate::ff::style_registry::GlobalRegistry
+            .with(|r| r.style("pair", "lj/cut").unwrap().0.gather(&style, &[]))?;
         super::neighbour_cutoff("lj/cut", &gathered.0)
     }
 
@@ -333,7 +374,8 @@ mod tests {
             );
         }
         // A style default on the pair kernels: lj/cut's n, m, shift.
-        let lj = |style: Params| {
+        let lj = |mut style: Params| {
+            style.set("cutoff", F::INFINITY);
             ExplicitTerms::new("pair", "lj/cut")
                 .style_params(style)
                 .term(

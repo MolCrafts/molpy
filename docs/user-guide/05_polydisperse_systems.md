@@ -355,10 +355,7 @@ for chain in typed_chains:
 packed = GencanPack().with_seed(42).run(targets, max_loops=200).frame  # carries mol_id
 packed.box = mp.Box(mp.core.Cell.lengths([box_length] * 3))
 
-# the pair cutoff is a run setting: you declare it, molpy never invents one
-ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
-ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-
+# the pair styles carry the 12 Å cutoff the OPLS-AA typifier declares
 Path("05_output").mkdir(exist_ok=True)
 mp.io.write_lammps_data(Path("05_output/system.data"), packed)
 # the input script states `units` before `read_data`; LAMMPS refuses a second

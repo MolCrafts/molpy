@@ -56,7 +56,7 @@ def _frame() -> mp.core.Frame:
 
 def _energy(ff: mp.ff.forcefield.ForceField) -> float:
     frame = _frame()
-    return mp.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
+    return mp.ff.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
 
 
 def test_canonical_is_dihedral_periodic_with_the_same_energy() -> None:

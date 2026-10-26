@@ -25,7 +25,7 @@ ATOM_TYPES = ["A", "B", "C", "D"]
 TERMS = [("t", ("A", "B", "C"), 20.0, 2.45), ("u", ("B", "C", "D"), 11.0, 2.2)]
 
 # The public registration path: the process-wide registry gains the category.
-mp.ff.style_registry.register_category("urey_bradley", 3)
+mp.ff.style_registry.GlobalRegistry().register_category("urey_bradley", 3)
 
 
 def _chain(kind: str) -> mp.core.Atomistic:
@@ -79,7 +79,7 @@ def _energy_forces(
 ) -> tuple[float, np.ndarray, mp.core.Frame]:
     frame = typifier.typify(_chain(kind)).to_frame()
     ff = typifier.forcefield()
-    e, f = mp.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)
+    e, f = mp.ff.PotentialCompiler(ff).compile(frame).evaluate(frame)
     return e, f, frame
 
 

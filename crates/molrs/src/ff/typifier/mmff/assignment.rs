@@ -153,7 +153,7 @@ pub(crate) fn annotate_mmff(
     // Enumerate angles + dihedrals on the graph (impropers are MMFF-specific and
     // are enumerated by `annotate_impropers` below).
     graph
-        .generate_topology(true, true, false, true)
+        .generate_topology(true, true, false, true, true)
         .map_err(TypingError::malformed)?;
 
     *m.link_mut(ANGLES) = annotate_angles(graph, &typed_mol)?;

@@ -1116,6 +1116,14 @@ fn build_frame(mut parsed: ParsedDataFile) -> std::io::Result<Frame> {
             &atom_id_map,
             &HashMap::new(),
         )?;
+        // LAMMPS states no special pairs: it derives them from the bonds, the
+        // way the frame's `pairs` hold them, weighed by `special_bonds`.
+        if frame.get("bonds").is_some() {
+            let pairs = molrs::core::Topology::from_frame(&frame)
+                .map(|t| t.pairs_block())
+                .map_err(invalid_data)?;
+            frame.insert("pairs", pairs);
+        }
 
         // Every typed block also carries its string `type`: the file's type
         // label, or the numeric id spelled as a label when the file declares
@@ -2075,23 +2083,10 @@ fn write_lammps_data_frame_with<W: Write>(
         coords.push(col.iter().copied().collect::<Vec<F>>());
     }
 
-    // A per-pair 1-4 override has no LAMMPS form: LAMMPS prices a close pair
-    // by special_bonds, lj/charmm's epsilon14/sigma14 and dihedral charmm's
-    // w, never per pair. Writing the file without it would run a different
-    // force field.
-    if let Some(present) = frame.visit_block("pairs", |b| {
-        crate::core::schema::PAIR_OVERRIDE_COLUMNS
-            .iter()
-            .copied()
-            .filter(|k| b.contains_key(k))
-            .collect::<Vec<_>>()
-    }) && !present.is_empty()
-    {
-        return Err(invalid_data(format!(
-            "frame['pairs'] carries the per-pair override columns {present:?}, which a \
-             LAMMPS data file cannot express (LAMMPS has no per-pair 1-4 exception)"
-        )));
-    }
+    // LAMMPS derives the special pairs from the bonds and weighs them by
+    // special_bonds alone. Writing the file without what it cannot state would
+    // run a different force field.
+    crate::io::lammps::refuse_inexpressible_pairs(frame).map_err(invalid_data)?;
 
     refuse_virtual_sites(frame)?;
 
@@ -3766,6 +3761,7 @@ Bonds
     fn drude_springs_need_a_molecular_style() {
         let mut frame = drude_host();
         frame.remove("bonds");
+        frame.remove("pairs");
         frame.get_mut("atoms").unwrap().remove("mol_id");
         let err = written(&frame).unwrap_err().to_string();
         assert!(err.contains("drudes") && err.contains("mol_id"), "{err}");

@@ -13,10 +13,10 @@ use rand::{RngExt, SeedableRng};
 use crate::ff::compile::PotentialCompiler;
 use crate::ff::forcefield::ForceField;
 use crate::ff::form_conversion::FitMetric;
+use crate::ff::ir::Params;
 use crate::ff::ir::torsion::{CosineTermForm, OplsForm, PeriodicForm};
 use crate::ff::ir::{FormCodec, FormRefusal, TypeParams};
 use crate::ff::ir::{IrError, ParamDimension, ParamSpec, StyleSpec};
-use crate::ff::ir::{Params, pair_key};
 use crate::ff::style_registry::Registry;
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -604,38 +604,8 @@ fn lj_class2_is_the_nine_six_lj_cut() {
                 None,
             )
             .unwrap();
-        let types = ["A", "B", "A"];
-        let ij = [(0usize, 1usize), (0, 2), (1, 2)];
-        let mut pairs_block = Block::new();
-        pairs_block
-            .insert(
-                "atomi",
-                Array1::from_vec(ij.iter().map(|p| p.0 as Idx).collect()).into_dyn(),
-                None,
-            )
-            .unwrap();
-        pairs_block
-            .insert(
-                "atomj",
-                Array1::from_vec(ij.iter().map(|p| p.1 as Idx).collect()).into_dyn(),
-                None,
-            )
-            .unwrap();
-        pairs_block
-            .insert(
-                "type",
-                Array1::from_vec(
-                    ij.iter()
-                        .map(|&(i, j)| pair_key(types[i], types[j]).unwrap())
-                        .collect(),
-                )
-                .into_dyn(),
-                None,
-            )
-            .unwrap();
         let mut f = Frame::new();
         f.insert("atoms", atoms);
-        f.insert("pairs", pairs_block);
 
         let lj = r.canonical(&ff).unwrap();
         let s = lj.get_style("pair", "lj/cut").expect("lj/cut");

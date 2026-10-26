@@ -274,7 +274,9 @@ gate_mrec() {
 gate_docs() {
     molpy_env --extra doc
     uv --directory molpy run --no-sync python -I ../scripts/run_doc_blocks.py
-    uv --directory molpy run --no-sync zensical build --clean --strict -f ../zensical.toml
+    # The build runs from molpy/; the theme finds a figure's `$file` data under
+    # DOCS_DIR, else under ./docs, which from molpy/ does not exist.
+    DOCS_DIR="$PWD/docs" uv --directory molpy run --no-sync zensical build --clean --strict -f ../zensical.toml
 }
 
 # The pre-push gate. The pre-commit stage (the CI profile's workflows, fmt,

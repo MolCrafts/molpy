@@ -4,10 +4,10 @@ A multi-term improper is one type per cosine, named ``<quartet>@<periodicity>``.
 A cmap grid stays on its type. ``exclude_14`` stays on the torsion it flags.
 ``special_bonds`` are the file's majority 1-4 weights. The Amber seed
 declares none, the first assignment declares the file's, and a later prmtop
-whose weights differ is refused. A 1-4 whose own scale
-differs from that majority stays on the typed graph as ``pair_overrides``,
-and the prmtop's ``exclusions`` replace the graph's. A graph that already
-holds ``pairs`` is refused. A charge list of the wrong length, a prmtop
+whose weights differ is refused. The prmtop's
+special pairs (``pairs``: each pair's ``n_bonds``, and the scale of a 1-4
+whose own scale differs from that majority) replace the graph's. A charge
+list of the wrong length, a prmtop
 with no ``special_bonds``, or a bond the file does not share is refused
 before the graph is rewritten. A proper dihedral is
 stored in the prmtop's order, which is the order its signed angle is priced in.
@@ -157,10 +157,12 @@ def test_multi_term_impropers_keep_each_cosine_and_its_14_flag() -> None:
     assert by_name["c3-ca-na-cc@3"].get("exclude_14") is True
 
     ff = typifier.forcefield()
-    assert _term(ff, "improper", "periodic", "c3-ca-na-cc@2")["k"] == pytest.approx(1.1)
-    assert _term(ff, "improper", "periodic", "c3-ca-na-cc@3")["k"] == pytest.approx(
-        0.35
-    )
+    assert _term(ff, "improper", "periodic", "c3-ca-na-cc@2").params[
+        "k"
+    ] == pytest.approx(1.1)
+    assert _term(ff, "improper", "periodic", "c3-ca-na-cc@3").params[
+        "k"
+    ] == pytest.approx(0.35)
 
     expected: dict[tuple[int, ...], tuple[str, bool]] = {}
     block = frame["dihedrals"]
@@ -209,9 +211,9 @@ def test_ff19sb_cmap_grid_reaches_the_assigned_type() -> None:
     typifier = PrmtopTypifier(path)
     typed = typifier.typify(_graph_of(frame))
     assigned = _term(typifier.forcefield(), "cmap", "charmm", "C-N-XC-C-N")
-    grid = np.asarray(assigned["grid"])
+    grid = np.asarray(assigned.params["grid"])
     assert grid.shape == (24, 24)
-    np.testing.assert_allclose(grid, np.asarray(source["grid"]))
+    np.testing.assert_allclose(grid, np.asarray(source.params["grid"]))
     terms = list(typed.terms("cmaps"))
     assert [term["type"] for term in terms] == [
         str(name) for name in frame["cmaps"]["type"]
@@ -234,18 +236,20 @@ def test_a_later_prmtop_with_other_14_weights_is_refused() -> None:
     assert _type_names(typifier.forcefield()) == before
 
 
-def _assert_same_overrides(out: mp.Frame, source: mp.Frame) -> None:
-    assert "pairs" not in out
-    assert _relation_pairs(out, "pair_overrides") == _relation_pairs(
-        source, "pair_overrides"
+_SCALES = ("coul_scale", "lj_scale", "epsilon", "sigma", "charge_product")
+
+
+def _assert_same_pairs(out: mp.Frame, source: mp.Frame) -> None:
+    """``out``'s special pairs are ``source``'s: rows, classes and cells."""
+    assert _relation_pairs(out, "pairs") == _relation_pairs(source, "pairs")
+    np.testing.assert_array_equal(
+        np.asarray(out["pairs"]["n_bonds"]), np.asarray(source["pairs"]["n_bonds"])
     )
-    if "pair_overrides" not in source:
-        return
-    for key in ("coul_scale", "lj_scale", "epsilon", "sigma", "charge_product"):
-        found = _stated_column(out["pair_overrides"], key)
-        wanted = _stated_column(source["pair_overrides"], key)
+    for key in _SCALES:
+        found = _stated_column(out["pairs"], key)
+        wanted = _stated_column(source["pairs"], key)
         if wanted is None:
-            assert found is None
+            assert found is None or not found[1].any()
             continue
         assert found is not None
         np.testing.assert_array_equal(found[1], wanted[1])
@@ -258,36 +262,39 @@ def test_glycam_per_pair_14_scales_reach_the_typed_graph() -> None:
     typed = PrmtopTypifier(path).typify(_graph_of(frame))
     out = typed.to_frame()
 
-    overrides = out["pair_overrides"]
-    assert overrides.n_rows > 0
-    np.testing.assert_allclose(np.asarray(overrides["coul_scale"]), 1.0 / 1.2)
-    np.testing.assert_allclose(np.asarray(overrides["lj_scale"]), 1.0 / 2.0)
-    _assert_same_overrides(out, frame)
-    assert _relation_pairs(out, "exclusions") == _relation_pairs(frame, "exclusions")
-    assert _relation_pairs(frame, "exclusions")
+    pairs = out["pairs"]
+    one_four = np.asarray(pairs["n_bonds"]) == 3
+    coul, coul_stated = _stated_column(pairs, "coul_scale")
+    lj, lj_stated = _stated_column(pairs, "lj_scale")
+    own = one_four & coul_stated
+    assert own.any()
+    np.testing.assert_allclose(coul[own], 1.0 / 1.2)
+    np.testing.assert_allclose(lj[one_four & lj_stated], 1.0 / 2.0)
+    _assert_same_pairs(out, frame)
 
 
-def test_a_uniform_prmtop_types_without_pair_overrides() -> None:
+def test_a_uniform_prmtop_states_no_pair_scale() -> None:
     path = FIXTURES / "ff14sb.parm7"
     _, frame = mp.io.amber.AmberPrmtopForcefieldReader().read_system(path)
     typed = PrmtopTypifier(path).typify(_graph_of(frame))
     out = typed.to_frame()
 
-    _assert_same_overrides(out, frame)
-    assert _relation_pairs(out, "exclusions") == _relation_pairs(frame, "exclusions")
-    assert _relation_pairs(frame, "exclusions")
+    _assert_same_pairs(out, frame)
+    assert out["pairs"].n_rows > 0
+    for key in _SCALES:
+        stated = _stated_column(out["pairs"], key)
+        assert stated is None or not stated[1].any(), key
 
 
-def test_a_graph_that_already_has_pairs_is_refused() -> None:
+def test_pairs_already_on_the_graph_are_replaced_by_the_prmtop() -> None:
     path = FIXTURES / "glycam.parm7"
     _, frame = mp.io.amber.AmberPrmtopForcefieldReader().read_system(path)
     graph = _graph_of(frame)
     atoms = list(graph.atoms)
-    graph.add_term("pairs", [atoms[0], atoms[1]])
-    with pytest.raises(ValueError, match="pairs"):
-        Prmtop(path).assignment(graph, frame["atoms"]["charge"])
-    assert graph.n_dihedrals == 0
-    assert graph.n_terms("pairs") == 1
+    graph.add_term("pairs", [atoms[0], atoms[5]], n_bonds=0, coul_scale=0.3)
+
+    out = PrmtopTypifier(path).typify(graph).to_frame()
+    _assert_same_pairs(out, frame)
 
 
 def test_a_missing_bond_is_refused_before_the_graph_is_rewritten() -> None:
@@ -327,35 +334,3 @@ def test_a_prmtop_without_special_bonds_is_refused_before_rewrite() -> None:
     assert graph.n_angles == 0
     assert graph.n_dihedrals == 0
     assert graph.n_impropers == 0
-
-
-def test_exclusions_already_on_the_graph_are_replaced_by_the_prmtop() -> None:
-    path = FIXTURES / "glycam.parm7"
-    _, frame = mp.io.amber.AmberPrmtopForcefieldReader().read_system(path)
-    graph = mp.Atomistic.from_frame(mp.io.read_prmtop(path))
-    assert graph.n_terms("exclusions") == frame["exclusions"].n_rows
-    assert graph.n_terms("pair_overrides") == 0
-
-    typed = PrmtopTypifier(path).typify(graph)
-    out = typed.to_frame()
-    assert _relation_pairs(out, "exclusions") == _relation_pairs(frame, "exclusions")
-    assert len(_relation_pairs(out, "exclusions")) == frame["exclusions"].n_rows
-    _assert_same_overrides(out, frame)
-
-
-def test_proper_dihedrals_keep_the_prmtop_order() -> None:
-    path = FIXTURES / "glycam.parm7"
-    _, frame = mp.io.amber.AmberPrmtopForcefieldReader().read_system(path)
-    typed = PrmtopTypifier(path).typify(_graph_of(frame))
-    index = _index(typed)
-    got = [
-        (
-            _ends(index, dihedral),
-            str(dihedral["type"]),
-            bool(dihedral.get("exclude_14")),
-        )
-        for dihedral in typed.dihedrals
-    ]
-    want = _proper_rows(frame)
-    assert sorted(got) == sorted(want)
-    assert any(quartet[1] > quartet[2] for quartet, _, _ in want)

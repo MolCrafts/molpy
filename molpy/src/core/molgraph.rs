@@ -1971,7 +1971,8 @@ impl PyAtomistic {
         leaf.relation("impropers", u64::from(id))
     }
 
-    /// Perceive angle, dihedral and improper relations from the bond graph.
+    /// Perceive angle, dihedral, improper and special-pair relations from the
+    /// bond graph.
     ///
     /// Angles are 2-edge paths ``i-j-k`` and proper dihedrals 3-edge paths
     /// ``i-j-k-l`` over the bonds. Impropers are the molecular-mechanics
@@ -1982,19 +1983,32 @@ impl PyAtomistic {
     /// carry the term is force-field data, not a graph property, so every
     /// one is emitted.
     ///
-    /// Idempotent; ``clear_existing`` deletes existing relations of the
-    /// requested kinds first. Returns ``(n_angles_added, n_dihedrals_added,
-    /// n_impropers_added)``.
-    #[pyo3(signature = (gen_angle=true, gen_dihedral=true, gen_improper=false, clear_existing=false))]
+    /// Pairs are the non-bonded exceptions: every 1-2, 1-3 and 1-4 pair as a
+    /// ``pairs`` relation with its ``n_bonds``, which the force field's
+    /// ``special_bonds`` weigh. A pair no relation names is priced at full
+    /// strength.
+    ///
+    /// Idempotent (an existing pair keeps its override cells);
+    /// ``clear_existing`` deletes existing relations of the requested kinds
+    /// first. Returns ``(n_angles_added, n_dihedrals_added,
+    /// n_impropers_added, n_pairs_added)``.
+    #[pyo3(signature = (gen_angle=true, gen_dihedral=true, gen_improper=false, gen_pairs=true, clear_existing=false))]
     fn generate_topology(
         &mut self,
         gen_angle: bool,
         gen_dihedral: bool,
         gen_improper: bool,
+        gen_pairs: bool,
         clear_existing: bool,
-    ) -> PyResult<(usize, usize, usize)> {
+    ) -> PyResult<(usize, usize, usize, usize)> {
         self.inner
-            .generate_topology(gen_angle, gen_dihedral, gen_improper, clear_existing)
+            .generate_topology(
+                gen_angle,
+                gen_dihedral,
+                gen_improper,
+                gen_pairs,
+                clear_existing,
+            )
             .map_err(molrs_error_to_pyerr)
     }
 

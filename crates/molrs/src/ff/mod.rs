@@ -52,6 +52,7 @@ mod one_four_check;
 mod openmm_check;
 pub mod params;
 pub mod potential;
+pub(crate) mod special_pairs;
 pub mod style_registry;
 pub mod typifier;
 pub mod virtual_sites;

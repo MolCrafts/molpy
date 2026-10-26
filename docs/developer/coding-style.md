@@ -56,7 +56,7 @@ Keep functions under 50 lines and focused on one task. Keep files under 800 line
 
 Use `snake_case` for functions and variables, `PascalCase` for classes, `UPPER_CASE` for constants. Canonical data-field names such as `element`, `charge`, and `mol_id` are defined in [Naming Conventions](../tutorials/naming-conventions.md); do not introduce local variants in developer docs or extension examples. Use MolPy-specific terms precisely: `topology` means the bond graph (not "connections"), `atom type` means the force field identifier (not "kind").
 
-molpy follows molrs's naming rules:
+molpy follows the project's naming rules (`AGENTS.md`):
 
 - **No module name starts with `_`.** What is public is what an `__all__`
   lists; a module no `__all__` lists (`molpy.engine.lammps`) is an
@@ -75,10 +75,13 @@ molpy follows molrs's naming rules:
   their spelling.
 - **Counts are `n_*`** (numpy / freud): `n_atoms`, `n_pairs`, `n_rings()`,
   `n_query_atoms` — never `num_*`.
-- **One door per file format**, named after the format:
-  `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`, `_str` / `_bytes` /
-  `_trajectory` for text, bytes and multi-frame input; no door picks a format
-  from a file extension.
+- **One door per file format and direction** on `mp.io`, named after the
+  format: `read_<fmt>[_<what>](source)` / `write_<fmt>[_<what>](sink, frame)`.
+  A source is an `os.PathLike`, `bytes` or `mp.io.Text` (a bare `str` is
+  refused), a sink an `os.PathLike` or a `bytearray`. Multi-frame and
+  force-field formats are classes in the format's submodule
+  (`mp.io.pdb.PdbReader`, `mp.io.lammps.LammpsForcefieldWriter`); no door
+  picks a format from a file extension.
 
 
 ## Type hints
@@ -103,7 +106,7 @@ Use Google-style docstrings for public functions and classes. Include `Args`, `R
 
 ## Formatting
 
-Ruff is the single source of truth for formatting and linting. From `molpy/`, run `ruff format python tests` and `ruff check python tests` before committing. The `python` gate runs those checks. Pre-commit hooks enforce this automatically.
+Ruff is the single source of truth for formatting and linting. From `molpy/`, run `uv run --no-sync ruff format python tests` and `uv run --no-sync ruff check python tests` before committing. The `python` gate checks the format; the `ruff` gate (`scripts/check.sh ruff`, also a pre-commit hook) lints the whole repository.
 
 
 ## Ready-to-commit checklist

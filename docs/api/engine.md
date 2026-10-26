@@ -12,7 +12,7 @@ no inputs.
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `LammpsEngine` | `generate_inputs(frame, ff, out)` → `input` (the input script), `data`, `settings`, `init`; `minimize` / `md` relax a frame through the same deck | LAMMPS decks and relaxations |
-| `GromacsEngine` | `generate_inputs(frame, ff, out)` → `input` (`em.mdp`), `gro`, the whole `top` (`write_top_system`), `nvt` (`nvt.mdp`); `run` grompp's and mdrun's an `.mdp` | GROMACS input sets |
+| `GromacsEngine` | `generate_inputs(frame, ff, out)` → `input` (`em.mdp`), `gro`, the whole `top` (`GromacsTopForcefieldWriter.write_system`), `nvt` (`nvt.mdp`); `run` grompp's and mdrun's an `.mdp` | GROMACS input sets |
 | `OpenmmEngine` | `generate_inputs(frame, ff, out, simulation=…)` → `input` (the Python script), `pdb`, `forcefield` (XML with residue templates) | Running OpenMM simulations |
 | `OpenmmSimulationConfig` | OpenMM run configuration, validated on construction | Configuring an OpenMM run |
 | `Cp2kEngine` | Runs a CP2K input you write (no `generate_inputs`) | Running CP2K simulations |
@@ -23,7 +23,8 @@ no inputs.
 - An engine's executable, environment (`env` + `env_manager`), `launcher`,
   `env_vars` and `timeout` are its `[engine.<name>]` settings in molpy's
   configuration, falling back to `[engine]` ([`molpy.config`](config.md));
-  the constructor takes `config`, `workdir` and `check_executable`; they are
+  the constructor takes `config`, `workdir` and `check_executable` (GROMACS
+  also `prefix`); they are
   resolved by the shared [`mp.tool.Tool`](tool.md) core
 - `run(scripts, *, workdir, capture_output, check)` writes the scripts (the
   first is the input) and runs the engine; it keeps no state and does not

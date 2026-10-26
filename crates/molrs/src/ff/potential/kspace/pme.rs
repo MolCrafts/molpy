@@ -10,11 +10,11 @@ use crate::ff::potential::form_kernel::ScalarPair;
 use crate::ff::potential::pair::CoulLong;
 use crate::ff::potential::pair::coul_long::real_space_pair;
 use crate::ff::potential::param_reads;
-use crate::ff::potential::{Accumulator, CompileError, ForceTerm, PairDriven, Potential};
+use crate::ff::potential::{
+    Accumulator, CompileError, ForceTerm, PairDriven, Potential, SpecialWeights,
+};
 use molrs::core::Neighbors;
-use molrs::core::schema::block_names::{ATOMS, EXCLUSIONS, PAIRS};
-use std::borrow::Cow;
-use std::collections::HashSet;
+use molrs::core::schema::block_names::ATOMS;
 use std::f64::consts::PI;
 use std::sync::{Arc, Mutex};
 
@@ -90,15 +90,17 @@ struct PmeScratch {
 /// constructor reads charges from `frame["atoms"]["charge"]` (float), the
 /// periodic cell from the frame's own box ([`Frame::simbox`]) — frame data,
 /// as LAMMPS's kspace reads its simulation box, never a force-field
-/// parameter — and exclusion pairs from `frame["exclusions"]` (`atomi`,
-/// `atomj` columns).
+/// parameter — and the special pairs with their electrostatic weights `w`
+/// (the frame's `pairs`, as the compiler weighs them).
 ///
-/// The real-space term is the pair form
-/// [`CoulLong`](crate::ff::potential::pair::CoulLong) whenever the compiled
-/// frame has a `pairs` block, and on the neighbour-driven door always. This
-/// kernel then prices only the reciprocal part (`direct` off), so the erfc
-/// term is not counted twice. With no `pairs` block the compiled door keeps
-/// the real-space loop here.
+/// A special pair is priced at `w · k qᵢqⱼ / r`, as LAMMPS, GROMACS and
+/// OpenMM price it: the reciprocal sum includes every pair at full strength,
+/// so the correction subtracts `(1 − w) · k qᵢqⱼ erf(αr) / r` beside a
+/// real-space term weighted by `w`. On the neighbour-driven door the
+/// real-space term is the pair form
+/// [`CoulLong`](crate::ff::potential::pair::CoulLong) and this kernel prices
+/// only the reciprocal part (`direct` off), so the erfc term is not counted
+/// twice.
 pub struct PairCoulLongPme {
     params: PairCoulLongPmeParams,
     n_atoms: usize,
@@ -106,7 +108,8 @@ pub struct PairCoulLongPme {
     h: [[F; 3]; 3],       // box matrix (row-major, lower-triangular)
     recip_h: [[F; 3]; 3], // inverse box matrix
     volume: F,
-    exclusions: Vec<[usize; 2]>,
+    /// The special pairs `(i, j, w)`, `i < j`, sorted.
+    special: Vec<(usize, usize, F)>,
     self_energy: F,
     bspline_moduli: [Vec<F>; 3],
     fft_plans: FftPlans,
@@ -124,15 +127,15 @@ impl PairCoulLongPme {
     ///
     /// * `charges` — per-atom partial charges (length `n_atoms`).
     /// * `box_vectors` — 3×3 box matrix, row-major, lower-triangular.
-    /// * `exclusions` — pairs `[i, j]` with `i < j` whose reciprocal-space
-    ///   interaction must be subtracted.
+    /// * `special` — the pairs `(i, j, w)` priced at weight `w` instead of
+    ///   full strength (`w = 0` excludes the pair).
     pub fn new(
         params: PairCoulLongPmeParams,
         charges: Vec<F>,
         box_vectors: [[F; 3]; 3],
-        exclusions: Vec<[usize; 2]>,
+        special: Vec<(usize, usize, F)>,
     ) -> Self {
-        Self::build(params, charges, box_vectors, exclusions, true)
+        Self::build(params, charges, box_vectors, special, true)
     }
 
     /// The reciprocal sum, the self energy and the exclusion correction.
@@ -142,19 +145,24 @@ impl PairCoulLongPme {
         params: PairCoulLongPmeParams,
         charges: Vec<F>,
         box_vectors: [[F; 3]; 3],
-        exclusions: Vec<[usize; 2]>,
+        special: Vec<(usize, usize, F)>,
     ) -> Self {
-        Self::build(params, charges, box_vectors, exclusions, false)
+        Self::build(params, charges, box_vectors, special, false)
     }
 
     fn build(
         params: PairCoulLongPmeParams,
         charges: Vec<F>,
         box_vectors: [[F; 3]; 3],
-        exclusions: Vec<[usize; 2]>,
+        special: Vec<(usize, usize, F)>,
         direct: bool,
     ) -> Self {
         let n_atoms = charges.len();
+        let mut special: Vec<(usize, usize, F)> = special
+            .into_iter()
+            .map(|(i, j, w)| (i.min(j), i.max(j), w))
+            .collect();
+        special.sort_by_key(|&(i, j, _)| (i, j));
         let h = box_vectors;
         let recip_h = invert_box_vectors(&h);
         let volume = h[0][0] * h[1][1] * h[2][2]; // lower-triangular determinant
@@ -215,7 +223,7 @@ impl PairCoulLongPme {
             h,
             recip_h,
             volume,
-            exclusions,
+            special,
             self_energy,
             bspline_moduli,
             fft_plans,
@@ -238,7 +246,8 @@ impl PairCoulLongPme {
 
         for i in 0..self.n_atoms {
             for j in (i + 1)..self.n_atoms {
-                if self.is_excluded(i, j) {
+                let w = self.weight(i, j);
+                if w == 0.0 {
                     continue;
                 }
                 let (dx, dy, dz) = self.min_image_delta(coords, i, j);
@@ -248,7 +257,7 @@ impl PairCoulLongPme {
                 }
                 let r = r2.sqrt();
                 let (e, _) = real_space_pair(coulomb, alpha, self.charges[i], self.charges[j], r);
-                energy += e;
+                energy += w * e;
             }
         }
         energy
@@ -262,7 +271,8 @@ impl PairCoulLongPme {
 
         for i in 0..self.n_atoms {
             for j in (i + 1)..self.n_atoms {
-                if self.is_excluded(i, j) {
+                let w = self.weight(i, j);
+                if w == 0.0 {
                     continue;
                 }
                 let (dx, dy, dz) = self.min_image_delta(coords, i, j);
@@ -273,7 +283,7 @@ impl PairCoulLongPme {
                 let r = r2.sqrt();
                 let (_, de) = real_space_pair(coulomb, alpha, self.charges[i], self.charges[j], r);
                 // `de` is dE/dr. The gradient stores ∂E/∂x; evaluate turns it into a force.
-                let factor = de / r;
+                let factor = w * de / r;
                 grad[j * 3] += factor * dx;
                 grad[j * 3 + 1] += factor * dy;
                 grad[j * 3 + 2] += factor * dz;
@@ -285,22 +295,27 @@ impl PairCoulLongPme {
     }
 
     // -----------------------------------------------------------------------
-    // Exclusion correction energy + gradient
+    // Special-pair correction energy + gradient
     // -----------------------------------------------------------------------
 
+    /// `−(1 − w) k qᵢqⱼ erf(αr) / r` over the special pairs: the part of a
+    /// pair's full-strength reciprocal term its weight does not keep.
     fn exclusion_energy(&self, coords: &[F]) -> F {
         let alpha = self.params.alpha;
         let coulomb = self.params.coulomb;
         let mut energy: F = 0.0;
 
-        for &[i, j] in &self.exclusions {
-            let (dx, dy, dz) = self.delta(coords, i, j);
+        for &(i, j, w) in &self.special {
+            if w == 1.0 {
+                continue;
+            }
+            let (dx, dy, dz) = self.min_image_delta(coords, i, j);
             let r = (dx * dx + dy * dy + dz * dz).sqrt();
             if r < 1e-15 {
                 continue;
             }
             let alpha_r = alpha * r;
-            energy -= coulomb * self.charges[i] * self.charges[j] * erf_f(alpha_r) / r;
+            energy -= (1.0 - w) * coulomb * self.charges[i] * self.charges[j] * erf_f(alpha_r) / r;
         }
         energy
     }
@@ -310,8 +325,11 @@ impl PairCoulLongPme {
         let coulomb = self.params.coulomb;
         let two_alpha_over_sqrt_pi = 2.0 * alpha / PI.sqrt();
 
-        for &[i, j] in &self.exclusions {
-            let (dx, dy, dz) = self.delta(coords, i, j);
+        for &(i, j, w) in &self.special {
+            if w == 1.0 {
+                continue;
+            }
+            let (dx, dy, dz) = self.min_image_delta(coords, i, j);
             let r2 = dx * dx + dy * dy + dz * dz;
             if r2 < 1e-30 {
                 continue;
@@ -319,7 +337,8 @@ impl PairCoulLongPme {
             let r = r2.sqrt();
             let alpha_r = alpha * r;
             let qi_qj = self.charges[i] * self.charges[j];
-            let factor = coulomb
+            let factor = (1.0 - w)
+                * coulomb
                 * qi_qj
                 * (erf_f(alpha_r) - two_alpha_over_sqrt_pi * r * (-alpha_r * alpha_r).exp())
                 / (r2 * r);
@@ -734,18 +753,13 @@ impl PairCoulLongPme {
         (d[0], d[1], d[2])
     }
 
-    /// Raw displacement from atom i to atom j (no minimum image).
-    fn delta(&self, coords: &[F], i: usize, j: usize) -> (F, F, F) {
-        (
-            coords[j * 3] - coords[i * 3],
-            coords[j * 3 + 1] - coords[i * 3 + 1],
-            coords[j * 3 + 2] - coords[i * 3 + 2],
-        )
-    }
-
-    fn is_excluded(&self, i: usize, j: usize) -> bool {
-        let (lo, hi) = if i < j { (i, j) } else { (j, i) };
-        self.exclusions.iter().any(|&[a, b]| a == lo && b == hi)
+    /// The weight of the pair `(i, j)`: its special weight, else 1.
+    fn weight(&self, i: usize, j: usize) -> F {
+        let key = (i.min(j), i.max(j));
+        match self.special.binary_search_by_key(&key, |&(a, b, _)| (a, b)) {
+            Ok(k) => self.special[k].2,
+            Err(_) => 1.0,
+        }
     }
 }
 
@@ -942,56 +956,37 @@ impl PairDriven for PmeTerms {
 ///   in LAMMPS's restricted triclinic form (`a` along x, `b` in the xy
 ///   plane). Anything else is [`CompileError::NoBox`].
 /// - `"atoms"` with `"charge"` column (f64) — per-atom charges.
-/// - `"exclusions"` with `"atomi"`, `"atomj"` columns (u64) — the erf
-///   correction list.
-/// - `"pairs"`, when present: the real-space erfc list. Rows that are also
-///   exclusions are omitted. The distances are raw coordinate differences,
-///   as for every other compiled pair style, so a periodic frame whose list
-///   is only intramolecular does not price intermolecular pairs on this
-///   door — `pair_coul_long_pme_typed` does, over the neighbour table.
-///   With no `pairs` block the real-space term stays the minimum-image loop
-///   in this kernel, so the energy is not dropped.
+/// - the special pairs' electrostatic weights (`coulomb`), which this kernel
+///   prices at `w` in its minimum-image real-space loop and corrects in
+///   reciprocal space.
 ///
 /// [`CompileError::NoBox`]: crate::ff::potential::CompileError::NoBox
 pub fn pair_coul_long_pme_constructor(
     style_params: &Params,
-    type_params: &[(&str, &Params)],
+    _type_params: &[(&str, &Params)],
     frame: &Frame,
+    coulomb: &SpecialWeights,
 ) -> Result<ForceTerm, CompileError> {
-    // A present `pairs` block, even an empty one, replaces the minimum-image
-    // loop. An absent block keeps it.
-    let prices_here = frame.get(PAIRS).is_none();
-    let long = long_range(style_params, frame, prices_here)?;
-    if prices_here {
-        return Ok(ForceTerm::plain(long));
-    }
-    let real_frame = real_space_frame(frame)?;
-    let nrows = real_frame.get(PAIRS).and_then(|b| b.n_rows()).unwrap_or(0);
-    if nrows == 0 {
-        return Ok(ForceTerm::plain(long));
-    }
-    let spec = pme_spec();
-    let real = ScalarPair::compiled(
-        Arc::new(CoulLong),
-        &spec,
+    Ok(ForceTerm::plain(long_range(
         style_params,
-        type_params,
-        &real_frame,
-    )?
-    .fused();
-    Ok(ForceTerm::plain(PmeTerms { real, long }))
+        frame,
+        coulomb,
+        true,
+    )?))
 }
 
 /// Neighbour-driven door: the real-space term is [`CoulLong`] over the
-/// neighbour table, and this kernel prices the reciprocal sum, the self
-/// energy and the exclusion correction. The minimum-image loop stays off.
-/// The box, the charges and the Ewald parameters are still required.
+/// neighbour table, weighted by the evaluator, and this kernel prices the
+/// reciprocal sum, the self energy and the special-pair correction. The
+/// minimum-image loop stays off. The box, the charges and the Ewald
+/// parameters are still required.
 pub(crate) fn pair_coul_long_pme_typed(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
+    coulomb: &SpecialWeights,
 ) -> Result<ForceTerm, CompileError> {
-    let long = long_range(style_params, frame, false)?;
+    let long = long_range(style_params, frame, coulomb, false)?;
     let spec = pme_spec();
     let real =
         ScalarPair::typed(Arc::new(CoulLong), &spec, style_params, type_params, frame)?.fused();
@@ -1008,6 +1003,7 @@ fn pme_spec() -> crate::ff::ir::StyleSpec {
 fn long_range(
     style_params: &Params,
     frame: &Frame,
+    special: &SpecialWeights,
     direct: bool,
 ) -> Result<PairCoulLongPme, CompileError> {
     let get = |key: &str| param_reads::style_num("coul/long/pme", style_params, key);
@@ -1045,19 +1041,6 @@ fn long_range(
 
     let box_vectors = box_vectors(frame)?;
 
-    let mut exclusions = Vec::new();
-    if let Some(block) = frame.get(EXCLUSIONS)
-        && let (Some(i_col), Some(j_col)) = (
-            block.get("atomi").and_then(|c| c.get::<u64>()),
-            block.get("atomj").and_then(|c| c.get::<u64>()),
-        )
-    {
-        for (&a, &b) in i_col.iter().zip(j_col.iter()) {
-            let (lo, hi) = ordered(a, b);
-            exclusions.push([lo as usize, hi as usize]);
-        }
-    }
-
     let params = PairCoulLongPmeParams {
         alpha,
         cutoff,
@@ -1069,63 +1052,9 @@ fn long_range(
         params,
         charges,
         box_vectors,
-        exclusions,
+        special.pairs().collect(),
         direct,
     ))
-}
-
-/// `frame` with exclusion rows dropped from `pairs`. Those pairs are the
-/// erf correction and must not also be priced as erfc. Cloned only when a
-/// row is dropped; a block whose endpoints cannot be read is passed through
-/// so the pair form reports that.
-fn real_space_frame(frame: &Frame) -> Result<Cow<'_, Frame>, CompileError> {
-    let Some(pairs) = frame.get(PAIRS) else {
-        return Ok(Cow::Borrowed(frame));
-    };
-    let (Some(i_col), Some(j_col)) = (
-        pairs.get("atomi").and_then(|c| c.get::<u64>()),
-        pairs.get("atomj").and_then(|c| c.get::<u64>()),
-    ) else {
-        return Ok(Cow::Borrowed(frame));
-    };
-    let excluded = exclusion_keys(frame);
-    if excluded.is_empty() {
-        return Ok(Cow::Borrowed(frame));
-    }
-    let mut keep = Vec::new();
-    for (idx, (&a, &b)) in i_col.iter().zip(j_col.iter()).enumerate() {
-        if !excluded.contains(&ordered(a, b)) {
-            keep.push(idx);
-        }
-    }
-    if keep.len() == i_col.len() {
-        return Ok(Cow::Borrowed(frame));
-    }
-    let filtered = pairs
-        .select_rows(&keep)
-        .map_err(|err| CompileError::from(err.to_string()))?;
-    let mut owned = frame.clone();
-    owned.insert(PAIRS, filtered);
-    Ok(Cow::Owned(owned))
-}
-
-fn exclusion_keys(frame: &Frame) -> HashSet<(u64, u64)> {
-    let mut keys = HashSet::new();
-    if let Some(block) = frame.get(EXCLUSIONS)
-        && let (Some(i_col), Some(j_col)) = (
-            block.get("atomi").and_then(|c| c.get::<u64>()),
-            block.get("atomj").and_then(|c| c.get::<u64>()),
-        )
-    {
-        for (&a, &b) in i_col.iter().zip(j_col.iter()) {
-            keys.insert(ordered(a, b));
-        }
-    }
-    keys
-}
-
-fn ordered(a: u64, b: u64) -> (u64, u64) {
-    if a < b { (a, b) } else { (b, a) }
 }
 
 /// The frame's periodic cell as [`PairCoulLongPme::new`] takes it: the lattice
@@ -1187,7 +1116,7 @@ mod tests {
     use crate::ff::ir::SpecialBonds;
     use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::pair::fixtures::table_over;
-    use molrs::core::schema::block_names::{EXCLUSIONS, PAIRS};
+    use molrs::core::schema::block_names::PAIRS;
     use molrs::core::{Block, SimBox};
     use ndarray::Array1;
 
@@ -1317,7 +1246,7 @@ mod tests {
             coulomb,
         };
         let charges = vec![1.0, -1.0];
-        let exclusions = vec![];
+        let exclusions: Vec<(usize, usize, F)> = vec![];
         let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), exclusions);
 
         let coords: Vec<F> = vec![
@@ -1355,7 +1284,7 @@ mod tests {
             coulomb: 1.0,
         };
         let charges = vec![0.5, -0.3, 0.2];
-        let exclusions = vec![[0, 1]]; // exclude the 0-1 pair
+        let exclusions = vec![(0, 1, 0.0)]; // exclude the 0-1 pair
         let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), exclusions);
 
         let coords: Vec<F> = vec![2.0, 3.0, 4.0, 5.0, 3.5, 4.5, 7.0, 6.0, 5.0];
@@ -1393,7 +1322,7 @@ mod tests {
             coulomb: 1.0,
         };
         let charges = vec![0.5, -0.3, 0.4, -0.6];
-        let exclusions = vec![[0, 1], [2, 3]];
+        let exclusions = vec![(0, 1, 0.0), (2, 3, 0.0)];
         let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), exclusions);
 
         let coords: Vec<F> = vec![1.0, 2.0, 3.0, 4.0, 2.5, 3.5, 6.0, 7.0, 2.0, 8.0, 7.5, 2.5];
@@ -1425,6 +1354,7 @@ mod tests {
         let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), vec![]);
 
         let lj = ExplicitTerms::new("pair", "lj/cut")
+            .style_params(Params::from_iter([("cutoff", F::INFINITY)]))
             .term(
                 &[0, 1],
                 Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
@@ -1609,47 +1539,31 @@ mod tests {
         frame
     }
 
-    fn put_pairs(frame: &mut Frame, rows: &[(u64, u64)], is_14: &[bool]) {
+    /// The frame's special pairs: `(i, j, n_bonds)`, and a `coul_scale`
+    /// cell per row where given.
+    fn put_pairs(frame: &mut Frame, rows: &[(u64, u64, u64)], coul_scale: &[Option<F>]) {
         let mut pairs = Block::new();
-        pairs
-            .insert(
-                "atomi",
-                Array1::from_vec(rows.iter().map(|r| r.0).collect()).into_dyn(),
-                None,
-            )
-            .unwrap();
-        pairs
-            .insert(
-                "atomj",
-                Array1::from_vec(rows.iter().map(|r| r.1).collect()).into_dyn(),
-                None,
-            )
-            .unwrap();
-        if !is_14.is_empty() {
+        for (key, col) in [
+            ("atomi", rows.iter().map(|r| r.0).collect::<Vec<u64>>()),
+            ("atomj", rows.iter().map(|r| r.1).collect()),
+            ("n_bonds", rows.iter().map(|r| r.2).collect()),
+        ] {
             pairs
-                .insert("is_14", Array1::from_vec(is_14.to_vec()).into_dyn(), None)
+                .insert(key, Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
+        }
+        if !coul_scale.is_empty() {
+            let valid: Vec<bool> = coul_scale.iter().map(Option::is_some).collect();
+            let values: Vec<F> = coul_scale.iter().map(|c| c.unwrap_or(0.0)).collect();
+            pairs
+                .insert(
+                    "coul_scale",
+                    Array1::from_vec(values).into_dyn(),
+                    Some(valid),
+                )
                 .unwrap();
         }
         frame.insert(PAIRS, pairs);
-    }
-
-    fn put_exclusions(frame: &mut Frame, rows: &[(u64, u64)]) {
-        let mut block = Block::new();
-        block
-            .insert(
-                "atomi",
-                Array1::from_vec(rows.iter().map(|r| r.0).collect()).into_dyn(),
-                None,
-            )
-            .unwrap();
-        block
-            .insert(
-                "atomj",
-                Array1::from_vec(rows.iter().map(|r| r.1).collect()).into_dyn(),
-                None,
-            )
-            .unwrap();
-        frame.insert(EXCLUSIONS, block);
     }
 
     fn separation(coords: &[F], i: usize, j: usize) -> F {
@@ -1670,16 +1584,12 @@ mod tests {
         }
     }
 
-    /// A `pairs` block that lists every non-excluded pair inside the cutoff
-    /// prices the same energy as the minimum-image loop. The two must not
-    /// both run: that would count the erfc term twice.
+    /// The compile door is the kernel's own minimum-image loop: a box of
+    /// ions with no special pair prices what the bare kernel does.
     #[test]
-    fn a_pairs_block_prices_the_real_space_term_once() {
-        let links = [(0, 1), (0, 2), (1, 2)];
-        let mut frame = ions(10.0);
-        put_pairs(&mut frame, &links, &[]);
+    fn compile_prices_the_minimum_image_loop() {
         let compiled = PotentialCompiler::new(&field(SpecialBonds::EXCLUDE_12_13))
-            .compile(&frame)
+            .compile(&ions(10.0))
             .unwrap();
         let full = PairCoulLongPme::new(
             kernel_params(),
@@ -1695,41 +1605,13 @@ mod tests {
         }
     }
 
-    /// An empty `pairs` block is a list, so the real-space loop stays off.
-    /// The reciprocal sum, the self energy and the exclusion correction remain.
+    /// A special pair at weight `w` is priced at `w · k qᵢqⱼ / r`, as LAMMPS,
+    /// GROMACS and OpenMM price it: its real-space erfc term is weighted and
+    /// its reciprocal-space erf term corrected by `1 − w`, so lowering the
+    /// 1-4 weight from 1 to ½ removes half the bare Coulomb energy of the
+    /// pair, whatever α, at both doors.
     #[test]
-    fn an_empty_pairs_block_prices_reciprocal_space_only() {
-        let mut frame = ions(10.0);
-        frame.insert(PAIRS, Block::new());
-        let got = PotentialCompiler::new(&field(SpecialBonds::EXCLUDE_12_13))
-            .compile(&frame)
-            .unwrap()
-            .energy_at(&IONS);
-        let recip = PairCoulLongPme::reciprocal(
-            kernel_params(),
-            ION_CHARGES.to_vec(),
-            cubic_box(10.0),
-            vec![],
-        )
-        .energy_at(&IONS);
-        let full = PairCoulLongPme::new(
-            kernel_params(),
-            ION_CHARGES.to_vec(),
-            cubic_box(10.0),
-            vec![],
-        )
-        .energy_at(&IONS);
-        assert_eq!(got.to_bits(), recip.to_bits(), "{got} vs {recip}");
-        assert!(
-            (full - got).abs() > 1.0,
-            "real space must be the difference"
-        );
-    }
-
-    /// A 1-4 row takes `coulomb14scale` on the erfc term. The reciprocal sum
-    /// is unchanged, so the total is not `s/r`.
-    #[test]
-    fn a_1_4_row_scales_the_real_space_term_only() {
+    fn a_special_pair_is_priced_at_its_weight_of_the_bare_coulomb() {
         let coords = [0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
         let charges = [1.0, -1.0];
         let mut atoms = Block::new();
@@ -1749,45 +1631,66 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert(ATOMS, atoms);
         frame.simbox = Some(cubic(20.0));
-        put_pairs(&mut frame, &[(0, 1)], &[true]);
+        put_pairs(&mut frame, &[(0, 1, 3)], &[]);
+        let special = |coul_14: F| SpecialBonds {
+            lj: [0.0, 0.0, 1.0],
+            coul: [0.0, 0.0, coul_14],
+        };
         let compile = |coul_14: F| {
-            let special = SpecialBonds {
-                lj: [0.0, 0.0, 1.0],
-                coul: [0.0, 0.0, coul_14],
-            };
-            PotentialCompiler::new(&field(special))
+            PotentialCompiler::new(&field(special(coul_14)))
                 .compile(&frame)
                 .unwrap()
                 .energy_forces_at(&coords)
         };
         let (full_e, full_f) = compile(1.0);
         let (half_e, half_f) = compile(0.5);
-        let (real_e, real_de) = real_space_pair(332.06371, 0.35, 1.0, -1.0, 2.0);
+        let bare = 332.06371 * charges[0] * charges[1] / 2.0;
         assert!(
-            (full_e - half_e - 0.5 * real_e).abs() < 1e-8,
-            "delta {} vs half erfc {}",
+            (full_e - half_e - 0.5 * bare).abs() < 1e-8,
+            "delta {} vs half the bare Coulomb {}",
             full_e - half_e,
-            0.5 * real_e
+            0.5 * bare
         );
-        // Δx / r = 1, so the unscaled real-space force on the +x atom is
-        // −dE/dr. The two compiles share the reciprocal gradient.
+        // dE/dr of k q q / r is −k q q / r²; the +x atom feels −dE/dr.
+        let bare_force = 332.06371 * charges[0] * charges[1] / 4.0;
         assert!(
-            (full_f[3] - half_f[3] - (-0.5 * real_de)).abs() < 1e-6,
+            (full_f[3] - half_f[3] - 0.5 * bare_force).abs() < 1e-6,
             "force delta {} vs {}",
             full_f[3] - half_f[3],
-            -0.5 * real_de
+            0.5 * bare_force
+        );
+
+        // The neighbour door: the evaluator weighs the erfc term, the kernel
+        // corrects the reciprocal sum.
+        let typed = |coul_14: F| {
+            let members = PotentialCompiler::new(&field(special(coul_14)))
+                .compile_typed(&frame)
+                .unwrap();
+            let (ForceTerm::Pair(kernel), weights) = &members[0] else {
+                panic!("a pair member");
+            };
+            let table = table_over(&coords, &[(0, 1)]);
+            let mut factor = Vec::new();
+            weights.fill_factors(&table, &mut factor);
+            let mut f = vec![0.0; coords.len()];
+            let mut acc = crate::ff::potential::Accumulator::adding_into(&mut f);
+            kernel.evaluate_pairs(&coords, &table, &factor, &mut acc);
+            acc.energy()
+        };
+        let delta = typed(1.0) - typed(0.5);
+        assert!(
+            (delta - 0.5 * bare).abs() < 1e-8,
+            "typed delta {delta} vs {}",
+            0.5 * bare
         );
     }
 
-    /// A pair listed in both `pairs` and `exclusions` is not priced as erfc.
-    /// The exclusion still subtracts the erf correction.
+    /// A special pair weighed 0 is excluded: it is not priced as erfc, and
+    /// its erf term is subtracted from the reciprocal sum.
     #[test]
-    fn an_excluded_pair_on_the_list_is_not_priced_as_erfc() {
-        let links = [(0_u64, 1_u64), (0, 2), (1, 2)];
+    fn an_excluded_special_pair_is_not_priced() {
         let mut frame = ions(10.0);
-        put_pairs(&mut frame, &links, &[]);
-        // Stored reversed: the filter orders the endpoints.
-        put_exclusions(&mut frame, &[(1, 0)]);
+        put_pairs(&mut frame, &[(0, 1, 0)], &[Some(0.0)]);
         let got = PotentialCompiler::new(&field(SpecialBonds::EXCLUDE_12_13))
             .compile(&frame)
             .unwrap()
@@ -1796,7 +1699,7 @@ mod tests {
             kernel_params(),
             ION_CHARGES.to_vec(),
             cubic_box(10.0),
-            vec![[0, 1]],
+            vec![(0, 1, 0.0)],
         )
         .energy_at(&IONS);
         let without = PairCoulLongPme::new(
@@ -1809,7 +1712,7 @@ mod tests {
         assert!((got - with).abs() < 1e-8, "{got} vs {with}");
         assert!(
             (got - without).abs() > 1.0,
-            "dropping the erfc must move the energy"
+            "excluding the pair must move the energy"
         );
     }
 
@@ -1828,11 +1731,7 @@ mod tests {
             panic!("neighbour-driven member, got {term:?}");
         };
         assert!(!kernel.binds_a_fixed_pair_list());
-        let weights = weights.as_ref().expect("Coulomb pair weights");
-        assert_eq!(
-            weights.by_distance(),
-            &SpecialBonds::EXCLUDE_12_13.coul_weights()
-        );
+        assert!(weights.is_empty(), "no special pair, no weight");
 
         let recip = PairCoulLongPme::reciprocal(
             kernel_params(),

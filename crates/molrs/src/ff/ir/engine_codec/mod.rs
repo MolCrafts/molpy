@@ -567,7 +567,8 @@ pub mod positional {
     }
 
     /// A pair style's cutoff, required when the spec declares one (the
-    /// writer never invents a cutoff).
+    /// writer never invents a cutoff) and finite: LAMMPS truncates every pair
+    /// style, so `inf` (every pair priced) has no `pair_style` form.
     pub fn style_args(
         spec: &StyleSpec,
         style: &Params,
@@ -586,6 +587,13 @@ pub mod positional {
                     spec.category, spec.name
                 )
             })?;
+        if !cutoff.is_finite() {
+            return Err(format!(
+                "{} style '{}' has cutoff {cutoff}: LAMMPS truncates every pair style, so a \
+                 cutoff that prices every pair has no {}_style form; declare a finite one",
+                spec.category, spec.name, spec.category
+            ));
+        }
         Ok(vec![Token::Real(units.apply(cutoff, p.dim))])
     }
 

@@ -7,11 +7,14 @@ use crate::core::MolRsError;
 use crate::core::bond_order::stamp_bond_class;
 use crate::core::graph::{Graph, sealed};
 use crate::core::keys;
+use crate::core::keys::N_BONDS;
 use crate::core::molgraph::NodeGuard;
+use crate::core::schema::block_names::PAIRS;
 use crate::core::schema::{self, RowKind};
 use crate::core::{BondNumber, BondOrder};
 use crate::core::{CenterError, EntityTable, LinkError, Port, PortKind};
 use crate::core::{GraphAccess, KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
+use crate::op::I;
 
 /// Result of [`Atomistic::extract_subgraph`].
 #[derive(Debug, Clone)]
@@ -36,7 +39,7 @@ pub struct ExtractedAtomistic {
 /// entity — atoms (`add_atom`, `del_atom` / `del_atoms`, `get_atom`,
 /// `set_atom`, `clear_atom`, `atom_ids`, `atoms`, `n_atoms`, `atom_table`),
 /// bonds, angles, dihedrals and impropers (the same eight operations each),
-/// the further relation blocks a force field states (`cmaps`, `exclusions`, …
+/// the further relation blocks a force field states (`cmaps`, `pairs`, …
 /// — the `*_term` family), ports, geometry ([`translate`](Self::translate),
 /// [`rotate`](Self::rotate), [`scale`](Self::scale),
 /// [`center`](Self::center)), composition and hashing. A single entity and a
@@ -381,7 +384,7 @@ impl Atomistic {
     /// [`NeighborKinds::with_ports`](crate::core::NeighborKinds::with_ports) and
     /// [`NeighborKinds::with_terms`](crate::core::NeighborKinds::with_terms)
     /// also yield ports and the other arity-2
-    /// terms (constraints, pairs, exclusions, drudes, virtual sites), and
+    /// terms (constraints, pairs, drudes, virtual sites), and
     /// each item is an [`Adjacent`](crate::core::Adjacent) so the handle
     /// stays tied to its table. Angles and dihedrals have more than two
     /// endpoints and are never neighbors.
@@ -648,17 +651,28 @@ impl Atomistic {
     /// the term is force-field data, not a graph property, so every trivalent
     /// centre is emitted and the selection belongs to the layer with the table.
     ///
-    /// Idempotent: an angle/dihedral/improper already present (by canonical
-    /// endpoints) is not duplicated. With `clear_existing`, all existing
-    /// relations of the requested kinds are removed first. Returns
-    /// `(n_angles_added, n_dihedrals_added, n_impropers_added)`.
+    /// Pairs are the non-bonded exceptions: every 1-2, 1-3 and 1-4 pair of the
+    /// bond graph ([`Topology::close_pairs`](crate::core::Topology::close_pairs))
+    /// as a `pairs` row with its `n_bonds`, which the force field's
+    /// `special_bonds` weight. A pair no row names is priced at full strength.
+    ///
+    /// Idempotent: an angle/dihedral/improper/pair already present (by
+    /// canonical endpoints) is not duplicated; an existing pair row keeps its
+    /// override cells. With `clear_existing`, all existing relations of the
+    /// requested kinds are removed first. Returns `(n_angles_added,
+    /// n_dihedrals_added, n_impropers_added, n_pairs_added)`.
     pub fn generate_topology(
         &mut self,
         gen_angle: bool,
         gen_dihedral: bool,
         gen_improper: bool,
+        gen_pairs: bool,
         clear_existing: bool,
-    ) -> Result<(usize, usize, usize), MolRsError> {
+    ) -> Result<(usize, usize, usize, usize), MolRsError> {
+        if clear_existing && gen_pairs {
+            let ids: Vec<_> = self.term_ids(PAIRS)?.collect();
+            self.del_terms(PAIRS, &ids)?;
+        }
         if clear_existing {
             for (wanted, kind) in [
                 (gen_angle, self.angle),
@@ -725,7 +739,50 @@ impl Atomistic {
             }
         }
 
-        Ok((n_ang, n_dih, n_imp))
+        let n_pairs = if gen_pairs {
+            self.generate_pairs(&atoms, &topo)?
+        } else {
+            0
+        };
+
+        Ok((n_ang, n_dih, n_imp, n_pairs))
+    }
+
+    /// The `pairs` rows of every 1-2, 1-3 and 1-4 pair of the bond graph,
+    /// each with its `n_bonds`, in `(atomi, atomj)` order. A row already
+    /// naming the pair keeps its override cells and takes the graph's
+    /// distance. Returns how many rows were added.
+    fn generate_pairs(
+        &mut self,
+        atoms: &[NodeId],
+        topo: &crate::core::Topology,
+    ) -> Result<usize, MolRsError> {
+        let row_of: HashMap<NodeId, usize> =
+            atoms.iter().enumerate().map(|(r, &id)| (id, r)).collect();
+        let mut existing: HashMap<(usize, usize), RelationId> = HashMap::new();
+        for id in self.term_ids(PAIRS)?.collect::<Vec<_>>() {
+            let nodes = self.get_term(PAIRS, id)?.nodes;
+            let (a, b) = (row_of[&nodes[0]], row_of[&nodes[1]]);
+            existing.insert((a.min(b), a.max(b)), id);
+        }
+        let mut close: Vec<((usize, usize), usize)> = topo.close_pairs(3).into_iter().collect();
+        close.sort_unstable();
+        let mut added = 0;
+        for ((a, b), hops) in close {
+            let n_bonds = I::try_from(hops).expect("at most three bonds");
+            match existing.get(&(a, b)) {
+                Some(&id) => self.set_term(PAIRS, id, N_BONDS, n_bonds)?,
+                None => {
+                    self.add_term(
+                        PAIRS,
+                        &[atoms[a], atoms[b]],
+                        Props::new().with(N_BONDS, n_bonds),
+                    )?;
+                    added += 1;
+                }
+            }
+        }
+        Ok(added)
     }
 
     /// The bond graph as a [`Topology`](crate::core::Topology) over atom
@@ -766,7 +823,7 @@ impl Atomistic {
     // ---- further relation blocks (the `*_term` family) ----
 
     /// Add a row to the relation block `block` — `cmaps`, `constraints`,
-    /// `drudes`, `exclusions`, `pairs`, `virtual_sites` or any block this
+    /// `drudes`, `pairs`, `virtual_sites` or any block this
     /// molecule already holds — over `atoms`, carrying `props`.
     ///
     /// The block's arity is the one this molecule registered for it, else the
@@ -1127,8 +1184,8 @@ impl Atomistic {
     ///
     /// Every other relation block of the schema vocabulary whose endpoints
     /// are `atoms` rows ([`schema::block`](crate::core::schema::block):
-    /// `drudes`, `virtual_sites`, `constraints`, `cmaps`, `pairs`,
-    /// `exclusions`) is registered as a kind of its name and arity when the
+    /// `drudes`, `virtual_sites`, `constraints`, `cmaps`, `pairs`) is
+    /// registered as a kind of its name and arity when the
     /// frame carries it, so a frame → graph → frame round trip keeps every
     /// relation [`to_frame`](Self::to_frame) writes. A block outside the
     /// vocabulary is not the graph's and is ignored.
@@ -1158,7 +1215,7 @@ impl Atomistic {
     /// # Term blocks
     ///
     /// Every canonical term block over atoms the frame carries (`cmaps`,
-    /// `constraints`, `drudes`, `exclusions`, `pairs`, `virtual_sites`) is
+    /// `constraints`, `drudes`, `pairs`, `virtual_sites`) is
     /// read back as that block's terms, so a molecule that
     /// [`to_frame`](Self::to_frame) wrote after
     /// [`add_term`](Self::add_term) round-trips. Other blocks (a box, a grid,
@@ -1274,7 +1331,7 @@ impl Atomistic {
         )?;
         let mut atomistic = Atomistic::promote(ball.graph)?;
         if regenerate_topology {
-            atomistic.generate_topology(true, true, false, false)?;
+            atomistic.generate_topology(true, true, false, true, false)?;
         }
         Ok(ExtractedAtomistic {
             graph: atomistic,
@@ -1344,7 +1401,7 @@ fn schema_term_arity(block: &str) -> Result<usize, MolRsError> {
         MolRsError::validation(format!(
             "'{block}' is not a term block of this molecule: {why}; a term block is a \
              registered relation block or a canonical one over atoms (cmaps, constraints, \
-             drudes, exclusions, pairs, virtual_sites)"
+             drudes, pairs, virtual_sites)"
         ))
     };
     let spec = schema::block(block).ok_or_else(|| unknown("no row of it is held"))?;
@@ -1611,7 +1668,9 @@ mod tests {
     #[test]
     fn generate_topology_ethane_counts() {
         let mut mol = ethane();
-        let (n_ang, n_dih, _) = mol.generate_topology(true, true, false, false).unwrap();
+        let (n_ang, n_dih, _, _) = mol
+            .generate_topology(true, true, false, false, false)
+            .unwrap();
         // Angles: C0 centre C(1,2,3) -> C(4,2,3)... 2 C-centres each with 4
         // neighbours -> 2*C(4,2)=12. Dihedrals across the C0-C1 bond: 3*3 = 9.
         assert_eq!(n_ang, 12, "ethane angles");
@@ -1623,9 +1682,12 @@ mod tests {
     #[test]
     fn generate_topology_is_idempotent() {
         let mut mol = ethane();
-        mol.generate_topology(true, true, false, false).unwrap();
+        mol.generate_topology(true, true, false, false, false)
+            .unwrap();
         // Second call adds nothing (already present).
-        let (n_ang, n_dih, _) = mol.generate_topology(true, true, false, false).unwrap();
+        let (n_ang, n_dih, _, _) = mol
+            .generate_topology(true, true, false, false, false)
+            .unwrap();
         assert_eq!((n_ang, n_dih), (0, 0));
         assert_eq!(mol.n_angles(), 12);
         assert_eq!(mol.n_dihedrals(), 9);
@@ -1634,12 +1696,78 @@ mod tests {
     #[test]
     fn generate_topology_clear_existing_regenerates() {
         let mut mol = ethane();
-        mol.generate_topology(true, true, false, false).unwrap();
-        let (n_ang, n_dih, _) = mol.generate_topology(true, true, false, true).unwrap();
+        mol.generate_topology(true, true, false, false, false)
+            .unwrap();
+        let (n_ang, n_dih, _, _) = mol
+            .generate_topology(true, true, false, false, true)
+            .unwrap();
         // clear_existing wipes then regenerates the identical set.
         assert_eq!((n_ang, n_dih), (12, 9));
         assert_eq!(mol.n_angles(), 12);
         assert_eq!(mol.n_dihedrals(), 9);
+    }
+
+    /// The `pairs` rows of `frame` as `(atomi, atomj, n_bonds)`.
+    fn pair_rows(frame: &Frame) -> Vec<(u64, u64, u64)> {
+        let pairs = frame.get("pairs").expect("the special pairs are written");
+        let col = |k: &str| pairs.get(k).unwrap().get::<u64>().unwrap().to_owned();
+        let (i, j, n) = (col("atomi"), col("atomj"), col("n_bonds"));
+        (0..i.len()).map(|r| (i[r], j[r], n[r])).collect()
+    }
+
+    /// Ethane's special pairs: its 7 bonds, 12 angles' ends and 9 dihedrals'
+    /// ends, each pair once at its bond distance, written as unsigned
+    /// `n_bonds`.
+    #[test]
+    fn generate_topology_writes_every_close_pair_with_its_class() {
+        let mut mol = ethane();
+        let (_, _, _, n_pairs) = mol
+            .generate_topology(false, false, false, true, false)
+            .unwrap();
+        assert_eq!(n_pairs, 7 + 12 + 9);
+        let rows = pair_rows(&mol.to_frame().unwrap());
+        let count = |d: u64| rows.iter().filter(|r| r.2 == d).count();
+        assert_eq!((count(1), count(2), count(3)), (7, 12, 9));
+        assert!(rows.iter().all(|r| r.0 < r.1));
+        // H2 (row 2) and H5 (row 5) are H-C0-C1-H: a 1-4 pair.
+        assert!(rows.contains(&(2, 5, 3)));
+    }
+
+    /// A regenerated pair keeps its override cells; `clear_existing` drops
+    /// them with the rows.
+    #[test]
+    fn generate_topology_keeps_a_pair_s_cells_unless_cleared() {
+        let mut mol = ethane();
+        mol.generate_topology(false, false, false, true, false)
+            .unwrap();
+        let atoms: Vec<NodeId> = mol.atom_ids().collect();
+        let one_four = mol
+            .term_ids("pairs")
+            .unwrap()
+            .find(|&id| {
+                let nodes = mol.get_term("pairs", id).unwrap().nodes;
+                nodes.as_slice() == [atoms[2], atoms[5]]
+            })
+            .unwrap();
+        mol.set_term("pairs", one_four, "coul_scale", 0.25).unwrap();
+        let (_, _, _, again) = mol
+            .generate_topology(false, false, false, true, false)
+            .unwrap();
+        assert_eq!(again, 0);
+        let kept = mol.get_term("pairs", one_four).unwrap();
+        assert_eq!(kept.props.get_f64("coul_scale"), Some(0.25));
+
+        let (_, _, _, fresh) = mol
+            .generate_topology(false, false, false, true, true)
+            .unwrap();
+        assert_eq!(fresh, 28);
+        let pairs = mol.to_frame().unwrap().remove("pairs").unwrap();
+        let stated = pairs
+            .validity("coul_scale")
+            .map_or(pairs.get("coul_scale").is_some(), |valid| {
+                valid.iter().any(|&v| v)
+            });
+        assert!(!stated, "a cleared pair keeps no cell");
     }
 
     /// A trivalent centre: C bonded to O, H, H.
@@ -1658,7 +1786,9 @@ mod tests {
     #[test]
     fn generate_topology_improper_at_a_trivalent_centre() {
         let mut mol = formaldehyde();
-        let (_, _, n_imp) = mol.generate_topology(false, false, true, false).unwrap();
+        let (_, _, n_imp, _) = mol
+            .generate_topology(false, false, true, false, false)
+            .unwrap();
         assert_eq!(n_imp, 1);
         assert_eq!(mol.n_impropers(), 1);
     }
@@ -1669,7 +1799,9 @@ mod tests {
         // enumeration would give C(4,3) = 4 quartets per carbon; a force field
         // wants none.
         let mut mol = ethane();
-        let (_, _, n_imp) = mol.generate_topology(false, false, true, false).unwrap();
+        let (_, _, n_imp, _) = mol
+            .generate_topology(false, false, true, false, false)
+            .unwrap();
         assert_eq!(n_imp, 0);
         assert_eq!(mol.n_impropers(), 0);
     }
@@ -1677,8 +1809,11 @@ mod tests {
     #[test]
     fn generate_topology_improper_is_idempotent() {
         let mut mol = formaldehyde();
-        mol.generate_topology(false, false, true, false).unwrap();
-        let (_, _, n_imp) = mol.generate_topology(false, false, true, false).unwrap();
+        mol.generate_topology(false, false, true, false, false)
+            .unwrap();
+        let (_, _, n_imp, _) = mol
+            .generate_topology(false, false, true, false, false)
+            .unwrap();
         assert_eq!(n_imp, 0, "an improper already present is not duplicated");
         assert_eq!(mol.n_impropers(), 1);
     }
@@ -1691,7 +1826,9 @@ mod tests {
         let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
         mol.add_improper(ids[0], ids[3], ids[1], ids[2], props! {})
             .unwrap();
-        let (_, _, n_imp) = mol.generate_topology(false, false, true, false).unwrap();
+        let (_, _, n_imp, _) = mol
+            .generate_topology(false, false, true, false, false)
+            .unwrap();
         assert_eq!(n_imp, 0);
         assert_eq!(mol.n_impropers(), 1);
     }
@@ -1699,7 +1836,9 @@ mod tests {
     #[test]
     fn generate_topology_selective() {
         let mut mol = ethane();
-        let (n_ang, n_dih, _) = mol.generate_topology(true, false, false, false).unwrap();
+        let (n_ang, n_dih, _, _) = mol
+            .generate_topology(true, false, false, false, false)
+            .unwrap();
         assert_eq!(n_ang, 12);
         assert_eq!(n_dih, 0);
         assert_eq!(mol.n_dihedrals(), 0);
@@ -2960,14 +3099,14 @@ mod tests {
         let cmap = mol
             .add_term("cmaps", &ids, props! { keys::TYPE => "C1" })
             .unwrap();
-        let excl = mol.add_term("exclusions", &ids[..2], props! {}).unwrap();
+        let excl = mol.add_term("constraints", &ids[..2], props! {}).unwrap();
         assert_eq!(
             mol.term_blocks().collect::<Vec<_>>(),
-            ["cmaps", "exclusions"]
+            ["cmaps", "constraints"]
         );
         assert_eq!(mol.n_terms("cmaps").unwrap(), 1);
         assert_eq!(
-            mol.term_ids("exclusions").unwrap().collect::<Vec<_>>(),
+            mol.term_ids("constraints").unwrap().collect::<Vec<_>>(),
             [excl]
         );
         let read = mol.get_term("cmaps", cmap).unwrap();
@@ -2982,11 +3121,11 @@ mod tests {
         let back = Atomistic::from_frame(&frame).unwrap();
         assert_eq!(
             back.term_blocks().collect::<Vec<_>>(),
-            ["cmaps", "exclusions"],
+            ["cmaps", "constraints"],
             "from_frame reads back every term block to_frame wrote"
         );
         assert_eq!(back.n_terms("cmaps").unwrap(), 1);
-        assert_eq!(back.n_terms("exclusions").unwrap(), 1);
+        assert_eq!(back.n_terms("constraints").unwrap(), 1);
         let row = |m: &Atomistic, id: NodeId| m.atom_ids().position(|a| a == id).unwrap();
         let back_ids: Vec<NodeId> = back.atom_ids().collect();
         let cmap_back = back.term_ids("cmaps").unwrap().next().unwrap();
@@ -2995,8 +3134,8 @@ mod tests {
         let rows: Vec<usize> = ids.iter().map(|&n| row(&mol, n)).collect();
         assert_eq!(rows_back, rows, "the cmap's atoms round-trip in order");
         assert_eq!(read_back.props.get_str(keys::TYPE), Some("C1"));
-        let excl_back = back.term_ids("exclusions").unwrap().next().unwrap();
-        let excl_nodes = back.get_term("exclusions", excl_back).unwrap().nodes;
+        let excl_back = back.term_ids("constraints").unwrap().next().unwrap();
+        let excl_nodes = back.get_term("constraints", excl_back).unwrap().nodes;
         assert_eq!(excl_nodes.as_slice(), &back_ids[..2]);
         assert_eq!(
             back.to_frame().unwrap().get("cmaps").unwrap().n_rows(),
@@ -3123,11 +3262,11 @@ mod tests {
     fn deleting_an_atom_deletes_its_terms() {
         let (mut mol, ids) = cmap_chain();
         mol.add_term("cmaps", &ids, props! {}).unwrap();
-        mol.add_term("exclusions", &[ids[0], ids[4]], props! {})
+        mol.add_term("constraints", &[ids[0], ids[4]], props! {})
             .unwrap();
         mol.del_atom(ids[4]).unwrap();
         assert_eq!(mol.n_terms("cmaps").unwrap(), 0);
-        assert_eq!(mol.n_terms("exclusions").unwrap(), 0);
+        assert_eq!(mol.n_terms("constraints").unwrap(), 0);
     }
 
     // ---- ports ----
@@ -3253,12 +3392,12 @@ mod tests {
     #[test]
     fn induced_subgraph_keeps_terms_and_ports_inside_the_set() {
         let (mut mol, ids) = cmap_chain();
-        mol.add_term("exclusions", &ids[..2], props! {}).unwrap();
-        mol.add_term("exclusions", &[ids[0], ids[4]], props! {})
+        mol.add_term("constraints", &ids[..2], props! {}).unwrap();
+        mol.add_term("constraints", &[ids[0], ids[4]], props! {})
             .unwrap();
         let (sub, map) = mol.induced_subgraph(&ids[..3]).unwrap();
         assert_eq!((sub.n_atoms(), sub.n_bonds()), (3, 2));
-        assert_eq!(sub.n_terms("exclusions").unwrap(), 1);
+        assert_eq!(sub.n_terms("constraints").unwrap(), 1);
         assert_eq!(sub.n_angles(), 1);
         assert_eq!(map.len(), 3);
     }

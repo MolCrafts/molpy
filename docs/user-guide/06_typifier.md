@@ -142,10 +142,6 @@ frame["atoms"]["mol_id"] = mp.Topology.from_frame(frame).connected_components() 
 outdir = Path("06_output")
 outdir.mkdir(exist_ok=True)
 
-# the pair cutoff is a run setting: you declare it, molpy never invents one
-ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
-ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-
 mp.io.write_lammps_data(outdir / "ethanol.data", frame)
 mp.io.lammps.LammpsForcefieldWriter(frame).write(outdir / "ethanol.ff", ff)
 
@@ -157,7 +153,7 @@ exported to 06_output
 ```
 
 
-The structure and the coefficients are two files and two calls. `mp.io.lammps.LammpsForcefieldWriter(frame)` looks up every type label the frame uses and writes only those coefficients. OPLS-AA defines no cutoff — a cutoff belongs to the run, not to the force field — so it is declared on the two pair styles before writing. The data writer refuses a bonded frame without `mol_id`: which atoms form a molecule is your decision, and the bond graph's connected components are the usual answer.
+The structure and the coefficients are two files and two calls. `mp.io.lammps.LammpsForcefieldWriter(frame)` looks up every type label the frame uses and writes only those coefficients. The pair styles carry the 12 Å cutoff the OPLS-AA typifier declares; `ff.get_style("pair", "lj/cut").set(cutoff=10.0)` would write another. The data writer refuses a bonded frame without `mol_id`: which atoms form a molecule is your decision, and the bond graph's connected components are the usual answer.
 
 ## Typing an assembled polymer
 
@@ -233,7 +229,7 @@ The native route assigns the types and parameter values tleap does for the same 
 
 Standard OPLS-AA covers common organic functional groups. Specialized molecules — ionic liquids (TFSI), metal complexes, reactive intermediates — often need custom force field parameters. In those cases:
 
-1. Use a specialized OPLS-style force field XML that includes the required SMARTS patterns and types (`OplsAaTypifier(source="custom.xml")`)
+1. Use a specialized OPLS-style force field XML that includes the required SMARTS patterns and types (`OplsAaTypifier(source=Path("custom.xml"))`; a plain `str` is refused)
 2. Or drop to the [Force Field](../tutorials/04_force_field.md) layer and define types manually
 
 The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them. GAFF / GAFF2 has its own native typifiers, shown above.

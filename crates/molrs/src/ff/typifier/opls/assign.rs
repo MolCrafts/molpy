@@ -334,7 +334,7 @@ pub(crate) fn typify_bonded_with(
 
     // --- enumerate angles + dihedrals from the bond graph (clear existing) ---
     graph
-        .generate_topology(true, true, false, true)
+        .generate_topology(true, true, false, true, true)
         .map_err(|e| e.to_string())?;
 
     let angles: Vec<[NodeId; 3]> = graph

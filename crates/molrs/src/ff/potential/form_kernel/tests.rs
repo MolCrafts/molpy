@@ -209,15 +209,8 @@ fn molecule() -> Frame {
         "dihedrals",
         relation(&[&[0, 1], &[1, 2], &[2, 3], &[3, 4]], &["d1", "d2"]),
     );
-    let mut pairs = Block::new();
-    pairs.insert("atomi", idx(&[0, 0, 1]), None).unwrap();
-    pairs.insert("atomj", idx(&[3, 4, 4]), None).unwrap();
-    pairs
-        .insert(
-            "is_14",
-            Array1::from_vec(vec![true, false, true]).into_dyn(),
-            None,
-        )
+    let pairs = molrs::core::Topology::from_frame(&frame)
+        .map(|t| t.pairs_block())
         .unwrap();
     frame.insert("pairs", pairs);
     frame
@@ -329,7 +322,7 @@ fn compare_bonded(label: &str, builtin: &ForceField, generic: &ForceField, reg: 
     .unwrap();
     assert_eq!(typed.len(), 1);
     assert!(
-        typed[0].1.is_none(),
+        typed[0].1.is_empty(),
         "{label}: a bonded member takes no weights"
     );
     assert_close(
@@ -489,7 +482,7 @@ fn scalar_pair_equals_lj_cut_at_both_doors() {
     );
     let frame = molecule();
 
-    // Compiled: the `pairs` list, `is_14` rows at the field's 1-4 weight.
+    // Compiled: every pair, the special pairs at the field's weights.
     let a = PotentialCompiler::new(&builtin).compile(&frame).unwrap();
     let b = PotentialCompiler::new(
         &generic
@@ -781,22 +774,8 @@ fn every_pair_form_prices_a_pair_list_and_a_table_alike() {
     let links: Vec<(usize, usize)> = (0..5)
         .flat_map(|i| ((i + 1)..5).map(move |j| (i, j)))
         .collect();
-    let mut pairs = Block::new();
-    pairs
-        .insert(
-            "atomi",
-            idx(&links.iter().map(|l| l.0).collect::<Vec<_>>()),
-            None,
-        )
-        .unwrap();
-    pairs
-        .insert(
-            "atomj",
-            idx(&links.iter().map(|l| l.1).collect::<Vec<_>>()),
-            None,
-        )
-        .unwrap();
-    frame.insert("pairs", pairs);
+    // No bonds and no special pair: every pair of `links` at full strength.
+    frame.remove("pairs");
     frame.remove("bonds");
     frame.remove("angles");
     frame.remove("dihedrals");

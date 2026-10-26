@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
@@ -438,8 +439,12 @@ class OpenmmEngine(Engine):
             "system = ff.createSystem(\n"
             "    pdb.topology,\n"
             f"    nonbondedMethod={config.nonbonded_method},\n"
-            f"    nonbondedCutoff={config.nonbonded_cutoff_nm}*unit.nanometer,\n"
-            f"    constraints={config.constraints},\n"
+            + (
+                ""
+                if config.nonbonded_cutoff_nm is None
+                else f"    nonbondedCutoff={config.nonbonded_cutoff_nm}*unit.nanometer,\n"
+            )
+            + f"    constraints={config.constraints},\n"
             ")\n"
         )
 
@@ -570,6 +575,16 @@ def _with_nonbonded(
             (r for r in (stated.coulomb_cutoff, stated.vdw_cutoff) if r is not None),
             _DEFAULT_CUTOFF_NM,
         )
+    if not math.isfinite(cutoff):
+        # A field that prices every pair: OpenMM's NoCutoff, which reads no
+        # cutoff; any other method needs a finite one.
+        if method != "NoCutoff":
+            raise ValueError(
+                f"OpenMM: nonbonded_method {method!r} needs a finite cutoff, and the "
+                f"force field's is {cutoff} (every pair priced). State a finite one on "
+                "its pair styles, or pass nonbonded_cutoff_nm."
+            )
+        cutoff = None
     return dataclasses.replace(
         config, nonbonded_method=method, nonbonded_cutoff_nm=cutoff
     )

@@ -35,7 +35,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : A simulation cell defined by a 3x3 lattice matrix and periodic boundary conditions. Provides wrapping, minimum-image distances, and coordinate conversion. See [Box and Periodicity](03_box_and_periodicity.md).
 
 **Trajectory**
-: An ordered sequence of `Frame` objects. Supports lazy access via generators and `map` transforms. See [Trajectory](05_trajectory.md).
+: An in-memory, ordered sequence of `Frame` objects with optional per-frame `step` / `time` labels; indexing, slicing and `map` transforms. Lazy, seekable reading from disk is a file reader's (`mp.io.lammps.LammpsDumpReader`, …). See [Trajectory](05_trajectory.md).
 
 ### Force field
 
@@ -49,7 +49,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : One concrete parameter record within a style, defined with `style.def_type(name, *endpoints, **params)`. For example, a bond type `CT-OH` between the atom types `CT` and `OH` with `k=320.0` and `r0=1.41`. Subclasses: `AtomType`, `BondType`, `AngleType`, `DihedralType`, `ImproperType`, `PairType`.
 
 **Potential**
-: The numerical realization of a force field's styles and types, ready for energy/force computation. Produced by `mp.ff.compile.PotentialCompiler(ff).compile(frame)` (or `.defer()` for a `Potentials` bound later) and evaluated against a typed `Frame` via `pots.calc_energy(frame)` / `pots.calc_forces(frame)`; the kernels run in the high-performance backend. See [Force Field](04_force_field.md).
+: The numerical realization of a force field's styles and types, ready for energy/force computation. Produced by `mp.ff.PotentialCompiler(ff).compile(frame)` and evaluated against a typed `Frame` via `energy, forces = pots.evaluate(frame)`; the kernels run in the high-performance backend. See [Force Field](04_force_field.md).
 
 ### Modules
 
@@ -69,7 +69,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : The topology of an assembly: an `mp.CoarseGrain` whose beads name library units (`bead_type`) and whose bonds say which units join. It comes from CGsmiles notation (`mp.io.cgsmiles.read_cgsmiles(...).to_coarsegrain()`) or from coarsening a CG model (`Coarsener`), in which case each site also has a position and an axis.
 
 **Placer**
-: The assembler's rule for each copy's pose. `GrowthPlacer` grows each molecule onto its parents' ports and needs no coordinates; `SitePlacer` puts each copy's centre of mass on its site.
+: The assembler's rule for each copy's pose. `GrowthPlacer` grows each molecule onto its parents' ports and needs no coordinates; `SitePlacer` puts each copy's centroid (the mean of its atom positions) on its site.
 
 **Orienter**
 : The optional rule that turns each copy before it is placed. `AxisOrienter` aligns a unit with its site's axis and bonds; it needs site positions.
@@ -78,7 +78,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : Assigns force field types to atoms, bonds, angles, and dihedrals: implements `assign` (returning a `TypeAssignment`), and the base's `typify` returns a typed copy while `forcefield()` accumulates the assigned types. Native: `OplsAaTypifier`, `Mmff94Typifier`, `Mmff94sTypifier`, `ElementTypifier`, and GAFF / GAFF2 as `AtdTypifier` then `GaffTypifier`. AM1-BCC charges for the native route: `mp.ff.charge.Am1BccModel` (sqm via AmberTools). A native GAFF force field merges with an `AmberPolymerBuilder` chain's. The whole AmberTools pipeline, for parameters of your own on top of the leaprc and antechamber's other charge methods: `AntechamberTypifier`, `TleapTypifier` (see [AmberTools Integration](../user-guide/13_ambertools_integration.md)). See [Force Field Typification](../user-guide/06_typifier.md).
 
 **Selector**
-: A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](06_selector.md).
+: A composable predicate that filters rows of a `Block` by a column value (`ColumnSelector`) or by row index (`AtomIndexSelector`); geometric regions (`mp.core.Sphere`, `mp.core.HalfSpace`, …) select by position. Combinable with `&`, `|`, `~`. See [Selector](06_selector.md).
 
 **Tool**
 : An external program molpy runs as a subprocess (an engine, or an AmberTools program such as antechamber or tleap), resolved from molpy's configuration; every failure is an `mp.tool.ToolError`. Packing uses molpack in-process, not a tool. See [Tool](../api/tool.md).

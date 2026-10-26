@@ -1,6 +1,6 @@
 # Telechelic chain
 
-**Script:** [`examples/topology/06_telechelic.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/06_telechelic.py)
+**Script:** [`molpy/examples/topology/06_telechelic.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/06_telechelic.py)
 
 End groups are one-port units at the ends of a path: `CAPA` (`C[>]`) joins the first `EO`'s `<`, and `CAPB` (`[<]OC`) joins the last `EO`'s `>`.
 
@@ -15,7 +15,7 @@ tele = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites
 **Check:** 8 units, 51 atoms, no open port.
 
 ```bash
-cd examples && python topology/06_telechelic.py
+cd molpy/examples && python topology/06_telechelic.py
 ```
 
 ## See also

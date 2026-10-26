@@ -45,7 +45,7 @@ use crate::ff::compile::PotentialCompiler;
 use crate::ff::compile::exceptions;
 use crate::ff::forcefield::{ForceField, Style};
 use crate::ff::ir::{Params, SpecialBonds};
-use crate::ff::potential::intramolecular_pairs;
+use crate::ff::special_pairs::SpecialPairs;
 use crate::io::amber::prmtop_forcefield::AmberPrmtopForcefieldReader;
 use crate::io::gromacs::top_reader::GromacsTopForcefieldReader;
 use crate::io::gromacs::top_writer::GromacsTopForcefieldWriter;
@@ -60,7 +60,6 @@ use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::core::constants::COULOMB_REAL;
-use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::io::gro::GroReader;
 use molrs::io::lammps::data::{read_lammps_data, write_lammps_data};
 use molrs::io::read_inpcrd;
@@ -164,7 +163,9 @@ fn prmtop(parm: &str, rst: &str) -> System {
         .read_system(parm.as_bytes())
         .unwrap();
     no_cutoff(&mut ff);
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds().unwrap(), None).unwrap();
+    let pairs = molrs::core::Topology::from_frame(&frame)
+        .unwrap()
+        .pairs_block();
     frame.insert("pairs", pairs);
     let xyz = read_inpcrd(rst.as_bytes()).unwrap();
     let atoms = xyz.get("atoms").unwrap();
@@ -410,15 +411,14 @@ pub(crate) fn one_four_as_dihedral_weights(ff: &ForceField, frame: &Frame) -> (F
         )
         .unwrap();
     let adjacent = adjacency(frame);
-    let pairs = frame.get("pairs").unwrap();
-    let is_14 = pairs.get("is_14").unwrap().get::<bool>().unwrap();
-    let (pi, pj) = (
+    let (pi, pj, hops) = (
         idx_col(frame, "pairs", "atomi"),
         idx_col(frame, "pairs", "atomj"),
+        idx_col(frame, "pairs", "n_bonds"),
     );
     let mut rows = relation_rows(frame, "dihedrals", 4);
     for r in 0..pi.len() {
-        if is_14[[r]] {
+        if hops[r] == 3 {
             let path = bonded_path(&adjacent, pi[r], pj[r]).expect("a 1-4 pair is 1-4");
             rows.push((path.to_vec(), PAIR14.to_owned()));
         }
@@ -427,7 +427,9 @@ pub(crate) fn one_four_as_dihedral_weights(ff: &ForceField, frame: &Frame) -> (F
     out_frame.insert("dihedrals", relation(&rows, 4));
     out_frame.insert(
         "pairs",
-        intramolecular_pairs(&out_frame, out.special_bonds().unwrap(), None).unwrap(),
+        molrs::core::Topology::from_frame(&out_frame)
+            .unwrap()
+            .pairs_block(),
     );
     (out, out_frame)
 }
@@ -603,24 +605,48 @@ fn at_coulomb(ff: &ForceField, c: F) -> ForceField {
 
 // ── molrs's terms ───────────────────────────────────────────────────────────
 
-/// `frame` without its per-pair override rows (the pair styles' own list).
-fn without_overrides(frame: &Frame) -> Frame {
+/// `frame` with the pairs the exceptions kernel prices (`replaced`) weighed
+/// 0 and no parameter cell: what the pair styles alone price.
+fn without_exceptions(frame: &Frame, replaced: &HashSet<(usize, usize)>) -> Frame {
     let mut out = frame.clone();
-    let Some(pairs) = frame.get("pairs") else {
-        return out;
-    };
-    let n = pairs.n_rows().unwrap_or(0);
-    let has = |r: usize| {
-        PAIR_OVERRIDE_COLUMNS
-            .iter()
-            .any(|k| pairs.get(k).is_some() && pairs.validity(k).is_none_or(|m| m[r]))
-    };
-    let keep: Vec<usize> = (0..n).filter(|&r| !has(r)).collect();
-    let mut kept = pairs.select_rows(&keep).unwrap();
-    for k in PAIR_OVERRIDE_COLUMNS {
-        kept.remove(k);
+    let rows = SpecialPairs::of(frame).unwrap().unwrap_or_default();
+    let mut listed = HashSet::new();
+    let (mut ai, mut aj, mut hops, mut lj, mut coul) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for p in rows.rows() {
+        listed.insert((p.i, p.j));
+        let gone = replaced.contains(&(p.i, p.j));
+        ai.push(p.i as u64);
+        aj.push(p.j as u64);
+        hops.push(p.n_bonds as u64);
+        lj.push(if gone { Some(0.0) } else { p.cells[3] });
+        coul.push(if gone { Some(0.0) } else { p.cells[4] });
     }
-    out.insert("pairs", kept);
+    for &(i, j) in replaced.iter().filter(|k| !listed.contains(k)) {
+        ai.push(i as u64);
+        aj.push(j as u64);
+        hops.push(0);
+        lj.push(Some(0.0));
+        coul.push(Some(0.0));
+    }
+    let mut block = molrs::core::Block::new();
+    for (key, col) in [("atomi", ai), ("atomj", aj), ("n_bonds", hops)] {
+        block
+            .insert(key, ndarray::Array1::from_vec(col).into_dyn(), None)
+            .unwrap();
+    }
+    for (key, cells) in [("lj_scale", lj), ("coul_scale", coul)] {
+        let valid: Vec<bool> = cells.iter().map(Option::is_some).collect();
+        let values: Vec<F> = cells.iter().map(|c| c.unwrap_or(0.0)).collect();
+        block
+            .insert(
+                key,
+                ndarray::Array1::from_vec(values).into_dyn(),
+                Some(valid),
+            )
+            .unwrap();
+    }
+    out.insert("pairs", block);
     out
 }
 
@@ -634,14 +660,10 @@ pub(crate) fn molrs_terms(
     sander: bool,
 ) -> BTreeMap<&'static str, F> {
     let ff = &at_coulomb(ff, c);
-    let mut frame = frame.clone();
-    let one_four = ff
-        .get_style("pair", "lj/charmm")
-        .is_some_and(|s| s.params().get("one_four").and_then(|v| v.as_text()) == Some("epsilon14"));
-    if one_four {
-        ff.materialize_one_four(&mut frame).unwrap();
-    }
-    let plain = without_overrides(&frame);
+    let frame = frame.clone();
+    let pairs = SpecialPairs::of(&frame).unwrap().unwrap_or_default();
+    let plan = exceptions::plan(ff, &frame, &pairs, ff.required_special_bonds().unwrap()).unwrap();
+    let plain = without_exceptions(&frame, &plan.replaced);
     let mut out: BTreeMap<&'static str, F> = TERMS.iter().map(|t| (*t, 0.0)).collect();
     for style in ff.styles() {
         let term = match (style.category(), style.name()) {
@@ -705,11 +727,7 @@ pub(crate) fn molrs_terms(
             .unwrap()
             .energy_at(x);
     }
-    let (lj14, coul14) = exceptions::plan(ff, &frame, true)
-        .unwrap()
-        .kernel
-        .map(|k| k.energy_terms(x))
-        .unwrap_or((0.0, 0.0));
+    let (lj14, coul14) = plan.kernel.map(|k| k.energy_terms(x)).unwrap_or((0.0, 0.0));
     *out.get_mut("vdw").unwrap() += lj14;
     *out.get_mut("coul").unwrap() += coul14;
     out.insert(
@@ -725,15 +743,8 @@ pub(crate) fn molrs_terms(
 /// molrs's total forces of `(ff, frame)` at `x`, Coulomb at `c`.
 pub(crate) fn molrs_forces(ff: &ForceField, frame: &Frame, x: &[F], c: F) -> Vec<F> {
     let ff = at_coulomb(ff, c);
-    let mut frame = frame.clone();
-    if ff
-        .get_style("pair", "lj/charmm")
-        .is_some_and(|s| s.params().get("one_four").and_then(|v| v.as_text()) == Some("epsilon14"))
-    {
-        ff.materialize_one_four(&mut frame).unwrap();
-    }
     PotentialCompiler::new(&ff)
-        .compile(&frame)
+        .compile(frame)
         .unwrap()
         .energy_forces_at(x)
         .1
@@ -878,10 +889,15 @@ fn every_written_file_reads_back_as_written() {
             .read(dir.join("system.ff").as_path())
             .unwrap_or_else(|e| panic!("{} LAMMPS include: {e}", source.name));
         let mut back_frame = read_lammps_data(&dir.join("data.lmp")).unwrap();
+        // The data file's box is LAMMPS's simulation cell; the molecule is
+        // priced in free space, as it was written.
+        back_frame.simbox = None;
         named_types(&mut back_frame);
         back_frame.insert(
             "pairs",
-            intramolecular_pairs(&back_frame, back.special_bonds().unwrap(), None).unwrap(),
+            molrs::core::Topology::from_frame(&back_frame)
+                .unwrap()
+                .pairs_block(),
         );
         let (pre2, include2, cmap2) = lammps_include(&back, &back_frame);
         same_text(

@@ -182,9 +182,13 @@ mod tests {
     #[test]
     fn coulomb_and_dielectric_are_required_and_the_spec_defaults_apply() {
         use crate::ff::ir::IrError;
+        // Each case states the cutoff, required of its own
+        // (`param_reads::a_declared_cutoff_is_stated_and_inf_prices_every_pair`).
         let terms = |style: &[(&str, f64)]| {
+            let mut params = Params::from_iter(style.iter().copied());
+            params.set("cutoff", F::INFINITY);
             ExplicitTerms::new("pair", "coul/cut")
-                .style_params(Params::from_iter(style.iter().copied()))
+                .style_params(params)
                 .atoms([vec![0, 1]])
                 .charges(vec![0.5, -0.4])
                 .compile()
@@ -214,7 +218,6 @@ mod tests {
             ("coulomb", COULOMB_REAL),
             ("dielectric", 1.0),
             ("delta", 0.0),
-            ("cutoff", F::INFINITY),
         ])
         .unwrap();
         let want = COULOMB_REAL * 0.5 * -0.4 / 2.5;

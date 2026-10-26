@@ -6,22 +6,22 @@ number, a curve, or a grid: a radial distribution function from neighbour
 tables, a mean squared displacement from a trajectory, a dipole series from
 positions and charges.
 
-!!! important "Science lives in molrs"
-    Every shipped kernel is implemented once in **molrs** and re-exported by
+!!! important "Science lives in the Rust core"
+    Every shipped kernel is implemented once in the **Rust core** and re-exported by
     identity into `molpy.compute`. molpy holds no compute code: a new analysis
     for every user is a new type in `molrs::compute`, with its Python binding,
-    and it appears on `molpy.compute` with no molpy change at all. Do **not**
+    and the Python package's only change is the line that re-exports it. Do **not**
     add a Python recipe class that reimplements Green–Kubo, Einstein
-    conductivity, or a dielectric spectrum, and do not wrap a molrs class in a
-    molpy one.
+    conductivity, or a dielectric spectrum, and do not wrap a core class in a
+    Python one.
 
-    A time correlation in particular is never a new kernel. molrs has one
+    A time correlation in particular is never a new kernel. The core has one
     estimator, `Correlator`, and every correlation — `Msd`, `Vacf`,
     `ReorientationAcf`, `Survival`, the dipole and current ACFs — is a
     configuration of it that fixes the settings defining the quantity and
     returns a `TimeCorrelation`. A new quantity of that shape is either a
     `Correlator` built directly in your script or, if chemists know it by
-    name, one more such configuration in molrs.
+    name, one more such configuration in the core.
 
 ## The contract: configuration in, data through `compute`
 
@@ -35,7 +35,7 @@ two rules:
 2. **Data goes to `compute`, by keyword.** Arrays, the sample interval `dt`,
    a `Box`, neighbour tables, a partition, the result of another compute. Each
    input is a named keyword argument with a concrete type, so a call site
-   reads `Msd(max_lag=500).compute(positions=xyz, dt=10.0)`.
+   reads `LinearFit(0.2, 0.8).compute(correlation=msd, channel=0)`.
 
 That split is the whole point: one configured object can be applied to many
 trajectories with the measurement held fixed, and the parameters that decide
@@ -50,10 +50,13 @@ fail on every other.
 
 `molpy.compute.Compute` is the name of that contract, and it is **not** a base
 class. It is a [`typing.Protocol`](https://peps.python.org/pep-0544/) — a
-*structural* type — owned by the molrs backend and re-exported unchanged.
+*structural* type — that mirrors the core `molrs::compute::Compute` trait.
 Structural means a class conforms by **having the right method**, never by
 inheriting one: define `compute(...)` and your class already is a `Compute`,
-with no import, no registration, and no subclassing.
+with no import, no registration, and no subclassing. A stream over frames
+(`Msd`, `Vacf`, `Rdf`) has no `compute`; it satisfies the sibling protocol
+`molpy.compute.Stream` with one method, `accumulator()`, whose accumulator
+takes one frame per `push(...)` and reads the result with `finish()`.
 
 The protocol is decorated `@runtime_checkable`, so `isinstance(obj, Compute)`
 runs — but read what it asserts. A runtime protocol check tests for the
@@ -61,19 +64,21 @@ runs — but read what it asserts. A runtime protocol check tests for the
 parameter types, not its behaviour. Treat it as a smoke test at a boundary,
 not as dispatch in a loop.
 
-## A shipped analysis is added in molrs
+## A shipped analysis is added in the Rust core
 
 An analysis every user should have goes into `molrs::compute` as one type
-implementing the core `Compute` trait, with its configuration in `new` /
-`with_*`, its data in a per-type input struct, its defaults in the core, and a
-`ComputeSpec` descriptor. The Python binding (`molpy/src/compute/`) is
-derived from that type, and the class lands on `mp.compute` under the same
-name.
+implementing the core `Compute` trait (or `Stream`, for a per-frame stream),
+with its configuration in `new` / `with_*`, its data in a per-type input
+struct, its defaults in the core, and a `ComputeSpec` descriptor (the
+`Described` trait). Its Python binding is a class in `molpy/src/compute/`
+under the core name, registered on `molpy._core`; listing it in
+`molpy/python/molpy/compute/__init__.py`'s import and `__all__`, with its
+stub in `molpy/python/molpy/_core.pyi`, puts it on `mp.compute`.
 
 Results chain without adapters. A fit reads the `TimeCorrelation` a
 correlation returns, `Pca` reads the `SteinhardtResult` a descriptor returns,
 and `CenterOfMass` reads a `ClusterResult` as its partition. A new type should
-take and give these same objects rather than a molpy-side dictionary.
+take and give these same objects rather than a Python-side dictionary.
 
 ## A one-off analysis is a class in your script
 
@@ -173,7 +178,8 @@ print(isinstance(profile, Compute))             # -> True
 ## Checklist
 
 - [ ] A shipped analysis is a `molrs::compute` type with a `ComputeSpec`, bound
-      in `molpy/src/compute/`
+      in `molpy/src/compute/`, re-exported by `molpy/python/molpy/compute/__init__.py`
+      and stubbed in `_core.pyi`
 - [ ] Plain class: no base class, no `super().__init__`, no `dump()`
 - [ ] Configuration only in `__init__`, stored as attributes
 - [ ] `def compute(self, *, …)` with type hints — one keyword per data input

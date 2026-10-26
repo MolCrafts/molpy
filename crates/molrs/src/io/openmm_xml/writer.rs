@@ -1011,7 +1011,10 @@ impl OpenmmXmlWriter {
     /// different elements, or an element other than the type's own; a
     /// `bonds` row naming an atom past the frame; two atoms of one residue
     /// with the same name (OpenMM refuses such a template); no charges in
-    /// the frame or on the types; frame charges with no Coulomb style.
+    /// the frame or on the types; frame charges with no Coulomb style; and
+    /// special pairs `createSystem` would not build (a `pairs` block that is
+    /// not exactly the 1-2, 1-3 and 1-4 pairs of the bonds, or carries a
+    /// per-pair override), which the document has no form for.
     ///
     /// Two residues with the same elements and bonds but different types or
     /// charges (one molecule typed or charged two ways) are written as two
@@ -1024,6 +1027,7 @@ impl OpenmmXmlWriter {
         ff: &ForceField,
         frame: &molrs::core::Frame,
     ) -> Result<(), ForceFieldWriteError> {
+        crate::io::lammps::refuse_inexpressible_pairs(frame)?;
         let templates = residues::Templates::of(self, ff, frame)?;
         put_text(sink.into(), &self.render(ff, Some(&templates))?)
     }

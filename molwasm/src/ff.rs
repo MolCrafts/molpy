@@ -145,11 +145,16 @@ impl PotentialCompiler {
         }
     }
 
-    /// Compile the potentials of a **typed** frame. Non-bonded terms need a
-    /// `pairs` block; `Lbfgs.minimize` installs that list (from the
-    /// [`Neighbors`](crate::core::Neighbors) table it was constructed with)
-    /// and recompiles before minimizing, so compiling a frame with no `pairs`
-    /// yields its bonded kernels only.
+    /// Compile the potentials of a **typed** frame: its bonded terms, and
+    /// every pair of atoms priced by the pair styles, each at its weight (a
+    /// pair the frame's `pairs` block names at its special-pair weight, every
+    /// other pair at full strength). Right for a molecule in free space.
+    ///
+    /// # Errors
+    ///
+    /// Throws what the compiler refuses — among it a frame whose bonds have
+    /// no special pairs (`pairs`), and a periodic frame (use
+    /// [`compileOver`](Self::compile_over)).
     pub fn compile(&self, frame: &Frame) -> Result<Potentials, JsValue> {
         let pots = frame.with_frame(|rs| {
             RsPotentialCompiler::new(&self.ff)
@@ -157,7 +162,31 @@ impl PotentialCompiler {
                 .map_err(|e| JsValue::from_str(&format!("compile: {e}")))
         })?;
         Ok(Potentials {
-            ff: self.ff.clone(),
+            inner: Arc::new(pots),
+        })
+    }
+
+    /// [`compile`](Self::compile) with the candidate pairs taken from a
+    /// [`Neighbors`](crate::core::Neighbors) table (a
+    /// [`NeighborList`](crate::core::NeighborList) built at the force field's
+    /// non-bonded cutoff) instead of every pair of atoms. The frame's special
+    /// pairs still weigh them; the frame is not changed.
+    ///
+    /// # Errors
+    ///
+    /// Throws what the compiler refuses.
+    #[wasm_bindgen(js_name = compileOver)]
+    pub fn compile_over(
+        &self,
+        frame: &Frame,
+        neighbors: &crate::core::Neighbors,
+    ) -> Result<Potentials, JsValue> {
+        let pots = frame.with_frame(|rs| {
+            RsPotentialCompiler::new(&self.ff)
+                .compile_over(rs, &neighbors.inner)
+                .map_err(|e| JsValue::from_str(&format!("compileOver: {e}")))
+        })?;
+        Ok(Potentials {
             inner: Arc::new(pots),
         })
     }
@@ -165,11 +194,9 @@ impl PotentialCompiler {
 
 // ── Potentials ──────────────────────────────────────────────────────────────
 
-/// Compiled kernels (molrs `ff::potential::Potentials`). Holds the force field so [`Lbfgs`](crate::optimize::Lbfgs) can recompile
-/// after installing a neighbour list.
+/// Compiled kernels (molrs `ff::potential::Potentials`).
 #[wasm_bindgen(js_name = Potentials)]
 pub struct Potentials {
-    pub(crate) ff: RsForceField,
     pub(crate) inner: Arc<RsPotentials>,
 }
 

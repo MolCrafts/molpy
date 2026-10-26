@@ -396,6 +396,7 @@ pub fn cmap_charmm_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
+    _coulomb: &crate::ff::potential::SpecialWeights,
 ) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame

@@ -231,7 +231,7 @@ pub struct TypeAssignment {
 pub fn link_category(kind: &str) -> Option<(String, EndpointOrder)> {
     // `Some(_)` when registered categories own the block: the relation
     // among them, if any.
-    let owned = crate::ff::style_registry::with_global_registry(|r| {
+    let owned = crate::ff::style_registry::GlobalRegistry.with(|r| {
         let owners: Vec<_> = r.categories().filter(|c| c.block == kind).collect();
         (!owners.is_empty()).then(|| {
             owners
@@ -1850,13 +1850,14 @@ mod tests {
     /// the process-wide registry exactly as the Python test hook does, so
     /// the registration is idempotent across tests.
     fn register_urey_bradley() {
-        crate::ff::style_registry::register_category(crate::ff::ir::CategorySpec::custom(
-            "urey_bradley",
-            3,
-            crate::ff::ir::Coordinate::Compound,
-            EndpointOrder::Reversible,
-        ))
-        .unwrap();
+        crate::ff::style_registry::GlobalRegistry
+            .register_category(crate::ff::ir::CategorySpec::custom(
+                "urey_bradley",
+                3,
+                crate::ff::ir::Coordinate::Compound,
+                EndpointOrder::Reversible,
+            ))
+            .unwrap();
     }
 
     const UB_EXPRESSION: &str = "k_ub*(distance(p1,p3)-r_ub)^2";

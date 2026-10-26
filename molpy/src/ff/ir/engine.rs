@@ -1,9 +1,8 @@
 //! `molpy.ff.ir`'s engine forms (`ff-ir-02-protocol` §8): a style's
 //! LAMMPS form, from Python.
 //!
-//! * `style_registry.register_style(..., lammps="positional")` (and a
-//!   `style_registry.StyleDeclaration`'s
-//!   `lammps = "positional"`) gives a style the positional LAMMPS form: its
+//! * `GlobalRegistry().register_style(..., lammps="positional")` gives a
+//!   style the positional LAMMPS form: its
 //!   `params` in order on the `*_coeff` line, each converted by its
 //!   dimension; `"positional:<name>"` writes it under the LAMMPS style
 //!   `<name>`; `None` (the default) gives it none, so LAMMPS refuses it by

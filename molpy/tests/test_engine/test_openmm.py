@@ -207,7 +207,7 @@ class TestNonbondedFromTheForceField:
 
     @pytest.fixture
     def boxed_water(self, water, tip3p):
-        tip3p.get_style("pair", "lj/cut")["cutoff"] = 9.0
+        tip3p.get_style("pair", "lj/cut").set(cutoff=9.0)
         frame = water.to_frame()
         frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
         return frame, tip3p
@@ -233,6 +233,23 @@ class TestNonbondedFromTheForceField:
         )
         assert config.nonbonded_method == "PME"
         assert config.nonbonded_cutoff_nm == 1.0
+
+    def test_an_infinite_cutoff_is_no_cutoff_and_refused_when_periodic(self, tip3p):
+        """A field that prices every pair is OpenMM's ``NoCutoff`` (which reads
+        no cutoff, so the script states none); a periodic method needs a
+        finite one."""
+        from molpy.engine.openmm import _with_nonbonded
+
+        tip3p.get_style("pair", "lj/cut").set(cutoff=float("inf"))
+        config = _with_nonbonded(
+            mp.engine.OpenmmSimulationConfig(), tip3p, periodic=False
+        )
+        assert config.nonbonded_method == "NoCutoff"
+        assert config.nonbonded_cutoff_nm is None
+        setup = mp.engine.OpenmmEngine._system_setup(config, "s.pdb", "ff.xml")
+        assert "nonbondedCutoff" not in setup
+        with pytest.raises(ValueError, match="finite cutoff"):
+            _with_nonbonded(mp.engine.OpenmmSimulationConfig(), tip3p, periodic=True)
 
     def test_cut_coulomb_is_a_periodic_cutoff(self, engine, boxed_water, tmp_path):
         frame, ff = boxed_water

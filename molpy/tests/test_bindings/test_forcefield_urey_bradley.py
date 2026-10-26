@@ -76,12 +76,17 @@ def test_an_angle_style_named_charmm_carries_the_four_params() -> None:
     style = _ub_ff().get_style("angle", "charmm")
     assert isinstance(style, mp.ff.forcefield.AngleStyle)
     (t,) = style.get_types()
-    assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
+    assert (t.params["k"], t.params["theta0"], t.params["k_ub"], t.params["r_ub"]) == (
+        K,
+        THETA0,
+        K_UB,
+        R_UB,
+    )
 
 
 def test_it_compiles_to_the_lammps_energy() -> None:
     frame = _frame()
-    compiler = mp.ff.compile.PotentialCompiler(_ub_ff())
+    compiler = mp.ff.PotentialCompiler(_ub_ff())
     e = compiler.compile(frame).evaluate(frame)[0]
     assert math.isclose(e, _hand_energy(), rel_tol=1e-12)
     assert len(compiler.compile_typed(frame)) == 1
@@ -95,11 +100,16 @@ def test_it_round_trips_through_the_section_and_a_store(tmp_path: Path) -> None:
     mp.io.write_mrec(path, forcefield=ff)
     back = mp.io.mrec.MrecFile(path).forcefield().to_forcefield()
     (t,) = back.get_types("angle")
-    assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
+    assert (t.params["k"], t.params["theta0"], t.params["k_ub"], t.params["r_ub"]) == (
+        K,
+        THETA0,
+        K_UB,
+        R_UB,
+    )
     frame = _frame()
     assert (
-        mp.ff.compile.PotentialCompiler(back).compile(frame).evaluate(frame)[0]
-        == mp.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
+        mp.ff.PotentialCompiler(back).compile(frame).evaluate(frame)[0]
+        == mp.ff.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
     )
 
 
@@ -111,6 +121,11 @@ def test_the_lammps_writer_and_reader_keep_it_as_written(tmp_path: Path) -> None
     path.write_text(text, encoding="utf-8")
     back = mp.io.lammps.LammpsForcefieldReader().read(path)
     (t,) = back.get_types("angle")
-    assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
+    assert (t.params["k"], t.params["theta0"], t.params["k_ub"], t.params["r_ub"]) == (
+        K,
+        THETA0,
+        K_UB,
+        R_UB,
+    )
     data = _lammps_data_coeffs(_ub_ff(), _frame())
     assert "Angle Coeffs # charmm" in data

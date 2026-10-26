@@ -90,7 +90,7 @@ closer than that. This is the repulsive wall of the interatomic potential, and
 it is the reason liquids are nearly incompressible. Every atom carries an
 exclusion zone that nothing else enters.
 
-**A sharp peak at 3.68 Å, reaching $g = 2.89$.** Almost three times as many
+**A sharp peak at 3.68 Å, reaching $g = 2.91$.** Almost three times as many
 neighbours sit at this distance as chance would put there. This is the first
 coordination shell — the atoms in direct contact. Its position is not arbitrary.
 Argon is modelled here as a Lennard-Jones fluid with collision diameter
@@ -99,7 +99,7 @@ $2^{1/6}\sigma = 3.82$ Å. The peak sits just inside the bottom of the pair
 potential well: atoms settle where the energy is lowest, pushed slightly closer
 by the pressure of the surrounding fluid.
 
-**A dip to $g \approx 0.59$, flat from 5.3 to 5.4 Å.** Depleted, not empty. Atoms in the first shell
+**A dip to $g \approx 0.61$, flat from 5.2 to 5.5 Å.** Depleted, not empty. Atoms in the first shell
 are in the way, so this separation is awkward to occupy.
 
 **A broad second peak at 7.08 Å, only $g = 1.27$.** The second shell, roughly
@@ -161,7 +161,7 @@ between the first peak and the first minimum of $g(r)$ is the first
 coordination shell.
 </figure>
 
-For this argon, $n$ at the first minimum (5.33 Å) is **12.4**. A close-packed crystal has
+For this argon, $n$ at the first minimum (5.28 Å) is **12.2**. A close-packed crystal has
 exactly 12 nearest neighbours. So each atom in the liquid is packed as
 tightly as it would be in a solid — it has kept its neighbours and lost only the
 long-range order. That one number is the physical content of the whole curve,
@@ -268,13 +268,13 @@ Those are the FCC shells exactly: 12 nearest neighbours, then 6 more, then 24
 more — 12, 18, 42. Because the crystal's $g(r)$ is a set of isolated spikes,
 $n(R)$ is a staircase, and any $R$ in the flat region between two shells gives
 the same integer. Run the identical four lines on the argon liquid and you get
-the 12.4 quoted above; the only difference is that the liquid's steps are
+the 12.2 quoted above; the only difference is that the liquid's steps are
 rounded, so *where* you evaluate matters.
 
 The argon curve in Figure 1 is the same calculation on a longer trajectory:
 
 ```python
-# docs: skip — runs a 30 ps MD trajectory (minutes, not seconds)
+# docs: skip — needs the docs_series package (molpy/scripts) and a 30 ps MD run
 from docs_series.run import argon_trajectory
 from docs_series.structure import radial_distribution
 

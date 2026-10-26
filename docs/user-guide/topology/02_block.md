@@ -1,6 +1,6 @@
 # Block / sequence copolymer
 
-**Script:** [`examples/topology/02_block.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/02_block.py)
+**Script:** [`molpy/examples/topology/02_block.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/02_block.py)
 
 A sequence is a path whose sites name different units. `{[#EO]|6[#PO]|4}` is six `EO` then four `PO`; any order can be written out site by site.
 
@@ -15,7 +15,7 @@ block = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(site
 **Check:** 10 units, 84 atoms, 2 open ports.
 
 ```bash
-cd examples && python topology/02_block.py
+cd molpy/examples && python topology/02_block.py
 ```
 
 ## See also

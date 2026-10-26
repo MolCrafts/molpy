@@ -6,7 +6,7 @@
 //! its sealed built-ins from [`BuiltinKernels::builtin`], each beside its
 //! spec, and `PotentialCompiler` resolves every style through that registry.
 //! A third party registers through
-//! [`register_style`](crate::ff::style_registry::register_style).
+//! [`GlobalRegistry::register_style`](crate::ff::style_registry::GlobalRegistry::register_style).
 //!
 //! Every built-in whose energy is a function of one coordinate or of its
 //! atoms' positions is a **form** — [`Kernel::Scalar`] or

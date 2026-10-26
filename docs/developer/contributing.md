@@ -41,10 +41,12 @@ A good description answers five questions:
 
 ## Documentation expectations
 
-When behavior changes, update the relevant docs in `docs/`. The three doc layers have different standards:
+When behavior changes, update the relevant docs in `docs/`. The doc layers have different standards:
 
-- **Concepts** (human-first) — narrative explanation with code after context
-- **Guides** (human-first) — end-to-end workflows with runnable code
+- **Tutorials** (human-first) — narrative explanation with code after context
+- **Guides** and **Compute** (human-first) — end-to-end workflows with runnable code
 - **API Reference** (agent-first) — quick-reference tables + mkdocstrings auto-generation
+
+The manual is executable: the `docs` gate runs every ```` ```python ```` block of a page, top to bottom, against the current API. A block that cannot run in the docs environment starts with `# docs: skip — <reason>`, naming the missing program or package.
 
 If the change adds a new public symbol, it should appear in the appropriate API page. If it changes user-facing behavior, the relevant guide or concept page should be updated.

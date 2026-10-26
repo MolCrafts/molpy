@@ -260,7 +260,7 @@ def test_read_opls_xml_returns_the_force_field_with_its_mixing(tmp_path):
     path.write_text(_OPLS_GEOMETRIC, encoding="utf-8")
     ff = mp.io.openmm_xml.OpenmmXmlReader().read(path)
     assert type(ff) is mp.ff.forcefield.ForceField
-    assert ff.get_style("pair", "lj/cut")["mixing"] == "geometric"
+    assert ff.get_style("pair", "lj/cut").params["mixing"] == "geometric"
 
 
 def test_a_written_force_field_reads_back_through_a_pathlike(tmp_path):
@@ -320,13 +320,13 @@ def test_handle_equality_includes_the_force_field():
 def test_a_type_param_can_be_a_string():
     ff = mp.ff.forcefield.ForceField("strings")
     (ct,) = _atoms(ff, "CT")
-    ct["element"] = "C"
-    ct["charge"] = -0.5
+    ct.set(element="C")
+    ct.set(charge=-0.5)
     assert ct.params == {"mass": 1.0, "element": "C", "charge": -0.5}
     with pytest.raises(TypeError, match="a number, a str or an array"):
-        ct["tags"] = {"a": 1}
+        ct.set(tags={"a": 1})
     with pytest.raises(TypeError, match="rectangular"):
-        ct["tags"] = ["a", "b"]
+        ct.set(tags=["a", "b"])
 
 
 def test_endpoints_are_the_defined_atom_types():
@@ -344,7 +344,7 @@ def test_a_force_field_pickles_with_its_whole_definition():
     ff = mp.ff.forcefield.ForceField("full", units="metal")
     ff.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 0.75])
     ct, oh = _atoms(ff, "CT", "OH")
-    ct["element"] = "C"
+    ct.set(element="C")
     ff.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=300.0, r0=1.4)
     ff.def_style("pair", "lj/cut", {"cutoff": 10.0, "mixing": "geometric"}).def_type(
         "CT", ct, epsilon=0.1, sigma=3.5
@@ -396,39 +396,30 @@ def _bonded_pair(label: str = "CT-CT") -> mp.core.Frame:
 
 
 def test_potential_compiler_constructs_from_a_forcefield():
-    compiler = mp.ff.compile.PotentialCompiler(_bond_ff())
-    assert isinstance(compiler, mp.ff.compile.PotentialCompiler)
+    compiler = mp.ff.PotentialCompiler(_bond_ff())
+    assert isinstance(compiler, mp.ff.PotentialCompiler)
 
 
 def test_compile_returns_potentials():
-    pots = mp.ff.compile.PotentialCompiler(_bond_ff()).compile(_bonded_pair())
+    pots = mp.ff.PotentialCompiler(_bond_ff()).compile(_bonded_pair())
     assert isinstance(pots, mp.ff.potential.Potentials)
     assert len(pots) == 1
 
 
 def test_compile_none_raises_type_error():
-    compiler = mp.ff.compile.PotentialCompiler(_bond_ff())
+    compiler = mp.ff.PotentialCompiler(_bond_ff())
     with pytest.raises(TypeError):
         compiler.compile(None)  # type: ignore[arg-type]
 
 
-def test_defer_returns_empty_potentials_that_bind_on_evaluation():
-    compiler = mp.ff.compile.PotentialCompiler(_bond_ff())
-    deferred = compiler.defer()
-    assert isinstance(deferred, mp.ff.potential.Potentials)
-    assert len(deferred) == 0
-    frame = _bonded_pair()
-    assert deferred.evaluate(frame)[0] == compiler.compile(frame).evaluate(frame)[0]
-
-
 def test_compile_typed_returns_typed_potentials():
-    typed = mp.ff.compile.PotentialCompiler(_bond_ff()).compile_typed(_bonded_pair())
+    typed = mp.ff.PotentialCompiler(_bond_ff()).compile_typed(_bonded_pair())
     assert isinstance(typed, mp.ff.potential.WeightedTerms)
     assert len(typed) == 1
 
 
 def test_compile_unknown_type_label_raises_value_error():
-    compiler = mp.ff.compile.PotentialCompiler(_bond_ff())
+    compiler = mp.ff.PotentialCompiler(_bond_ff())
     with pytest.raises(ValueError):
         compiler.compile(_bonded_pair("XX-XX"))
 
@@ -452,13 +443,9 @@ def _lj_pair_energy(ff: mp.ff.forcefield.ForceField, r: float) -> float:
     for key, values in (("x", [0.0, r]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])):
         atoms.insert(key, np.array(values))
     atoms.insert("type", ["A", "B"])
-    pairs = mp.core.Block()
-    pairs.insert("atomi", np.array([0], dtype=np.uint64))
-    pairs.insert("atomj", np.array([1], dtype=np.uint64))
     frame = mp.core.Frame()
     frame["atoms"] = atoms
-    frame["pairs"] = pairs
-    return mp.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
+    return mp.ff.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
 
 
 def _lj(eps: float, sigma: float, r: float) -> float:
@@ -490,40 +477,47 @@ def test_a_pair_restated_in_reverse_is_one_row_or_a_conflict():
     assert _lj_pair_energy(ff, 2.5) == pytest.approx(_lj(0.9, 2.0, 2.5), rel=1e-12)
 
 
-def test_potential_compiler_lives_in_compile():
-    assert hasattr(mp.ff.compile, "PotentialCompiler")
-    assert not hasattr(mp.ff, "PotentialCompiler")
-
-
 def test_style_setitem_declares_a_cutoff():
     ff = mp.ff.forcefield.ForceField("t")
     style = ff.def_style("pair", "lj/cut")
-    style["cutoff"] = 12.0
-    assert ff.get_style("pair", "lj/cut")["cutoff"] == 12.0
+    style.set(cutoff=12.0)
+    assert ff.get_style("pair", "lj/cut").params["cutoff"] == 12.0
 
 
 def test_style_setitem_takes_a_string_param():
     ff = mp.ff.forcefield.ForceField("t")
     style = ff.def_style("pair", "lj/cut")
-    style["mixing"] = "geometric"
-    assert ff.get_style("pair", "lj/cut")["mixing"] == "geometric"
+    style.set(mixing="geometric")
+    assert ff.get_style("pair", "lj/cut").params["mixing"] == "geometric"
     with pytest.raises(TypeError, match="numbers of one rectangular shape"):
-        style["mixing"] = ["geometric"]
+        style.set(mixing=["geometric"])
     with pytest.raises(TypeError, match="a number, a str or an array of numbers"):
-        style["mixing"] = object()
+        style.set(mixing=object())
 
 
-def test_style_setitem_takes_every_param_value_kind():
-    """``Style::set_param`` takes any ``ParamValue``: a number, a str, or an
-    array of numbers (stored as float64), as a type's ``__setitem__`` does."""
+def test_style_set_takes_every_param_value_kind():
+    """``Style.set`` takes any ``ParamValue``: a number, a str, or an array of
+    numbers (stored as float64), as a type's ``set`` does."""
     ff = mp.ff.forcefield.ForceField("t")
     style = ff.def_style("pair", "lj/cut")
-    style["cutoff"] = 10.0
-    style["table"] = [[1, 2], [3, 4]]
-    got = ff.get_style("pair", "lj/cut")
+    style.set(cutoff=10.0, table=[[1, 2], [3, 4]])
+    got = ff.get_style("pair", "lj/cut").params
     assert got["cutoff"] == 10.0
     np.testing.assert_array_equal(got["table"], np.array([[1.0, 2.0], [3.0, 4.0]]))
     assert got["table"].dtype == np.float64
+
+
+def test_set_checks_every_value_before_writing_any():
+    """A ``set`` with one bad value writes none, on a style and on a type."""
+    ff = mp.ff.forcefield.ForceField("t")
+    style = ff.def_style("pair", "lj/cut", {"cutoff": 9.0})
+    with pytest.raises(TypeError):
+        style.set(cutoff=12.0, mixing=object())
+    assert style.params == {"cutoff": 9.0}
+    c = ff.def_style("atom", "full").def_type("C", mass=12.0)
+    with pytest.raises(TypeError):
+        c.set(mass=13.0, element=object())
+    assert c.params == {"mass": 12.0}
 
 
 def test_style_del_type_removes_one_type_by_name():

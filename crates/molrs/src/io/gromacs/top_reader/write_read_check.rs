@@ -45,8 +45,8 @@ fn per_pair_parameters_are_refused_by_the_lammps_writer() {
     let (_, frame) = GromacsTopForcefieldReader::new()
         .read_system(f.top.as_bytes())
         .unwrap_or_else(|e| panic!("{}: {e}", f.name));
-    let err =
-        crate::io::lammps::forcefield_writer::refuse_pair_overrides(&frame).expect_err("overrides");
+    let err = crate::io::lammps::forcefield_writer::refuse_inexpressible_pairs(&frame)
+        .expect_err("overrides");
     assert!(err.contains("epsilon"), "{err}");
 }
 

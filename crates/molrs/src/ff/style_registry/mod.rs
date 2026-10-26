@@ -51,12 +51,16 @@
 //!     .unwrap();
 //! ```
 
+mod batch;
 #[cfg(test)]
 mod builtin_conformance;
 mod builtin_kernels;
 mod compiled_expression;
 pub mod conformance;
 
+pub use batch::{
+    BatchCoordinates, BatchError, BatchForm, BatchGradient, BatchParamKind, BatchValue,
+};
 pub(crate) use builtin_kernels::BuiltinKernels;
 pub(crate) use compiled_expression::fallback_spec;
 pub use compiled_expression::{CompiledExpression, compile_expression};
@@ -69,10 +73,11 @@ use crate::ff::ir::torsion::{FAMILY, FourierSeries, canonical_series};
 use crate::ff::ir::{CategorySpec, IrError, StyleSpec, builtin_categories, builtin_styles};
 use crate::ff::ir::{Engine, LammpsCodec, LammpsForm};
 use crate::ff::ir::{FormCodec, ParamSource, Params, SpecialClass, TypeParams};
-use crate::ff::potential::ForceTerm;
 use crate::ff::potential::form_kernel::{
     CompoundForm, CompoundTerms, Probe, ScalarBonded, ScalarForm, ScalarPair,
 };
+use crate::ff::potential::pair::CandidatePairs;
+use crate::ff::potential::{ForceTerm, SpecialWeights};
 use conformance::{PROBE_TERMS, form_id};
 use molrs::core::Frame;
 use molrs::op::F;
@@ -82,13 +87,23 @@ use molrs::op::F;
 // ---------------------------------------------------------------------------
 
 /// Builds a molecule-bound [`ForceTerm`] from a style's params, its per-type
-/// params (`(type_label, params)`), and a typed [`Frame`]. Every kernel
-/// constructor in the crate matches this signature.
+/// params (`(type_label, params)`), a typed [`Frame`], and the electrostatic
+/// weights of the frame's special pairs (what a long-range sum corrects its
+/// 1-2, 1-3 and 1-4 pairs by). Every kernel constructor in the crate matches
+/// this signature.
 pub type KernelConstructor = fn(
     &Params,
     &[(&str, &Params)],
     &Frame,
+    &SpecialWeights,
 ) -> Result<ForceTerm, crate::ff::potential::CompileError>;
+
+/// What a pair style's compiled kernel is built from beside the frame: the
+/// pairs it prices and the electrostatic weights of the special pairs.
+pub(crate) struct PairContext<'a> {
+    pub(crate) candidates: &'a CandidatePairs,
+    pub(crate) coulomb: &'a SpecialWeights,
+}
 
 /// Which `Frame` block decides whether a style has any rows to act on.
 ///
@@ -98,18 +113,17 @@ pub type KernelConstructor = fn(
 /// is a property of the **kernel**, not of its category.
 ///
 /// PME is the case that proves it: registered under `pair` because that is
-/// where an electrostatic style belongs, its reciprocal sum reads per-atom
-/// charges and `exclusions`. Its row source is the atoms, so an absent
-/// `pairs` block still builds it. Gated on `pairs`, it was skipped outright
-/// for any system whose caller had not built a pair list — deleting the
-/// entire long-range electrostatics, silently, to exactly zero. A present
-/// `pairs` block prices the real-space erfc term over that list; it does
-/// not gate the style.
+/// where an electrostatic style belongs, it reads per-atom charges and
+/// finds its own pairs (the minimum-image loop, or the neighbour table); the
+/// special pairs only weigh them. Its row source is the atoms: gated on a
+/// topology block, a system without one would lose the entire long-range
+/// electrostatics, silently, to exactly zero.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RowSource {
-    /// The category's own topology block: `bonds`, `angles`, `dihedrals`,
-    /// `impropers` or `pairs`. Absent or empty means the style contributes
-    /// nothing.
+    /// The category's own topology block: `bonds`, `angles`, `dihedrals` or
+    /// `impropers`; absent or empty means the style contributes nothing. For
+    /// a pair style, the candidate pairs (every pair of the atoms, or a
+    /// neighbour table's), weighed by the frame's special pairs.
     #[default]
     CategoryBlock,
     /// The atoms, or rows the kernel finds for itself. Nothing gates it.
@@ -259,7 +273,7 @@ impl fmt::Debug for Kernel {
 pub(crate) struct Native {
     compiled: NativeBuild,
     /// The neighbour-driven form of a pair style.
-    typed: Option<NativeBuild>,
+    typed: Option<NativeTyped>,
 }
 
 type NativeBuild = fn(
@@ -268,16 +282,43 @@ type NativeBuild = fn(
     &Params,
     &[(&str, &Params)],
     &Frame,
+    Option<&PairContext<'_>>,
 ) -> Result<ForceTerm, crate::ff::potential::CompileError>;
+
+type NativeTyped = fn(
+    &CategorySpec,
+    &StyleSpec,
+    &Params,
+    &[(&str, &Params)],
+    &Frame,
+) -> Result<ForceTerm, crate::ff::potential::CompileError>;
+
+/// The candidate pairs of a pair style's compile, or the refusal that it was
+/// compiled without them.
+fn candidates_of<'a>(
+    spec: &StyleSpec,
+    pairs: Option<&'a PairContext<'_>>,
+) -> Result<&'a CandidatePairs, crate::ff::potential::CompileError> {
+    pairs.map(|p| p.candidates).ok_or_else(|| {
+        format!(
+            "pair style '{}' compiled without the pairs it prices",
+            spec.name
+        )
+        .into()
+    })
+}
 
 impl Native {
     /// The kernels of the scalar form `Fm`.
     pub(crate) fn scalar<Fm: ScalarForm + Default>() -> Self {
         Self {
-            compiled: |category, spec, style, tp, frame| {
+            compiled: |category, spec, style, tp, frame, pairs| {
                 let form = Arc::new(Fm::default());
                 Ok(if category.is_pair_driven() {
-                    ForceTerm::pair(ScalarPair::compiled(form, spec, style, tp, frame)?.fused())
+                    let candidates = candidates_of(spec, pairs)?;
+                    ForceTerm::pair(
+                        ScalarPair::compiled(form, spec, style, tp, frame, candidates)?.fused(),
+                    )
                 } else {
                     ForceTerm::indexed(ScalarBonded::build(form, category, spec, style, tp, frame)?)
                 })
@@ -294,7 +335,7 @@ impl Native {
     /// The kernel of the compound form `Fm`.
     pub(crate) fn compound<Fm: CompoundForm + Default>() -> Self {
         Self {
-            compiled: |category, spec, style, tp, frame| {
+            compiled: |category, spec, style, tp, frame, _| {
                 let form = Arc::new(Fm::default());
                 Ok(ForceTerm::indexed(CompoundTerms::build(
                     form, category, spec, style, tp, frame,
@@ -488,7 +529,7 @@ impl RegisteredStyle {
     }
 
     /// Build the style's kernel for a **compiled** evaluation: its terms
-    /// resolved against `frame` (a pair style against its `pairs` block).
+    /// resolved against `frame` (a pair style against the pairs of `pairs`).
     pub(crate) fn compiled(
         &self,
         category: &CategorySpec,
@@ -496,21 +537,24 @@ impl RegisteredStyle {
         tp: &[(&str, &Params)],
         frame: &Frame,
         expressions: Option<ExpressionCompiler>,
+        pairs: Option<&PairContext<'_>>,
     ) -> Result<ForceTerm, crate::ff::potential::CompileError> {
         let (params, rows) = self.spec.gather(params, tp)?;
         let (params, tp) = (&params, &borrowed(&rows));
         if let Some(Kernel::Constructor { compiled, .. }) = &self.kernel {
-            return compiled(params, tp, frame);
+            let none = SpecialWeights::default();
+            return compiled(params, tp, frame, pairs.map_or(&none, |p| p.coulomb));
         }
         if let (true, Some(native)) = (self.sealed, &self.native) {
-            return (native.compiled)(category, &self.spec, params, tp, frame);
+            return (native.compiled)(category, &self.spec, params, tp, frame, pairs);
         }
         let form = self.form(category, expressions)?;
         let coords = frame_coords(frame);
         let spec = &self.spec;
         Ok(match &form.form {
             ExpressionForm::Scalar(f) if category.is_pair_driven() => {
-                let k = ScalarPair::compiled(f.clone(), spec, params, tp, frame)?;
+                let candidates = candidates_of(spec, pairs)?;
+                let k = ScalarPair::compiled(f.clone(), spec, params, tp, frame, candidates)?;
                 self.first_compile(category, &form, expressions, || {
                     probe_on(&coords, |c| k.probe(c, PROBE_TERMS))
                 })?;
@@ -543,6 +587,7 @@ impl RegisteredStyle {
         tp: &[(&str, &Params)],
         frame: &Frame,
         expressions: Option<ExpressionCompiler>,
+        coulomb: &SpecialWeights,
     ) -> Result<Option<(ForceTerm, SpecialClass)>, crate::ff::potential::CompileError> {
         let (params, rows) = self.spec.gather(params, tp)?;
         let (params, tp) = (&params, &borrowed(&rows));
@@ -551,7 +596,7 @@ impl RegisteredStyle {
             Some(Kernel::Constructor {
                 typed: Some((constructor, class)),
                 ..
-            }) => return Ok(Some((constructor(params, tp, frame)?, *class))),
+            }) => return Ok(Some((constructor(params, tp, frame, coulomb)?, *class))),
             _ => {}
         }
         if let (true, Some(native)) = (self.sealed, &self.native) {
@@ -632,7 +677,7 @@ struct RegisteredForm {
 /// field's own conflict rule.
 ///
 /// A force field is read against the process-wide registry
-/// ([`register_style`], [`with_global_registry`], …) unless it carries its
+/// ([`GlobalRegistry`]) unless it carries its
 /// own ([`ForceField::with_registry`](crate::ff::forcefield::ForceField::with_registry)),
 /// which is how a test extends the IR without touching anything another test
 /// sees: [`ForceField::def_style`](crate::ff::forcefield::ForceField::def_style),
@@ -1040,36 +1085,69 @@ fn global() -> &'static RwLock<Registry> {
     REGISTRY.get_or_init(|| RwLock::new(Registry::builtin()))
 }
 
-/// [`Registry::register_category`] on the process-wide registry.
-pub fn register_category(c: CategorySpec) -> Result<(), IrError> {
-    global().write().unwrap().register_category(c)
-}
+/// The process-wide registry: what every compile, reader and writer reads
+/// unless given a registry of its own ([`ForceField::with_registry`],
+/// [`RegistryRef::Own`]). A handle that holds nothing: each method locks
+/// the registry for its call.
+///
+/// [`ForceField::with_registry`]: crate::ff::forcefield::ForceField::with_registry
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GlobalRegistry;
 
-/// [`Registry::register_style`] on the process-wide registry: the extension
-/// point every compile reads, with nothing rebuilt.
-pub fn register_style(spec: StyleSpec, kernel: Option<Kernel>) -> Result<(), IrError> {
-    global().write().unwrap().register_style(spec, kernel)
-}
+impl GlobalRegistry {
+    /// [`Registry::register_category`].
+    pub fn register_category(&self, c: CategorySpec) -> Result<(), IrError> {
+        global().write().unwrap().register_category(c)
+    }
 
-/// [`Registry::register_form`] on the process-wide registry.
-pub fn register_form(category: &str, style: &str, codec: FormCodec) -> Result<(), IrError> {
-    global()
-        .write()
-        .unwrap()
-        .register_form(category, style, codec)
-}
+    /// [`Registry::register_style`]: the extension point every compile
+    /// reads, with nothing rebuilt.
+    pub fn register_style(&self, spec: StyleSpec, kernel: Option<Kernel>) -> Result<(), IrError> {
+        global().write().unwrap().register_style(spec, kernel)
+    }
 
-/// [`Registry::register_engine_form`] on the process-wide registry.
-pub fn register_engine_form(
-    engine: Engine,
-    category: &str,
-    style: &str,
-    form: LammpsForm,
-) -> Result<(), IrError> {
-    global()
-        .write()
-        .unwrap()
-        .register_engine_form(engine, category, style, form)
+    /// [`Registry::register_form`].
+    pub fn register_form(
+        &self,
+        category: &str,
+        style: &str,
+        codec: FormCodec,
+    ) -> Result<(), IrError> {
+        global()
+            .write()
+            .unwrap()
+            .register_form(category, style, codec)
+    }
+
+    /// [`Registry::register_engine_form`].
+    pub fn register_engine_form(
+        &self,
+        engine: Engine,
+        category: &str,
+        style: &str,
+        form: LammpsForm,
+    ) -> Result<(), IrError> {
+        global()
+            .write()
+            .unwrap()
+            .register_engine_form(engine, category, style, form)
+    }
+
+    /// [`Registry::unregister_style`].
+    pub fn unregister_style(&self, category: &str, name: &str) -> Result<(), IrError> {
+        global().write().unwrap().unregister_style(category, name)
+    }
+
+    /// [`Registry::set_expression_compiler`].
+    pub fn set_expression_compiler(&self, compiler: Option<ExpressionCompiler>) {
+        global().write().unwrap().set_expression_compiler(compiler);
+    }
+
+    /// Read the registry. The lock is held for the call, so `f` must not
+    /// register anything.
+    pub fn with<R>(&self, f: impl FnOnce(&Registry) -> R) -> R {
+        f(&global().read().unwrap())
+    }
 }
 
 /// The registry an engine reader or writer reads: the process-wide one
@@ -1088,26 +1166,10 @@ impl RegistryRef {
     /// itself), or the caller's.
     pub fn with<R>(&self, f: impl FnOnce(&Registry) -> R) -> R {
         match self {
-            RegistryRef::Global => f(&with_global_registry(Registry::clone)),
+            RegistryRef::Global => f(&GlobalRegistry.with(Registry::clone)),
             RegistryRef::Own(r) => f(r),
         }
     }
-}
-
-/// [`Registry::unregister_style`] on the process-wide registry.
-pub fn unregister_style(category: &str, name: &str) -> Result<(), IrError> {
-    global().write().unwrap().unregister_style(category, name)
-}
-
-/// [`Registry::set_expression_compiler`] on the process-wide registry.
-pub fn set_expression_compiler(compiler: Option<ExpressionCompiler>) {
-    global().write().unwrap().set_expression_compiler(compiler);
-}
-
-/// Read the process-wide registry. The lock is held for the call, so `f`
-/// must not register anything.
-pub fn with_global_registry<R>(f: impl FnOnce(&Registry) -> R) -> R {
-    f(&global().read().unwrap())
 }
 
 /// The exact series of a row of any style of the `torsion` family, through
@@ -1142,7 +1204,7 @@ pub fn torsion_series(
 /// the formats that hold built-in styles only (GROMACS, AMBER): a
 /// built-in without one, or any style that is not built in.
 pub fn refuse_style(engine: Engine, category: &str, style: &str) -> IrError {
-    let builtin = with_global_registry(|r| r.is_sealed(category, style));
+    let builtin = GlobalRegistry.with(|r| r.is_sealed(category, style));
     let reason = if builtin {
         format!(
             "a built-in style no {} directive or section holds",

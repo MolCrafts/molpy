@@ -387,7 +387,7 @@ def test_lammps_identity():
 def test_every_deck_names_its_runnable_input(tmp_path, water, tip3p):
     import molpy as mp
 
-    tip3p.get_style("pair", "lj/cut")["cutoff"] = 10.0
+    tip3p.get_style("pair", "lj/cut").set(cutoff=10.0)
     tip3p.def_style("pair", "coul/cut", {"cutoff": 10.0})
     o, h1, h2 = list(water.atoms)
     ow = tip3p.get_style("atom", "full").get_type_by_name("OW")
@@ -396,6 +396,7 @@ def test_every_deck_names_its_runnable_input(tmp_path, water, tip3p):
         "HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52
     )
     water.add_angle(h1, o, h2, type="HW-OW-HW")
+    water.generate_topology(gen_angle=False, gen_dihedral=False)
     frame = water.to_frame()
     frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
     for engine_cls in (

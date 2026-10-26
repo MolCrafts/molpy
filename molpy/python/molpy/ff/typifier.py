@@ -13,10 +13,9 @@ the output force field — ``forcefield()``, of which ``typify`` is the only
 writer. A subclass must not define ``typify``.
 
 The built-in typifiers accept and return ``Atomistic``. :class:`ElementTypifier`
-labels by element symbol alone and defines no force field.
-
-:func:`assign_cmaps` adds a typed molecule's CMAP crossterms (``cmaps``
-terms) from its dihedrals, against a force field's CMAP types.
+labels by element symbol alone and defines no force field. A typed
+molecule's CMAP crossterms are its force field's:
+``ForceField.assign_cmaps(mol)``.
 
 GAFF / GAFF2 is typed natively: :class:`AtdTypifier` (antechamber's atom
 types) then :class:`GaffTypifier` (the bonded terms), each taking the
@@ -38,7 +37,6 @@ from molpy._core import (
     Mmff94Typifier,
     OplsAaTypifier,
     Typifier,
-    assign_cmaps,
 )
 
 from molpy.ff.ambertools import AntechamberTypifier, TleapTypifier
@@ -52,7 +50,6 @@ __all__ = [
     "TypeAssignment",
     "OplsAaTypifier",
     "Typifier",
-    "assign_cmaps",
     "AntechamberTypifier",
     "TleapTypifier",
 ]

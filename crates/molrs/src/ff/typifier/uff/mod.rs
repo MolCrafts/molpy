@@ -60,10 +60,8 @@ use crate::perceive::{Hybridization, perceive_conjugated_atoms, perceive_hybridi
 ///
 /// ```ignore
 /// let mut typing = Typing::new(UffTypifier::new());
-/// let mut frame = typing.typify(&mol)?.to_frame()?;
-/// let ff = typing.forcefield();
-/// frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds(), None)?);
-/// let pots = PotentialCompiler::new(ff).compile(&frame)?;
+/// let frame = typing.typify(&mol)?.to_frame()?; // terms, special pairs, types
+/// let pots = PotentialCompiler::new(typing.forcefield()).compile(&frame)?;
 /// ```
 ///
 /// Organic / main-group subset only (see [`crate::ff::params::uff`]). No GFN-FF.
@@ -162,7 +160,7 @@ impl Typifier for UffTypifier {
     /// used are pairs; every library style is declared.
     fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
         graph
-            .generate_topology(true, true, false, true)
+            .generate_topology(true, true, false, true, true)
             .map_err(TypingError::malformed)?;
 
         let atom_ids: Vec<NodeId> = graph.atom_ids().collect();

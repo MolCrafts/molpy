@@ -736,7 +736,7 @@ fn lammps_style<'r>(
     reg.lammps_style(category, name).ok_or_else(|| {
         format!(
             "{}: unsupported {category}_style `{name}`: no registered style has this LAMMPS form \
-             (molpy.ff.style_registry.register_style with a LAMMPS form registers one)",
+             (molpy.ff.style_registry.GlobalRegistry().register_style with a LAMMPS form registers one)",
             where_()
         )
     })
@@ -1562,7 +1562,7 @@ pub(crate) fn lammps_coeff_params(
         s => s,
     };
     let where_ = || format!("{category} {style}");
-    crate::ff::style_registry::with_global_registry(|reg| {
+    crate::ff::style_registry::GlobalRegistry.with(|reg| {
         let (spec, codec) = lammps_style(reg, category, style, &where_)?;
         codec.read(spec, values)
     })

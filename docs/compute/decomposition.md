@@ -193,8 +193,10 @@ standardize the columns yourself.
 Believe the projection. This is k-means doing what it always does.
 
 **Component signs flip between runs.**
-Eigenvectors are defined up to sign. A flipped PC1 is the same decomposition;
-do not interpret the sign.
+Eigenvectors are defined up to sign. `Pca` fixes each axis so its
+largest-magnitude loading is positive, so the same table always projects the
+same way, but a changed table can still land on the other sign. A flipped PC1
+is the same decomposition; do not interpret the sign.
 
 **Adding a descriptor changes the answer completely.**
 Your descriptors are correlated and you have added another copy of one that was

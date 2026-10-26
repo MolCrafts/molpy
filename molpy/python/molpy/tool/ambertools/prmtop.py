@@ -3,8 +3,8 @@
 antechamber and tleap keep atom order, so prmtop atom *i* is graph atom *i*;
 the AmberTools typifiers and :class:`molpy.builder.AmberPolymerBuilder`
 assign a prmtop through :class:`Prmtop`. Their outputs merge when the files
-declare the same 1-4 weights. Each typed graph keeps that file's exclusions
-and any 1-4 scale that differs from those weights.
+declare the same 1-4 weights. Each typed graph keeps that file's special
+pairs: its exclusions and any 1-4 scale that differs from those weights.
 """
 
 from __future__ import annotations
@@ -68,12 +68,10 @@ class Prmtop:
     term. Each row is annotated with that row's type — a multi-term improper
     keeps every ``<quartet>@<periodicity>``, and a cmap keeps its grid.
     ``exclude_14`` is stamped on the dihedral or improper it flags. The
-    assignment carries the file's 1-4 weights. A 1-4 whose own scale differs
-    is written on the graph as ``pair_overrides``; the file's ``exclusions``
-    replace the graph's. Neither block is a pair type. A graph that already
-    holds ``pairs`` is refused: that block is what a later compile prices,
-    and it would hide these rows. Impropers and cmaps are replaced from the
-    file. Any refusal leaves the graph unchanged.
+    assignment carries the file's 1-4 weights, and the file's special pairs
+    (``pairs``: each pair's ``n_bonds``, and the scale of a 1-4 or excluded
+    pair the weights do not give) replace the graph's. Impropers and cmaps
+    are replaced from the file. Any refusal leaves the graph unchanged.
     """
 
     def __init__(self, prmtop: Path) -> None:
@@ -89,16 +87,16 @@ class Prmtop:
 
         Args:
             graph: The graph the prmtop was built from. Its angles, dihedrals,
-                impropers, cmaps, exclusions and pair_overrides are rewritten
-                to the file. A refusal leaves the graph unchanged.
+                impropers, cmaps and special pairs are rewritten to the
+                file. A refusal leaves the graph unchanged.
             charges: The charge to stamp on each atom, in row order. The
                 length has to equal the atom count.
 
         Raises:
             ValueError: The graph and the prmtop disagree on atom count,
                 element, or charge length; the prmtop force field declares no
-                ``special_bonds``; the graph already has a ``pairs`` block; a
-                bond, angle, or proper dihedral the two do not share; or a
+                ``special_bonds``; a bond, angle, or proper dihedral the two
+                do not share; or a
                 type name the force field does not declare. Impropers and
                 cmaps are replaced from the file, so a perceived one the file
                 lacks is not an error.
@@ -126,11 +124,6 @@ class Prmtop:
                     f"atom {index} is {atom.get('atomic_number')} in the graph but "
                     f"{elements[index]} in the prmtop"
                 )
-        if graph.n_terms("pairs"):
-            raise ValueError(
-                "the graph already has a pairs block, which is priced instead of "
-                "pair_overrides; drop it before assignment"
-            )
         if len(charges) != len(graph_atoms):
             raise ValueError(
                 f"the prmtop has {len(graph_atoms)} atoms, the charges {len(charges)}"
@@ -177,7 +170,9 @@ class Prmtop:
             Improper: self._rows("impropers", four),
         }
 
-        graph.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)
+        graph.generate_topology(
+            gen_angle=True, gen_dihedral=True, gen_pairs=False, clear_existing=True
+        )
         graph.del_impropers(list(graph.impropers))
         for atoms_at, _, _ in frame_rows[Improper]:
             graph.add_improper(*(graph_atoms[i] for i in atoms_at))
@@ -205,10 +200,9 @@ class Prmtop:
         self._install_block(
             graph,
             graph_atoms,
-            "pair_overrides",
-            ("epsilon", "sigma", "charge_product", "lj_scale", "coul_scale"),
+            "pairs",
+            ("n_bonds", "epsilon", "sigma", "charge_product", "lj_scale", "coul_scale"),
         )
-        self._install_block(graph, graph_atoms, "exclusions", ())
         return TypeAssignment(
             nodes, links, styles=styles, pairs=pairs, special_bonds=weights
         )
@@ -264,12 +258,12 @@ class Prmtop:
         for index, (left, right) in enumerate(
             zip(data["atomi"], data["atomj"], strict=True)
         ):
-            stated: dict[str, float] = {}
+            stated: dict[str, int | float] = {}
             for key in present:
                 mask = masks[key]
                 if mask is not None and not bool(mask[index]):
                     continue
-                stated[key] = float(columns[key][index])
+                stated[key] = columns[key][index].item()
             graph.add_term(block, [atoms[int(left)], atoms[int(right)]], **stated)
 
     def _rows(self, block: str, keys: tuple[str, ...]) -> list[TermRow]:
@@ -386,8 +380,8 @@ class PrmtopTypifier(AmberTypifier):
     AmberTools typifiers do after tleap. Proper dihedrals are stored in the
     prmtop's order. The force field carries the file's
     1-4 weights and its types, without the prmtop's atom-type row ids. The
-    typed graph carries the file's exclusions and, where a 1-4 scale differs
-    from those weights, its ``pair_overrides``. A GAFF prmtop therefore merges
+    typed graph carries the file's special pairs: its exclusions and, where a
+    1-4 scale differs from those weights, that scale. A GAFF prmtop therefore merges
     with :class:`~molpy.ff.typifier.GaffTypifier`.
     :class:`molpy.builder.AmberPolymerBuilder` assigns its chain's prmtop
     with it.
@@ -406,8 +400,8 @@ class PrmtopTypifier(AmberTypifier):
         Raises:
             ValueError: The graph and the prmtop disagree on atom count,
                 element, or charge length; the prmtop declares no
-                ``special_bonds``; the graph already has a ``pairs`` block; a
-                bond, angle, or proper the two do not share; or a type the
+                ``special_bonds``; a bond, angle, or proper the two do not
+                share; or a type the
                 force field does not declare. Impropers and cmaps are
                 replaced from the file. The graph is left unchanged.
         """

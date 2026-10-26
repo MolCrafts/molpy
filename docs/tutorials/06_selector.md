@@ -36,12 +36,12 @@ atoms = mp.Block(
 
 carbons = ColumnSelector("C")(atoms)
 print(carbons.n_rows) # 2
-print(carbons["element"]) # ['C', 'C']
+print(carbons["element"]) # ['C' 'C']
 
 # Select by the string label, or point the selector at the numeric column.
 hydrogens = ColumnSelector("hc", column=keys.TYPE)(atoms)
-print(hydrogens["element"]) # ['H', 'H']
-print(ColumnSelector(2, column=keys.TYPE_ID)(atoms)["element"]) # ['H', 'H']
+print(hydrogens["element"]) # ['H' 'H']
+print(ColumnSelector(2, column=keys.TYPE_ID)(atoms)["element"]) # ['H' 'H']
 ```
 
 The value must have the column's type. `type` is always a string label, so
@@ -56,23 +56,23 @@ index.
 
 ```python
 first_and_last = AtomIndexSelector([0, 5])(atoms)
-print(first_and_last["element"]) # ['C', 'N']
+print(first_and_last["element"]) # ['C' 'N']
 ```
 
 ## Selecting by position: regions
 
 Where an atom is — a slab, a sphere, a shell — is a geometric region's job.
-The regions are molrs's (`mp.core.Cuboid`, `mp.core.Sphere`, `mp.core.HalfSpace`, …); each has
+The regions (`mp.core.Cuboid`, `mp.core.Sphere`, `mp.core.HalfSpace`, …); each has
 the same `mask(block)` and is callable on a block, and they compose with `&`,
 `|` and `~` into an `mp.core.Region`. They read the `x`, `y`, `z` columns.
 
 ```python
 # x >= 2.5: the half-space whose outward normal points to -x
 right_half = mp.core.HalfSpace([-1.0, 0.0, 0.0], [2.5, 0.0, 0.0])(atoms)
-print(right_half["element"]) # ['H', 'O', 'N']
+print(right_half["element"]) # ['H' 'O' 'N']
 
 near_origin = mp.core.Sphere([0.0, 0.0, 0.0], 1.5)(atoms)
-print(near_origin["element"]) # ['C', 'C']
+print(near_origin["element"]) # ['C' 'C']
 ```
 
 A shell selection — atoms between a minimum and maximum distance — is a common
@@ -94,11 +94,11 @@ sel = (ColumnSelector("C") | ColumnSelector("O")) & mp.core.HalfSpace(
  [-1.0, 0.0, 0.0], [0.5, 0.0, 0.0]
 )
 result = sel(atoms)
-print(result["element"]) # ['C', 'O']
+print(result["element"]) # ['C' 'O']
 
 # Everything except hydrogen
 no_h = ~ColumnSelector("H")
-print(no_h(atoms)["element"]) # ['C', 'C', 'O', 'N']
+print(no_h(atoms)["element"]) # ['C' 'C' 'O' 'N']
 ```
 
 Nested combinations let you express precise scientific queries concisely.
@@ -115,9 +115,9 @@ Sometimes you need the boolean mask rather than the filtered block — for index
 
 ```python
 mask = ColumnSelector("C").mask(atoms)
-print(mask) # [ True True False False False False]
-print(np.where(mask)[0]) # [0, 1]
-print(atoms["x"][mask]) # [0., 1.]
+print(mask) # [ True  True False False False False]
+print(np.where(mask)[0]) # [0 1]
+print(atoms["x"][mask]) # [0. 1.]
 ```
 
 ## When to use selectors

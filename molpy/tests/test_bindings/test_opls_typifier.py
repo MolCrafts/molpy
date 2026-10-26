@@ -49,10 +49,10 @@ def test_typify_and_compose_potentials():
     assert frame["bonds"].n_rows == 7
     assert frame["angles"].n_rows == 12
     assert frame["dihedrals"].n_rows == 9
+    # Every pair within three bonds of ethane's eight atoms: 7 + 12 + 9.
+    assert frame["pairs"].n_rows == 28
 
-    pairs = mp.ff.potential.intramolecular_pairs(frame, typifier.forcefield())
-    frame["pairs"] = pairs
-    pots = mp.ff.compile.PotentialCompiler(typifier.forcefield()).compile(frame)
+    pots = mp.ff.PotentialCompiler(typifier.forcefield()).compile(frame)
     energy, forces = pots.evaluate(frame)
     assert math.isfinite(energy)
     assert np.isfinite(np.asarray(forces)).all()

@@ -98,11 +98,8 @@ pub(crate) const HARMONIC_IMPROPER_ABS: &str = "k*(abs(theta)-theta0)^2";
 /// field keeps `epsilon14`/`sigma14` on `lj/charmm` and its `special_bonds`,
 /// and declares the style param `one_four = "epsilon14"`
 /// ([`ONE_FOUR_EPSILON14`]):
-/// a frame's 1-4 pairs are OpenMM's exceptions, which the IR holds as per-pair
-/// override rows on `pairs`.
-/// [`ForceField::materialize_one_four`](crate::ff::forcefield::ForceField::materialize_one_four)
-/// writes them;
-/// compiling such a field for a frame whose 1-4 pairs lack them is refused.
+/// a frame's 1-4 pairs (its `pairs` rows of `n_bonds` 3) are then priced at
+/// `epsilon14`/`sigma14`, OpenMM's exceptions, by the compiler.
 ///
 /// # Refused
 ///

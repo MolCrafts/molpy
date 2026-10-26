@@ -38,7 +38,7 @@ fn polarizability(name: &str, params: &Bound<'_, PyAny>) -> PyResult<Polarizabil
 }
 
 /// ``type -> params`` from either CL&Pol table shape: a mapping (as
-/// ``mp.ff.params.clpol_polarizability()`` returns) or rows each carrying a
+/// ``DrudeBuilder().polarizability`` holds it) or rows each carrying a
 /// ``type_name`` (as ``mp.io.read_clpol_alpha`` returns). A type given twice
 /// keeps its later row.
 fn polarizability_table(table: &Bound<'_, PyAny>) -> PyResult<HashMap<String, Polarizability>> {
@@ -106,6 +106,22 @@ impl PyDrudeBuilder {
         Ok(Self {
             inner: inner.with_prefix(drude_prefix),
         })
+    }
+
+    /// The CL&Pol table this builder reads, ``type -> {"m_D", "q_D_sign",
+    /// "k_D", "alpha", "a_thole"}`` in u, e (sign), kJ/mol/Å² (``k/2 r²``
+    /// form), Å³ and dimensionless. A type with ``k_D == 0`` carries no Drude
+    /// particle.
+    #[getter]
+    fn polarizability(&self) -> HashMap<String, HashMap<&'static str, f64>> {
+        self.inner
+            .polarizability()
+            .iter()
+            .map(|(name, row)| {
+                let values = [row.m_d, row.q_d_sign, row.k_d, row.alpha, row.a_thole];
+                (name.clone(), CLPOL_KEYS.into_iter().zip(values).collect())
+            })
+            .collect()
     }
 
     /// A new molecule with a Drude shell on every polarizable atom; ``mol``

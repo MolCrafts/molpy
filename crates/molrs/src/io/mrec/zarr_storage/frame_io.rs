@@ -267,6 +267,18 @@ pub(in crate::io::mrec::zarr_storage) fn zarr_dtype(
     (dt, fill)
 }
 
+/// Switch off zarrs' `_zarrs` provenance attribute on every array this process
+/// creates. Done once: the attribute is bundle noise on a contract layout, and
+/// the flag is process-wide by the library's design, so every array writer
+/// calls this before it builds, whichever writes first.
+#[cfg(feature = "zarr")]
+pub(in crate::io::mrec::zarr_storage) fn quiet_zarrs_metadata() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        zarrs::config::global_config_mut().set_include_zarrs_metadata(false);
+    });
+}
+
 /// The one array writer: every array this backend stores is created and filled
 /// here, laid out by `chunking` and encoded by `codecs` (from
 /// [`frame_codecs`]), with `attributes` on the array.
@@ -305,6 +317,7 @@ where
         Some(shards) => (shards, Some(chunk)),
         None => (chunk, None),
     };
+    quiet_zarrs_metadata();
     let mut builder = ArrayBuilder::new(shape.clone(), extent, dt, fill);
     // Under sharding these codecs encode the subchunks, inside the shard.
     builder.bytes_to_bytes_codecs(codecs);

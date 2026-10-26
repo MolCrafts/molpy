@@ -9,7 +9,7 @@ back. There:
   same energy and forces, bit for bit, and keep the expression byte for byte;
 * a style with no expression (native-only where it was made) is read whole,
   and compiling it is refused by name — "no kernel for … register it
-  (molpy.ff.style_registry.register_style) or give it an expression";
+  (molpy.ff.style_registry.GlobalRegistry().register_style) or give it an expression";
 * an array parameter (``dihedral table/linear``, ``table: f64[N]``) comes back
   bit for bit, through ``mp.io.mrec`` as an ``f64[T, N]`` column;
 * a category nothing ever registers is kept;
@@ -39,14 +39,14 @@ FENE = (
 UB = "k_ub*(distance(p1,p3)-r_ub)^2"
 CHILD = Path(__file__).with_name("ff_ir_persist_child.py")
 NO_KERNEL = (
-    "no kernel for {} `{}`: register it (molpy.ff.style_registry.register_style) "
+    "no kernel for {} `{}`: register it (molpy.ff.style_registry.GlobalRegistry().register_style) "
     "or give it an expression"
 )
 
 # This process's registry gains the category, and a bond style priced by
 # the registry's expression alone (its instances state none).
-mp.ff.style_registry.register_category("urey_bradley", 3)
-mp.ff.style_registry.register_style(
+mp.ff.style_registry.GlobalRegistry().register_category("urey_bradley", 3)
+mp.ff.style_registry.GlobalRegistry().register_style(
     "bond",
     "fene/registered",
     params={"k": "E/L^2", "r0": "L", "epsilon": "E", "sigma": "L"},
@@ -267,4 +267,4 @@ def test_an_array_param_round_trips_bit_for_bit_as_an_f64_t_n_column(
     assert column.tobytes() == want.tobytes()
     back = section.to_forcefield()
     t = back.get_style("dihedral", "table/linear").get_type_by_name("t")
-    assert np.asarray(t["table"]).tobytes() == TABLE.tobytes()
+    assert np.asarray(t.params["table"]).tobytes() == TABLE.tobytes()

@@ -95,18 +95,18 @@ string, and `mp.builder.Assembler` with `mp.builder.GrowthPlacer` grows it into 
 
 | Docs | Examples |
 |------|----------|
-| [`user-guide/topology/`](../user-guide/topology/index.md) | `examples/topology/` |
+| [`user-guide/topology/`](../user-guide/topology/index.md) | `molpy/examples/topology/` |
 | `01_linear.md` … `06_telechelic.md` | `01_linear.py` … `06_telechelic.py` |
 
 ```bash
-cd examples
+cd molpy/examples
 python topology/01_linear.py
 ```
 
 Minimal linear chain, ten EO units:
 
 ```python
-# run from examples/topology/ or put that dir on PYTHONPATH
+# run from molpy/examples/topology/ or put that dir on PYTHONPATH
 import molpy as mp
 from eo_kit import library
 
@@ -163,7 +163,7 @@ plan = planner.plan_system(np.random.default_rng(42))
 print(f"Planned {len(plan.chains)} chains") # reproducible chain population
 
 # Each planned chain is a unit sequence; written as CGsmiles it is a site graph.
-from eo_kit import library  # examples/topology/
+from eo_kit import library  # molpy/examples/topology/
 
 first = plan.chains[0]
 sites = mp.io.cgsmiles.read_cgsmiles("{" + "".join(f"[#{m}]" for m in first.monomers) + "}").to_coarsegrain()

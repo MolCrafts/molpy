@@ -25,8 +25,8 @@ Built on those, this module also holds:
 * polymers — sequence generators, chain-length distributions and
   :class:`SystemPlanner`; :class:`AmberPolymerBuilder` for GAFF chains
   through AmberTools;
-* virtual sites — :class:`DrudeBuilder` (CL&Pol, parameters from
-  ``mp.ff.params.clpol_polarizability``) and :class:`Tip4pBuilder`;
+* virtual sites — :class:`DrudeBuilder` (CL&Pol; its shipped table is
+  ``DrudeBuilder().polarizability``) and :class:`Tip4pBuilder`;
 * :class:`PackingTemplate` — a built molecule's frame plus its hydrogen
   indices, for a packer's per-atom settings.
 

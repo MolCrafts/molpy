@@ -1,9 +1,9 @@
 # Release Process
 
-**Releases are frozen** until the molpy-unification restructure and the
-downstream migration land (the repository's `.claude/specs/molpy-unification.md`,
-links 03 and 04). Until then, push no `v*` tag. The last releases are molpy
-0.19.0 and molrs 0.19.0.
+**Releases are frozen** until the downstream migration of the
+molpy-unification restructure lands (the repository's
+`.claude/specs/molpy-unification.md`, link 04). Until then, push no `v*` tag. The last release is 0.19.0
+(`v0.19.0`).
 
 From then on, one version and one tag cover the whole project.
 

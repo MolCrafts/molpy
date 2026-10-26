@@ -17,7 +17,7 @@ use crate::ff::potential::CompileError;
 use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
 use crate::ff::style_registry::BuiltinKernels;
 use crate::ff::style_registry::{
-    ExpressionForm, ExpressionKernel, Kernel, Registry, RowSource, register_style,
+    ExpressionForm, ExpressionKernel, GlobalRegistry, Kernel, Registry, RowSource,
 };
 #[cfg(feature = "zarr")]
 use crate::io::mrec::ForceFieldSection;
@@ -239,7 +239,7 @@ fn a_builtin_is_sealed_and_an_identical_restatement_is_a_no_op() {
     ));
     // The global registry seals them too.
     assert!(matches!(
-        register_style(
+        GlobalRegistry.register_style(
             StyleSpec::new("bond", "harmonic"),
             Some(Kernel::Scalar(Arc::new(
                 crate::ff::potential::bond::Harmonic
@@ -468,6 +468,7 @@ fn nonconforming_styles_are_refused_by_name() {
         _: &Params,
         _: &[(&str, &Params)],
         _: &Frame,
+        _: &crate::ff::potential::SpecialWeights,
     ) -> Result<crate::ff::potential::ForceTerm, CompileError> {
         Err("a constructor no compile reaches".into())
     }
@@ -820,22 +821,10 @@ fn chain(category: &str, arity: usize) -> Frame {
             .unwrap();
         frame.insert(format!("{category}s"), block);
     }
-    let mut pairs = Block::new();
-    pairs
-        .insert(
-            "atomi",
-            Array1::from_vec(vec![0 as Idx, 0, 1]).into_dyn(),
-            None,
-        )
-        .unwrap();
-    pairs
-        .insert(
-            "atomj",
-            Array1::from_vec(vec![2 as Idx, 3, 3]).into_dyn(),
-            None,
-        )
-        .unwrap();
-    frame.insert("pairs", pairs);
+    frame.insert(
+        "pairs",
+        crate::ff::potential::pair::fixtures::pricing_only(4, &[(0, 2), (0, 3), (1, 3)], &[]),
+    );
     frame
 }
 
@@ -1145,7 +1134,7 @@ fn a_custom_category_prices_its_block_like_angle_charmm_without_k() {
         let typed = compiler.compile_typed(&frame).unwrap();
         assert_eq!(typed.len(), 1, "{style}");
         assert!(
-            typed[0].1.is_none(),
+            typed[0].1.is_empty(),
             "a relation takes no special-bonds weight"
         );
         // No block, nothing to price.
@@ -1603,11 +1592,11 @@ fn fresh_process_reads_custom_styles() {
     let expected: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("expected.json")).unwrap()).unwrap();
     // Nothing is registered here: the process-wide registry is the builtin one.
-    assert!(crate::ff::style_registry::with_global_registry(|g| g
-        .category("urey_bradley")
-        .is_none()
-        && g.style("bond", "fene").is_none()
-        && g.style("dihedral", "table/linear").is_none()));
+    assert!(crate::ff::style_registry::GlobalRegistry.with(
+        |g| g.category("urey_bradley").is_none()
+            && g.style("bond", "fene").is_none()
+            && g.style("dihedral", "table/linear").is_none()
+    ));
     let read = |name: &str| {
         let section = molrs::io::mrec::MrecFile::open(&dir.join(format!("{name}.mrec")))
             .unwrap()
@@ -1647,7 +1636,7 @@ fn fresh_process_reads_custom_styles() {
         .compile(&two_terms("urey_bradley"))
         .unwrap_err();
     assert!(
-        err.to_string().contains("no kernel for urey_bradley `harmonic`: register it (molpy.ff.style_registry.register_style) or give it an expression"),
+        err.to_string().contains("no kernel for urey_bradley `harmonic`: register it (molpy.ff.style_registry.GlobalRegistry().register_style) or give it an expression"),
         "{err}"
     );
     let table = read("table");

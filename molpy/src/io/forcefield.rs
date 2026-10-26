@@ -263,7 +263,7 @@ impl PyLammpsForcefieldWriter {
         let (labels, pair_refusal) = frame.with_frame(|f| {
             (
                 molrs::io::lammps::lammps_type_labels(f),
-                molrs::io::lammps::refuse_pair_overrides(f).err(),
+                molrs::io::lammps::refuse_inexpressible_pairs(f).err(),
             )
         })?;
         Ok(Self {
@@ -595,12 +595,12 @@ impl PyAmberPrmtopForcefieldReader {
     /// Read a whole prmtop (or ParmEd chamber) topology into a force field
     /// and a typed frame.
     ///
-    /// The frame is :func:`molpy.io.read_prmtop`'s plus a ``pair_overrides``
-    /// block holding the 1-4 pairs sander weighs otherwise than the field's
-    /// ``special_bonds``, each with its own ``coul_scale`` / ``lj_scale``
-    /// where it differs. That block is not the list ``PotentialCompiler.compile``
-    /// prices; :func:`molpy.ff.potential.intramolecular_pairs` carries the
-    /// cells onto ``pairs``. No block when every 1-4 pair agrees.
+    /// The frame is :func:`molpy.io.read_prmtop`'s plus its special pairs
+    /// (``pairs``): every pair within three bonds with its ``n_bonds``, and
+    /// the pairs sander weighs otherwise than the field's ``special_bonds``
+    /// (a 1-4 pair at its dihedral's own SCEE / SCNB, a pair the exclusion
+    /// list leaves out or adds) with their own ``coul_scale`` /
+    /// ``lj_scale``.
     /// Coordinates come from the restart (:func:`molpy.io.read_inpcrd`).
     ///
     /// Parameters

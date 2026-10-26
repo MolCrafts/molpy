@@ -29,17 +29,16 @@
 //! ```no_run
 //! use molrs::core::Atomistic;
 //! use molrs::ff::compile::PotentialCompiler;
-//! use molrs::ff::potential::{Accumulator, Potential, intramolecular_pairs};
+//! use molrs::ff::potential::{Accumulator, Potential};
 //! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::mmff::Mmff94Typifier;
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mol = Atomistic::new();                             // build or load your molecule
 //! let mut typing = Typing::new(Mmff94Typifier::new());
 //!
-//! let mut frame = typing.typify(&mol)?.to_frame().map_err(|e| e.to_string())?;
+//! // terms, special pairs and types: every energy term is on the frame
+//! let frame = typing.typify(&mol)?.to_frame().map_err(|e| e.to_string())?;
 //! let ff = typing.forcefield();                           // exactly the types assigned
-//! let special = ff.special_bonds().ok_or("the force field states no special_bonds")?;
-//! frame.insert("pairs", intramolecular_pairs(&frame, special, None)?);
 //! let potentials = PotentialCompiler::new(ff).compile(&frame)?; // the standard compile path
 //!
 //! let coords: Vec<f64> = Vec::new();                      // flat [x,y,z, ...]
@@ -50,8 +49,8 @@
 //! # }
 //! ```
 //!
-//! The `pairs` block is the caller's because the neighbour list is the caller's:
-//! a minimizer that moves atoms decides when to rebuild it. See `docs/interop.md`.
+//! The frame's `pairs` rows are its special pairs (1-2, 1-3, 1-4), generated
+//! with the angles and dihedrals; every other pair is priced at full strength.
 
 #![allow(clippy::type_complexity)]
 
@@ -112,9 +111,8 @@ macro_rules! mmff_front_door {
             ///
             /// To evaluate an energy, type through
             /// [`Typing`](crate::ff::typifier::Typing), materialize the result
-            /// ([`Atomistic::to_frame`]), add the neighbour list
-            /// ([`intramolecular_pairs`](crate::ff::potential::intramolecular_pairs)),
-            /// and compile it with
+            /// ([`Atomistic::to_frame`], which carries the special pairs), and
+            /// compile it with
             /// `PotentialCompiler::new(typing.forcefield()).compile(&frame)` — see
             /// the module example.
             fn assign(

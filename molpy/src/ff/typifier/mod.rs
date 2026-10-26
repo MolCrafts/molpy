@@ -1,11 +1,11 @@
 //! Python bindings for `molrs::ff::typifier` (`molpy.ff.typifier`): the
 //! subclassable [`PyTypifier`] base and the [`PyTypeAssignment`] its ``assign`` hook
 //! returns, the native typifiers — MMFF94 / MMFF94s, OPLS-AA, element, and
-//! the antechamber-derived [`atd`] and [`gaff`] — and `assign_cmaps`, which
-//! types a molecule's CMAP crossterms from its dihedrals.
+//! the antechamber-derived [`atd`] and [`gaff`]. A molecule's CMAP crossterms
+//! are its force field's (`ForceField.assign_cmaps`).
 //!
 //! A typifier's contract is `typify`: compiling potentials from what it
-//! defined is `molpy.ff.compile.PotentialCompiler`'s. There is deliberately
+//! defined is `molpy.ff.PotentialCompiler`'s. There is deliberately
 //! no one-step `build(mol)`: one such shortcut once silently omitted the whole
 //! electrostatic term because no `ForceField` defined `pair/mmff_ele`.
 //!
@@ -537,8 +537,7 @@ py_mmff_front_door! {
     /// --------
     /// >>> typifier = Mmff94Typifier()
     /// >>> frame = typifier.typify(mol).to_frame()          # labels + charges
-    /// >>> frame["pairs"] = molpy.ff.potential.intramolecular_pairs(frame)
-    /// >>> pots = molpy.ff.compile.PotentialCompiler(typifier.forcefield()).compile(frame)
+    /// >>> pots = molpy.ff.PotentialCompiler(typifier.forcefield()).compile(frame)
     PyMmff94Typifier, Mmff94Typifier, "Mmff94Typifier"
 }
 
@@ -595,8 +594,8 @@ py_mmff_front_door! {
 /// Examples
 /// --------
 /// >>> typifier = OplsAaTypifier()
-/// >>> typed = typifier.typify(mol)        # typed Atomistic
-/// >>> # compose: typify → to_frame → intramolecular_pairs → PotentialCompiler(forcefield()).compile
+/// >>> frame = typifier.typify(mol).to_frame()   # types, terms, special pairs
+/// >>> pots = molpy.ff.PotentialCompiler(typifier.forcefield()).compile(frame)
 #[pyclass(module = "molpy.ff.typifier", name = "OplsAaTypifier", extends = PyTypifier, subclass)]
 pub struct PyOplsAaTypifier;
 
@@ -661,29 +660,6 @@ impl PyElementTypifier {
     }
 }
 
-/// Replace ``mol``'s ``cmaps`` terms, in place, by the CMAP crossterms its
-/// dihedrals and ``forcefield``'s ``cmap`` rows define; return their number.
-///
-/// A crossterm is five atoms ``(a, b, c, d, e)`` whose dihedrals
-/// ``(a, b, c, d)`` and ``(b, c, d, e)`` are both dihedrals of ``mol`` (in
-/// either stored direction) and whose atom ``type`` labels equal a ``cmap``
-/// row's ``itom`` … ``mtom`` in that order — never reversed. Each is one
-/// ``cmaps`` term with ``type`` = the row's name; ``mol.to_frame()`` writes
-/// them as the ``cmaps`` block.
-///
-/// Raises
-/// ------
-/// ValueError
-///     Cmap rows in two styles, two rows on the same five types, a path that
-///     matches one row forward and another backward, or an untyped dihedral
-///     atom. ``mol`` is unchanged.
-#[pyfunction]
-#[pyo3(name = "assign_cmaps")]
-pub fn assign_cmaps_py(mol: &Bound<'_, PyAtomistic>, forcefield: &PyForceField) -> PyResult<usize> {
-    molrs::ff::typifier::cmap::assign_cmaps(mol.try_borrow_mut()?.core_mut(), &forcefield.inner)
-        .map_err(typing_err)
-}
-
 /// Register `molpy.ff.typifier` (the base before its subclasses).
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTypifier>()?;
@@ -694,10 +670,5 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<atd::PyAtdTypifier>()?;
     m.add_class::<gaff::PyGaffTypifier>()?;
     m.add_class::<PyElementTypifier>()?;
-    crate::add_function(
-        m,
-        "molpy.ff.typifier",
-        wrap_pyfunction!(assign_cmaps_py, m)?,
-    )?;
     Ok(())
 }

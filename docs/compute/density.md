@@ -266,7 +266,7 @@ print(round(float(1 - np.exp(-rho * 4 / 3 * np.pi * 1.5**3)), 3))  # -> 0.507
     slab, a droplet, a pore. The reference trajectory behind every figure in
     these pages is bulk argon, which renders as featureless noise, so there is
     nothing honest to plot. This page will get a figure when an interfacial
-    trajectory is added under `scripts/docs_series/`.
+    trajectory is added under `molpy/scripts/docs_series/`.
 
 ## When it goes wrong
 

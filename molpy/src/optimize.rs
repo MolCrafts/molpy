@@ -12,13 +12,12 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::potential::Potentials;
 use molrs::optimize::{Lbfgs, LbfgsSettings, OptimizationReport, OptimizeError, Optimizer};
 
 use crate::core::frame::PyFrame;
 use crate::ff::ir;
-use crate::ff::potential::{PotBacking, PyPotentials, potentials_moved_err, take_err};
+use crate::ff::potential::{PyPotentials, take_err};
 
 use numpy::{PyArray2, PyArray3, PyArrayMethods, PyUntypedArrayMethods};
 
@@ -99,7 +98,7 @@ impl From<OptimizationReport> for PyOptimizationReport {
 ///
 /// Examples
 /// --------
-/// >>> pots = molpy.ff.compile.PotentialCompiler(ff).compile(frame)
+/// >>> pots = molpy.ff.PotentialCompiler(ff).compile(frame)
 /// >>> opt = molpy.optimize.Lbfgs(pots, fmax=0.05, max_steps=500)
 /// >>> report = opt.minimize(frame)                  # frame relaxed in place
 /// >>> report = opt.minimize_coords(coords)          # (N, 3), in place
@@ -118,7 +117,7 @@ impl PyLbfgs {
         f: impl FnOnce(&Lbfgs<&Potentials>) -> Result<R, OptimizeError>,
     ) -> PyResult<R> {
         let pots = self.potentials.borrow(py);
-        let compiled = pots.inner.compiled()?;
+        let compiled = pots.compiled()?;
         compiled.require_pair_lists().map_err(ir::compile_err)?;
         let out = f(&Lbfgs::new(compiled, self.settings));
         take_err(&pots.err_slots)?;
@@ -176,17 +175,7 @@ impl PyLbfgs {
     fn minimize(&self, py: Python<'_>, frame: &PyFrame) -> PyResult<PyOptimizationReport> {
         let pots = self.potentials.borrow(py);
         let report = frame.with_frame_mut(|core| -> PyResult<OptimizationReport> {
-            let compiled;
-            let pot: &Potentials = match &pots.inner {
-                PotBacking::Compiled(p) => p,
-                PotBacking::Deferred(ff) => {
-                    compiled = PotentialCompiler::new(ff)
-                        .compile(core)
-                        .map_err(ir::compile_err)?;
-                    &compiled
-                }
-                PotBacking::Moved => return Err(potentials_moved_err()),
-            };
+            let pot = pots.compiled()?;
             pot.require_pair_lists().map_err(ir::compile_err)?;
             Lbfgs::new(pot, self.settings)
                 .minimize(core)
@@ -249,7 +238,7 @@ impl PyLbfgs {
             )));
         }
         let (b, n) = (shape[0], shape[1]);
-        let expected = self.potentials.borrow(py).inner.compiled()?.n_atoms();
+        let expected = self.potentials.borrow(py).compiled()?.n_atoms();
         if expected != 0 && n != expected {
             return Err(PyValueError::new_err(format!(
                 "structure atom count N={n} does not match this Potentials' atom count {expected}"

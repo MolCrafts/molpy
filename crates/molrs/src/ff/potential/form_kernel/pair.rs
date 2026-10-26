@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::ff::ir::CombiningRule;
-use crate::ff::ir::SpecialClass;
 use crate::ff::ir::{IrError, ParamCombination, ParamKind, ParamSource, StyleSpec};
 use crate::ff::ir::{Params, pair_key};
 use crate::ff::potential::form_kernel::Probe;
@@ -12,8 +11,8 @@ use crate::ff::potential::form_kernel::{
     ParamColumns, ScalarForm, StyleParamColumn, TermParams, columns, numeric_column,
     retain_form_inputs, row_num,
 };
-use crate::ff::potential::pair::{atom_type_index, fold_pairs, pair_columns, type_pair};
-use crate::ff::potential::param_reads::{neighbour_cutoff, pair_cutoff, style_num};
+use crate::ff::potential::pair::{CandidatePairs, atom_type_index, fold_pairs, type_pair};
+use crate::ff::potential::param_reads::{neighbour_cutoff, pair_cutoff};
 use crate::ff::potential::{Accumulator, CompileError, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
@@ -118,13 +117,13 @@ enum Source {
 ///
 /// Built at both compile doors from the style's [`StyleSpec`]:
 ///
-/// * [`compiled`](Self::compiled) resolves every row of the frame's `pairs`
-///   block — the fixed, intramolecular list — prices a row only at
-///   `r < cutoff` (the style's `cutoff`, ∞ when it states none: LAMMPS
-///   truncates every pair, special ones included), and weights an `is_14`
-///   row by the force field's 1-4 weight of the style's special class
-///   (`lj14scale` / `coulomb14scale`, which the compiler projects into the
-///   style params); a row of weight exactly zero is skipped.
+/// * `compiled` resolves the candidate pairs the compiler
+///   hands it (every pair of the atoms, or a neighbour table's) — fixed at
+///   construction — prices a pair only at `r < cutoff` (the style's
+///   `cutoff`, ∞ when it states none: LAMMPS truncates every pair, special
+///   ones included), at the candidate's weight of the style's special class
+///   (the frame's special pairs under `special_bonds`); a pair of weight
+///   exactly zero is skipped.
 /// * [`typed`](Self::typed) builds a type-pair table and prices a neighbour
 ///   table, honouring the style's `cutoff` (`r < cutoff`; required finite
 ///   when the style declares one, ∞ when it declares none and its form
@@ -639,29 +638,25 @@ impl Pending {
 }
 
 impl<Fm: ScalarForm + ?Sized> ScalarPair<Fm> {
-    /// The compiled form: every row of the frame's `pairs` block resolved
-    /// now, an `is_14` row weighted by the style param `lj14scale`
-    /// ([`SpecialClass::Vdw`]) or `coulomb14scale` (`Coulomb`), every row
-    /// truncated at the style param `cutoff` (absent: ∞).
-    pub fn compiled(
+    /// The compiled form: every pair of `candidates` its weight in this
+    /// style's special class does not drop, resolved now, weighted, and
+    /// truncated at the style param `cutoff`.
+    pub(crate) fn compiled(
         form: Arc<Fm>,
         spec: &StyleSpec,
         style: &Params,
         tp: &[(&str, &Params)],
         frame: &Frame,
+        candidates: &CandidatePairs,
     ) -> Result<Self, CompileError> {
-        let who = format!("{} `{}`", spec.category, spec.name);
         let table = PairRows::new(spec, &form.inputs(), style, tp)?;
-        let cutoff = pair_cutoff(&spec.name, style)?;
-        let scale_14 = style_num(
-            &spec.name,
-            style,
-            match spec.special_class() {
-                SpecialClass::Vdw => crate::ff::ir::LJ_14_SCALE,
-                SpecialClass::Coulomb => crate::ff::ir::COULOMB_14_SCALE,
-            },
-        )?;
-        let (i_col, j_col, is_14) = pair_columns(frame, &who)?;
+        let cutoff = pair_cutoff(spec, style)?;
+        let class_weights = candidates.weights(spec.special_class());
+        let kept: Vec<usize> = (0..candidates.len())
+            .filter(|&r| class_weights[r] != 0.0)
+            .collect();
+        let i_col: Vec<usize> = kept.iter().map(|&r| candidates.i[r]).collect();
+        let j_col: Vec<usize> = kept.iter().map(|&r| candidates.j[r]).collect();
         let n = i_col.len();
         let names = table.pair_names();
         let mut types: Option<Vec<String>> = None;
@@ -680,10 +675,7 @@ impl<Fm: ScalarForm + ?Sized> ScalarPair<Fm> {
             let labels = read_types()?;
             let mut resolved: HashMap<(&str, &str), Vec<F>> = HashMap::new();
             for row in 0..n {
-                let key = (
-                    labels[i_col[row] as usize].as_str(),
-                    labels[j_col[row] as usize].as_str(),
-                );
+                let key = (labels[i_col[row]].as_str(), labels[j_col[row]].as_str());
                 if let std::collections::hash_map::Entry::Vacant(slot) = resolved.entry(key) {
                     slot.insert(table.resolve(key.0, key.1)?);
                 }
@@ -693,15 +685,7 @@ impl<Fm: ScalarForm + ?Sized> ScalarPair<Fm> {
             }
         }
         let (atoms, per_atom) = atom_inputs(&table, &*form, frame, &mut read_types)?;
-        let weight = (0..n)
-            .map(|row| {
-                if is_14.is_some_and(|b| b[row]) {
-                    scale_14
-                } else {
-                    1.0
-                }
-            })
-            .collect();
+        let weight = kept.iter().map(|&r| class_weights[r]).collect();
         Self::assemble(
             form,
             spec,
@@ -710,8 +694,8 @@ impl<Fm: ScalarForm + ?Sized> ScalarPair<Fm> {
             atoms,
             per_atom,
             Source::Compiled {
-                atom_i: i_col.iter().map(|&a| a as usize).collect(),
-                atom_j: j_col.iter().map(|&a| a as usize).collect(),
+                atom_i: i_col,
+                atom_j: j_col,
                 values,
                 weight,
                 cutoff2: cutoff * cutoff,
@@ -1093,8 +1077,8 @@ impl<Fm: ScalarForm + ?Sized> ScalarPair<Fm> {
         let mut energy: F = 0.0;
         let mut batch = Batch::new(self.names.len());
         let mut disp = vec![[0.0; 3]; BATCH];
-        // A compiled list is an intramolecular sum with no periodicity: a
-        // virial from its raw differences would be a number about nothing.
+        // A compiled kernel prices fixed pairs at raw distances, no
+        // periodicity: a virial from them would be a number about nothing.
         let mut untallied = Virial::ZERO;
         let mut next = 0;
         while next < atom_i.len() {

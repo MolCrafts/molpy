@@ -189,10 +189,9 @@ impl PairLjCut {
             ));
         }
         let shifted = shifted || smeared;
-        let spec = crate::ff::style_registry::with_global_registry(|r| {
-            r.style("pair", "lj/cut").map(|(spec, _)| spec.clone())
-        })
-        .ok_or("pair lj/cut is a built-in style")?;
+        let spec = crate::ff::style_registry::GlobalRegistry
+            .with(|r| r.style("pair", "lj/cut").map(|(spec, _)| spec.clone()))
+            .ok_or("pair lj/cut is a built-in style")?;
         let style = Params::from_iter([
             ("cutoff", cutoff),
             ("n", F::from(n)),
@@ -297,7 +296,6 @@ mod tests {
     use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::pair::fixtures::{assert_same, table_over};
     use molrs::core::{Block, Frame};
-    use molrs::op::Idx;
     use ndarray::Array1;
 
     /// The fold gives the same number, bit for bit, however many threads ran.
@@ -428,6 +426,7 @@ mod tests {
     /// One `lj/cut` pair over atoms 0-1, its row the pair's.
     fn compiled(eps: F, sigma: F) -> crate::ff::potential::Potentials {
         ExplicitTerms::new("pair", "lj/cut")
+            .style_params(Params::from_iter([("cutoff", F::INFINITY)]))
             .term(
                 &[0, 1],
                 Params::from_iter([("epsilon", eps), ("sigma", sigma)]),
@@ -495,18 +494,12 @@ mod tests {
                 None,
             )
             .unwrap();
-        let mut pairs = Block::new();
-        let (ai, aj): (Vec<Idx>, Vec<Idx>) =
-            links.iter().map(|&(i, j)| (i as Idx, j as Idx)).unzip();
-        pairs
-            .insert("atomi", Array1::from_vec(ai).into_dyn(), None)
-            .unwrap();
-        pairs
-            .insert("atomj", Array1::from_vec(aj).into_dyn(), None)
-            .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        frame.insert("pairs", pairs);
+        frame.insert(
+            "pairs",
+            crate::ff::potential::pair::fixtures::pricing_only(types.len(), links, &[]),
+        );
         (ff, frame)
     }
 

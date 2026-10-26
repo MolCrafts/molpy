@@ -2,17 +2,14 @@
 //!
 //! ```js
 //! const typifier = new UffTypifier();
-//! const typed    = typifier.typify(frame);
-//! const pots     = new PotentialCompiler(typifier.forcefield()).compile(typed);
-//! const nl       = new NeighborList(12.5);         // or NeighborList.bruteForce
-//! nl.build(typed);
-//! const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);
+//! const typed    = typifier.typify(frame);         // terms, special pairs, types
+//! const compiler = new PotentialCompiler(typifier.forcefield());
+//! const pots     = compiler.compile(typed);        // or compileOver(typed, nl.neighbors())
+//! const report   = new Lbfgs(pots).minimize(typed);
 //! ```
 //!
-//! The non-bonded pairs come from a [`NeighborList`](crate::core::NeighborList)
-//! when the frame has no `pairs` block. A frame that already has one keeps
-//! that list, cut to the neighbor table. The optimizer builds no pair list
-//! of its own.
+//! The optimizer minimizes the potentials it is given; which pairs they
+//! price is the compile's.
 
 use std::sync::Arc;
 
@@ -20,13 +17,9 @@ use js_sys::Uint32Array;
 use wasm_bindgen::prelude::*;
 
 use molrs::core::Frame as RsFrame;
-use molrs::core::Neighbors as RsNeighbors;
-use molrs::ff::compile::PotentialCompiler;
-use molrs::ff::forcefield::ForceField as RsForceField;
-use molrs::ff::potential::{Potential, Potentials as RsPotentials, install_pairs};
+use molrs::ff::potential::{Potential, Potentials as RsPotentials};
 use molrs::optimize::{Lbfgs as RsLbfgs, LbfgsSettings, Optimizer, set_free_mask};
 
-use crate::core::Neighbors;
 use crate::core::frame::Frame;
 use crate::ff::Potentials;
 
@@ -34,27 +27,16 @@ use crate::ff::Potentials;
 
 /// Limited-memory BFGS.
 ///
-/// Construct with potentials and a neighbor table, then `minimize(frame)`.
-///
-/// The table is a [`NeighborList`](crate::core::NeighborList)'s
-/// [`Neighbors`], built at the force field's non-bonded cutoff (or
-/// `NeighborList.bruteForce` for a small molecule). Its pairs are installed
-/// as the frame's `pairs` with the force field's `special_bonds` applied, by
-/// `molrs::ff::potential::install_pairs`.
+/// Construct with compiled potentials, then `minimize(frame)`.
 #[wasm_bindgen(js_name = Lbfgs)]
 pub struct Lbfgs {
-    ff: RsForceField,
-    /// Latest compiled kernels (rebuilt at each `minimize` after pair install).
     pots: Arc<RsPotentials>,
-    /// The constructor's neighbour table.
-    neighbors: RsNeighbors,
     settings: LbfgsSettings,
 }
 
 #[wasm_bindgen(js_class = Lbfgs)]
 impl Lbfgs {
-    /// Bind `pots` and the [`Neighbors`] table from
-    /// [`NeighborList::neighbors`](crate::core::NeighborList::neighbors).
+    /// Bind `pots`.
     ///
     /// Knobs default to molrs `LbfgsSettings::DEFAULT` when omitted:
     /// `fmax` (0.05), `maxStep` (0.2), `memory` (8). The step budget is
@@ -67,7 +49,6 @@ impl Lbfgs {
     #[wasm_bindgen(constructor)]
     pub fn new(
         pots: &Potentials,
-        neighbors: &Neighbors,
         fmax: Option<f64>,
         max_step: Option<f64>,
         memory: Option<usize>,
@@ -86,9 +67,7 @@ impl Lbfgs {
             Some(m) => m,
         };
         Ok(Lbfgs {
-            ff: pots.ff.clone(),
             pots: Arc::clone(&pots.inner),
-            neighbors: RsNeighbors::clone(&neighbors.inner),
             settings: LbfgsSettings {
                 fmax: positive("fmax", fmax, defaults.fmax)?,
                 max_step: positive("maxStep", max_step, defaults.max_step)?,
@@ -102,16 +81,14 @@ impl Lbfgs {
     /// iterations (molrs `LbfgsSettings::DEFAULT.max_steps`, 500, when
     /// omitted).
     ///
-    /// Installs the constructor's neighbour pairs, recompiles potentials,
-    /// then runs L-BFGS. Optional `fixed`: dense atom indices held fixed.
+    /// Optional `fixed`: dense atom indices held fixed.
     ///
     /// # Errors
     ///
     /// Throws for a `maxSteps` of 0, a `fixed` index outside the frame's
-    /// atoms, or what pair installation, compilation or the minimizer
-    /// refuses.
+    /// atoms, or what the minimizer refuses.
     pub fn minimize(
-        &mut self,
+        &self,
         frame: &Frame,
         max_steps: Option<usize>,
         fixed: Option<Uint32Array>,
@@ -130,22 +107,10 @@ impl Lbfgs {
             ..self.settings
         };
 
-        // Install pairs + recompile, then minimize — all on the same borrow.
         let report = frame
             .inner
             .with_mut(
                 |rs| -> Result<molrs::optimize::OptimizationReport, String> {
-                    let pairs = install_pairs(
-                        rs,
-                        self.ff.required_special_bonds()?,
-                        Some(&self.neighbors),
-                    )?;
-                    rs.insert("pairs", pairs);
-                    let compiled = PotentialCompiler::new(&self.ff)
-                        .compile(rs)
-                        .map_err(|e| format!("compile: {e}"))?;
-                    self.pots = Arc::new(compiled);
-
                     if let Some(ref fixed) = fixed {
                         apply_fixed_mask(rs, fixed)?;
                     }

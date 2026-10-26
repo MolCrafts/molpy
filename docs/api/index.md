@@ -1,6 +1,6 @@
 # API Reference
 
-Auto-generated reference for every public symbol, with typed signatures throughout. Start from the tables below: find your task, get the symbol and its package.
+Reference for molpy's public API, generated from the docstrings with typed signatures. Start from the tables below: find your task, get the symbol and its package.
 
 ## Public surface: one path per name
 
@@ -13,13 +13,13 @@ promoted class is also `mp.core`'s, as the same object), and the modules
 behind molpy's own additions are implementation modules, outside every
 `__all__` (no module name starts with `_`). The native classes are the
 Rust core's, compiled into `molpy._core` and published in the subsystem
-module named after their Rust owner (`mp.core` is `molrs::core`).
+module they belong to (`mp.core`, `mp.io`, `mp.ff`, …).
 
 | Layer | What it means | Names |
 |-------|---------------|-------|
 | **Promoted core data classes** | The data classes a user handles directly, on the root as the `mp.core` objects (`mp.Frame is mp.core.Frame`). No function, algorithm or unit preset is promoted. | `Frame`, `Block`, `Trajectory`, `Box`, `MolGraph`, `Atomistic`, `CoarseGrain`, `Atom`, `Bond`, `Angle`, `Dihedral`, `Improper`, `Bead`, `CgBond`, `Port`, `VirtualSite`, `DrudeParticle`, `MasslessSite`, `Element`, `Topology` |
-| **Subsystems of the core** | One molpy module per subsystem of the Rust core. Behaviour and docs come from the native core. | `mp.core` — the core data model in one module: the classes above plus `FrameMeta`, `MetaValue`, `keys`, `schema`, `NodeRef`, `Refs`, regions (`Cuboid`, `Sphere`, `HalfSpace`, `Region`, …), `NeighborList`, `VerletSkin`, `UnitRegistry`, `UnitPreset`, `Quantity`, … · `mp.perceive` (`assign_rings`, `perceive_rings`, `add_hydrogens`, `assign_aromaticity`, …, `RingSet`, `SmartsPattern`, `Reaction`, `SubgraphMatcher`, …) · `mp.optimize` (`Lbfgs`, `OptimizationReport`) · `mp.conformer` (`Conformer`, …) · `mp.io` (every `read_*` / `write_*`, with the per-format submodules `mp.io.smiles`, `mp.io.cgsmiles`, `mp.io.lammps`, `mp.io.mrec`, the force-field formats' `mp.io.openmm_xml`, `mp.io.gromacs`, `mp.io.amber`, `mp.io.xml`, and the trajectory readers' `mp.io.pdb`, `mp.io.xyz`, `mp.io.gro`, `mp.io.dcd`, `mp.io.trr`, `mp.io.xtc`) · `mp.ff` (`forcefield`, `potential`, `compile`, `typifier`, `charge`, `ir`, `style_registry`, `params`, `clpol_scaling`) · `mp.compute` · `mp.md` · `mp.op` · `mp.builder` · `mp.stream` |
-| **molpy's additions** | Defined in molpy, placed in the subsystem whose types they act on. | `mp.core`: the selectors (`ColumnSelector`, `AtomIndexSelector`, `MaskPredicate`) and `TrajectorySplitter` with its strategies · `mp.io.lammps`: `LammpsLogMetricReader` · `mp.io.mlp_jsonl`: `MlpJsonlMetricReader` · `mp.io.mrec`: `MrecMetricReader` · `mp.ff.typifier`: the AmberTools typifiers · `mp.builder`: crystals, polymers, virtual sites, `PackingTemplate` |
+| **Subsystems of the core** | One molpy module per subsystem of the Rust core. Behaviour and docs come from the native core. | `mp.core` — the core data model in one module: the classes above plus `FrameMeta`, `MetaValue`, `keys`, `schema`, `NodeRef`, `Refs`, regions (`Cuboid`, `Sphere`, `HalfSpace`, `Region`, …), `NeighborList`, `VerletSkin`, `UnitRegistry`, `UnitPreset`, `Quantity`, … · `mp.perceive` (`assign_rings`, `perceive_rings`, `add_hydrogens`, `assign_aromaticity`, …, `RingSet`, `SmartsPattern`, `Reaction`, `SubgraphMatcher`, …) · `mp.optimize` (`Lbfgs`, `OptimizationReport`) · `mp.conformer` (`Conformer`, …) · `mp.io` (every `read_*` / `write_*`, with the per-format submodules `mp.io.smiles`, `mp.io.cgsmiles`, `mp.io.lammps`, `mp.io.mrec`, the force-field formats' `mp.io.openmm_xml`, `mp.io.gromacs`, `mp.io.amber`, `mp.io.xml`, and the multi-frame readers' `mp.io.pdb`, `mp.io.xyz`, `mp.io.gro`, `mp.io.dcd`, `mp.io.trr`, `mp.io.xtc`, `mp.io.cif`, `mp.io.mol2`, `mp.io.sdf`, `mp.io.cube`) · `mp.ff` (`forcefield`, `potential`, `compile`, `typifier`, `charge`, `ir`, `style_registry`, `clpol_scaling`) · `mp.compute` · `mp.md` · `mp.op` · `mp.builder` · `mp.stream` |
+| **molpy's additions** | Defined in molpy, placed in the subsystem whose types they act on. | `mp.core`: the selectors (`ColumnSelector`, `AtomIndexSelector`, `MaskPredicate`) and `TrajectorySplitter` with its strategies · `mp.io.lammps`: `LammpsLogMetricReader` · `mp.io.mlp_jsonl`: `MlpJsonlMetricReader` · `mp.io.mrec`: `MrecMetricReader` · `mp.ff.typifier`: the AmberTools typifiers · `mp.ff.charge`: `Am1BccModel` · `mp.builder`: the polymer planning layer, the AmberTools polymer builder, `PackingTemplate` |
 | **molpy's own subpackages** | Python only, no Rust counterpart. | `mp.engine` (with `Script`), `mp.tool`, `mp.config`, `mp.resources` |
 
 ## Index of Operations and Symbols
@@ -37,17 +37,17 @@ module named after their Rust owner (`mp.core` is `molrs::core`).
 | Apply a reaction SMARTS to a graph (bond formation / removal) | `Reaction` | [Notation](notation.md) |
 | Generate `fix bond/react` pre/post topology templates | `mp.io.lammps.BondReactTemplate`, `write_lammps_bond_react_system` | [IO](io.md) |
 | Assemble units along a site graph (chains, rings, stars, combs, backmapping) | `mp.builder.Assembler`, `GrowthPlacer`, `SitePlacer`, `AxisOrienter`, `mp.io.cgsmiles.CgSmilesIr` | [Builder](builder.md) |
-| Pack molecules into a simulation box | `molpack.GencanPack`, `Target`, molrs regions as restraints | [Pack](pack.md) |
+| Pack molecules into a simulation box | `molpack.GencanPack`, `Target`, `mp.core` regions as restraints | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
 | Assign force field types (OPLS-AA, MMFF94, GAFF / GAFF2; AM1-BCC charges with `mp.ff.charge.Am1BccModel`, sqm via AmberTools) | `mp.ff.typifier.OplsAaTypifier`, `Mmff94Typifier`, `AtdTypifier`, `GaffTypifier`, `AntechamberTypifier`, `TleapTypifier` | [Typifier](typifier.md) |
-| Evaluate bond, angle, and pair potentials | `mp.ff.compile.PotentialCompiler`, `ExplicitTerms`, `mp.ff.potential.Potentials` | [Potential](potential.md) |
-| Register a force-field style or category from Python | `mp.ff.style_registry.StyleDeclaration`, `register_style`, `register_category` | [Potential](potential.md) |
+| Evaluate bond, angle, and pair potentials | `mp.ff.PotentialCompiler`, `ExplicitTerms`, `mp.ff.potential.Potentials` | [Potential](potential.md) |
+| Register a force-field style or category from Python | `mp.ff.style_registry.GlobalRegistry`: `register_style`, `register_category` | [Potential](potential.md) |
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.io.openmm_xml.OpenmmXmlReader` | [I/O](io.md) |
 | Store a frame, trajectory or force field as a `*.mrec` record | `mp.io.write_mrec`, `mp.io.mrec.MrecReader`, `mp.io.mrec.MrecFile` | [I/O](io.md) |
 | Catch an external program's failure, inspect its environment | `mp.tool.ToolError`, `mp.tool.EnvironmentSpec` | [Tool](tool.md) |
 | Plan polydisperse polymer systems | `SystemPlanner`, `PolydisperseChainGenerator`, `SchulzZimmPolydisperse` | [Builder](builder.md) |
 | Compute mean-squared displacement, correlations, RDF, clustering | `Msd`, `OnsagerCorrelation`, `Rdf` | [Compute](compute.md) |
-| Locate bundled data files and built-in force fields | `get_path`, `list_files` | [Resources](resources.md) |
+| Locate bundled data files and built-in force fields | `get_path`, `list_files`, `exists` | [Resources](resources.md) |
 | Generate LAMMPS, GROMACS, or OpenMM input decks | `LammpsEngine.generate_inputs`, `GromacsEngine.generate_inputs`, `OpenmmEngine.generate_inputs` | [Engine](engine.md) |
 | Set an engine's or AmberTools program's executable, environment, launcher, time limit | `mp.config.load_config`, `tool_settings`, `molpy.toml` | [Config](config.md) |
 
@@ -60,8 +60,8 @@ module named after their Rust owner (`mp.core` is `molrs::core`).
 | [Builder](builder.md) | System construction: site-graph assembly and placers, polydisperse planning, nanostructures, crystals, virtual sites |
 | [Pack](pack.md) | Spatial packing via molpack (`molcrafts-molpack`) |
 | [Conformer](conformer.md) | 3D conformer generation from molecular graphs |
-| [Typifier](typifier.md) | Force-field typing: OPLS-AA and MMFF94 (native), GAFF / GAFF2 through AmberTools |
-| [Potential](potential.md) | `mp.ff.potential` kernels, `mp.ff.compile` compiler, `mp.ff.style_registry` style registration |
+| [Typifier](typifier.md) | Force-field typing: OPLS-AA, MMFF94 and GAFF / GAFF2 (native), and the AmberTools pipelines |
+| [Potential](potential.md) | `mp.ff.potential` kernels, `mp.ff.PotentialCompiler`, `mp.ff.style_registry` style registration |
 | [I/O](io.md) | `mp.io`: every file reader and writer — structure, trajectory and force-field files, SMILES, `*.mrec` records, LAMMPS logs — and molpy's metric readers |
 | [Tool](tool.md) | The one core every external program shares: settings, environment, executable, `ToolError` |
 | [Engine](engine.md) | Simulation engines (LAMMPS, GROMACS, OpenMM, CP2K): one `generate_inputs` each, `run`, `Script` |

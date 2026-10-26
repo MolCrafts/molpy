@@ -52,7 +52,7 @@ def test_a_cmap_style_takes_five_endpoints_and_a_grid() -> None:
     assert cmap.category == "cmap"
     assert [t.name for t in cmap.endpoints] == list(ENDS)
     assert (cmap.itom.name, cmap.mtom.name) == ("C", "NH2")
-    grid = cmap["grid"]
+    grid = cmap.params["grid"]
     assert isinstance(grid, np.ndarray) and grid.dtype == np.float64
     np.testing.assert_array_equal(grid, _grid())
     assert ff.get_types(mp.ff.forcefield.CmapType) == [cmap]
@@ -62,15 +62,17 @@ def test_a_cmap_style_takes_five_endpoints_and_a_grid() -> None:
 def test_an_array_param_is_taken_from_any_numeric_array_or_nested_list() -> None:
     ff = _cmap_ff(grid=[[1, 2], [3, 4]])
     (cmap,) = ff.get_types("cmap")
-    np.testing.assert_array_equal(cmap["grid"], [[1.0, 2.0], [3.0, 4.0]])
-    assert cmap["grid"].dtype == np.float64
-    cmap["grid"] = np.zeros((3, 3), dtype=np.int32)
-    assert cmap["grid"].shape == (3, 3) and cmap["grid"].dtype == np.float64
+    np.testing.assert_array_equal(cmap.params["grid"], [[1.0, 2.0], [3.0, 4.0]])
+    assert cmap.params["grid"].dtype == np.float64
+    cmap.set(grid=np.zeros((3, 3), dtype=np.int32))
+    assert (
+        cmap.params["grid"].shape == (3, 3) and cmap.params["grid"].dtype == np.float64
+    )
     with pytest.raises(TypeError):
-        cmap["grid"] = [[1.0, 2.0], [3.0]]
+        cmap.set(grid=[[1.0, 2.0], [3.0]])
     # A 0-d array is a number.
-    cmap["scale"] = np.float64(0.5)
-    assert cmap["scale"] == 0.5
+    cmap.set(scale=np.float64(0.5))
+    assert cmap.params["scale"] == 0.5
 
 
 def test_a_restatement_compares_its_arrays_exactly() -> None:
@@ -100,7 +102,7 @@ def test_a_cmap_grid_round_trips_through_the_section_and_a_store(
     mp.io.write_mrec(path, forcefield=ff)
     back = mp.io.mrec.MrecFile(path).forcefield().to_forcefield()
     (cmap,) = back.get_types("cmap")
-    assert cmap["grid"].tobytes() == _grid().tobytes()
+    assert cmap.params["grid"].tobytes() == _grid().tobytes()
 
 
 def test_a_grid_the_section_cannot_hold_is_refused() -> None:
@@ -112,7 +114,7 @@ def test_a_cmap_force_field_pickles_with_its_grid() -> None:
     ff = _cmap_ff()
     back = pickle.loads(pickle.dumps(ff, protocol=pickle.HIGHEST_PROTOCOL))
     (cmap,) = back.get_types("cmap")
-    assert cmap["grid"].tobytes() == _grid().tobytes()
+    assert cmap.params["grid"].tobytes() == _grid().tobytes()
     assert [t.name for t in cmap.endpoints] == list(ENDS)
 
 
@@ -183,7 +185,7 @@ def _alanine_ff() -> mp.ff.forcefield.ForceField:
     atoms = ff.def_style("atom", "full")
     by_name = {name: atoms.def_type(name, mass=12.0) for name in set(ALA)}
     ff.def_style("cmap", "charmm").def_type(
-        "ala", *(by_name[name] for name in ALA), grid=row["grid"]
+        "ala", *(by_name[name] for name in ALA), grid=row.params["grid"]
     )
     return ff
 
@@ -209,18 +211,18 @@ def test_read_lammps_cmap_names_rows_by_crossterm_type() -> None:
     assert ff.units == "real"
     (row,) = ff.get_types("cmap")
     assert row.name == "1"
-    assert row["grid"].shape == (24, 24)
-    assert row["grid"][0, 0] == 0.12679
+    assert row.params["grid"].shape == (24, 24)
+    assert row.params["grid"][0, 0] == 0.12679
 
 
 def test_assign_cmaps_builds_the_block_the_kernel_prices() -> None:
     ff, mol = _alanine_ff(), _backbone()
-    assert mp.ff.typifier.assign_cmaps(mol, ff) == 1
+    assert ff.assign_cmaps(mol) == 1
     frame = mol.to_frame()
     cmaps = frame["cmaps"]
     assert [int(cmaps[k][0]) for k in ("atomi", "atomm")] == [0, 4]
     assert list(cmaps["type"]) == ["ala"]
-    compiler = mp.ff.compile.PotentialCompiler(ff)
+    compiler = mp.ff.PotentialCompiler(ff)
     energy, forces = compiler.compile(frame).evaluate(frame)
     assert np.isfinite(energy) and energy != 0.0
     np.testing.assert_allclose(forces.reshape(-1, 3).sum(axis=0), 0.0, atol=1e-10)
@@ -228,7 +230,7 @@ def test_assign_cmaps_builds_the_block_the_kernel_prices() -> None:
 
 def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
     ff, mol = _alanine_ff(), _backbone()
-    mp.ff.typifier.assign_cmaps(mol, ff)
+    ff.assign_cmaps(mol)
     frame = mol.to_frame()
     del frame["dihedrals"]
 

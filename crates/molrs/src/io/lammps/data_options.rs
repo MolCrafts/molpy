@@ -413,6 +413,7 @@ mod tests {
         let molecular = {
             let mut f = f.clone();
             f.remove("bonds");
+            f.remove("pairs");
             f
         };
         let out = write(&molecular, Some("charge"), None).unwrap();

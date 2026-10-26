@@ -1,6 +1,6 @@
 # Star polymer
 
-**Script:** [`examples/topology/04_star.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/04_star.py)
+**Script:** [`molpy/examples/topology/04_star.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/04_star.py)
 
 A star needs a **multifunctional core**: `X3` carries three `>` ports, one per arm. Arms are ordinary `EO` paths written as branches.
 
@@ -18,7 +18,7 @@ A core with fewer ports than arms is refused, naming the core site.
 **Check:** 10 units, 77 atoms, 3 open ports at the arm ends.
 
 ```bash
-cd examples && python topology/04_star.py
+cd molpy/examples && python topology/04_star.py
 ```
 
 ## See also

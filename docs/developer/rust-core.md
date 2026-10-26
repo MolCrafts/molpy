@@ -1,6 +1,6 @@
-# The Rust Core (molrs)
+# The Rust Core
 
-molpy's native classes are the Rust core's, [molrs](https://github.com/MolCrafts/molpy/tree/dev/crates/molrs):
+molpy's native classes are the [Rust core's](https://github.com/MolCrafts/molpy/tree/dev/crates/molrs) (`crates/molrs`):
 a column store and compute kernels, compiled into the wheel as `molpy._core`
 and published in the subsystem module named after their Rust owner
 (`mp.core` is `molrs::core`, `mp.compute` is `molrs::compute`). `mp.Frame` and
@@ -46,8 +46,8 @@ frames = [_frame(step) for step in range(20)]
 The practical consequence is that a box goes into any native call unchanged,
 as the same object with the same coordinates: `frame.box` is accepted directly by Rust-side calls such as
 `mp.core.NeighborList.build`. Everything — the constructor (`Box(cell,
-origin=(0, 0, 0), pbc=(True, True, True))`, the cell a `(3, 3)` matrix or a
-`mp.core.Cell`), the factories (`Box.cube`, `Box.ortho`,
+origin=(0, 0, 0), pbc=None)`, the cell a `(3, 3)` matrix or a
+`mp.core.Cell`, `pbc` omitted periodic on every axis of a defined cell), the factories (`Box.cube`, `Box.ortho`,
 `Box.from_lengths_tilts`, `Box.from_lengths_angles`, `Box.bounding`) and the
 geometry (`wrap`, `unwrap`, `delta`, `distances`, `to_frac`, …) — is the
 native box's.

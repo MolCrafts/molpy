@@ -198,21 +198,28 @@ const dcd   = writeDcd(frame);                                    // Uint8Array
 
 ```js
 const typifier = new UffTypifier();                 // or Mmff94Typifier / Mmff94sTypifier
-const typed    = typifier.typify(frame);
-const pots     = new PotentialCompiler(typifier.forcefield()).compile(typed);
-const nl       = new NeighborList(12.5);            // or NeighborList.bruteForce(12.5)
+const typed    = typifier.typify(frame);            // terms, special pairs, types
+const compiler = new PotentialCompiler(typifier.forcefield());
+const pots     = compiler.compile(typed);           // every pair of atoms
+const report   = new Lbfgs(pots).minimize(typed);
+
+// A large molecule: candidate pairs from a neighbour table instead.
+const nl = new NeighborList(12.5);
 nl.build(typed);
-const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);  // pairs come from the NeighborList
+const bounded = compiler.compileOver(typed, nl.neighbors());
 ```
 
 - **UFF** — full RDKit default table (entire periodic table + oxidation states)
 - **MMFF94 / MMFF94s** — Merck force fields
 - **no GFN-FF**
 - `typifier.forcefield()` → the `ForceField` typing assigned;
-  `new PotentialCompiler(ff).compile(typedFrame)` → `Potentials` — the native
-  composition, no typifier-to-potentials shortcut
+  `new PotentialCompiler(ff).compile(typedFrame)` (or
+  `compileOver(typedFrame, neighbors)`) → `Potentials` — the native
+  composition, no typifier-to-potentials shortcut. The frame's special pairs
+  (`pairs`, written by typing) weigh the non-bonded pairs; every other pair
+  is at full strength
 - `Potentials.evaluate(coords)` → `{ energy, forces }` (flat `3N` coordinates)
-- `new Lbfgs(pots, neighbors, fmax?, maxStep?, memory?)`; `minimize(frame,
+- `new Lbfgs(pots, fmax?, maxStep?, memory?)`; `minimize(frame,
   maxSteps?, fixed?)` minimizes in place. A given knob that is not positive
   (or a `fixed` index outside the frame) throws; nothing is clamped
 

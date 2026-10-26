@@ -46,7 +46,7 @@ pub(crate) fn codec_of<'r>(
         Engine::Lammps.refuse(
             category,
             style,
-            "the style is not registered (molpy.ff.style_registry.register_style), so nothing states \
+            "the style is not registered (molpy.ff.style_registry.GlobalRegistry().register_style), so nothing states \
              its parameters' order and dimensions",
         )
     })?;
@@ -97,7 +97,7 @@ pub(crate) fn lammps_coeff_values(
     units: &str,
 ) -> Result<Vec<f64>, ForceFieldWriteError> {
     parse_lammps_units_style(units)?;
-    crate::ff::style_registry::with_global_registry(|reg| {
+    crate::ff::style_registry::GlobalRegistry.with(|reg| {
         let (spec, codec) = codec_of(reg, category, style)?;
         Ok(codec
             .write(spec, params, &UnitScale::IDENTITY)?
@@ -347,7 +347,7 @@ impl PairRow<'_> {
 /// LAMMPS has no per-pair exception. A frame whose `pairs` block carries an
 /// override column ([`PAIR_OVERRIDE_COLUMNS`](molrs::core::schema::PAIR_OVERRIDE_COLUMNS))
 /// is refused by name — by the data-file writer, and by
-/// [`refuse_pair_overrides`] for a caller writing a force field for it.
+/// [`refuse_inexpressible_pairs`] for a caller writing a force field for it.
 #[derive(Debug, Clone)]
 pub struct LammpsForcefieldWriter<'a> {
     labels: &'a TypeLabels,
@@ -1211,27 +1211,67 @@ fn push_data_section(lines: &mut Vec<String>, heading: &str, rows: Vec<String>) 
     lines.push("\n".to_owned());
 }
 
-/// The per-pair override columns of `frame`'s `pairs` block, refused by name:
-/// LAMMPS has no per-pair exception (see the conventions guide, "1-4
-/// interactions"). The data-file writer refuses them too; a caller writing a
-/// force field for a frame checks the frame here.
-pub fn refuse_pair_overrides(frame: &molrs::core::Frame) -> Result<(), String> {
-    let Some(pairs) = frame.get("pairs") else {
+/// Refuse a frame whose special pairs LAMMPS cannot state: LAMMPS derives
+/// them from the bonds and weighs them by `special_bonds` alone (see the
+/// conventions guide, "1-4 interactions"), so the frame's `pairs` must be
+/// exactly the 1-2, 1-3 and 1-4 pairs of its bonds, with no per-pair override
+/// cell. The data-file writer refuses the same frames, and so does the OpenMM
+/// force-field writer, whose `createSystem` derives them the same way; a
+/// caller writing a force field for a frame checks the frame here.
+pub fn refuse_inexpressible_pairs(frame: &impl molrs::core::FrameAccess) -> Result<(), String> {
+    use molrs::core::ColumnView;
+    if !frame.contains_block("pairs") {
         return Ok(());
-    };
+    }
     let present: Vec<&str> = molrs::core::schema::PAIR_OVERRIDE_COLUMNS
         .iter()
         .copied()
-        .filter(|k| pairs.get(k).is_some())
+        .filter(|k| frame.column("pairs", k).is_some())
         .collect();
-    if present.is_empty() {
-        return Ok(());
+    if !present.is_empty() {
+        return Err(format!(
+            "pairs: the per-pair override columns {present:?} have no LAMMPS form — LAMMPS \
+             prices a 1-4 pair by special_bonds, lj/charmm's epsilon14/sigma14 and dihedral \
+             charmm's w, never per pair"
+        ));
     }
-    Err(format!(
-        "pairs: the per-pair override columns {present:?} have no LAMMPS form — LAMMPS \
-         prices a 1-4 pair by special_bonds, lj/charmm's epsilon14/sigma14 and dihedral \
-         charmm's w, never per pair"
-    ))
+    let indices = |block: &str, key: &str| -> Vec<usize> {
+        match frame.column(block, key) {
+            Some(ColumnView::Uint(v)) => v.iter().map(|&x| x as usize).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let n_atoms = frame
+        .visit_block("atoms", |b| b.n_rows())
+        .flatten()
+        .unwrap_or(0);
+    let mut topology = molrs::core::Topology::with_atoms(n_atoms);
+    let edges: Vec<[usize; 2]> = indices("bonds", "atomi")
+        .into_iter()
+        .zip(indices("bonds", "atomj"))
+        .map(|(a, b)| [a, b])
+        .collect();
+    topology.add_bonds(&edges);
+    let close = topology.close_pairs(3);
+    let (pi, pj, hops) = (
+        indices("pairs", "atomi"),
+        indices("pairs", "atomj"),
+        indices("pairs", "n_bonds"),
+    );
+    let derivable = pi.len() == close.len()
+        && hops.len() == pi.len()
+        && (0..pi.len())
+            .all(|r| close.get(&(pi[r].min(pj[r]), pi[r].max(pj[r]))) == Some(&hops[r]));
+    if !derivable {
+        return Err(format!(
+            "pairs: {} rows that are not the {} pairs within three bonds of the frame's \
+             bonds — LAMMPS (and an OpenMM force field) derives the special pairs from the \
+             bonds and states no other",
+            pi.len(),
+            close.len()
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn cmap_file_text(
@@ -1347,6 +1387,22 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert!(text.contains("bond_coeff c3-c3"), "{text}");
         assert!(!text.contains("pair_coeff"), "{text}");
+    }
+
+    /// A pair style stating `cutoff = inf` (every pair priced) is refused by
+    /// name: LAMMPS truncates every pair style.
+    #[test]
+    fn an_infinite_cutoff_is_refused() {
+        let mut ff = split_pair_ff();
+        ff.get_style_mut("pair", "lj/cut")
+            .unwrap()
+            .set_param("cutoff", f64::INFINITY);
+        let labels = labels_of(&[("atoms", &["c3", "hc"])]);
+        let err = LammpsForcefieldWriter::new(&labels)
+            .written(&ff)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("lj/cut") && err.contains("finite"), "{err}");
     }
 
     #[test]

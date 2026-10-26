@@ -51,7 +51,7 @@ mod tests {
     use crate::ff::ir::{Params, SpecialBonds};
     use crate::ff::potential::fixtures::{OneShot, assert_forces_are_negative_gradient};
     use molrs::core::{Block, Frame};
-    use molrs::op::{F, Idx};
+    use molrs::op::F;
     use ndarray::Array1;
 
     /// Two atoms with their own `x1`, `D1` columns, one `pairs` row.
@@ -63,16 +63,8 @@ mod tests {
         atoms
             .insert("D1", Array1::from_vec(d1.to_vec()).into_dyn(), None)
             .unwrap();
-        let mut pairs = Block::new();
-        pairs
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
-            .unwrap();
-        pairs
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None)
-            .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        frame.insert("pairs", pairs);
         frame
     }
 

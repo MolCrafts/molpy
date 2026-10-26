@@ -2031,8 +2031,8 @@ impl MolGraph {
         }
 
         // Non-endpoint columns are properties, read back at every dtype the
-        // frame can carry (a string bond label, a UInt `type_id`, an `is_14`
-        // flag), each honouring its validity mask.
+        // frame can carry (a string bond label, a UInt `type_id` or
+        // `n_bonds`, a bool flag), each honouring its validity mask.
         let props = MaskedColumns::of(block, &endpoint_names)?;
 
         for row in 0..block.n_rows().unwrap_or(0) {

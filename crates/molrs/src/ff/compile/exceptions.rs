@@ -1,100 +1,125 @@
 //! The 1-4 exceptions of a force field on a frame: which non-bonded pairs
 //! the [`PairExceptions`] kernel prices instead of the pair styles, and at
-//! what parameters (the `dihedral charmm` `w`, the per-pair override cells,
-//! `special_bonds`).
+//! what parameters (the `dihedral charmm` `w`, a `pairs` row's parameter
+//! cells, `lj/charmm`'s `epsilon14` / `sigma14`, the row's weights).
+//!
+//! LAMMPS's `lj/charmm` prices a `special_bonds` 1-4 pair at the regular
+//! `epsilon` / `sigma`; its `epsilon14` / `sigma14` reach only `w` pairs.
+//! Engines that price every bond-graph 1-4 pair once with its own 1-4
+//! parameters — OpenMM's `<LennardJonesForce>` (`sigma14`/`epsilon14`),
+//! GROMACS `[ pairtypes ]`, CHARMM-via-chamber prmtop — mean the 1-4 pairs at
+//! `epsilon14` / `sigma14`, and a `lj/charmm` style says so with its string
+//! param `one_four = "epsilon14"`; this kernel then prices those pairs.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::ff::compile::gathered;
-use crate::ff::compile::one_four::check_materialized;
 use crate::ff::forcefield::ForceField;
-use crate::ff::ir::{CombiningRule, OneFour, Params, SpecialClass};
+use crate::ff::ir::{CombiningRule, OneFour, Params, SpecialBonds, SpecialClass};
+use crate::ff::potential::end_pairs;
 use crate::ff::potential::pair::PairExceptions;
 use crate::ff::potential::pair::lj_rows::{charmm_pair_params, lj_pair_params, mixing_of};
 use crate::ff::potential::param_reads;
-use crate::ff::potential::{bond_classes, end_pairs};
+use crate::ff::special_pairs::{COUL_SCALE, EPS, LJ_SCALE, QQ, SIGMA, SpecialPairs};
 use molrs::core::Frame;
-use molrs::core::keys::{ATOMI, ATOMJ, ATOML};
-use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::core::schema::block_names::{ATOMS, BONDS, DIHEDRALS, PAIR_OVERRIDES, PAIRS};
+use molrs::core::keys::{ATOMI, ATOML};
+use molrs::core::schema::block_names::{ATOMS, DIHEDRALS};
 use molrs::op::F;
 
 /// What the compiler routes through the exceptions kernel for one frame.
 pub(crate) struct Exceptions {
     /// The kernel, when any pair is an exception.
     pub(crate) kernel: Option<PairExceptions>,
-    /// Rows of the frame's `pairs` block that carry an override cell: the
-    /// regular pair kernels must not price them.
-    pub(crate) override_rows: Vec<usize>,
-    /// Those rows' atom pairs, `(lo, hi)`.
-    pub(crate) replaced: Vec<(usize, usize)>,
+    /// The pairs `(lo, hi)` the kernel prices: the pair styles must not.
+    pub(crate) replaced: HashSet<(usize, usize)>,
 }
 
-/// One `pairs` row's override cells, in [`PAIR_OVERRIDE_COLUMNS`] order.
-type Cells = [Option<F>; 5];
-const EPS: usize = 0;
-const SIGMA: usize = 1;
-const QQ: usize = 2;
-const LJ_SCALE: usize = 3;
-const COUL_SCALE: usize = 4;
-
-/// The van-der-Waals style a 1-4 pair's Lennard-Jones parameters come from:
-/// the one answer [`pair_styles`] gives the exceptions kernel and
-/// [`ForceField::materialize_one_four`] alike.
+/// The van-der-Waals style a 1-4 pair's Lennard-Jones parameters come from.
 pub(crate) enum Vdw<'f> {
     None,
     LjCut(HashMap<String, Params>, CombiningRule),
-    Charmm(HashMap<String, Params>, CombiningRule, OneFour),
+    Charmm(HashMap<String, Params>, CombiningRule),
     /// A van-der-Waals style with no LJ 12-6 form (`buck`, `morse`, Mie
     /// `lj/cut`, …).
     Other(&'f str),
 }
 
-/// How the compiler prices the frame's 1-4 exceptions under `ff`.
+/// One exception before it is priced.
+struct Entry {
+    /// The summed `dihedral charmm` `w` of the dihedrals ending at the pair.
+    w: F,
+    /// The pair's `pairs` row, when it has one.
+    row: Option<usize>,
+    /// Whether the pair takes `lj/charmm`'s `epsilon14` / `sigma14`.
+    one_four: bool,
+}
+
+/// How the compiler prices the frame's exceptions under `ff`.
 ///
-/// `overlay` reads `pair_overrides` when the frame has no `pairs` block —
-/// the neighbour-driven door. [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)
-/// passes `false`: a bonded field must not grow an exceptions kernel from
-/// an overlay that is not an evaluation list.
+/// A pair is an exception when a `dihedral charmm` with `w > 0` ends at it,
+/// when its `pairs` row states one of its parameters (`epsilon`, `sigma`,
+/// `charge_product`), or, under `lj/charmm` with `one_four = "epsilon14"`,
+/// when it is a 1-4 pair (`n_bonds` 3) its weights still price.
 ///
 /// # Errors
 ///
 /// A `dihedral charmm` `w` outside `[0, 1]`; `w > 0` beside `special_bonds`
 /// 1-4 weights other than 0, or without a `lj/charmm` pair style and a
-/// Coulomb style (all three LAMMPS's own errors); an override column that is
-/// not float, holds a non-finite value, or names one pair twice; and, when
-/// any exception exists, a pair style the exception cannot stand in for.
-pub(crate) fn plan(ff: &ForceField, frame: &Frame, overlay: bool) -> Result<Exceptions, String> {
+/// Coulomb style (all three LAMMPS's own errors); and, when any exception
+/// exists, a pair style the exception cannot stand in for.
+pub(crate) fn plan(
+    ff: &ForceField,
+    frame: &Frame,
+    pairs: &SpecialPairs,
+    special: &SpecialBonds,
+) -> Result<Exceptions, String> {
     let wsum = dihedral_weights(ff, frame)?;
-    let source = exception_source(frame, overlay);
-    let (cells, override_rows) = override_cells(source)?;
-    let rows_ij = pair_ends(frame, source);
-    check_one_four(ff, frame, &wsum, &cells, &rows_ij)?;
-    let block = source.map(|(name, _)| name).unwrap_or(PAIRS);
-
-    let mut entries: BTreeMap<(usize, usize), (F, Option<usize>)> = BTreeMap::new();
+    let rows = pairs.rows();
+    let row_of: HashMap<(usize, usize), usize> = rows
+        .iter()
+        .enumerate()
+        .map(|(r, p)| ((p.i, p.j), r))
+        .collect();
+    let mut entries: BTreeMap<(usize, usize), Entry> = BTreeMap::new();
     for (&key, &w) in &wsum {
-        entries.insert(key, (w, None));
+        entries.insert(
+            key,
+            Entry {
+                w,
+                row: row_of.get(&key).copied(),
+                one_four: false,
+            },
+        );
     }
-    let mut replaced = Vec::with_capacity(override_rows.len());
-    for &r in &override_rows {
-        let key = rows_ij[r];
-        let e = entries.entry(key).or_insert((0.0, None));
-        if e.1.is_some() {
-            return Err(format!(
-                "{block}: atoms {} and {} carry per-pair overrides on two rows; a pair \
-                 has one set of exception parameters",
-                key.0, key.1
-            ));
+    for (r, p) in rows.iter().enumerate() {
+        if p.has_parameters() {
+            entries
+                .entry((p.i, p.j))
+                .or_insert(Entry {
+                    w: 0.0,
+                    row: None,
+                    one_four: false,
+                })
+                .row = Some(r);
         }
-        e.1 = Some(r);
-        replaced.push(key);
+    }
+    if epsilon14(ff, special)? {
+        for (r, p) in rows.iter().enumerate() {
+            if p.n_bonds != 3 || p.weight(SpecialClass::Vdw, special) == 0.0 {
+                continue;
+            }
+            let e = entries.entry((p.i, p.j)).or_insert(Entry {
+                w: 0.0,
+                row: Some(r),
+                one_four: false,
+            });
+            e.one_four = e.w == 0.0;
+        }
     }
     if entries.is_empty() {
         return Ok(Exceptions {
             kernel: None,
-            override_rows,
-            replaced,
+            replaced: HashSet::new(),
         });
     }
 
@@ -113,12 +138,6 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame, overlay: bool) -> Result<Exce
         .get(ATOMS)
         .and_then(|b| b.get("charge"))
         .and_then(|c| c.get::<f64>());
-    let is_14 = frame
-        .get(PAIRS)
-        .and_then(|b| b.get("is_14"))
-        .and_then(|c| c.get::<bool>());
-    let classes = bond_distances(frame)?;
-    let sb = ff.required_special_bonds()?;
     let lj_rows = match &vdw {
         Vdw::Charmm(rows, ..) | Vdw::LjCut(rows, _) => as_refs(rows),
         _ => HashMap::new(),
@@ -132,61 +151,33 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame, overlay: bool) -> Result<Exce
         Vec::with_capacity(n),
         Vec::with_capacity(n),
     );
-    for (&(i, j), &(w, row)) in &entries {
-        // An overlay row on a 1-2 or 1-3 that `special_bonds` excludes is the
-        // row the list builder refuses. Pricing it here would be the other answer.
-        if block == PAIR_OVERRIDES
-            && row.is_some()
-            && let Some(class) = classes
-                .as_ref()
-                .and_then(|c| c.get(&(i.min(j), i.max(j))).copied())
-        {
-            let slot = match class {
-                1 => Some(0usize),
-                2 => Some(1usize),
-                _ => None,
-            };
-            if let Some(k) = slot
-                && sb.lj[k] == 0.0
-                && sb.coul[k] == 0.0
-            {
-                return Err(format!(
-                    "pair_overrides: atoms {i} and {j} carry a per-pair override, and \
-                     the force field's special_bonds exclude that pair (1-2 or 1-3), \
-                     so the override would be dropped"
-                ));
-            }
-        }
-        let cell = row.map(|r| cells[r]).unwrap_or([None; 5]);
-        // The class weight is needed only for a pair the dihedral does not
-        // price, and only where an override leaves a scale null.
-        let class = || match &classes {
-            Some(c) => c.get(&(i.min(j), i.max(j))).copied().unwrap_or(0),
-            None => {
-                let flagged = row.is_some_and(|r| is_14.is_some_and(|f| f[r]));
-                if flagged { 3 } else { 0 }
-            }
-        };
-        let weight = |table: [f64; 3]| match class() {
-            d @ 1..=3 => table[d - 1],
-            _ => 1.0,
-        };
+    for (&(i, j), entry) in &entries {
+        let w = entry.w;
+        let row = entry.row.map(|r| &rows[r]);
+        let cell = row.map(|p| p.cells).unwrap_or([None; 5]);
+        // The weight a pair the dihedral does not price takes: its row's.
+        let weight = |class: SpecialClass| row.map_or(1.0, |p| p.weight(class, special));
 
-        // Van der Waals: the cells, else the dihedral's 1-4 parameters, else
-        // the style's own. A field with no Lennard-Jones style prices none of
-        // the LJ cells: they belong to a style it does not have.
+        // Van der Waals: the cells, else the 1-4 parameters (a `w` pair, an
+        // `epsilon14` 1-4 pair), else the style's own. A field with no
+        // Lennard-Jones style prices none of the LJ cells: they belong to a
+        // style it does not have.
         let base = |mixing: CombiningRule, charmm: bool| -> Result<(F, F), String> {
             let (a, b) = atom_type_pair(types, i, j)?;
             if charmm {
                 let (regular, one_four) =
                     charmm_pair_params(&lj_rows, mixing, a, b).map_err(|e| e.to_string())?;
-                Ok(if w > 0.0 { one_four } else { regular })
+                Ok(if w > 0.0 || entry.one_four {
+                    one_four
+                } else {
+                    regular
+                })
             } else {
                 lj_pair_params("lj/cut", &lj_rows, mixing, a, b).map_err(|e| e.to_string())
             }
         };
         let (eps, sigma, w_lj) = match &vdw {
-            Vdw::Charmm(_, mixing, _) | Vdw::LjCut(_, mixing) => {
+            Vdw::Charmm(_, mixing) | Vdw::LjCut(_, mixing) => {
                 let (e, s) = match (cell[EPS], cell[SIGMA]) {
                     (Some(e), Some(s)) => (e, s),
                     (e, s) => {
@@ -194,8 +185,13 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame, overlay: bool) -> Result<Exce
                         (e.unwrap_or(be), s.unwrap_or(bs))
                     }
                 };
-                let w_lj =
-                    cell[LJ_SCALE].unwrap_or_else(|| if w > 0.0 { w } else { weight(sb.lj) });
+                let w_lj = cell[LJ_SCALE].unwrap_or_else(|| {
+                    if w > 0.0 {
+                        w
+                    } else {
+                        weight(SpecialClass::Vdw)
+                    }
+                });
                 (e, s, w_lj)
             }
             _ => (0.0, 0.0, 0.0),
@@ -205,8 +201,13 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame, overlay: bool) -> Result<Exce
         let (k, w_c, qq_ij) = match coul {
             None => (0.0, 0.0, 0.0),
             Some(k) => {
-                let w_c =
-                    cell[COUL_SCALE].unwrap_or_else(|| if w > 0.0 { w } else { weight(sb.coul) });
+                let w_c = cell[COUL_SCALE].unwrap_or_else(|| {
+                    if w > 0.0 {
+                        w
+                    } else {
+                        weight(SpecialClass::Coulomb)
+                    }
+                });
                 let qq_ij = match cell[QQ] {
                     Some(v) => v,
                     None if w_c == 0.0 => 0.0,
@@ -229,9 +230,18 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame, overlay: bool) -> Result<Exce
     }
     Ok(Exceptions {
         kernel: Some(PairExceptions::new(ai, aj, &es, lj_w, qq, coul_w)),
-        override_rows,
-        replaced,
+        replaced: entries.into_keys().collect(),
     })
+}
+
+/// Whether the field prices its 1-4 pairs at `lj/charmm`'s `epsilon14` /
+/// `sigma14`: `one_four = "epsilon14"` with a non-zero 1-4 weight.
+fn epsilon14(ff: &ForceField, special: &SpecialBonds) -> Result<bool, String> {
+    let Some(style) = ff.get_style("pair", "lj/charmm") else {
+        return Ok(false);
+    };
+    let (params, _) = gathered(ff, style).map_err(|e| e.to_string())?;
+    Ok(OneFour::of(&params)? == OneFour::Epsilon14 && special.lj_14() != 0.0)
 }
 
 fn as_refs(rows: &HashMap<String, Params>) -> HashMap<&str, &Params> {
@@ -294,52 +304,6 @@ pub(crate) fn dihedral_weights(
     Ok(wsum)
 }
 
-/// A `lj/charmm` field with `one_four = "epsilon14"` must have its 1-4 pairs
-/// priced by an override (`epsilon` and `sigma` cells) or a `w` dihedral:
-/// [`check_materialized`]. The 1-4 pairs are the `pairs` rows flagged `is_14`,
-/// or, for a frame without a `pairs` block (the neighbour-driven door), the
-/// bond-graph 1-4 pairs.
-fn check_one_four(
-    ff: &ForceField,
-    frame: &Frame,
-    wsum: &BTreeMap<(usize, usize), F>,
-    cells: &[Cells],
-    rows_ij: &[(usize, usize)],
-) -> Result<(), String> {
-    let mut overridden: HashSet<(usize, usize)> = HashSet::new();
-    for (r, c) in cells.iter().enumerate() {
-        if c[EPS].is_some() && c[SIGMA].is_some() {
-            overridden.insert(rows_ij[r]);
-        }
-    }
-    let pairs_14: Vec<(usize, usize)> = match frame
-        .get(PAIRS)
-        .and_then(|b| b.get("is_14"))
-        .and_then(|c| c.get::<bool>())
-    {
-        Some(flags) => rows_ij
-            .iter()
-            .zip(flags.iter())
-            .filter(|(_, f)| **f)
-            .map(|(k, _)| *k)
-            .collect(),
-        None => {
-            let mut at_three: Vec<(usize, usize)> = bond_distances(frame)?
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|&(_, d)| d == 3)
-                .map(|(pair, _)| pair)
-                .collect();
-            at_three.sort_unstable();
-            at_three
-        }
-    };
-    let covered = |i: usize, j: usize| {
-        overridden.contains(&(i, j)) || wsum.get(&(i, j)).is_some_and(|&w| w > 0.0)
-    };
-    check_materialized(ff, frame, &pairs_14, &covered)
-}
-
 /// LAMMPS's `DihedralCharmm::init_style` checks for a field with `w > 0`.
 fn check_weightflag(ff: &ForceField) -> Result<(), String> {
     let sb = ff.required_special_bonds()?;
@@ -372,65 +336,6 @@ fn check_weightflag(ff: &ForceField) -> Result<(), String> {
         );
     }
     Ok(())
-}
-
-/// `pairs` when present, otherwise `pair_overrides` when `overlay`.
-fn exception_source(frame: &Frame, overlay: bool) -> Option<(&'static str, &molrs::core::Block)> {
-    if let Some(block) = frame.get(PAIRS) {
-        return Some((PAIRS, block));
-    }
-    if overlay {
-        return frame
-            .get(PAIR_OVERRIDES)
-            .map(|block| (PAIR_OVERRIDES, block));
-    }
-    None
-}
-
-/// Each row's override cells of the block [`exception_source`] chose, and
-/// the rows that carry any.
-fn override_cells(
-    source: Option<(&str, &molrs::core::Block)>,
-) -> Result<(Vec<Cells>, Vec<usize>), String> {
-    let Some((name, block)) = source else {
-        return Ok((Vec::new(), Vec::new()));
-    };
-    let n = block.n_rows().unwrap_or(0);
-    let mut cells = vec![[None; 5]; n];
-    for (c, &key) in PAIR_OVERRIDE_COLUMNS.iter().enumerate() {
-        let Some(col) = block.get(key) else {
-            continue;
-        };
-        let values = col
-            .get::<f64>()
-            .ok_or_else(|| format!("{name}: the per-pair override column '{key}' must be float"))?;
-        let valid = block.validity(key);
-        for r in 0..n {
-            if valid.is_some_and(|m| !m[r]) {
-                continue;
-            }
-            let v = values[r];
-            if !v.is_finite() {
-                return Err(format!(
-                    "{name} row {r}: '{key}' = {v}; a null cell is a validity mask, not a \
-                     non-finite value"
-                ));
-            }
-            cells[r][c] = Some(v);
-        }
-    }
-    let rows = (0..n)
-        .filter(|&r| cells[r].iter().any(Option::is_some))
-        .collect();
-    Ok((cells, rows))
-}
-
-/// `(lo, hi)` of each row of the block [`exception_source`] chose.
-fn pair_ends(frame: &Frame, source: Option<(&str, &molrs::core::Block)>) -> Vec<(usize, usize)> {
-    match source {
-        Some((name, _)) => end_pairs(frame, name, ATOMI, ATOMJ),
-        None => Vec::new(),
-    }
 }
 
 /// The force field's van-der-Waals style and Coulomb prefactor
@@ -478,11 +383,15 @@ pub(crate) fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), Strin
                 rows.into_iter().collect(),
                 mixing_of(name, &p).map_err(|e| e.to_string())?,
             ),
-            "lj/charmm" => Vdw::Charmm(
-                rows.into_iter().collect(),
-                mixing_of(name, &p).map_err(|e| e.to_string())?,
-                OneFour::of(&p)?,
-            ),
+            "lj/charmm" => {
+                // Refused here, not only where it is read: a field whose
+                // `one_four` is neither value has no 1-4 pricing at all.
+                OneFour::of(&p)?;
+                Vdw::Charmm(
+                    rows.into_iter().collect(),
+                    mixing_of(name, &p).map_err(|e| e.to_string())?,
+                )
+            }
             _ => Vdw::Other(name),
         };
         if let Some(prev) = seen_vdw {
@@ -497,16 +406,135 @@ pub(crate) fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), Strin
     Ok((vdw, coul))
 }
 
-/// Bond-graph distance of each atom pair, up to 3.
-type BondDistances = HashMap<(usize, usize), usize>;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ff::compile::PotentialCompiler;
+    use crate::ff::ir::{ONE_FOUR, ONE_FOUR_EPSILON14};
+    use crate::ff::potential::fixtures::OneShot;
+    use molrs::core::Block;
+    use molrs::op::Idx;
+    use ndarray::Array1;
 
-/// Bond-graph distances up to 3 ([`bond_classes`]) when the frame carries
-/// `bonds`; `None` without them, where a `pairs` row's `is_14` flag is all
-/// the classification there is.
-fn bond_distances(frame: &Frame) -> Result<Option<BondDistances>, String> {
-    if frame.get(BONDS).is_none() {
-        return Ok(None);
+    #[test]
+    fn one_four_reads_its_two_values_and_refuses_others() {
+        assert_eq!(OneFour::of(&Params::new()), Ok(OneFour::Regular));
+        let mut p = Params::new();
+        p.set(ONE_FOUR, "regular");
+        assert_eq!(OneFour::of(&p), Ok(OneFour::Regular));
+        p.set(ONE_FOUR, "epsilon14");
+        assert_eq!(OneFour::of(&p), Ok(OneFour::Epsilon14));
+        p.set(ONE_FOUR, "sigma14");
+        assert!(OneFour::of(&p).unwrap_err().contains("sigma14"));
+        let p = Params::from_iter([(ONE_FOUR, 1.0)]);
+        assert!(OneFour::of(&p).is_err());
     }
-    let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
-    bond_classes(frame, n_atoms).map(Some)
+
+    fn lj_charmm(one_four: Option<&str>) -> ForceField {
+        let mut ff = ForceField::new("x");
+        let mut sp = Params::from_iter([("inner", 8.0), ("cutoff", 10.0)]);
+        if let Some(v) = one_four {
+            sp.set(ONE_FOUR, v);
+        }
+        ff.def_style("pair", "lj/charmm", sp)
+            .unwrap()
+            .def_type(
+                "A",
+                &["A"],
+                Params::from_iter([
+                    ("epsilon", 0.1),
+                    ("sigma", 3.0),
+                    ("epsilon14", 0.04),
+                    ("sigma14", 2.0),
+                ]),
+            )
+            .unwrap()
+            .def_type(
+                "B",
+                &["B"],
+                Params::from_iter([("epsilon", 0.4), ("sigma", 4.0)]),
+            )
+            .unwrap();
+        ff.set_special_bonds(SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 0.75],
+        });
+        ff
+    }
+
+    /// The A-B-B-A chain along x with its special pairs; (0, 3) is the one
+    /// 1-4 pair.
+    fn chain() -> Frame {
+        let mut atoms = Block::new();
+        for (k, key) in ["x", "y", "z"].iter().enumerate() {
+            let v: Vec<F> = (0..4)
+                .map(|i| {
+                    if k == 0 {
+                        1.5 * i as F
+                    } else {
+                        0.1 * (i * k) as F
+                    }
+                })
+                .collect();
+            atoms
+                .insert(*key, Array1::from_vec(v).into_dyn(), None)
+                .unwrap();
+        }
+        let types: Vec<String> = ["A", "B", "B", "A"].map(String::from).to_vec();
+        atoms
+            .insert("type", Array1::from_vec(types).into_dyn(), None)
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(ATOMS, atoms);
+        let rel = |cols: &[&str], rows: &[&[Idx]]| {
+            let mut b = Block::new();
+            for (k, c) in cols.iter().enumerate() {
+                let v: Vec<Idx> = rows.iter().map(|r| r[k]).collect();
+                b.insert(*c, Array1::from_vec(v).into_dyn(), None).unwrap();
+            }
+            b
+        };
+        frame.insert(
+            "bonds",
+            rel(&["atomi", "atomj"], &[&[0, 1], &[1, 2], &[2, 3]]),
+        );
+        frame.insert(
+            "pairs",
+            rel(
+                &["atomi", "atomj", "n_bonds"],
+                &[
+                    &[0, 1, 1],
+                    &[1, 2, 1],
+                    &[2, 3, 1],
+                    &[0, 2, 2],
+                    &[1, 3, 2],
+                    &[0, 3, 3],
+                ],
+            ),
+        );
+        frame
+    }
+
+    /// `"epsilon14"` prices the 1-4 pair (0, 3) of two A atoms at A's
+    /// ε₁₄/σ₁₄ and the 1-4 weight, with nothing written onto the frame:
+    /// the energy differs from `"regular"` by exactly that pair's change.
+    #[test]
+    fn epsilon14_prices_the_one_four_pairs_at_their_own_parameters() {
+        let frame = chain();
+        let x: Vec<F> = frame.coords().unwrap().into_iter().collect();
+        let energy = |ff: &ForceField| {
+            PotentialCompiler::new(ff)
+                .compile(&frame)
+                .unwrap()
+                .energy_at(&x)
+        };
+        let lj = |eps: F, sigma: F| {
+            let r2: F = (0..3).map(|k| (x[9 + k] - x[k]).powi(2)).sum();
+            let s6 = (sigma * sigma / r2).powi(3);
+            4.0 * eps * (s6 * s6 - s6)
+        };
+        let shift = energy(&lj_charmm(Some(ONE_FOUR_EPSILON14))) - energy(&lj_charmm(None));
+        let want = 0.5 * (lj(0.04, 2.0) - lj(0.1, 3.0));
+        assert!((shift - want).abs() < 1e-12, "{shift} vs {want}");
+    }
 }

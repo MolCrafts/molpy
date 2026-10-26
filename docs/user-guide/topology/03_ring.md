@@ -1,6 +1,6 @@
 # Macrocycle
 
-**Script:** [`examples/topology/03_ring.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/03_ring.py)
+**Script:** [`molpy/examples/topology/03_ring.py`](https://github.com/MolCrafts/molpy/blob/dev/molpy/examples/topology/03_ring.py)
 
 A ring bond closes the path: `{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}` bonds the last unit back to the first.
 
@@ -17,7 +17,7 @@ The growth placer lays the ring out as an open chain, so the closing bond starts
 **Check:** 6 units, 42 atoms, 42 bonds (one ring), no open port.
 
 ```bash
-cd examples && python topology/03_ring.py
+cd molpy/examples && python topology/03_ring.py
 ```
 
 ## See also

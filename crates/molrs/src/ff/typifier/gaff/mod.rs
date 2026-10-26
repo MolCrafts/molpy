@@ -23,6 +23,10 @@ use crate::ff::typifier::BondedTerm;
 use crate::ff::typifier::{Annotation, TypeAssignment, Typifier, TypingError};
 use crate::ff::typifier::{EmpiricalSet, Provenance};
 
+/// The non-bonded cutoff [`GaffTypifier`]'s force field declares, Å: the
+/// 10 Å `cut` AMBER's `sander` / `pmemd` runs are conventionally set at.
+pub const GAFF_CUTOFF: f64 = 10.0;
+
 mod analog;
 mod improper;
 mod torsion;
@@ -149,9 +153,9 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
 
     // AMBER mixes Lennard-Jones by Lorentz–Berthelot; the style states it, as
     // the prmtop reader's does, rather than lean on the kernel's default.
-    let mut mixing = Params::new();
-    mixing.set("mixing", CombiningRule::Arithmetic.name());
-    let lj = ff.def_style("pair", "lj/cut", mixing)?;
+    let mut lj_style = Params::from_iter([("cutoff", GAFF_CUTOFF)]);
+    lj_style.set("mixing", CombiningRule::Arithmetic.name());
+    let lj = ff.def_style("pair", "lj/cut", lj_style)?;
     for row in table.nonbonded {
         let name = table.name_of(row.atom_type);
         lj.def_type(
@@ -170,6 +174,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
             ("coulomb", AMBER_COULOMB),
             ("dielectric", VACUUM_DIELECTRIC),
             ("delta", 0.0),
+            ("cutoff", GAFF_CUTOFF),
         ]),
     )?;
 
@@ -481,7 +486,6 @@ impl std::error::Error for GaffError {}
 /// ```
 /// use molrs::core::Atomistic;
 /// use molrs::ff::compile::PotentialCompiler;
-/// use molrs::ff::potential::intramolecular_pairs;
 /// use molrs::ff::typifier::Typing;
 /// use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
 /// use molrs::ff::typifier::{GaffParameterSet, GaffTypifier};
@@ -524,10 +528,9 @@ impl std::error::Error for GaffError {}
 ///     assert_eq!(bond.props.get(keys::TYPE), Some(&name));
 /// }
 ///
-/// let mut frame = typed.to_frame()?;
-/// let special = ff.special_bonds().ok_or("the force field states no special_bonds")?;
-/// let pairs = intramolecular_pairs(&frame, special, None)?;
-/// frame.insert("pairs", pairs);
+/// // Typing generated the angles, dihedrals and special pairs with the types.
+/// let frame = typed.to_frame()?;
+/// assert!(frame.get("pairs").is_some());
 /// let potentials = PotentialCompiler::new(ff).compile(&frame)?;
 /// # Ok(())
 /// # }
@@ -607,7 +610,7 @@ impl GaffTypifier {
         // graph `TypeAssignment::apply_to` stamps: angles and dihedrals regenerated
         // from the bond graph, impropers rebuilt as AmberTools builds them.
         graph
-            .generate_topology(true, true, false, true)
+            .generate_topology(true, true, false, true, true)
             .map_err(malformed)?;
         let mut improper_terms = add_impropers(graph, &index, &type_of)?;
 
@@ -1297,6 +1300,19 @@ mod tests {
             coul: [0.0, 0.0, 1.0 / 1.2],
         };
         assert_eq!(typing.forcefield().special_bonds(), Some(&amber));
+    }
+
+    /// GAFF's pair styles are at AMBER's conventional 10 Å.
+    #[test]
+    fn gaff_declares_the_amber_cutoff() {
+        let gaff = GaffTypifier::new(GaffParameterSet::Gaff2);
+        for name in ["lj/cut", "coul/cut"] {
+            let style = crate::ff::typifier::Typifier::source_forcefield(&gaff)
+                .get_style("pair", name)
+                .unwrap();
+            let cutoff = style.params().get("cutoff").and_then(|v| v.as_num());
+            assert_eq!(cutoff, Some(super::GAFF_CUTOFF), "{name}");
+        }
     }
 
     /// `gaff2.dat` declares `ow` and `hw` (MASS rows) but gives neither a NONBON

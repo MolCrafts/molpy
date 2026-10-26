@@ -261,7 +261,7 @@ impl fmt::Display for IrError {
             ),
             NoKernel { category, style } => write!(
                 f,
-                "no kernel for {category} `{style}`: register it (molpy.ff.style_registry.register_style) \
+                "no kernel for {category} `{style}`: register it (molpy.ff.style_registry.GlobalRegistry().register_style) \
                  or give it an expression"
             ),
             NoMixing { style, param, pair } => write!(

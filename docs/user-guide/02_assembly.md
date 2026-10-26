@@ -102,7 +102,7 @@ between units, ring closures and overlaps are not adjusted; they are left to rel
 
 When the sites come from a CG simulation, the copies must sit where the beads were. Match
 the bead pattern of one repeat unit with `mp.perceive.SubgraphMatcher`, turn each match into a site
-with `mp.builder.Coarsener`, and assemble with `mp.builder.SitePlacer` (each copy's centre of mass on its
+with `mp.builder.Coarsener`, and assemble with `mp.builder.SitePlacer` (each copy's centroid on its
 site) and `mp.builder.AxisOrienter` (each copy turned to its site's axis and bonds).
 
 The toy model below is a five-unit PMMA chain with two beads per repeat unit: a backbone

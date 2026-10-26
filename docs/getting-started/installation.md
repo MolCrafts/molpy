@@ -13,13 +13,12 @@ MolPy keeps the core lightweight. Install extras when you need integrations or d
 | Group | Command | When to use |
 |-------|---------|-------------|
 | **All** | `pip install molcrafts-molpy[all]` | Everything below |
-| **Dev** | `pip install molcrafts-molpy[dev]` | Tests, coverage, tooling |
+| **Dev** | `pip install molcrafts-molpy[dev]` | Build, tests, coverage, type checks, lint |
 | **Docs** | `pip install molcrafts-molpy[doc]` | Build documentation locally |
 
 ## Nightly builds
 
-Nightly builds are paused while molpy merges into the molrs repository; the
-last snapshots stay on the **separate** PyPI project `molcrafts-molpy-nightly`.
+Nightly builds are paused while releases are frozen; the last snapshots stay on the **separate** PyPI project `molcrafts-molpy-nightly`.
 Each build is versioned `X.Y.Z.devN` (a PEP 440 dev release), so you opt in
 with `--pre`:
 
@@ -32,11 +31,11 @@ the two **cannot be installed at the same time** (the same trade-off as
 `tensorflow` vs `tf-nightly`). Uninstall `molcrafts-molpy` first, or use a
 dedicated virtual environment for nightly testing.
 
-## Backend package
+## Native core
 
-MolPy depends on a native backend package on the same **major.minor** line
-(patch may differ). A normal `pip install` pulls a compatible wheel;
-`import molpy` fails fast if the installed backend is on a different minor.
+The native core ships inside the `molcrafts-molpy` wheel as the extension
+module `molpy._core`; there is no separate backend package to install or keep
+in step. `mp.__version__` is the version of the core the wheel was built with.
 
 
 ## Verify installation

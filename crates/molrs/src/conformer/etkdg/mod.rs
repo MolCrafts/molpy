@@ -30,7 +30,7 @@ use crate::conformer::{ConformerReport, ConformerStageReport, StageKind};
 use molrs::core::Atomistic;
 use molrs::core::MolRsError;
 use molrs::ff::compile::PotentialCompiler;
-use molrs::ff::potential::{Accumulator, Potential, intramolecular_pairs};
+use molrs::ff::potential::{Accumulator, Potential};
 use molrs::ff::typifier::mmff::Mmff94Typifier;
 use molrs::ff::typifier::{Typing, TypingError};
 use molrs::perceive::add_hydrogens;
@@ -459,18 +459,11 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<Cleanup, MolRsE
         }
         Err(e) => return Err(MolRsError::validation(format!("MMFF94 cleanup: {e}"))),
     };
-    let mut frame = typed.to_frame()?;
-    // The neighbour list is the consumer's to build — and here the consumer is the
-    // minimizer. Bonded terms and the 1-2/1-3 exclusions are topological, so this
-    // list stays valid across the relaxation. Which close neighbours belong in
-    // it is MMFF's call, so the list is built from MMFF's own weights rather
-    // than from an assumption about them.
+    let frame = typed.to_frame()?;
+    // The typed molecule carries its special pairs (MMFF's typing generated
+    // them with the angles); they are topological, so they hold across the
+    // relaxation.
     let ff = typing.forcefield();
-    let pairs = ff
-        .required_special_bonds()
-        .and_then(|sb| intramolecular_pairs(&frame, sb, None))
-        .map_err(|e| MolRsError::validation(format!("MMFF94 cleanup: {e}")))?;
-    frame.insert("pairs", pairs);
     let potentials = PotentialCompiler::new(ff)
         .compile(&frame)
         .map_err(|e| MolRsError::validation(format!("MMFF94 cleanup: {e}")))?;

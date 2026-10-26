@@ -1,13 +1,15 @@
 # Third-Party Attributions & Licenses
 
-molrs is distributed under the [BSD 3-Clause License](../LICENSE)
-(Copyright © 2025, MolCrafts). It ports or adapts code and reference data from
-the projects listed here. **This is the single, authoritative attribution file
-for molrs.**
+molpy — the Rust core and every binding — is distributed under the
+[BSD 3-Clause License](https://github.com/MolCrafts/molpy/blob/dev/LICENSE)
+(Copyright © 2025, MolCrafts). The core ports or adapts code and reference
+data from the projects listed here; module paths are relative to
+`crates/molrs/src/`. **This is the single, authoritative attribution file
+for the project.**
 
 ## Ported / adapted — permissive licenses
 
-| Project | SPDX | Copyright | molrs modules | Upstream |
+| Project | SPDX | Copyright | Modules | Upstream |
 |---|---|---|---|---|
 | **RDKit** | `BSD-3-Clause` | © 2006–2015 Rational Discovery LLC, Greg Landrum, Julie Penzotti and others | `perceive/{aromaticity,mmff_aromaticity,hybridization,hydrogens,rings}.rs`, `perceive/smarts/{mod,matcher}.rs` (substructure-match semantics), `ff/charge/gasteiger.rs`, `optimize/lbfgs.rs`, `conformer/distgeom/**`, `conformer/etkdg/**`, `ff/typifier/mmff/**`, `ff/typifier/uff/**`, `ff/potential/{bond,angle,dihedral,improper,pair}/{mmff,uff}.rs`, `ff/params/mmff.rs`, `core/constants.rs` (`MMFF_MDYNE_A_TO_KCAL_MOL`) | [rdkit/rdkit](https://github.com/rdkit/rdkit) |
 | **freud** | `BSD-3-Clause` | © 2010–2026 The Regents of the University of Michigan | `compute/cluster/**`, `compute/density/**`, `compute/diffraction/**`, `compute/environment/**`, `compute/order/**`, `compute/pmft/**`, `compute/rdf/**`, `compute/time_series/{msd,correlator}.rs` (the windowed-MSD recurrence), `core/neighbors/{aabb,filter,linkcell,mod,query}.rs`, `core/math/{wigner3j,spherical_harmonics}.rs`, `op/{linalg,superpose}.rs` (Jacobi eigensolvers, 3×3 det/inv, Horn superposition) | [glotzerlab/freud](https://github.com/glotzerlab/freud) |
@@ -22,7 +24,7 @@ for molrs.**
 
 ## Bundled data files
 
-Every force-field table molrs ships is typed Rust under `crates/molrs/src/ff/params/`.
+Every force-field table the core ships is typed Rust under `crates/molrs/src/ff/params/`.
 The origin and licence of the numbers travel with them; the rows below name the
 tables that hold them.
 

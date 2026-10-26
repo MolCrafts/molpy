@@ -2,8 +2,8 @@
 //! [`Potential`] traits, the generic form kernels and the built-in forms they
 //! price (`bond`, `angle`, `dihedral`, `improper`, `pair`), PME's
 //! reciprocal-space sum and `cmap`, and
-//! the weights a non-bonded kernel takes on close pairs ([`PairWeights`],
-//! [`SpecialWeights`]).
+//! the weights a non-bonded kernel takes on a frame's special pairs
+//! ([`SpecialWeights`]).
 //!
 //! What a style *is* (its spec) is the IR's ([`crate::ff::ir`]); which kernel
 //! prices a style is the style registry's ([`crate::ff::style_registry`]);
@@ -26,574 +26,18 @@ mod error;
 pub mod form_kernel;
 pub mod improper;
 pub mod kspace;
-mod neighbor_pairs;
 pub mod pair;
 pub(crate) mod param_reads;
 pub mod soft;
 
 pub use error::CompileError;
 
-use std::collections::{HashMap, HashSet};
+use ndarray::{Array2, ArrayView2};
 
-use ndarray::{Array1, Array2, ArrayView2};
-
-use crate::ff::ir::SpecialBonds;
-use molrs::core::Block;
-use molrs::core::BondDistanceWeights;
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::core::keys::{ATOMI, ATOMJ, IS_14, MOL_ID};
-use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::core::schema::block_names::{ATOMS, PAIR_OVERRIDES, PAIRS};
-use molrs::op::{F, Idx};
-
-/// Above this many atoms, [`intramolecular_pairs`] refuses rather than
-/// enumerating.
-///
-/// The list is every pair in the molecule with no cutoff, so it is `N(N-1)/2`
-/// rows — at 50 000 atoms that is 1.2 billion rows and about 11 GiB, which
-/// arrives as an OOM kill rather than as an answer. 20 000 is where the block
-/// is still under 2 GiB and the caller is still plausibly asking for what this
-/// function is for: the intramolecular pairs of one molecule, in free space.
-/// A periodic or larger system wants a neighbour list and
-/// [`PotentialCompiler::compile_typed`](crate::ff::compile::PotentialCompiler::compile_typed).
-///
-/// molwasm caps the same path at 2 000 for its own memory budget; this is
-/// the native ceiling, not a duplicate of that policy.
-pub const MAX_ATOMS_FOR_A_FULL_PAIR_LIST: usize = 20_000;
-
-/// `atomi` + `atomj` + `is_14`, as they land in the block's columns.
-const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
-
-/// Build the intramolecular non-bonded `pairs` block (`atomi`, `atomj`, `is_14`)
-/// from a frame's bonds: every `i < j` pair, excluding 1-2 and 1-3 pairs and
-/// flagging 1-4 pairs, each class its **bond-graph distance**
-/// ([`Topology::close_pairs`](molrs::core::Topology::close_pairs)) — the
-/// classification [`PotentialCompiler::compile_typed`](crate::ff::compile::PotentialCompiler::compile_typed)
-/// weights by and LAMMPS's `special_bonds` applies, so an `angles` or
-/// `dihedrals` block that is absent or lists only some terms changes nothing.
-///
-/// This is the neighbour list that [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile) hands to every
-/// pair kernel; every force field (GAFF/LAMMPS, OPLS, MMFF, …) shares this
-/// one path. Per-pair scaling of the flagged 1-4 pairs is applied by the
-/// pair kernels using the force field's 1-4 weight, not baked into this list.
-///
-/// # Per-pair overrides
-///
-/// Override cells (`lj_scale`, `coul_scale`, `epsilon`, `sigma`,
-/// `charge_product`) already on the frame move onto the same pairs of the
-/// new list. They are read from `pairs` when that block is present, and from
-/// `pair_overrides` otherwise — the AMBER prmtop reader's 1-4 rows whose
-/// `SCEE` / `SCNB` differ from the field's. An override on a pair the new
-/// list excludes is an [`Err`], since the list would drop it.
-///
-/// # Why this needs the force field's weights
-///
-/// Which 1-2 / 1-3 pairs belong in the list *is* a force-field decision, so
-/// this function does not make it on its own. LAMMPS's `special_bonds fene`
-/// (`[0, 1, 1]`) keeps 1-3 pairs at full strength, and a FENE chain without
-/// them has nothing holding it open. `special` answers it, via
-/// [`SpecialBonds::compiled_inclusion`](crate::ff::ir::SpecialBonds::compiled_inclusion),
-/// which is also where weights this list cannot express become an [`Err`]
-/// rather than a silently different force field.
-///
-/// [`SpecialBonds::EXCLUDE_12_13`](crate::ff::ir::SpecialBonds::EXCLUDE_12_13)
-/// excludes both classes.
-///
-/// # Candidate pairs
-///
-/// With `neighbors: None` the candidates are every `i < j` pair of the
-/// frame's atoms (refused past [`MAX_ATOMS_FOR_A_FULL_PAIR_LIST`]). With
-/// `Some(table)` they are the pairs of that cutoff-bounded neighbour table,
-/// by the same rules: each unordered pair appears once, as `(lo, hi)`, in the
-/// order the table first reports it, so a full (both-direction) table and a
-/// half-shell one give the same block.
-pub fn intramolecular_pairs(
-    frame: &Frame,
-    special: &SpecialBonds,
-    neighbors: Option<&Neighbors>,
-) -> Result<Block, String> {
-    if let Some(neighbors) = neighbors {
-        return neighbor_pairs::over_neighbors(frame, special, neighbors);
-    }
-    let [keep_12, keep_13] = special.compiled_inclusion()?;
-    let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
-    if n_atoms > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
-        return Err(format!(
-            "intramolecular_pairs: {n_atoms} atoms would enumerate {} pairs \
-             (~{} GiB) — this list is every pair in the molecule, with no cutoff. \
-             Above {MAX_ATOMS_FOR_A_FULL_PAIR_LIST} atoms build a neighbour list \
-             instead and evaluate through PotentialCompiler::compile_typed.",
-            n_atoms * (n_atoms - 1) / 2,
-            (n_atoms * (n_atoms - 1) / 2 * BYTES_PER_PAIR_ROW) >> 30,
-        ));
-    }
-    let classes = bond_classes(frame, n_atoms)?;
-
-    let mut pi: Vec<Idx> = Vec::new();
-    let mut pj: Vec<Idx> = Vec::new();
-    let mut p14: Vec<bool> = Vec::new();
-    for a in 0..n_atoms {
-        for b in (a + 1)..n_atoms {
-            let class = classes.get(&(a, b)).copied();
-            if (!keep_12 && class == Some(1)) || (!keep_13 && class == Some(2)) {
-                continue;
-            }
-            pi.push(a as Idx);
-            pj.push(b as Idx);
-            p14.push(class == Some(3));
-        }
-    }
-
-    let mut pairs = Block::new();
-    if !pi.is_empty() {
-        let overrides = carried_overrides(frame, &pi, &pj)?;
-        pairs
-            .insert(ATOMI, Array1::from_vec(pi).into_dyn(), None)
-            .expect("fresh pairs block");
-        pairs
-            .insert(ATOMJ, Array1::from_vec(pj).into_dyn(), None)
-            .expect("fresh pairs block");
-        pairs
-            .insert(IS_14, Array1::from_vec(p14).into_dyn(), None)
-            .expect("fresh pairs block");
-        for (key, values, valid) in overrides {
-            pairs
-                .insert(key, Array1::from_vec(values).into_dyn(), Some(valid))
-                .map_err(|e| e.to_string())?;
-        }
-    } else if let Some((i, j)) = override_pairs(frame)?.into_iter().next() {
-        return Err(excluded_override(i, j));
-    }
-    Ok(pairs)
-}
-
-/// The `pairs` block [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)
-/// should price.
-///
-/// No `pairs` block: [`intramolecular_pairs`] builds one (bond graph, or the
-/// pairs of `neighbors`) and carries `pair_overrides` onto it. A `pairs`
-/// block and no neighbor table: that block, unchanged. A `pairs` block and a
-/// neighbor table: the intersection. Intramolecular rows of the existing
-/// list stay as written (`is_14` and override cells included), so a GROMACS
-/// exclusion or a `[ pairs ]` flag the bond graph would not assign survives.
-/// Intermolecular rows are authoritative only when the list already contains
-/// a cross-`mol_id` pair, or the frame has a single `mol_id` (no column
-/// counts as one molecule). Otherwise the list is the intramolecular one a
-/// reader writes above [`MAX_ATOMS_FOR_A_FULL_PAIR_LIST`], and intermolecular
-/// candidates come from the neighbor table under `special`.
-///
-/// # Errors
-///
-/// The errors of [`intramolecular_pairs`]. A `pairs` row whose endpoints fall
-/// outside `atoms.mol_id`. Two rows of one unordered pair. A column other
-/// than `atomi`, `atomj`, `is_14` and the override columns on a list that the
-/// intersection has to extend with a neighbor pair. A kept row of a block
-/// with no bool `is_14` column.
-pub fn install_pairs(
-    frame: &Frame,
-    special: &SpecialBonds,
-    neighbors: Option<&Neighbors>,
-) -> Result<Block, String> {
-    let Some(existing) = frame.get(PAIRS) else {
-        return intramolecular_pairs(frame, special, neighbors);
-    };
-    let Some(neighbors) = neighbors else {
-        return Ok(existing.clone());
-    };
-    intersect_pairs(frame, existing, special, neighbors)
-}
-
-/// One output row of [`intersect_pairs`]: an existing `pairs` row, or a
-/// neighbor pair the capped list does not hold.
-enum KeptPair {
-    Row(usize),
-    Fresh { lo: Idx, hi: Idx, is_14: bool },
-}
-
-/// `neighbors` cut by the evaluation list `existing`.
-fn intersect_pairs(
-    frame: &Frame,
-    existing: &Block,
-    special: &SpecialBonds,
-    neighbors: &Neighbors,
-) -> Result<Block, String> {
-    let (ai, aj) = pair_endpoints(existing)?;
-    let mut index: HashMap<(usize, usize), usize> = HashMap::with_capacity(ai.len());
-    for (r, (&a, &b)) in ai.iter().zip(aj.iter()).enumerate() {
-        let pair = (a.min(b) as usize, a.max(b) as usize);
-        if index.insert(pair, r).is_some() {
-            return Err(format!(
-                "install_pairs: atoms {} and {} are on two pairs rows",
-                pair.0, pair.1
-            ));
-        }
-    }
-    let mol = molecule_ids(frame)?;
-    let closed = intermolecular_list_is_closed(mol.as_ref(), &ai, &aj)?;
-    let [keep_12, keep_13] = if closed {
-        [true, true]
-    } else {
-        special.compiled_inclusion()?
-    };
-    let classes = if closed {
-        HashMap::new()
-    } else {
-        let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
-        bond_classes(frame, n_atoms)?
-    };
-
-    let mut seen = HashSet::new();
-    let mut kept = Vec::new();
-    for (&a, &b) in neighbors
-        .query_point_indices()
-        .iter()
-        .zip(neighbors.point_indices())
-    {
-        let (lo, hi) = (a.min(b) as usize, a.max(b) as usize);
-        if lo == hi || !seen.insert((lo, hi)) {
-            continue;
-        }
-        let same = same_molecule(mol.as_ref(), lo, hi)?;
-        if same || closed {
-            if let Some(&row) = index.get(&(lo, hi)) {
-                kept.push(KeptPair::Row(row));
-            }
-        } else {
-            let class = classes.get(&(lo, hi)).copied();
-            if (!keep_12 && class == Some(1)) || (!keep_13 && class == Some(2)) {
-                continue;
-            }
-            kept.push(KeptPair::Fresh {
-                lo: lo as Idx,
-                hi: hi as Idx,
-                is_14: class == Some(3),
-            });
-        }
-    }
-    materialize_intersection(existing, &kept)
-}
-
-/// `(atomi, atomj)` of a `pairs` block. A column-less block (no rows) has
-/// neither, and that is an empty list.
-fn pair_endpoints(block: &Block) -> Result<(Vec<Idx>, Vec<Idx>), String> {
-    if block.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
-    }
-    let column = |key: &str| -> Result<Vec<Idx>, String> {
-        block
-            .get(key)
-            .and_then(|c| c.get::<u64>())
-            .map(|c| c.iter().copied().collect())
-            .ok_or_else(|| format!("install_pairs: pairs block missing \"{key}\""))
-    };
-    Ok((column(ATOMI)?, column(ATOMJ)?))
-}
-
-/// `atoms.mol_id`, when the frame has that column.
-fn molecule_ids(frame: &Frame) -> Result<Option<ndarray::ArrayView1<'_, Idx>>, String> {
-    let Some(atoms) = frame.get(ATOMS) else {
-        return Ok(None);
-    };
-    let Some(col) = atoms.get(MOL_ID) else {
-        return Ok(None);
-    };
-    let ids = col
-        .get::<u64>()
-        .ok_or_else(|| "install_pairs: atoms.mol_id must be an unsigned column".to_string())?;
-    ids.view()
-        .into_dimensionality()
-        .map(Some)
-        .map_err(|_| "install_pairs: atoms.mol_id must be one-dimensional".to_string())
-}
-
-/// Whether intermolecular membership of `pairs` is closed.
-///
-/// One distinct `mol_id` (or no column) has no intermolecular pair, so the
-/// list is the whole answer. Several molecules are closed when a row already
-/// crosses two of them — the reader included those pairs — and open when
-/// every row is intramolecular, which is the list written once the system
-/// exceeds [`MAX_ATOMS_FOR_A_FULL_PAIR_LIST`].
-fn intermolecular_list_is_closed(
-    mol: Option<&ndarray::ArrayView1<'_, Idx>>,
-    ai: &[Idx],
-    aj: &[Idx],
-) -> Result<bool, String> {
-    let Some(mol) = mol else {
-        return Ok(true);
-    };
-    if mol.iter().collect::<HashSet<_>>().len() <= 1 {
-        return Ok(true);
-    }
-    for (&a, &b) in ai.iter().zip(aj.iter()) {
-        let (ma, mb) = molecule_pair(mol, a as usize, b as usize)?;
-        if ma != mb {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Whether atoms `lo` and `hi` share a molecule. No `mol_id` column means
-/// they do.
-fn same_molecule(
-    mol: Option<&ndarray::ArrayView1<'_, Idx>>,
-    lo: usize,
-    hi: usize,
-) -> Result<bool, String> {
-    let Some(mol) = mol else {
-        return Ok(true);
-    };
-    let (a, b) = molecule_pair(mol, lo, hi)?;
-    Ok(a == b)
-}
-
-fn molecule_pair(
-    mol: &ndarray::ArrayView1<'_, Idx>,
-    lo: usize,
-    hi: usize,
-) -> Result<(Idx, Idx), String> {
-    match (mol.get(lo), mol.get(hi)) {
-        (Some(&a), Some(&b)) => Ok((a, b)),
-        _ => Err(format!(
-            "install_pairs: atoms {lo} and {hi} are outside the atoms mol_id column ({})",
-            mol.len()
-        )),
-    }
-}
-
-/// The columns an intersection may extend with a fresh neighbor row.
-const INSTALL_COLUMNS: [&str; 8] = [
-    ATOMI,
-    ATOMJ,
-    IS_14,
-    "epsilon",
-    "sigma",
-    "charge_product",
-    "lj_scale",
-    "coul_scale",
-];
-
-fn materialize_intersection(existing: &Block, kept: &[KeptPair]) -> Result<Block, String> {
-    let rows: Vec<usize> = kept
-        .iter()
-        .filter_map(|row| match row {
-            KeptPair::Row(r) => Some(*r),
-            KeptPair::Fresh { .. } => None,
-        })
-        .collect();
-    if rows.len() == kept.len() {
-        return existing.select_rows(&rows).map_err(|e| e.to_string());
-    }
-    if let Some(key) = existing.keys().find(|key| !INSTALL_COLUMNS.contains(key)) {
-        return Err(format!(
-            "install_pairs: pairs column '{key}' has no form on a neighbor pair the list does \
-             not already hold"
-        ));
-    }
-    let is_14 = existing.get(IS_14).and_then(|c| c.get::<bool>());
-    if kept.iter().any(|row| matches!(row, KeptPair::Row(_))) && is_14.is_none() {
-        return Err("install_pairs: pairs block missing a bool \"is_14\" column".to_string());
-    }
-    let n = kept.len();
-    let mut pi = Vec::with_capacity(n);
-    let mut pj = Vec::with_capacity(n);
-    let mut p14 = Vec::with_capacity(n);
-    let (ai, aj) = if kept.iter().any(|row| matches!(row, KeptPair::Row(_))) {
-        pair_endpoints(existing)?
-    } else {
-        (Vec::new(), Vec::new())
-    };
-    for row in kept {
-        match row {
-            KeptPair::Row(r) => {
-                pi.push(ai[*r].min(aj[*r]));
-                pj.push(ai[*r].max(aj[*r]));
-                p14.push(is_14.expect("checked above")[*r]);
-            }
-            KeptPair::Fresh { lo, hi, is_14 } => {
-                pi.push(*lo);
-                pj.push(*hi);
-                p14.push(*is_14);
-            }
-        }
-    }
-    let mut out = Block::new();
-    if n == 0 {
-        return Ok(out);
-    }
-    out.insert(ATOMI, Array1::from_vec(pi).into_dyn(), None)
-        .map_err(|e| e.to_string())?;
-    out.insert(ATOMJ, Array1::from_vec(pj).into_dyn(), None)
-        .map_err(|e| e.to_string())?;
-    out.insert(IS_14, Array1::from_vec(p14).into_dyn(), None)
-        .map_err(|e| e.to_string())?;
-    for key in PAIR_OVERRIDE_COLUMNS {
-        let Some(col) = existing.get(key) else {
-            continue;
-        };
-        let values = col
-            .get::<f64>()
-            .ok_or_else(|| format!("pairs: the per-pair override column '{key}' must be float"))?;
-        let valid = existing.validity(key);
-        let mut new_values = Vec::with_capacity(n);
-        let mut new_valid = Vec::with_capacity(n);
-        for row in kept {
-            match row {
-                KeptPair::Row(r) => {
-                    let holds = valid.is_none_or(|mask| mask[*r]);
-                    new_values.push(if holds { values[*r] } else { 0.0 });
-                    new_valid.push(holds);
-                }
-                KeptPair::Fresh { .. } => {
-                    new_values.push(0.0);
-                    new_valid.push(false);
-                }
-            }
-        }
-        if new_valid.iter().any(|&holds| holds) {
-            out.insert(
-                key,
-                Array1::from_vec(new_values).into_dyn(),
-                Some(new_valid),
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(out)
-}
-
-/// The bond distance (1, 2 or 3) of every pair at most three bonds apart in
-/// `frame`'s `bonds`: [`Topology::close_pairs`](molrs::core::Topology::close_pairs).
-/// A frame with no atoms has none.
-pub(crate) fn bond_classes(
-    frame: &Frame,
-    n_atoms: usize,
-) -> Result<HashMap<(usize, usize), usize>, String> {
-    if n_atoms == 0 {
-        return Ok(HashMap::new());
-    }
-    let topology = molrs::core::Topology::from_frame(frame).map_err(|e| e.to_string())?;
-    Ok(topology.close_pairs(3))
-}
-
-/// One override column of a new pair list: its name, values and validity.
-type OverrideColumn = (&'static str, Vec<F>, Vec<bool>);
-
-/// The per-pair override cells ([`PAIR_OVERRIDE_COLUMNS`]) of the frame's
-/// own rows, moved onto the rows `(pi, pj)` of the new list: a reader's
-/// per-pair data (an AMBER torsion's own SCEE / SCNB, a GROMACS `[ pairs ]`
-/// row's parameters) survives building the full list. Read from `pairs`
-/// when that block is present, and from `pair_overrides` otherwise. An
-/// override on a pair the new list leaves out (1-2 / 1-3) is an `Err`: it
-/// would be dropped.
-fn carried_overrides(frame: &Frame, pi: &[Idx], pj: &[Idx]) -> Result<Vec<OverrideColumn>, String> {
-    let Some(old) = override_source(frame) else {
-        return Ok(Vec::new());
-    };
-    let (Some(oi), Some(oj)) = (
-        old.get(ATOMI).and_then(|c| c.get::<u64>()),
-        old.get(ATOMJ).and_then(|c| c.get::<u64>()),
-    ) else {
-        return Ok(Vec::new());
-    };
-    let row_of: HashMap<(Idx, Idx), usize> = pi
-        .iter()
-        .zip(pj)
-        .enumerate()
-        .map(|(r, (&a, &b))| ((a, b), r))
-        .collect();
-    let mut out = Vec::new();
-    for key in PAIR_OVERRIDE_COLUMNS {
-        let Some(col) = old.get(key) else {
-            continue;
-        };
-        let values = col.get::<f64>().ok_or_else(|| {
-            format!("pairs or pair_overrides: the per-pair override column '{key}' must be float")
-        })?;
-        let valid = old.validity(key);
-        let mut new_values = vec![0.0; pi.len()];
-        let mut new_valid = vec![false; pi.len()];
-        // One row owns a pair, across every override column. A second row
-        // last-writing the cell is the split `exceptions::plan` already rejects.
-        let mut row_of_pair: HashMap<(Idx, Idx), usize> = HashMap::new();
-        for (r, (&a, &b)) in oi.iter().zip(oj.iter()).enumerate() {
-            if valid.is_some_and(|m| !m[r]) {
-                continue;
-            }
-            let v = values[r];
-            if !v.is_finite() {
-                return Err(format!(
-                    "pairs or pair_overrides row {r}: '{key}' = {v}; a null cell is a \
-                     validity mask, not a non-finite value"
-                ));
-            }
-            let pair = (a.min(b), a.max(b));
-            match row_of_pair.get(&pair) {
-                Some(&prev) if prev != r => {
-                    return Err(format!(
-                        "pairs or pair_overrides: atoms {} and {} carry per-pair overrides \
-                         on two rows; a pair has one set of exception parameters",
-                        pair.0, pair.1
-                    ));
-                }
-                None => {
-                    row_of_pair.insert(pair, r);
-                }
-                _ => {}
-            }
-            let at = *row_of
-                .get(&pair)
-                .ok_or_else(|| excluded_override(pair.0 as usize, pair.1 as usize))?;
-            new_values[at] = v;
-            new_valid[at] = true;
-        }
-        if new_valid.iter().any(|&v| v) {
-            out.push((key, new_values, new_valid));
-        }
-    }
-    Ok(out)
-}
-
-/// `pairs` when the frame has it, otherwise `pair_overrides`.
-fn override_source(frame: &Frame) -> Option<&Block> {
-    frame.get(PAIRS).or_else(|| frame.get(PAIR_OVERRIDES))
-}
-
-/// The pairs of the frame's override rows that carry an override cell.
-fn override_pairs(frame: &Frame) -> Result<Vec<(usize, usize)>, String> {
-    let Some(old) = override_source(frame) else {
-        return Ok(Vec::new());
-    };
-    let (Some(oi), Some(oj)) = (
-        old.get(ATOMI).and_then(|c| c.get::<u64>()),
-        old.get(ATOMJ).and_then(|c| c.get::<u64>()),
-    ) else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::new();
-    for key in PAIR_OVERRIDE_COLUMNS {
-        if old.get(key).is_none() {
-            continue;
-        }
-        let valid = old.validity(key);
-        for (r, (&a, &b)) in oi.iter().zip(oj.iter()).enumerate() {
-            if valid.is_none_or(|m| m[r]) {
-                out.push((a.min(b) as usize, a.max(b) as usize));
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn excluded_override(i: usize, j: usize) -> String {
-    format!(
-        "intramolecular_pairs: the frame's pairs or pair_overrides row for atoms {i} and {j} \
-         carries a per-pair override, and the force field's special_bonds exclude that pair \
-         (1-2 or 1-3), so the override would be dropped"
-    )
-}
+use molrs::op::F;
 
 /// `(lo, hi)` end-atom pairs of a topology block (bond ends, angle i–k,
 /// dihedral i–l), one per row in row order. A missing block or column yields
@@ -1026,66 +470,6 @@ impl Potential for Box<dyn Potential> {
 /// it *is* the bonded interaction, not a scaled copy of one.
 pub type ScaledTerm = (ForceTerm, Option<crate::ff::ir::SpecialClass>);
 
-/// One member of a neighbour-driven evaluation: the kernel, and the weights
-/// its non-bonded term takes.
-///
-/// The weights travel with the member because a force field may scale close
-/// van-der-Waals and electrostatic neighbours differently, and in molrs those
-/// are separate kernels.
-pub type WeightedTerm = (ForceTerm, Option<PairWeights>);
-
-/// The weights a neighbour-driven non-bonded member applies: by bond distance
-/// (`special_bonds`), and zero on the pairs the 1-4 exceptions kernel prices
-/// in its place (a `pairs` row with per-pair overrides).
-///
-/// A neighbour table finds every pair inside the cutoff, so a pair that an
-/// exception prices would otherwise be priced twice — once here at its
-/// class's weight, once there at its own.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PairWeights {
-    by_distance: BondDistanceWeights,
-    replaced: Vec<(usize, usize)>,
-}
-
-impl PairWeights {
-    /// Weights by bond distance, with `replaced` pairs (either order) at 0.
-    pub fn new(by_distance: BondDistanceWeights, replaced: Vec<(usize, usize)>) -> Self {
-        Self {
-            by_distance,
-            replaced,
-        }
-    }
-
-    /// The weights by bond distance.
-    pub fn by_distance(&self) -> &BondDistanceWeights {
-        &self.by_distance
-    }
-
-    /// The pairs weighted 0 whatever their bond distance.
-    pub fn replaced(&self) -> &[(usize, usize)] {
-        &self.replaced
-    }
-
-    /// The weights on `topo`'s close pairs: per atom, its partners whose
-    /// weight is not 1 — the lists
-    /// [`Topology::special_weights`](molrs::core::Topology::special_weights) gives,
-    /// with the replaced pairs set to 0.
-    pub fn special_weights(&self, topo: &molrs::core::Topology) -> SpecialWeights {
-        let mut lists = topo.special_weights(&self.by_distance);
-        for &(i, j) in &self.replaced {
-            for (a, b) in [(i, j), (j, i)] {
-                if let Some(list) = lists.get_mut(a) {
-                    match list.binary_search_by_key(&b, |&(p, _)| p) {
-                        Ok(k) => list[k].1 = 0.0,
-                        Err(k) => list.insert(k, (b, 0.0)),
-                    }
-                }
-            }
-        }
-        SpecialWeights::new(&lists)
-    }
-}
-
 /// The weights a force field puts on close non-bonded neighbours.
 ///
 /// A bonded pair's non-bonded term is not wanted at full strength: 1-2 and 1-3
@@ -1096,10 +480,10 @@ impl PairWeights {
 /// evaluated. A neighbour table has no such memory: it finds every pair inside
 /// the cutoff, bonded or not.
 ///
-/// So the weights have to be applied at evaluation time, and this holds them.
-/// Build it from [`PairWeights::special_weights`], or from
-/// [`Topology::special_weights`](molrs::core::Topology::special_weights), which
-/// walks the bond graph.
+/// So the weights have to be applied at evaluation time, and this holds them:
+/// the frame's special pairs (its `pairs` block) as a force field weighs them,
+/// which [`PotentialCompiler::compile_typed`](crate::ff::compile::PotentialCompiler::compile_typed)
+/// hands out per member.
 ///
 /// # Why it splits the table rather than scaling in the kernel
 ///
@@ -1112,7 +496,7 @@ impl PairWeights {
 /// not have been counted — is not available. A 1-2 pair sits at bond length,
 /// where a Lennard-Jones term is enormous; subtracting it from a total of
 /// ordinary size cancels away the very digits the answer is made of.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SpecialWeights {
     /// Per owned atom, its special partners sorted by index, with weights.
     per_atom: Vec<Vec<(u32, F)>>,
@@ -1137,7 +521,7 @@ impl Default for SpecialWeights {
 }
 
 impl SpecialWeights {
-    /// Take the per-atom lists a bond-graph walk produced.
+    /// Take per-atom lists of `(partner, weight)`, each sorted by partner.
     pub fn new(special: &[Vec<(usize, F)>]) -> Self {
         let per_atom: Vec<Vec<(u32, F)>> = special
             .iter()
@@ -1159,6 +543,15 @@ impl SpecialWeights {
             Ok(k) => list[k].1,
             Err(_) => 1.0,
         }
+    }
+
+    /// Every scaled pair once, `(i, j, weight)` with `i < j`.
+    pub fn pairs(&self) -> impl Iterator<Item = (usize, usize, F)> + '_ {
+        self.per_atom.iter().enumerate().flat_map(|(i, list)| {
+            list.iter()
+                .filter(move |&&(p, _)| p as usize > i)
+                .map(move |&(p, w)| (i, p as usize, w))
+        })
     }
 
     /// True when nothing is scaled, so a caller can skip the weights entirely.
@@ -1388,66 +781,9 @@ impl PairDriven for Potentials {
 mod tests {
     use super::*;
     use crate::ff::compile::PotentialCompiler;
+    use crate::ff::ir::SpecialBonds;
     use crate::ff::potential::fixtures::OneShot;
-
-    /// A pair's class is its bond distance: a chain that states only its
-    /// bonds, or bonds plus a partial `angles` / `dihedrals` block, gives the
-    /// same list as one stating every angle and dihedral — the classes the
-    /// neighbour-driven door weights by.
-    #[test]
-    fn pair_classes_follow_bond_distance_not_the_listed_terms() {
-        use molrs::core::keys::{ATOMK, ATOML};
-        use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
-        let block = |cols: &[(&str, Vec<Idx>)]| {
-            let mut b = Block::new();
-            for (k, v) in cols {
-                b.insert(*k, Array1::from_vec(v.clone()).into_dyn(), None)
-                    .unwrap();
-            }
-            b
-        };
-        // Chain 0-1-2-3-4.
-        let chain = |angles: bool, dihedrals: bool| {
-            let mut f = Frame::new();
-            f.insert(ATOMS, block(&[("id", vec![0, 1, 2, 3, 4])]));
-            f.insert(
-                BONDS,
-                block(&[(ATOMI, vec![0, 1, 2, 3]), (ATOMJ, vec![1, 2, 3, 4])]),
-            );
-            if angles {
-                f.insert(
-                    ANGLES,
-                    block(&[(ATOMI, vec![0]), (ATOMJ, vec![1]), (ATOMK, vec![2])]),
-                );
-            }
-            if dihedrals {
-                f.insert(
-                    DIHEDRALS,
-                    block(&[
-                        (ATOMI, vec![0]),
-                        (ATOMJ, vec![1]),
-                        (ATOMK, vec![2]),
-                        (ATOML, vec![3]),
-                    ]),
-                );
-            }
-            f
-        };
-        let listed = |f: &Frame| {
-            let p = intramolecular_pairs(f, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
-            let i = p.get(ATOMI).unwrap().get::<u64>().unwrap().to_owned();
-            let j = p.get(ATOMJ).unwrap().get::<u64>().unwrap().to_owned();
-            let f14 = p.get(IS_14).unwrap().get::<bool>().unwrap().to_owned();
-            (i, j, f14)
-        };
-        let expected = listed(&chain(false, false));
-        // 0-3, 0-4, 1-4: the 1-4 pairs are 0-3 and 1-4.
-        assert_eq!(expected.0.as_slice().unwrap(), &[0, 0, 1]);
-        assert_eq!(expected.1.as_slice().unwrap(), &[3, 4, 4]);
-        assert_eq!(expected.2.as_slice().unwrap(), &[true, false, true]);
-        assert_eq!(listed(&chain(true, true)), expected);
-        assert_eq!(listed(&chain(true, false)), expected);
-    }
+    use molrs::core::schema::block_names::PAIRS;
 
     /// The default scales nothing, and says so.
     ///
@@ -1705,12 +1041,7 @@ mod tests {
             )
             .unwrap();
 
-        // Build the neighbour list the real way — `intramolecular_pairs` owns
-        // the atomi/atomj/is_14 convention; with no bonds it yields the single
-        // unexcluded (0,1) pair, is_14 = false.
-        let pairs = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
-        frame.insert("pairs", pairs);
-
+        // No bonds, so no special pair: (0, 1) is priced at full strength.
         frame
     }
 
@@ -1847,16 +1178,18 @@ mod tests {
             _sp: &Params,
             _tp: &[(&str, &Params)],
             _f: &Frame,
+            _coulomb: &SpecialWeights,
         ) -> Result<ForceTerm, crate::ff::potential::CompileError> {
             Ok(ForceTerm::plain(DummyPotential { value: 42.0 }))
         }
-        crate::ff::style_registry::register_style(
-            crate::ff::ir::StyleSpec::new("pair", "test/custom"),
-            Some(crate::ff::style_registry::Kernel::constructor(
-                my_constructor,
-            )),
-        )
-        .unwrap();
+        crate::ff::style_registry::GlobalRegistry
+            .register_style(
+                crate::ff::ir::StyleSpec::new("pair", "test/custom"),
+                Some(crate::ff::style_registry::Kernel::constructor(
+                    my_constructor,
+                )),
+            )
+            .unwrap();
 
         let mut ff = ForceField::new("test");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
@@ -1984,27 +1317,26 @@ mod tests {
                 None,
             )
             .unwrap();
-        frame.insert(
-            "pairs",
-            intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap(),
-        );
-
         let mut ff = ForceField::new("test");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style("pair", "lj/cut", Params::new())
-            .unwrap()
-            .def_type(
-                "A",
-                &["A"],
-                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
-            )
-            .unwrap()
-            .def_type(
-                "B",
-                &["B"],
-                Params::from_iter([("epsilon", 4.0), ("sigma", 3.0)]),
-            )
-            .unwrap();
+        ff.def_style(
+            "pair",
+            "lj/cut",
+            Params::from_iter([("cutoff", F::INFINITY)]),
+        )
+        .unwrap()
+        .def_type(
+            "A",
+            &["A"],
+            Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
+        )
+        .unwrap()
+        .def_type(
+            "B",
+            &["B"],
+            Params::from_iter([("epsilon", 4.0), ("sigma", 3.0)]),
+        )
+        .unwrap();
 
         let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
@@ -2022,9 +1354,9 @@ mod tests {
 
     #[test]
     fn lj_cut_applies_special_bonds_14_scaling() {
-        // A 4-atom chain 0-1-2-3 (bonds 0-1-2-3, angles, one dihedral) so the
-        // neighbour list excludes 1-2/1-3 and flags only the (0,3) pair is_14.
-        // With special_bonds lj 1-4 = 0.5, the (0,3) LJ energy is halved.
+        // A 4-atom chain 0-1-2-3 (bonds 0-1-2-3, angles, one dihedral): the
+        // special pairs weigh 1-2/1-3 0 and the (0,3) 1-4 pair at
+        // special_bonds lj 1-4 = 0.5, so its LJ energy is halved.
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
@@ -2091,24 +1423,26 @@ mod tests {
             .unwrap();
         frame.insert("dihedrals", dihedrals);
 
-        // The real neighbour list: only (0,3), flagged is_14.
-        let pairs = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
-        assert_eq!(
-            pairs.n_rows(),
-            Some(1),
-            "expected exactly the (0,3) 1-4 pair"
-        );
-        frame.insert("pairs", pairs);
+        // The special pairs: the three bonds, the two 1-3 pairs and (0,3).
+        let pairs = molrs::core::Topology::from_frame(&frame)
+            .unwrap()
+            .pairs_block();
+        assert_eq!(pairs.n_rows(), Some(6));
+        frame.insert(PAIRS, pairs);
 
         let mut ff = ForceField::new("test");
-        ff.def_style("pair", "lj/cut", Params::new())
-            .unwrap()
-            .def_type(
-                "A",
-                &["A"],
-                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
-            )
-            .unwrap();
+        ff.def_style(
+            "pair",
+            "lj/cut",
+            Params::from_iter([("cutoff", F::INFINITY)]),
+        )
+        .unwrap()
+        .def_type(
+            "A",
+            &["A"],
+            Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
+        )
+        .unwrap();
         let mut sb = crate::ff::ir::SpecialBonds::EXCLUDE_12_13;
         sb.lj[2] = 0.5;
         ff.set_special_bonds(sb);
@@ -2139,308 +1473,94 @@ mod tests {
         assert!(forces.iter().all(|x| x.abs() < 1e-5));
     }
 
+    /// `compile` prices every pair at the weight the frame's special pairs
+    /// give it: 1-2 and 1-3 out, 1-4 scaled by `special_bonds`, every other
+    /// pair (an unbonded atom's included) at full strength. A frame with
+    /// bonds and no special pairs is refused.
     #[test]
-    fn test_compile_skips_absent_topology() {
-        // A style whose topology block is absent from the frame contributes
-        // nothing (no rows of that kind) — skipped, not an error.
-        let mut ff = ForceField::new("test");
-        ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
-            .unwrap()
-            .def_type(
-                "A",
-                &["A"],
-                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
-            )
-            .unwrap();
-
-        let frame = make_atoms_only_frame();
-        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
-        assert_eq!(pots.len(), 0);
-        let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
-        assert!(pots.energy_at(&coords).abs() < 1e-9);
-    }
-
-    /// A frame too large for a full pair list is refused, not enumerated.
-    ///
-    /// `N(N-1)/2` with no cutoff is the shape of this list, and the failure
-    /// mode past a certain `N` is the OOM killer, which tells the caller
-    /// nothing about what to do instead. The refusal names the alternative.
-    /// An overlay on a bond-graph 1-4 is carried onto that pair. A `pairs`
-    /// block already present wins, and the overlay is not read.
-    #[test]
-    fn pair_overrides_are_carried_onto_the_bond_graph_list() {
-        let chain = || {
-            let mut frame = Frame::new();
-            let mut atoms = Block::new();
-            atoms
-                .insert("x", Array1::from_vec(vec![0.0_f64; 4]).into_dyn(), None)
-                .unwrap();
-            frame.insert(ATOMS, atoms);
-            let mut bonds = Block::new();
-            bonds
-                .insert(ATOMI, Array1::from_vec(vec![0_u64, 1, 2]).into_dyn(), None)
-                .unwrap();
-            bonds
-                .insert(ATOMJ, Array1::from_vec(vec![1_u64, 2, 3]).into_dyn(), None)
-                .unwrap();
-            frame.insert("bonds", bonds);
-            frame
-        };
-        let overlay = |scale: f64| {
-            let mut block = Block::new();
-            block
-                .insert(ATOMI, Array1::from_vec(vec![0_u64]).into_dyn(), None)
-                .unwrap();
-            block
-                .insert(ATOMJ, Array1::from_vec(vec![3_u64]).into_dyn(), None)
-                .unwrap();
-            block
-                .insert("lj_scale", Array1::from_vec(vec![scale]).into_dyn(), None)
-                .unwrap();
-            block
-        };
-        let scale_of = |pairs: &Block| -> f64 {
-            let i = pairs.get(ATOMI).unwrap().get::<u64>().unwrap();
-            let j = pairs.get(ATOMJ).unwrap().get::<u64>().unwrap();
-            let row = (0..i.len()).find(|&r| i[[r]] == 0 && j[[r]] == 3).unwrap();
-            pairs.get("lj_scale").unwrap().get::<f64>().unwrap()[[row]]
-        };
-
-        let mut frame = chain();
-        frame.insert(PAIR_OVERRIDES, overlay(0.5));
-        let built = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
-        assert!(
-            built
-                .get(IS_14)
-                .unwrap()
-                .get::<bool>()
-                .unwrap()
-                .iter()
-                .all(|&f| f)
-        );
-        assert_eq!(scale_of(&built), 0.5);
-
-        frame.insert(PAIRS, overlay(0.2));
-        let built = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap();
-        assert_eq!(scale_of(&built), 0.2);
-    }
-
-    #[test]
-    fn a_repeated_or_non_finite_overlay_row_is_refused() {
-        let mut frame = Frame::new();
+    fn compile_prices_every_pair_at_its_special_weight() {
+        // Chain 0-1-2-3 along x, atom 4 unbonded beside it.
+        let xs: [F; 5] = [0.0, 1.5, 3.0, 4.5, 2.0];
+        let ys: [F; 5] = [0.0, 0.0, 0.0, 0.0, 3.0];
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![0.0_f64; 4]).into_dyn(), None)
+            .insert("x", Array1::from_vec(xs.to_vec()).into_dyn(), None)
             .unwrap();
-        frame.insert(ATOMS, atoms);
-        let mut bonds = Block::new();
-        bonds
-            .insert(ATOMI, Array1::from_vec(vec![0_u64, 1, 2]).into_dyn(), None)
+        atoms
+            .insert("y", Array1::from_vec(ys.to_vec()).into_dyn(), None)
             .unwrap();
-        bonds
-            .insert(ATOMJ, Array1::from_vec(vec![1_u64, 2, 3]).into_dyn(), None)
+        atoms
+            .insert("z", Array1::from_vec(vec![0.0 as F; 5]).into_dyn(), None)
             .unwrap();
-        frame.insert("bonds", bonds);
-
-        let mut twice = Block::new();
-        twice
-            .insert(ATOMI, Array1::from_vec(vec![0_u64, 0]).into_dyn(), None)
-            .unwrap();
-        twice
-            .insert(ATOMJ, Array1::from_vec(vec![3_u64, 3]).into_dyn(), None)
-            .unwrap();
-        twice
+        atoms
             .insert(
-                "lj_scale",
-                Array1::from_vec(vec![0.5_f64, 0.25]).into_dyn(),
+                "type",
+                Array1::from_vec(vec!["A".to_string(); 5]).into_dyn(),
                 None,
             )
             .unwrap();
-        frame.insert(PAIR_OVERRIDES, twice);
-        let err = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap_err();
-        assert!(err.contains("two rows"), "{err}");
+        let mut bonds = Block::new();
+        bonds
+            .insert(
+                "atomi",
+                Array1::from_vec(vec![0 as Idx, 1, 2]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        bonds
+            .insert(
+                "atomj",
+                Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
 
-        let mut nan = Block::new();
-        nan.insert(ATOMI, Array1::from_vec(vec![0_u64]).into_dyn(), None)
-            .unwrap();
-        nan.insert(ATOMJ, Array1::from_vec(vec![3_u64]).into_dyn(), None)
-            .unwrap();
-        nan.insert(
-            "lj_scale",
-            Array1::from_vec(vec![f64::NAN]).into_dyn(),
-            None,
+        let (epsilon, sigma) = (0.2, 1.4);
+        let mut ff = ForceField::new("derived");
+        ff.set_special_bonds(SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 0.5],
+        });
+        ff.def_style(
+            "pair",
+            "lj/cut",
+            Params::from_iter([("cutoff", F::INFINITY)]),
+        )
+        .unwrap()
+        .def_type(
+            "A",
+            &["A"],
+            Params::from_iter([("epsilon", epsilon), ("sigma", sigma)]),
         )
         .unwrap();
-        frame.insert(PAIR_OVERRIDES, nan);
-        let err = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None).unwrap_err();
-        assert!(err.contains("non-finite"), "{err}");
-    }
 
-    /// A list that omits one intramolecular pair and flags another `is_14`
-    /// the bond graph would not keeps both facts. A second molecule's
-    /// neighbor is kept only when the list is open.
-    #[test]
-    fn install_pairs_keeps_an_authoritative_list_and_opens_a_capped_one() {
-        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
-
-        let mut frame = Frame::new();
-        let mut atoms = Block::new();
-        atoms
-            .insert("x", Array1::from_vec(vec![0.0_f64; 5]).into_dyn(), None)
-            .unwrap();
-        // 0-1-2-3 one molecule, atom 4 another.
-        atoms
-            .insert(
-                MOL_ID,
-                Array1::from_vec(vec![0_u64, 0, 0, 0, 1]).into_dyn(),
-                None,
-            )
-            .unwrap();
-        frame.insert(ATOMS, atoms);
-        let mut bonds = Block::new();
-        bonds
-            .insert(ATOMI, Array1::from_vec(vec![0_u64, 1, 2]).into_dyn(), None)
-            .unwrap();
-        bonds
-            .insert(ATOMJ, Array1::from_vec(vec![1_u64, 2, 3]).into_dyn(), None)
-            .unwrap();
-        frame.insert("bonds", bonds);
-
-        // (0, 2) is bond distance 2, which the bond graph would exclude, and
-        // the list flags it 1-4. (0, 3) is the bond-graph 1-4 and is omitted.
-        let mut listed = Block::new();
-        listed
-            .insert(ATOMI, Array1::from_vec(vec![0_u64]).into_dyn(), None)
-            .unwrap();
-        listed
-            .insert(ATOMJ, Array1::from_vec(vec![2_u64]).into_dyn(), None)
-            .unwrap();
-        listed
-            .insert(IS_14, Array1::from_vec(vec![true]).into_dyn(), None)
-            .unwrap();
-        listed
-            .insert(
-                "lj_scale",
-                Array1::from_vec(vec![0.25_f64]).into_dyn(),
-                None,
-            )
-            .unwrap();
-        let neighbors = Neighbors::from_pairs(
-            [(0_u32, 2_u32), (0, 3), (0, 4)]
-                .into_iter()
-                .map(|(i, j)| NeighborPair {
-                    i,
-                    j,
-                    dist_sq: 1.0,
-                    disp: [1.0, 0.0, 0.0],
-                }),
-            NeighborColumns::FULL,
-            QueryMode::SelfQuery { n_points: 5 },
-        );
-        let rows = |block: &Block| -> (Vec<u64>, Vec<u64>, Vec<bool>) {
-            (
-                block
-                    .get(ATOMI)
-                    .unwrap()
-                    .get::<u64>()
-                    .unwrap()
-                    .iter()
-                    .copied()
-                    .collect(),
-                block
-                    .get(ATOMJ)
-                    .unwrap()
-                    .get::<u64>()
-                    .unwrap()
-                    .iter()
-                    .copied()
-                    .collect(),
-                block
-                    .get(IS_14)
-                    .unwrap()
-                    .get::<bool>()
-                    .unwrap()
-                    .iter()
-                    .copied()
-                    .collect(),
-            )
+        let lj = |a: usize, b: usize| {
+            let r = ((xs[a] - xs[b]).powi(2) + (ys[a] - ys[b]).powi(2)).sqrt();
+            4.0 * epsilon * ((sigma / r).powi(12) - (sigma / r).powi(6))
         };
+        let expected = 0.5 * lj(0, 3) + lj(0, 4) + lj(1, 4) + lj(2, 4) + lj(3, 4);
+        let coords: Vec<F> = (0..5).flat_map(|k| [xs[k], ys[k], 0.0]).collect();
 
-        // Open: two molecules and no cross-molecule row. (0, 4) comes from
-        // the neighbor table; (0, 3) stays omitted.
-        frame.insert(PAIRS, listed.clone());
-        let open = install_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, Some(&neighbors)).unwrap();
-        assert_eq!(rows(&open), (vec![0, 0], vec![2, 4], vec![true, false]));
-        let scale = open.get("lj_scale").unwrap().get::<f64>().unwrap();
-        let valid = open.validity("lj_scale").unwrap();
-        assert_eq!(scale[[0]], 0.25);
-        assert!(valid[0] && !valid[1]);
+        // Bonds and no special pairs: the 1-2 terms would be priced at
+        // full strength, so the frame is refused.
+        let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
+        assert!(err.to_string().contains("generate_topology"), "{err}");
 
-        // Closed by a cross-molecule row, (1, 4), that the neighbor table
-        // does not contain. (0, 4) is then omitted: a closed list adds no
-        // intermolecular pair it does not already hold. (0, 3) stays omitted.
-        let mut closed_list = Block::new();
-        closed_list
-            .insert(ATOMI, Array1::from_vec(vec![0_u64, 1]).into_dyn(), None)
-            .unwrap();
-        closed_list
-            .insert(ATOMJ, Array1::from_vec(vec![2_u64, 4]).into_dyn(), None)
-            .unwrap();
-        closed_list
-            .insert(IS_14, Array1::from_vec(vec![true, false]).into_dyn(), None)
-            .unwrap();
-        closed_list
-            .insert(
-                "lj_scale",
-                Array1::from_vec(vec![0.25_f64, 0.0]).into_dyn(),
-                Some(vec![true, false]),
-            )
-            .unwrap();
-        frame.insert(PAIRS, closed_list);
-        let closed = install_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, Some(&neighbors)).unwrap();
-        assert_eq!(rows(&closed), (vec![0], vec![2], vec![true]));
-        assert_eq!(
-            closed.get("lj_scale").unwrap().get::<f64>().unwrap()[[0]],
-            0.25
+        frame.insert(
+            PAIRS,
+            molrs::core::Topology::from_frame(&frame)
+                .unwrap()
+                .pairs_block(),
         );
-    }
-
-    #[test]
-    fn a_frame_too_large_for_a_full_pair_list_is_refused() {
-        use molrs::core::Block;
-        use ndarray::Array1;
-
-        let n = MAX_ATOMS_FOR_A_FULL_PAIR_LIST + 1;
-        let mut frame = Frame::new();
-        let mut atoms = Block::new();
-        atoms
-            .insert(
-                "type",
-                Array1::from(vec!["a".to_string(); n]).into_dyn(),
-                None,
-            )
-            .unwrap();
-        frame.insert("atoms", atoms);
-
-        let err = intramolecular_pairs(&frame, &SpecialBonds::EXCLUDE_12_13, None)
-            .expect_err("a list this size is not an answer");
-        assert!(err.contains("neighbour list"), "{err}");
-        assert!(err.contains("compile_typed"), "{err}");
-
-        // And one atom under the ceiling still builds, so the bound is a
-        // ceiling and not an off-by-one that refuses the supported case.
-        let mut small = Frame::new();
-        let mut atoms = Block::new();
-        atoms
-            .insert(
-                "type",
-                Array1::from(vec!["a".to_string(); MAX_ATOMS_FOR_A_FULL_PAIR_LIST]).into_dyn(),
-                None,
-            )
-            .unwrap();
-        small.insert("atoms", atoms);
-        assert!(intramolecular_pairs(&small, &SpecialBonds::EXCLUDE_12_13, None).is_ok());
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
+        assert!(
+            (pots.energy_at(&coords) - expected).abs() < 1e-10,
+            "{} != {expected}",
+            pots.energy_at(&coords)
+        );
     }
 }
 

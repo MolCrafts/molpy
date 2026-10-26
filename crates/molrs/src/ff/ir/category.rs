@@ -141,7 +141,7 @@ impl CategorySpec {
     /// `<name>s` (molrec's rule, so a record alone locates it). Its
     /// coordinate is [`Coordinate::Compound`] unless it names the geometric
     /// variable its arity has (`Distance` 2, `Angle` 3, `Dihedral` /
-    /// `Improper` 4); [`register_category`](crate::ff::style_registry::register_category)
+    /// `Improper` 4); [`register_category`](crate::ff::style_registry::GlobalRegistry::register_category)
     /// refuses any other combination.
     pub fn custom(
         name: impl Into<Cow<'static, str>>,

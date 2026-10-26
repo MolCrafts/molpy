@@ -82,7 +82,7 @@ encoding:
 </div>
 
 **Figure 1.** $C_1$ and $C_2$ for rods undergoing rotational diffusion. Both
-decay exponentially; the fitted relaxation times are 276 and 91 frames, a ratio
+decay exponentially; the fitted relaxation times are 275 and 91 frames, a ratio
 of **3.04** against the exact 3.
 </figure>
 

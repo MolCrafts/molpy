@@ -60,10 +60,10 @@ fn lj_coeffs(epsilon: F, sigma: F) -> [F; 4] {
 ///
 /// with no cutoff (as LAMMPS's dihedral 1-4 term, and an OpenMM exception),
 /// `C` the Coulomb style's `coulomb / dielectric`. The regular pair kernels
-/// price an **override** pair at weight 0 — the compiled door drops its
-/// `pairs` row, the neighbour-driven door zeroes its weight
-/// ([`PairWeights`](crate::ff::potential::PairWeights)). A `w` pair needs no
-/// such step: `special_bonds` 1-4 is 0 for it, as LAMMPS requires.
+/// price an **override** pair at weight 0, at both compile doors (its
+/// [`SpecialWeights`](crate::ff::potential::SpecialWeights) weight is
+/// zeroed). A `w` pair needs no such step: `special_bonds` 1-4 is 0 for it,
+/// as LAMMPS requires.
 ///
 /// The kernel is a fixed list of atom pairs, so it is an indexed (bond-like)
 /// member at both compile doors: a periodic régime rebinds it like a bond.

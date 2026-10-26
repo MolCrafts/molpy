@@ -831,7 +831,7 @@ impl ForceField {
     /// one is read under its lock, so `f` must not register anything.
     pub(crate) fn read_registry<R>(&self, f: impl FnOnce(&Registry) -> R) -> R {
         match &self.registry {
-            RegistryRef::Global => crate::ff::style_registry::with_global_registry(f),
+            RegistryRef::Global => crate::ff::style_registry::GlobalRegistry.with(f),
             RegistryRef::Own(r) => f(r),
         }
     }
@@ -862,8 +862,9 @@ impl ForceField {
 
     /// The force field's declared [`SpecialBonds`] 1-2 / 1-3 / 1-4
     /// nonbonded scale weights, or `None` when it declares none. Pair kernels
-    /// apply the 1-4 weight to flagged (`is_14`) pairs; compiling a field with
-    /// a pair style and no weights is an error, never a default.
+    /// weigh each special pair (a `pairs` row) by its `n_bonds` class;
+    /// compiling a field with a pair style and no weights is an error, never
+    /// a default.
     pub fn special_bonds(&self) -> Option<&SpecialBonds> {
         self.special_bonds.as_ref()
     }
@@ -980,7 +981,7 @@ impl ForceField {
     ///
     /// `category` names a **declared** category, its arity taken from its
     /// declaration: one this force field's registry declares (the built-in
-    /// ones, and [`crate::ff::style_registry::register_category`]'s for the
+    /// ones, and [`GlobalRegistry::register_category`](crate::ff::style_registry::GlobalRegistry::register_category)'s for the
     /// process-wide registry), one of the IR's
     /// [built-in categories](crate::ff::ir::builtin_categories), or a
     /// category this force field already holds a style of (one read from a
@@ -2424,48 +2425,6 @@ pub(crate) mod tests {
             types[0].params.get("theta0").and_then(|v| v.as_num()),
             Some(107.8)
         );
-    }
-
-    /// The two values a presence/absence list can say, and the two ways to
-    /// fall outside them.
-    #[test]
-    fn a_compiled_pair_list_says_only_in_or_out() {
-        // The default and every Amber-family reader: both classes excluded.
-        assert_eq!(
-            SpecialBonds::EXCLUDE_12_13.compiled_inclusion(),
-            Ok([false, false])
-        );
-        // LAMMPS `special_bonds fene`: 1-3 stays, at full strength.
-        let fene = SpecialBonds {
-            lj: [0.0, 1.0, 1.0],
-            coul: [0.0, 1.0, 1.0],
-        };
-        assert_eq!(fene.compiled_inclusion(), Ok([false, true]));
-
-        // A fraction is not expressible by a row that is merely there.
-        let half = SpecialBonds {
-            lj: [0.0, 0.5, 0.5],
-            coul: [0.0, 0.5, 0.5],
-        };
-        let err = half.compiled_inclusion().unwrap_err();
-        assert!(err.contains("1-3"), "{err}");
-        assert!(err.contains("PotentialCompiler::compile_typed"), "{err}");
-
-        // Neither is a class one kernel wants and the other does not.
-        let split = SpecialBonds {
-            lj: [0.0, 1.0, 1.0],
-            coul: [0.0, 0.0, 1.0],
-        };
-        let err = split.compiled_inclusion().unwrap_err();
-        assert!(err.contains("lj 1 and coul 0 differ"), "{err}");
-
-        // The 1-4 weight is not part of this judgement: both doors scale it
-        // inside the kernel, so a fraction there is ordinary.
-        let amber = SpecialBonds {
-            lj: [0.0, 0.0, 0.5],
-            coul: [0.0, 0.0, 1.0 / 1.2],
-        };
-        assert_eq!(amber.compiled_inclusion(), Ok([false, false]));
     }
 
     // -- declared state: units / special_bonds ---------------------------------

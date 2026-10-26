@@ -14,11 +14,12 @@ GMX = shutil.which("gmx") or shutil.which("gmx_d")
 
 @pytest.fixture
 def system(water, tip3p):
-    """The water with its H-O-H angle typed: a whole topology for GROMACS.
+    """The water with its H-O-H angle typed and its special pairs: a whole
+    topology for GROMACS.
 
-    GROMACS excludes every pair within three bonds (nrexcl 3); the pair list
-    the topology writer checks that against excludes 1-3 pairs by the frame's
-    ``angles`` rows, so a typed system carries them.
+    GROMACS excludes every pair within three bonds (nrexcl 3); the topology
+    writer checks that against the frame's special pairs (``pairs``), so a
+    typed system carries them.
     """
     o, h1, h2 = list(water.atoms)
     (ow,) = [t for t in tip3p.get_styles("atom")[0].get_types() if t.name == "OW"]
@@ -27,6 +28,7 @@ def system(water, tip3p):
         "HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52
     )
     water.add_angle(h1, o, h2, type="HW-OW-HW")
+    water.generate_topology(gen_angle=False, gen_dihedral=False)
     frame = water.to_frame()
     frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
     return frame, tip3p
@@ -74,7 +76,7 @@ def test_mdp_nonbonded_settings_are_the_force_fields(tmp_path, system):
     """A 10 Å lj/cut + 9 Å coul/cut force field runs cut-off Coulomb at
     0.9 nm and van der Waals at 1.0 nm, in both stages."""
     frame, ff = system
-    ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+    ff.get_style("pair", "lj/cut").set(cutoff=10.0)
     ff.def_style("pair", "coul/cut", {"cutoff": 9.0})
     paths = mp.engine.GromacsEngine(check_executable=False).generate_inputs(
         frame, ff, tmp_path
@@ -90,7 +92,7 @@ def test_mdp_nonbonded_settings_are_the_force_fields(tmp_path, system):
 
 def test_a_single_stated_cutoff_is_both(tmp_path, system):
     frame, ff = system
-    ff.get_style("pair", "lj/cut")["cutoff"] = 11.0
+    ff.get_style("pair", "lj/cut").set(cutoff=11.0)
     ff.def_style("pair", "coul/cut")
     paths = mp.engine.GromacsEngine(check_executable=False).generate_inputs(
         frame, ff, tmp_path
@@ -221,3 +223,17 @@ def test_grompp_accepts_the_generated_inputs(tmp_path, system):
     )
     assert done.returncode == 0, done.stderr[-2000:]
     assert (tmp_path / "em.tpr").is_file()
+
+
+def test_an_infinite_cutoff_is_refused_unless_overridden(tmp_path, system):
+    """GROMACS's Verlet scheme needs a finite cutoff: a field that prices every
+    pair is refused by name, and an explicit ``rvdw`` / ``rcoulomb`` writes."""
+    frame, ff = system
+    ff.get_style("pair", "lj/cut").set(cutoff=float("inf"))
+    engine = mp.engine.GromacsEngine(check_executable=False)
+    with pytest.raises(ValueError, match="finite cutoff"):
+        engine.generate_inputs(frame, ff, tmp_path / "refused")
+    paths = engine.generate_inputs(
+        frame, ff, tmp_path / "stated", rvdw=1.0, rcoulomb=1.0
+    )
+    assert "rvdw            = 1\n" in paths["input"].read_text(encoding="utf-8")

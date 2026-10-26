@@ -5,7 +5,7 @@ use crate::ff::style_registry;
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::keys::ENDPOINTS;
-use molrs::core::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::ATOMS;
 use molrs::op::{F, Idx};
 use ndarray::Array1;
 
@@ -13,6 +13,7 @@ use crate::ff::compile::PotentialCompiler;
 use crate::ff::forcefield::{DefError, ForceField};
 use crate::ff::ir::Params;
 use crate::ff::ir::{CategorySpec, IrError};
+use crate::ff::potential::pair::CandidatePairs;
 use crate::ff::potential::{CompileError, Potentials};
 use crate::ff::style_registry::{Registry, RegistryRef};
 use std::sync::Arc;
@@ -113,7 +114,7 @@ impl ExplicitTerms {
     pub fn compile(&self) -> Result<Potentials, CompileError> {
         let lookup = |r: &Registry| r.category(&self.category).cloned();
         let category = match &self.registry {
-            RegistryRef::Global => style_registry::with_global_registry(lookup),
+            RegistryRef::Global => style_registry::GlobalRegistry.with(lookup),
             RegistryRef::Own(r) => lookup(r),
         };
         self.build(category)
@@ -154,13 +155,6 @@ impl ExplicitTerms {
 
         let mut ff = ForceField::new("instances");
         ff.registry = self.registry.clone();
-        // Each explicit term is priced at full strength: the `pairs` rows
-        // below carry no `is_14`, and no 1-2 / 1-3 class is excluded from
-        // terms the caller listed by hand.
-        ff.set_special_bonds(crate::ff::ir::SpecialBonds {
-            lj: [1.0; 3],
-            coul: [1.0; 3],
-        });
         let style = ff
             .def_style(&self.category, &self.style, self.style_params.clone())
             .map_err(def_err)?;
@@ -179,20 +173,22 @@ impl ExplicitTerms {
         }
 
         let mut frame = Frame::new();
-        let mut terms = Block::new();
-        for (col, name) in ENDPOINTS.iter().take(arity).enumerate() {
-            let column: Vec<Idx> = self.atoms.iter().map(|a| a[col] as Idx).collect();
-            terms
-                .insert(*name, Array1::from_vec(column).into_dyn(), None)
-                .map_err(|e| e.to_string())?;
+        if !pair {
+            let mut terms = Block::new();
+            for (col, name) in ENDPOINTS.iter().take(arity).enumerate() {
+                let column: Vec<Idx> = self.atoms.iter().map(|a| a[col] as Idx).collect();
+                terms
+                    .insert(*name, Array1::from_vec(column).into_dyn(), None)
+                    .map_err(|e| e.to_string())?;
+            }
+            if !self.rows.is_empty() {
+                let labels: Vec<String> = (0..self.atoms.len()).map(|t| t.to_string()).collect();
+                terms
+                    .insert("type", Array1::from_vec(labels).into_dyn(), None)
+                    .map_err(|e| e.to_string())?;
+            }
+            frame.insert(spec.block.as_ref(), terms);
         }
-        if !pair && !self.rows.is_empty() {
-            let labels: Vec<String> = (0..self.atoms.len()).map(|t| t.to_string()).collect();
-            terms
-                .insert("type", Array1::from_vec(labels).into_dyn(), None)
-                .map_err(|e| e.to_string())?;
-        }
-        frame.insert(if pair { PAIRS } else { spec.block.as_ref() }, terms);
         if pair || self.charges.is_some() {
             let mut atoms = Block::new();
             let types: Vec<String> = (0..n_atoms).map(atom_type).collect();
@@ -209,7 +205,16 @@ impl ExplicitTerms {
             frame.insert(ATOMS, atoms);
         }
 
-        PotentialCompiler::new(&ff).compile(&frame)
+        if !pair {
+            return PotentialCompiler::new(&ff).compile(&frame);
+        }
+        // Each pair the caller listed, at full strength: no special pair
+        // weighs terms listed by hand.
+        let mut candidates = CandidatePairs::default();
+        for a in &self.atoms {
+            candidates.push(a[0], a[1], 1.0, 1.0);
+        }
+        PotentialCompiler::new(&ff).compile_candidates(&frame, candidates)
     }
 }
 
@@ -281,6 +286,7 @@ mod tests {
     #[test]
     fn a_pair_term_is_priced_with_its_own_row_and_charges_per_atom() {
         let lj = ExplicitTerms::new("pair", "lj/cut")
+            .style_params(Params::from_iter([("cutoff", F::INFINITY)]))
             .term(
                 &[0, 3],
                 Params::from_iter([("epsilon", 0.2), ("sigma", 3.1)]),
@@ -294,6 +300,7 @@ mod tests {
             .style_params(Params::from_iter([
                 ("coulomb", 332.06371),
                 ("dielectric", 1.0),
+                ("cutoff", F::INFINITY),
             ]))
             .atoms([vec![0, 3]])
             .charges(vec![0.3, 0.0, 0.0, -0.4])

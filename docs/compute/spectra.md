@@ -228,7 +228,8 @@ for window in ("none", "cosine_sq", "hann", "blackman"):
 
 `hann` and `blackman` go to zero at both ends and suppress the leakage by three
 orders of magnitude; Blackman harder, at the price of broader peaks.
-`cosine_sq`, the default of every transform on these pages, is one at $t = 0$
+`cosine_sq`, the window every transform on these pages uses (and the default of
+`RamanSpectrum` and the [dielectric](dielectric.md) routes), is one at $t = 0$
 and zero at the last lag: it tapers only the tail, which is the end a one-sided
 correlation function needs tapered, and keeps the zero-lag value that Hann and
 Blackman would destroy. It does nothing for a signal that oscillates at full
@@ -425,7 +426,7 @@ magnitude smaller.
     charges — or, for *ab initio* intensities, an electron density to partition
     — and the reference system behind these pages is monatomic argon, whose
     dipole is identically zero. Add these when a molecular trajectory exists
-    under `scripts/docs_series/`.
+    under `molpy/scripts/docs_series/`.
 
 ## When it goes wrong
 
@@ -436,7 +437,7 @@ band before believing any peak.
 
 **The spectrum is covered in regular ripples.**
 Spectral leakage: the correlation was truncated before it decayed. Use a
-tapering window in `Spectrum` (`"hann"` or `"blackman"` when even the default
+tapering window in `Spectrum` (`"hann"` or `"blackman"` when even
 `"cosine_sq"` is not enough) — at the cost of broader peaks.
 
 **Everything is one broad hump.**

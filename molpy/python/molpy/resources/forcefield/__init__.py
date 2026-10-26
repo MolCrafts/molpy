@@ -5,6 +5,6 @@
 * ``clp.xml`` — the CL&P ionic-liquid typing force field
   (``mp.ff.typifier.OplsAaTypifier(get_path("forcefield/clp.xml"))``).
 
-OPLS-AA and the CL&Pol Drude table (``mp.ff.params.clpol_polarizability``)
-ship with molrs.
+OPLS-AA and the CL&Pol Drude table (``mp.builder.DrudeBuilder().polarizability``)
+ship with molpy.
 """

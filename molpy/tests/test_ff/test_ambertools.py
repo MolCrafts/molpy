@@ -204,9 +204,9 @@ class TestAntechamberTypifier:
         (atom_style,) = ff.get_styles("atom")
         assert {t.name for t in atom_style.get_types()} == set(TYPES)
         bond = ff.get_style("bond", "harmonic").get_type_by_name("c3-f")
-        assert bond["k"] == pytest.approx(356.9)
+        assert bond.params["k"] == pytest.approx(356.9)
         pair = ff.get_style("pair", "lj/cut").get_type_by_name("f")
-        assert pair["sigma"] == pytest.approx(3.118145514)
+        assert pair.params["sigma"] == pytest.approx(3.118145514)
 
     def test_graph_bond_missing_from_prmtop_raises(self, tools, tmp_path):
         graph = _litfsi()

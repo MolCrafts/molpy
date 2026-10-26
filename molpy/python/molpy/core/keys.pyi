@@ -52,7 +52,6 @@ __all__ = [
     "IMAGES",
     "IMPROPER_TYPE_LABELS",
     "ISOTOPE",
-    "IS_14",
     "IS_AROMATIC",
     "IX",
     "IY",
@@ -66,6 +65,7 @@ __all__ = [
     "MUX",
     "MUY",
     "MUZ",
+    "N_BONDS",
     "NAME",
     "OCCUPANCY",
     "PORTS",
@@ -140,7 +140,6 @@ ICODE: Key
 ID: Key
 IMAGES: list[Key]
 IMPROPER_TYPE_LABELS: Key
-IS_14: Key
 IX: Key
 IY: Key
 IZ: Key
@@ -151,6 +150,7 @@ MOL_ID: Key
 MUX: Key
 MUY: Key
 MUZ: Key
+N_BONDS: Key
 NAME: Key
 OCCUPANCY: Key
 PORTS: Key

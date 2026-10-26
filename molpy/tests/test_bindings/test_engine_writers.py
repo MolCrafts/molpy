@@ -51,7 +51,7 @@ def _native_gaff() -> tuple[ForceField, mp.core.Frame]:
     frame = gaff.typify(_ethylene()).to_frame()
     ff = gaff.forcefield()
     for style in ("lj/cut", "coul/cut"):
-        ff.get_style("pair", style)["cutoff"] = 10.0
+        ff.get_style("pair", style).set(cutoff=10.0)
     return ff, frame
 
 
@@ -109,7 +109,7 @@ def test_coul_cut_delta_is_written_at_its_default_and_refused_off_it(
 ) -> None:
     ff, frame = _native_gaff()
     _every_writer(ff, frame, tmp_path)
-    ff.get_style("pair", "coul/cut")["delta"] = 0.5
+    ff.get_style("pair", "coul/cut").set(delta=0.5)
     with pytest.raises(ValueError, match="delta"):
         mp.io.gromacs.GromacsTopForcefieldWriter().write_system(
             tmp_path / "x.top", ff, frame

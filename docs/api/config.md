@@ -9,7 +9,7 @@ Layered configuration for the engines and AmberTools programs, built on
 |--------|---------|---------------|
 | `load_config` | Merge the four layers (`defaults` → `user` → `project` → `run`), validate, freeze | Getting the config an engine or AmberTools program runs with |
 | `tool_settings` | One tool's resolved settings (any `"engine.<name>"` / `"ambertools.<name>"`), each with the layer and key it came from | Inspecting what a tool will run |
-| `ToolSettings` | `executable`, `env`, `env_manager`, `conda_executable`, `launcher`, `env_vars`, `timeout`, `sources` | Reading resolved settings |
+| `ToolSettings` | `tool`, `executable`, `env`, `env_manager`, `conda_executable`, `launcher`, `env_vars`, `timeout`, `sources` | Reading resolved settings |
 | `user_config_path` | `~/.molcrafts/molpy/config/config.toml` (`MOLCRAFTS_HOME` moves it) | Finding the user layer's file |
 | `PROJECT_CONFIG_NAME` | `molpy.toml`, the project layer's file name | Finding the project layer's file |
 | `LAYERS` | `("defaults", "user", "project", "run")` | Naming a layer |

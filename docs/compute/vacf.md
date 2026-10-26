@@ -170,8 +170,8 @@ adding a constant that integrates without bound.
 and the result has `max_lag + 1` lags because lag 0 is included. `Vacf` is a
 **stream**: `accumulator()` hands out an accumulator, each frame's velocities
 are pushed into it in order with the frame spacing `dt`, which sets the lag
-axis `lag_times`, and `finish()` reads the curve. Only the last `max_lag`
-frames are kept, however long the trajectory.
+axis `lag_times`, and `finish()` reads the curve. Memory holds the first and
+last `max_lag` frames and running totals, however long the trajectory.
 
 Each frame is pushed as an `(n_dof, 1)` column — one row per Cartesian degree
 of freedom. A frame's `(N, 3)` velocities become `(3N, 1)` with
@@ -336,7 +336,7 @@ polarizability fluxes.
 **Sampling sets your frequency ceiling.** The Nyquist limit is
 $\tilde{\nu}_{\max} \approx 16678/(\Delta t/\mathrm{fs})$ cm⁻¹. At $\Delta t =
 10$ fs — the spacing used for argon — that is 1668 cm⁻¹, fine for a monatomic
-liquid whose motion is all below 100 cm⁻¹, but hopeless for O–H stretches near
+liquid whose motion lies below about 150 cm⁻¹, but hopeless for O–H stretches near
 3600 cm⁻¹. Those need sub-femtosecond dumps.
 
 ## When it goes wrong

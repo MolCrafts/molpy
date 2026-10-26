@@ -800,7 +800,6 @@ mod tests {
     fn explicit_cross_rows_round_trip_and_still_override_mixing() {
         use crate::ff::compile::PotentialCompiler;
         use molrs::core::Frame;
-        use molrs::op::Idx;
         use ndarray::Array1;
 
         let gromacs = "[ defaults ]\n1 3 yes 0.5 0.5\n\
@@ -812,10 +811,17 @@ mod tests {
             .read(gromacs.as_bytes())
             .unwrap();
         round_trips(&ff, "GROMACS nonbond_params");
-        let back = ForceFieldSection::from_forcefield(&ff)
+        let mut back = ForceFieldSection::from_forcefield(&ff)
             .unwrap()
             .to_forcefield()
             .unwrap();
+        // A `.top` states no cutoff (the `.mdp` does): the pair is priced in
+        // free space.
+        for name in ["lj/cut", "coul/cut"] {
+            back.get_style_mut("pair", name)
+                .unwrap()
+                .set_param("cutoff", f64::INFINITY);
+        }
 
         // One A–B pair at 2.5 Å: priced by the cross row (ε = 0.9, σ = 2), not
         // by geometric mixing.
@@ -827,19 +833,11 @@ mod tests {
                 None,
             )
             .unwrap();
-        let mut pairs = Block::new();
-        pairs
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
-            .unwrap();
-        pairs
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None)
-            .unwrap();
         atoms
             .insert("charge", Array1::from_vec(vec![0.0, 0.0]).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        frame.insert("pairs", pairs);
         let r: f64 = 2.5;
         let coords = [0.0, 0.0, 0.0, r, 0.0, 0.0];
         let s6 = (2.0 / r).powi(6);
@@ -849,6 +847,25 @@ mod tests {
             .unwrap()
             .energy_at(&coords);
         assert!((e - want).abs() < 1e-9, "E = {e}, cross row gives {want}");
+    }
+
+    /// A record holds a finite cutoff: `inf` (every pair priced) is refused
+    /// by name rather than written as a null.
+    #[test]
+    fn an_infinite_cutoff_is_refused() {
+        let mut ff = ForceField::new("x");
+        ff.set_units("real");
+        ff.def_style(
+            "pair",
+            "lj/cut",
+            Params::from_iter([("cutoff", f64::INFINITY)]),
+        )
+        .unwrap();
+        let err = ForceFieldSection::from_forcefield(&ff).unwrap_err();
+        assert!(
+            err.contains("\"cutoff\"") && err.contains("not finite"),
+            "{err}"
+        );
     }
 
     /// `lj/charmm`'s `one_four` round-trips through the section, and a value

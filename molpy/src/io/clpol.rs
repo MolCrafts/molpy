@@ -8,8 +8,8 @@ use pyo3::types::PyDict;
 
 use super::PySource;
 
-/// One row's fields under the names :func:`molpy.ff.params.clpol_polarizability`
-/// uses, and its ``type_name``.
+/// One row's fields under the names ``DrudeBuilder.polarizability`` uses, and
+/// its ``type_name``.
 fn row_dict(py: Python<'_>, row: ClpolAlphaRow) -> PyResult<Bound<'_, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("type_name", row.type_name)?;
@@ -26,7 +26,7 @@ fn row_dict(py: Python<'_>, row: ClpolAlphaRow) -> PyResult<Bound<'_, PyDict>> {
 /// The text is whitespace-separated rows ``type m_D q_D k_D alpha a_thole``;
 /// ``#`` starts a comment and a line with fewer than six fields is not a
 /// row. A type given twice keeps both rows; the later one is the file's last
-/// word. The table molrs ships is :func:`molpy.ff.params.clpol_polarizability`.
+/// word. The table molpy ships is ``mp.builder.DrudeBuilder().polarizability``.
 ///
 /// Parameters
 /// ----------

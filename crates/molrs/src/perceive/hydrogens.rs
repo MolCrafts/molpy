@@ -787,7 +787,8 @@ mod tests {
         let c3 = g.add_atom(atom_at(Element::C, [3.0, 0.0, 0.0])).unwrap();
         bond_with_order(&mut g, c1, c2, 1.0);
         bond_with_order(&mut g, c2, c3, 1.0);
-        g.generate_topology(true, false, false, false).unwrap();
+        g.generate_topology(true, false, false, false, false)
+            .unwrap();
         let n_ang = g.n_angles();
         assert!(n_ang > 0);
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");

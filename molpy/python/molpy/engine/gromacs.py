@@ -32,6 +32,7 @@ Reference:
 
 from __future__ import annotations
 
+import math
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -314,6 +315,13 @@ def _nonbonded_mdp(
         rvdw = next(
             (r for r in (vdw_nm, coulomb_nm) if r is not None), _DEFAULT_CUTOFF_NM
         )
+    for name, r in (("rcoulomb", rcoulomb), ("rvdw", rvdw)):
+        if not math.isfinite(r):
+            raise ValueError(
+                f"GROMACS: {name} would be {r} — the force field prices every pair, and "
+                "the Verlet cutoff scheme needs a finite cutoff. State one on the "
+                f"force field's pair styles, or pass {name}= (nm)."
+            )
     if coulombtype is None:
         coulombtype = _COULOMBTYPE.get(stated.coulomb or "", _DEFAULT_COULOMBTYPE)
     return {

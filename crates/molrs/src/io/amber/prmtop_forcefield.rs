@@ -17,6 +17,7 @@ use crate::io::amber::prmtop_tables::{
 };
 use crate::io::reader::ForceFieldReader;
 use crate::io::{Source, invalid_data};
+use molrs::core::Topology;
 use molrs::core::TypeName;
 use molrs::core::keys;
 use molrs::core::{Block, Frame};
@@ -88,26 +89,19 @@ impl AmberPrmtopForcefieldReader {
 
     /// The whole AMBER system `src` holds (a path or a whole file's bytes):
     /// the force field, and the structure frame of
-    /// [`read_prmtop`](crate::io::read_prmtop) plus a `pair_overrides` block
-    /// holding the 1-4 pairs sander weighs otherwise than the field's
-    /// `special_bonds` — a torsion type whose `SCEE` / `SCNB` differ from
-    /// the divisor most 1-4 rows carry (GLYCAM beside ff14SB), a pair two
-    /// rows list, a 1-4 pair no row lists — each with its own `coul_scale`
-    /// (Σ 1/SCEE) / `lj_scale` (Σ 1/SCNB) where it differs, null where it
-    /// agrees. No block when every pair agrees, or the file has no
-    /// `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` (pre-Amber-11). It is not
-    /// the list [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)
-    /// prices: build that with
-    /// [`intramolecular_pairs`](crate::ff::potential::intramolecular_pairs),
-    /// which keeps these cells.
+    /// [`read_prmtop`](crate::io::read_prmtop) with its special pairs — every
+    /// pair within three bonds, every pair `EXCLUDED_ATOMS_LIST` names, every
+    /// torsion's 1-4 pair — each with its `n_bonds`, and a `coul_scale`
+    /// (Σ 1/SCEE) / `lj_scale` (Σ 1/SCNB) cell where sander weighs it
+    /// otherwise than the field's `special_bonds` (a torsion type whose
+    /// `SCEE` / `SCNB` differ from the divisor most 1-4 rows carry, as GLYCAM
+    /// beside ff14SB; a pair two rows list; a 1-4 pair no row lists).
     ///
     /// # Errors
     ///
     /// The OS error of a path that cannot be read;
     /// [`InvalidData`](std::io::ErrorKind::InvalidData) for what
-    /// [`read`](ForceFieldReader::read) and the structure reader refuse, and a
-    /// 1-4 row on a bonded pair or an angle's ends (sander prices that pair as
-    /// 1-4, molrs excludes it).
+    /// [`read`](ForceFieldReader::read) and the structure reader refuse.
     pub fn read_system<'a>(
         &self,
         src: impl Into<Source<'a>>,
@@ -122,9 +116,9 @@ fn system(bytes: &[u8]) -> Result<(ForceField, Frame), String> {
     let sections = parse_flag_sections(bytes).map_err(|e| e.to_string())?;
     let ff = build_forcefield(&sections)?;
     let mut frame = frame_from_sections(&sections).map_err(|e| e.to_string())?;
-    if let Some(pairs) = one_four_pairs(&sections, &frame)? {
-        frame.insert(molrs::core::schema::block_names::PAIR_OVERRIDES, pairs);
-    }
+    let special = ff.required_special_bonds()?;
+    let pairs = special_pairs(&sections, &frame, special)?;
+    frame.insert(molrs::core::schema::block_names::PAIRS, pairs);
     Ok((ff, frame))
 }
 
@@ -801,118 +795,131 @@ fn tally(counts: &mut Vec<Tally>, v: f64) {
     }
 }
 
-/// The `pair_overrides` rows of [`AmberPrmtopForcefieldReader::read_system`]: the 1-4
-/// pairs of `frame` (the structure reader's) whose summed sander weight
-/// differs from the field's (`one_four_weights`); `None` when none does.
+/// The special pairs of `frame` (the structure reader's) as sander prices
+/// them: every pair within three bonds, every pair `EXCLUDED_ATOMS_LIST`
+/// names, and every torsion's 1-4 pair (a non-negative 3rd pointer).
 ///
-/// sander prices a pair at full weight unless `EXCLUDED_ATOMS_LIST` names it,
-/// plus `1/SCEE`, `1/SCNB` of its type for every torsion row that lists it as
-/// its 1-4 pair. For the 1-4 pairs of the topology (the end atoms of a
-/// proper, neither bonded nor an angle's ends) that sum is the pair's
-/// weight. A 1-4 row on a bonded pair or an angle's ends is an `Err`: molrs
-/// excludes those pairs.
-fn one_four_pairs(
+/// sander prices a pair at full weight unless `EXCLUDED_ATOMS_LIST` names
+/// it, plus `1/SCEE`, `1/SCNB` of its type for every torsion row that lists it
+/// as its 1-4 pair (AMBER's 1.2 and 2.0 in a file with no divisors,
+/// pre-Amber-11). A row states a weight in its `coul_scale` / `lj_scale` cell only
+/// where that sum differs from what `special` gives its bond distance.
+fn special_pairs(
     sections: &HashMap<String, Vec<String>>,
     frame: &Frame,
-) -> Result<Option<Block>, String> {
+    special: &SpecialBonds,
+) -> Result<Block, String> {
     use std::collections::{BTreeMap, HashSet};
     let n_atoms = frame.get("atoms").and_then(|b| b.n_rows()).unwrap_or(0);
     let mut dihe_ptrs = section::<i64>(sections, "DIHEDRALS_INC_HYDROGEN")?;
     dihe_ptrs.extend(section::<i64>(sections, "DIHEDRALS_WITHOUT_HYDROGEN")?);
-    // No divisors in the file (pre-Amber-11): no pair is priced on its own.
-    let Some(weights) = one_four_weights(
+    let torsion = one_four_weights(
         &dihe_ptrs,
         n_atoms,
         &section::<f64>(sections, "SCEE_SCALE_FACTOR")?,
         &section::<f64>(sections, "SCNB_SCALE_FACTOR")?,
         &section::<f64>(sections, "DIHEDRAL_PERIODICITY")?,
-        None,
-    )?
-    else {
-        return Ok(None);
-    };
-    let key = |a: Idx, b: Idx| (a.min(b) as usize, a.max(b) as usize);
-    // The (first, last) atom pairs of a frame block's rows.
-    let ends = |block: &str, last: &str| -> Vec<(usize, usize)> {
-        let Some(b) = frame.get(block) else {
-            return Vec::new();
-        };
-        match (
-            b.get(keys::ATOMI).and_then(|c| c.get::<u64>()),
-            b.get(last).and_then(|c| c.get::<u64>()),
-        ) {
-            (Some(i), Some(j)) => i.iter().zip(j.iter()).map(|(&a, &b)| key(a, b)).collect(),
-            _ => Vec::new(),
-        }
-    };
-    let close: HashSet<(usize, usize)> = ends("bonds", keys::ATOMJ)
-        .into_iter()
-        .chain(ends("angles", keys::ATOMK))
-        .collect();
-    if let Some(&(i, j)) = weights.pairs.keys().find(|p| close.contains(p)) {
-        return Err(format!(
-            "atoms {} and {} are a torsion's 1-4 pair (a non-negative 3rd pointer) and \
-             also bonded or an angle's ends: sander prices that pair as 1-4, molrs \
-             excludes it",
-            i + 1,
-            j + 1
-        ));
+        // A file without SCEE/SCNB (pre-Amber-11) is an AMBER force field's,
+        // as the force field read from it says.
+        Some((AMBER_SCEE, AMBER_SCNB)),
+    )?;
+    let excluded: Option<HashSet<(usize, usize)>> =
+        crate::io::amber::prmtop::excluded_pairs(sections)
+            .map_err(|e| e.to_string())?
+            .map(|pairs| pairs.into_iter().collect());
+    let topology = Topology::from_frame(frame).map_err(|e| e.to_string())?;
+    let close = topology.close_pairs(3);
+
+    let mut keys: Vec<(usize, usize)> = close.keys().copied().collect();
+    if let Some(set) = &excluded {
+        keys.extend(set.iter().copied());
     }
-    let excluded: Option<HashSet<(usize, usize)>> = frame
-        .get("exclusions")
-        .map(|_| ends("exclusions", keys::ATOMJ).into_iter().collect());
-    let mut topology_14: BTreeMap<(usize, usize), (F, F)> = BTreeMap::new();
-    for pair in ends("dihedrals", keys::ATOML) {
-        if close.contains(&pair) {
+    if let Some(w) = &torsion {
+        keys.extend(w.pairs.keys().copied());
+    }
+    keys.sort_unstable();
+    keys.dedup();
+
+    let differs = |a: F, b: F| (a - b).abs() > 1e-12 * a.abs().max(b.abs()).max(1.0);
+    // Per pair: its `n_bonds`, then its `coul_scale` and `lj_scale` cells.
+    type Row = (usize, Option<F>, Option<F>);
+    let mut rows: BTreeMap<(usize, usize), Row> = BTreeMap::new();
+    for key in keys {
+        let n_bonds = match close.get(&key) {
+            Some(&d) => d,
+            None => topology
+                .hops_within(key.0, None)
+                .into_iter()
+                .find(|&(p, _)| p == key.1)
+                .map_or(0, |(_, d)| d),
+        };
+        // Without an exclusion list every pair within three bonds is excluded.
+        let full = match &excluded {
+            Some(set) => F::from(u8::from(!set.contains(&key))),
+            None => F::from(u8::from(!close.contains_key(&key))),
+        };
+        let (coul_t, lj_t) = torsion
+            .as_ref()
+            .and_then(|w| w.pairs.get(&key).copied())
+            .unwrap_or((0.0, 0.0));
+        let (coul, lj) = (full + coul_t, full + lj_t);
+        let class = |table: [F; 3]| match n_bonds {
+            d @ 1..=3 => table[d - 1],
+            _ => 1.0,
+        };
+        let coul_cell = differs(coul, class(special.coul)).then_some(coul);
+        let lj_cell = differs(lj, class(special.lj)).then_some(lj);
+        if n_bonds == 0 && coul_cell.is_none() && lj_cell.is_none() {
             continue;
         }
-        let (coul, lj) = weights.pairs.get(&pair).copied().unwrap_or((0.0, 0.0));
-        // Without an exclusion list every such pair is taken as excluded.
-        let full = match &excluded {
-            Some(set) if !set.contains(&pair) => 1.0,
-            _ => 0.0,
-        };
-        topology_14.insert(pair, (coul + full, lj + full));
+        rows.insert(key, (n_bonds, coul_cell, lj_cell));
     }
-    let differs = |a: F, b: F| (a - b).abs() > 1e-12 * a.abs().max(b.abs()).max(1.0);
-    let rows: Vec<((usize, usize), (F, F))> = topology_14
-        .into_iter()
-        .filter(|&(_, (c, l))| differs(c, weights.coul) || differs(l, weights.lj))
-        .collect();
-    if rows.is_empty() {
-        return Ok(None);
-    }
+
     let column_err = |e: molrs::core::BlockError| e.to_string();
     let mut block = Block::new();
-    for (column, pick) in [(keys::ATOMI, 0usize), (keys::ATOMJ, 1usize)] {
-        let ids: Vec<Idx> = rows
-            .iter()
-            .map(|r| if pick == 0 { r.0.0 } else { r.0.1 } as Idx)
-            .collect();
+    let ids = |pick: fn(&(usize, usize)) -> usize| -> Vec<Idx> {
+        rows.keys().map(|k| pick(k) as Idx).collect()
+    };
+    block
+        .insert(
+            keys::ATOMI,
+            ndarray::Array1::from_vec(ids(|k| k.0)).into_dyn(),
+            None,
+        )
+        .map_err(column_err)?;
+    block
+        .insert(
+            keys::ATOMJ,
+            ndarray::Array1::from_vec(ids(|k| k.1)).into_dyn(),
+            None,
+        )
+        .map_err(column_err)?;
+    let hops: Vec<Idx> = rows.values().map(|r| r.0 as Idx).collect();
+    block
+        .insert(
+            keys::N_BONDS,
+            ndarray::Array1::from_vec(hops).into_dyn(),
+            None,
+        )
+        .map_err(column_err)?;
+    for (column, cells) in [
+        ("coul_scale", rows.values().map(|r| r.1).collect::<Vec<_>>()),
+        ("lj_scale", rows.values().map(|r| r.2).collect::<Vec<_>>()),
+    ] {
+        if cells.iter().all(Option::is_none) {
+            continue;
+        }
+        let valid: Vec<bool> = cells.iter().map(Option::is_some).collect();
+        let values: Vec<F> = cells.iter().map(|c| c.unwrap_or(0.0)).collect();
         block
-            .insert(column, ndarray::Array1::from_vec(ids).into_dyn(), None)
+            .insert(
+                column,
+                ndarray::Array1::from_vec(values).into_dyn(),
+                Some(valid),
+            )
             .map_err(column_err)?;
     }
-    for (column, pick, field) in [
-        ("coul_scale", 0usize, weights.coul),
-        ("lj_scale", 1usize, weights.lj),
-    ] {
-        let values: Vec<F> = rows
-            .iter()
-            .map(|r| if pick == 0 { r.1.0 } else { r.1.1 })
-            .collect();
-        let valid: Vec<bool> = values.iter().map(|&v| differs(v, field)).collect();
-        if valid.iter().any(|&v| v) {
-            block
-                .insert(
-                    column,
-                    ndarray::Array1::from_vec(values).into_dyn(),
-                    Some(valid),
-                )
-                .map_err(column_err)?;
-        }
-    }
-    Ok(Some(block))
+    Ok(block)
 }
 
 /// The Urey–Bradley `(k_ub, r_ub)` of each angle: the chamber term whose two
@@ -1052,28 +1059,45 @@ fn def_lj_charmm(
 mod tests {
     use super::*;
 
-    /// The structure frame of `text` with the `pair_overrides` rows
-    /// [`AmberPrmtopForcefieldReader::read_system`] adds (the test prmtops hold
-    /// no LJ tables, so the force field itself is not read).
+    /// The structure frame of `text` with the special pairs
+    /// [`AmberPrmtopForcefieldReader::read_system`] adds, against the
+    /// `special_bonds` it would declare (the test prmtops hold no LJ tables,
+    /// so the force field itself is not read).
     fn read_system(text: &str) -> Frame {
         let sections = parse_flag_sections(text.as_bytes()).unwrap();
         let mut frame = frame_from_sections(&sections).unwrap();
-        if let Some(pairs) = one_four_pairs(&sections, &frame).unwrap() {
-            frame.insert("pair_overrides", pairs);
-        }
+        let n_atoms = frame.get("atoms").and_then(|b| b.n_rows()).unwrap();
+        let mut dih = section::<i64>(&sections, "DIHEDRALS_INC_HYDROGEN").unwrap();
+        dih.extend(section::<i64>(&sections, "DIHEDRALS_WITHOUT_HYDROGEN").unwrap());
+        let w = one_four_weights(
+            &dih,
+            n_atoms,
+            &section::<f64>(&sections, "SCEE_SCALE_FACTOR").unwrap(),
+            &section::<f64>(&sections, "SCNB_SCALE_FACTOR").unwrap(),
+            &section::<f64>(&sections, "DIHEDRAL_PERIODICITY").unwrap(),
+            Some((AMBER_SCEE, AMBER_SCNB)),
+        )
+        .unwrap()
+        .unwrap();
+        let special = SpecialBonds {
+            lj: [0.0, 0.0, w.lj],
+            coul: [0.0, 0.0, w.coul],
+        };
+        frame.insert("pairs", special_pairs(&sections, &frame, &special).unwrap());
         frame
     }
 
     use crate::io::amber::prmtop::tests::chain5_prmtop;
 
-    /// SCEE = SCNB = 1 on every 1-4 row of a chamber file: uniform, neither block.
+    /// SCEE = SCNB = 1 on every 1-4 row of a chamber file: uniform, so the
+    /// special pairs are the bond graph's, weighed by `special_bonds` alone.
     #[test]
-    fn a_uniform_chamber_file_has_no_pairs() {
+    fn a_uniform_chamber_file_states_no_scale() {
         let (_, frame) = AmberPrmtopForcefieldReader::new()
             .read_system(CHAMBER_MINI.as_bytes())
             .unwrap();
-        assert!(frame.get("pairs").is_none());
-        assert!(frame.get("pair_overrides").is_none());
+        assert!(frame.get("pairs").unwrap().n_rows().unwrap() > 0);
+        assert!(pair_scales(&frame).is_empty());
     }
 
     /// [`chain5_prmtop`] with the dihedral tables and SCEE/SCNB: type 1
@@ -1101,10 +1125,10 @@ mod tests {
             )
     }
 
-    /// The `(atomi, atomj, coul_scale, lj_scale)` of each `pair_overrides`
-    /// row, a null cell as `None`.
+    /// The `(atomi, atomj, coul_scale, lj_scale)` of each `pairs` row that
+    /// states a scale, a null cell as `None`.
     fn pair_scales(frame: &Frame) -> Vec<(Idx, Idx, Option<F>, Option<F>)> {
-        let pairs = frame.get("pair_overrides").expect("pair_overrides");
+        let pairs = frame.get("pairs").expect("pairs");
         let ai = pairs.get("atomi").unwrap().get::<u64>().unwrap();
         let aj = pairs.get("atomj").unwrap().get::<u64>().unwrap();
         let cell = |k: &str, r: usize| -> Option<F> {
@@ -1116,12 +1140,13 @@ mod tests {
         };
         (0..ai.len())
             .map(|r| (ai[[r]], aj[[r]], cell("coul_scale", r), cell("lj_scale", r)))
+            .filter(|r| r.2.is_some() || r.3.is_some())
             .collect()
     }
 
     /// Two 1-4 pairs, (0, 3) at type 1's 1.2 / 2.0 and (1, 4) at type 2's
     /// 1.0 / 1.0: the field takes the first divisor on the tie, and the
-    /// frame's `pair_overrides` carry the other pair's own weights.
+    /// other pair's row carries its own weights.
     #[test]
     fn a_non_uniform_scee_gives_the_odd_pairs_their_scales() {
         let text = chain5_scaled(
@@ -1130,9 +1155,7 @@ mod tests {
             "1.00000000E+00",
         );
         let frame = read_system(&text);
-        assert!(frame.get("pairs").is_none());
         assert_eq!(pair_scales(&frame), vec![(1, 4, Some(1.0), Some(1.0))]);
-        assert!(frame.get("pair_overrides").unwrap().get("is_14").is_none());
     }
 
     /// Only the weight that differs gets a cell: SCNB 2.0 on both types.

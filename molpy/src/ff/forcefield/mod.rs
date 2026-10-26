@@ -21,7 +21,6 @@ use pyo3::types::{PyCapsule, PyDict, PyList, PyString, PyTuple};
 use molrs::ff::forcefield::ForceField;
 use molrs_ffi::ForceFieldRef;
 
-use crate::core::frame::PyFrame;
 use crate::error::py_value_err;
 use crate::ff::ir;
 
@@ -351,52 +350,38 @@ impl PyForceField {
         self.inner.special_bonds().map(|sb| (sb.lj, sb.coul))
     }
 
-    /// Declare both LJ and Coulomb special-bond triples (1-2, 1-3, 1-4).
+    /// Replace ``mol``'s ``cmaps`` terms, in place, by the CMAP crossterms its
+    /// dihedrals and this force field's ``cmap`` rows define; return their
+    /// number.
     ///
-    /// Length-3 sequences required; a wrong length raises ``ValueError``.
-    /// Entries ``[0]``/``[1]`` are stored but not applied (1-2/1-3 exclusion
-    /// is by omitting pairs from the neighbour list).
-    fn set_special_bonds(&mut self, lj: [f64; 3], coul: [f64; 3]) {
-        self.inner
-            .set_special_bonds(molrs::ff::ir::SpecialBonds { lj, coul });
-    }
-
-    /// Write this force field's 1-4 pricing of ``frame``'s 1-4 pairs as
-    /// per-pair override cells (``epsilon``, ``sigma``, ``lj_scale``,
-    /// ``coul_scale``) on its ``pairs`` block, and return how many rows were
-    /// filled.
-    ///
-    /// Every ``pairs`` row flagged ``is_14`` (each 1-4 pair once; the block is
-    /// built when the frame has none) that no ``dihedral charmm`` ``w > 0``
-    /// covers gets its null cells: ``epsilon``/``sigma`` are the pair's 1-4
-    /// Lennard-Jones parameters — under ``lj/charmm`` with ``one_four =
-    /// "epsilon14"`` the cross (NBFIX) row or the two types'
-    /// ``epsilon14``/``sigma14`` mixed, else the regular pair parameters — and
-    /// the scales are the ``special_bonds`` 1-4 weights. Cells already set are
-    /// kept. A field whose ``lj/charmm`` declares ``one_four = "epsilon14"``
-    /// (an OpenMM ``<LennardJonesForce>`` with ``sigma14``/``epsilon14``, a
-    /// GROMACS ``[ pairtypes ]`` table) needs this on its frames before it
-    /// compiles; LAMMPS's writers refuse the override columns.
-    ///
-    /// Parameters
-    /// ----------
-    /// frame : Frame
-    ///     A typed frame (``atoms.type``), modified in place.
-    ///
-    /// Returns
-    /// -------
-    /// int
-    ///     The number of ``pairs`` rows given override cells.
+    /// A crossterm is five atoms ``(a, b, c, d, e)`` whose dihedrals
+    /// ``(a, b, c, d)`` and ``(b, c, d, e)`` are both dihedrals of ``mol`` (in
+    /// either stored direction) and whose atom ``type`` labels equal a
+    /// ``cmap`` row's ``itom`` … ``mtom`` in that order — never reversed. Each
+    /// is one ``cmaps`` term with ``type`` = the row's name; ``mol.to_frame()``
+    /// writes them as the ``cmaps`` block.
     ///
     /// Raises
     /// ------
     /// ValueError
-    ///     An untyped frame, a type without a pair row, two Lennard-Jones
-    ///     styles or an invalid ``one_four``.
-    fn materialize_one_four(&self, frame: &PyFrame) -> PyResult<usize> {
-        frame
-            .with_frame_mut(|core| self.inner.materialize_one_four(core))?
-            .map_err(py_value_err)
+    ///     Cmap rows in two styles, two rows on the same five types, a path
+    ///     that matches one row forward and another backward, or an untyped
+    ///     dihedral atom. ``mol`` is unchanged.
+    fn assign_cmaps(&self, mol: &Bound<'_, crate::core::molgraph::PyAtomistic>) -> PyResult<usize> {
+        self.inner
+            .assign_cmaps(mol.try_borrow_mut()?.core_mut())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    /// Declare both LJ and Coulomb special-bond triples (1-2, 1-3, 1-4).
+    ///
+    /// Length-3 sequences required; a wrong length raises ``ValueError``.
+    /// Entry ``[k]`` weighs the frame's special pairs (``pairs`` rows) of
+    /// ``n_bonds`` ``k + 1``, a row's own ``lj_scale`` / ``coul_scale`` cell
+    /// aside.
+    fn set_special_bonds(&mut self, lj: [f64; 3], coul: [f64; 3]) {
+        self.inner
+            .set_special_bonds(molrs::ff::ir::SpecialBonds { lj, coul });
     }
 
     /// Export this force field's FFI handle as a ``PyCapsule``.

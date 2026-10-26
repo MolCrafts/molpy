@@ -82,7 +82,7 @@ the oscillations damp out by about 6 Å⁻¹.
 The **main peak at $k = 1.98$ Å⁻¹** is the dominant density wave of the liquid —
 the reciprocal-space fingerprint of the first coordination shell. Its position is
 the number a diffraction experiment reports; neutron diffraction on liquid argon
-at 85 K puts it close to 2.0 Å⁻¹. Its height here, 2.07, falls short of the
+at 85 K puts it close to 2.0 Å⁻¹. Its height here, 2.09, falls short of the
 experimental ≈ 2.7 for the finite-size reason given above; do not read that as
 the force field failing.
 
@@ -213,8 +213,9 @@ Either far too few frames, or the coordinates are not what you think — check f
 a mangled box or duplicated atoms.
 
 **The peak position disagrees with experiment but $g(r)$ looks fine.**
-Check units. A GROMACS trajectory is in nm; a $k$ grid in Å⁻¹ against
-coordinates in nm gives a peak off by a factor of 10.
+Check units. molpy's readers convert GROMACS nm to Å, but coordinates you
+assemble yourself may still be in nm; a $k$ grid in Å⁻¹ against coordinates in
+nm gives a peak off by a factor of 10.
 
 **The calculation takes forever.**
 $\mathcal{O}(N^2 n_k)$. Reduce the $k$ grid first, then the number of frames,

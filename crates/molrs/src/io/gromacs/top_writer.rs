@@ -12,14 +12,14 @@ use crate::ff::forcefield::{ForceField, Style, TypeDef};
 use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::CombiningRule;
 use crate::ff::ir::Params;
+use crate::ff::ir::SpecialClass;
 use crate::ff::ir::same_lj;
 use crate::ff::ir::torsion::nharmonic_coefficients;
 use crate::ff::potential::pair::lj_rows::{charmm_pair_params, mixing_of};
-use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
+use crate::ff::special_pairs::SpecialPairs;
 use crate::io::Sink;
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter, put_text};
 use molrs::core::Frame;
-use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 
 /// The Lennard-Jones styles, one of which carries `[ atomtypes ]` V/W.
 const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
@@ -151,19 +151,18 @@ const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
 /// numbered within its residue, so `grompp` finds the `.gro` and the `.top`
 /// alike. A null `type`, `charge` or `mass` cell is refused by column and
 /// rows.
-/// `[ pairs ]` lists the frame's 1-4 pairs (funct 1, or with parameters of
+/// The frame's special pairs (its `pairs` rows) are written as they are:
+/// `[ pairs ]` lists its priced 1-4 rows (funct 1, or with parameters of
 /// their own from the override cells: funct 1 `σ ε` when only `epsilon` /
 /// `sigma` differ, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε`), and
-/// `[ exclusions ]` every pair of one molecule beyond three bonds the frame
-/// does not price — so GROMACS prices exactly the frame's intramolecular
-/// `pairs` (built by [`intramolecular_pairs`] when absent), and every pair
-/// across molecules. Refused by name: a priced pair within three bonds that is
-/// not a 1-4 pair (GROMACS excludes it) or a 1-4 pair beyond them, override cells
-/// without `epsilon` and `sigma`, a crossterm GROMACS's lookup would give
-/// another grid, a type name two styles of one category share, a molecule
-/// whose atoms are not consecutive or a row across two molecules, more than
-/// `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms, and the force-field refusals
-/// above.
+/// `[ exclusions ]` its rows beyond three bonds weighed 0 — so GROMACS
+/// prices every pair as the frame does. Refused by name: a frame whose bonds
+/// have no special pairs, a pair within three bonds the frame prices other
+/// than as nrexcl 3 and the fudges do (no row, a fractional weight, a 1-2 or
+/// 1-3 pair priced), override cells without `epsilon` and `sigma`, a
+/// crossterm GROMACS's lookup would give another grid, a type name two
+/// styles of one category share, a molecule whose atoms are not consecutive
+/// or a row across two molecules, and the force-field refusals above.
 ///
 /// # Whole-FF serialization, not coefficient writing
 ///
@@ -743,11 +742,12 @@ fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
             .and_then(|v| v.as_num())
             .is_none_or(|v| v == value)
     };
-    let stated = crate::ff::style_registry::with_global_registry(|r| {
-        r.style(style.category(), style.name())
-            .map(|(spec, _)| spec.style_params_off_default(style.params()))
-    })
-    .unwrap_or_else(|| style.params().clone());
+    let stated = crate::ff::style_registry::GlobalRegistry
+        .with(|r| {
+            r.style(style.category(), style.name())
+                .map(|(spec, _)| spec.style_params_off_default(style.params()))
+        })
+        .unwrap_or_else(|| style.params().clone());
     let extra_params = |keys: &[&str]| {
         stated
             .iter()
@@ -1046,13 +1046,6 @@ impl GromacsTopForcefieldWriter {
         let mut out = self.directives(ff, true)?;
         let atoms = frame.get("atoms").ok_or("frame has no atoms block")?;
         let n = atoms.n_rows().unwrap_or(0);
-        if n > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
-            return Err(format!(
-                "{n} atoms: the topology states the frame's pairs molecule by molecule, \
-                 which is not done above {MAX_ATOMS_FOR_A_FULL_PAIR_LIST} atoms"
-            )
-            .into());
-        }
         let strings = |key: &str| atoms.get(key).and_then(|c| c.get::<String>());
         let types = strings("type").ok_or("atoms has no string type column")?;
         let charges = atoms
@@ -1253,31 +1246,11 @@ impl GromacsTopForcefieldWriter {
             }
         }
 
-        // The pairs GROMACS prices: nrexcl 3 excludes every pair within
-        // three bonds, `[ pairs ]` prices the 1-4 ones, `[ exclusions ]`
-        // removes the others of the molecule the frame does not price.
-        let pairs = match frame.get("pairs") {
-            Some(p) => p.clone(),
-            None => intramolecular_pairs(frame, ff.required_special_bonds()?, None)?,
-        };
-        // A frame whose every pair is excluded (a water) has a column-less
-        // `pairs` block: no rows, not a missing column.
-        let endpoints = |key: &str| -> Result<Vec<usize>, String> {
-            if pairs.is_empty() {
-                return Ok(Vec::new());
-            }
-            pairs
-                .get(key)
-                .and_then(|c| c.get::<u64>())
-                .map(|c| c.iter().map(|&v| v as usize).collect())
-                .ok_or_else(|| format!("pairs has no {key}"))
-        };
-        let (pi, pj) = (endpoints("atomi")?, endpoints("atomj")?);
-        let is_14 = pairs.get("is_14").and_then(|c| c.get::<bool>());
-        let cell = |key: &str, r: usize| -> Option<f64> {
-            let col = pairs.get(key)?.get::<f64>()?;
-            pairs.validity(key).is_none_or(|m| m[r]).then(|| col[[r]])
-        };
+        // The special pairs GROMACS prices: nrexcl 3 excludes every pair
+        // within three bonds, `[ pairs ]` prices those the frame weighs, and
+        // `[ exclusions ]` removes the further pairs the frame weighs 0.
+        let special = SpecialPairs::of(frame)?.unwrap_or_default();
+        special.require_bonds_covered(frame)?;
         let mut near = HashSet::new();
         for start in 0..n {
             let mut depth = vec![usize::MAX; n];
@@ -1301,75 +1274,78 @@ impl GromacsTopForcefieldWriter {
             );
         }
         let sb = ff.required_special_bonds()?;
-        let mut priced = HashSet::new();
-        for r in 0..pi.len() {
-            let (a, b) = (pi[r], pj[r]);
-            let key = (a.min(b), a.max(b));
-            let one_four = is_14.is_some_and(|f| f[[r]]);
-            if one_four != near.contains(&key) {
-                return Err(format!(
-                    "pair {} {}: {} — GROMACS (nrexcl 3) prices a pair within three bonds \
-                     only through [ pairs ] and one beyond them only as a regular pair",
-                    a + 1,
-                    b + 1,
-                    if one_four {
-                        "a 1-4 pair beyond three bonds"
-                    } else {
-                        "a regular pair within three bonds"
-                    }
-                )
-                .into());
-            }
-            priced.insert(key);
-            if !one_four {
-                continue;
-            }
-            let [eps, sigma, qq, lj_w, coul_w] = PAIR_OVERRIDE_COLUMNS.map(|k| cell(k, r));
+        let mut listed = HashSet::new();
+        for p in special.rows() {
+            let (a, b) = (p.i, p.j);
+            listed.insert((a, b));
+            let (w_lj, w_coul) = (
+                p.weight(SpecialClass::Vdw, sb),
+                p.weight(SpecialClass::Coulomb, sb),
+            );
+            let [eps, sigma, qq, _, _] = p.cells;
             let (i, j) = (a + 1, b + 1);
             let m = molecule[a];
             let ij = local(m, &[a, b]);
-            let line = if [eps, sigma, qq, lj_w, coul_w].iter().all(Option::is_none) {
-                format!("  {ij}  1\n")
-            } else {
-                let (Some(eps), Some(sigma)) = (eps, sigma) else {
+            if !near.contains(&(a, b)) {
+                if w_lj == 0.0 && w_coul == 0.0 {
+                    sections[m]
+                        .entry("exclusions")
+                        .or_default()
+                        .push_str(&format!("  {ij}\n"));
+                    continue;
+                }
+                if w_lj == 1.0 && w_coul == 1.0 && !p.has_parameters() {
+                    continue;
+                }
+                return Err(format!(
+                    "pair {i} {j}: beyond three bonds and weighed (lj {w_lj}, coul {w_coul}) \
+                     — GROMACS (nrexcl 3) prices such a pair only at full strength or \
+                     excludes it"
+                )
+                .into());
+            }
+            if w_lj == 0.0 && w_coul == 0.0 && !p.has_parameters() {
+                continue;
+            }
+            let line = match (eps, sigma) {
+                (None, None) if qq.is_none() && w_lj == sb.lj[2] && w_coul == sb.coul[2] => {
+                    format!("  {ij}  1\n")
+                }
+                (Some(eps), Some(sigma)) => {
+                    let (v, w) = (full(sigma / NM_TO_ANGSTROM.get()), |e: f64| {
+                        full(e * KCAL_TO_KJ.get())
+                    });
+                    if qq.is_none() && w_lj == 1.0 && w_coul == sb.coul[2] {
+                        format!("  {ij}  1  {v}  {}\n", w(eps))
+                    } else {
+                        format!(
+                            "  {ij}  2  {}  {}  1.0  {v}  {}\n",
+                            full(w_coul),
+                            full(qq.unwrap_or(charges[[a]] * charges[[b]])),
+                            w(eps * w_lj)
+                        )
+                    }
+                }
+                _ => {
                     return Err(format!(
-                        "pair {i} {j}: override cells without epsilon and sigma — a \
-                         [ pairs ] row with parameters states both"
+                        "pair {i} {j}: within three bonds and weighed (lj {w_lj}, coul \
+                         {w_coul}) with no epsilon and sigma — a [ pairs ] row is the \
+                         [ defaults ] fudges ({}, {}) or states both parameters",
+                        sb.lj[2], sb.coul[2]
                     )
                     .into());
-                };
-                let (v, w) = (full(sigma / NM_TO_ANGSTROM.get()), |e: f64| {
-                    full(e * KCAL_TO_KJ.get())
-                });
-                if qq.is_none()
-                    && lj_w.is_none_or(|x| x == 1.0)
-                    && coul_w.is_none_or(|x| x == sb.coul[2])
-                {
-                    format!("  {ij}  1  {v}  {}\n", w(eps))
-                } else {
-                    format!(
-                        "  {ij}  2  {}  {}  1.0  {v}  {}\n",
-                        full(coul_w.unwrap_or(sb.coul[2])),
-                        full(qq.unwrap_or(charges[[a]] * charges[[b]])),
-                        w(eps * lj_w.unwrap_or(1.0))
-                    )
                 }
             };
             sections[m].entry("pairs").or_default().push_str(&line);
         }
-        for (m, &(lo, hi)) in runs.iter().enumerate() {
-            for i in lo..hi {
-                let others: Vec<String> = (i + 1..hi)
-                    .filter(|&j| !near.contains(&(i, j)) && !priced.contains(&(i, j)))
-                    .map(|j| (j - lo + 1).to_string())
-                    .collect();
-                if !others.is_empty() {
-                    sections[m]
-                        .entry("exclusions")
-                        .or_default()
-                        .push_str(&format!("  {}  {}\n", i - lo + 1, others.join("  ")));
-                }
-            }
+        if let Some(&(a, b)) = near.iter().find(|k| !listed.contains(k)) {
+            return Err(format!(
+                "pair {} {}: within three bonds and no pairs row — GROMACS (nrexcl 3) \
+                 excludes it, and the frame prices it at full strength",
+                a + 1,
+                b + 1
+            )
+            .into());
         }
         if frame.get("constraints").is_some() {
             let r0 = frame
@@ -2574,14 +2550,14 @@ SOL  2
             .energy_at(x)
     }
 
-    /// The (i, j, is_14, override cells) of a frame's pairs.
-    fn pairs_of(frame: &molrs::core::Frame) -> Vec<(u64, u64, bool, Vec<Option<f64>>)> {
+    /// The (i, j, n_bonds, override cells) of a frame's pairs.
+    fn pairs_of(frame: &molrs::core::Frame) -> Vec<(u64, u64, u64, Vec<Option<f64>>)> {
         let p = frame.get("pairs").unwrap();
         let (i, j) = (
             p.get("atomi").unwrap().get::<u64>().unwrap(),
             p.get("atomj").unwrap().get::<u64>().unwrap(),
         );
-        let f = p.get("is_14").unwrap().get::<bool>().unwrap();
+        let f = p.get("n_bonds").unwrap().get::<u64>().unwrap();
         (0..i.len())
             .map(|r| {
                 let cells = molrs::core::schema::PAIR_OVERRIDE_COLUMNS
@@ -2596,10 +2572,35 @@ SOL  2
             .collect()
     }
 
-    /// A system written and read back is the system: every pair GROMACS
-    /// prices and its 1-4 flag, the `[ pairs ]` rows' own parameters (funct 1
-    /// and 2), the constraints, and the energy molrs prices; writing the read
-    /// system again gives the same topology.
+    /// Each special pair of `frame` under `ff`: its atoms, then its LJ and
+    /// Coulomb weights and its parameter cells (ε, σ, qq).
+    fn weighed(ff: &ForceField, frame: &molrs::core::Frame) -> Vec<(u64, u64, Vec<Option<f64>>)> {
+        use crate::ff::ir::SpecialClass;
+        let special = ff.required_special_bonds().unwrap();
+        let pairs = crate::ff::special_pairs::SpecialPairs::of(frame)
+            .unwrap()
+            .unwrap();
+        pairs
+            .rows()
+            .iter()
+            .map(|p| {
+                let mut cells = vec![
+                    Some(p.weight(SpecialClass::Vdw, special)),
+                    Some(p.weight(SpecialClass::Coulomb, special)),
+                ];
+                cells.extend_from_slice(&p.cells[..3]);
+                (p.i as u64, p.j as u64, cells)
+            })
+            .collect()
+    }
+
+    /// A system written and read back is the system: every special pair at
+    /// its weights, the `[ pairs ]` rows' own parameters (funct 1 and 2), the
+    /// constraints, and the energy molrs prices; writing the read system
+    /// again gives the same topology. A pair's class may change: a water's
+    /// `settles` and `[ exclusions ]` (disconnected pairs weighed 0) write as
+    /// funct-1 `[ constraints ]`, chemical bonds whose 1-2 and 1-3 pairs
+    /// `special_bonds` weighs 0.
     #[test]
     fn a_system_reads_back_as_written() {
         let (ff, frame) = read_system(SYSTEM);
@@ -2614,11 +2615,11 @@ SOL  2
             assert!(top.contains(section), "{section}:\n{top}");
         }
         let (back, back_frame) = read_system(&top);
-        let (a, b) = (pairs_of(&frame), pairs_of(&back_frame));
+        let (a, b) = (weighed(&ff, &frame), weighed(&back, &back_frame));
         assert_eq!(a.len(), b.len());
         for (p, q) in a.iter().zip(&b) {
-            assert_eq!((p.0, p.1, p.2), (q.0, q.1, q.2));
-            for (x, y) in p.3.iter().zip(&q.3) {
+            assert_eq!((p.0, p.1), (q.0, q.1));
+            for (x, y) in p.2.iter().zip(&q.2) {
                 match (x, y) {
                     (Some(x), Some(y)) => assert!((x - y).abs() <= 1e-12 * x.abs().max(1.0)),
                     (x, y) => assert_eq!(x.is_some(), y.is_some(), "{p:?} vs {q:?}"),
@@ -2642,9 +2643,9 @@ SOL  2
         }
     }
 
-    /// A water: every pair of it is within three bonds, so its pair list has
-    /// no row (a column-less `pairs` block). It writes, the reader's frame or
-    /// one whose pair list the writer builds itself.
+    /// A water: every pair of it is within three bonds and excluded, so it
+    /// writes no `[ pairs ]`. A frame whose bonds have no special pairs is
+    /// refused: GROMACS would exclude what the frame prices at full strength.
     #[test]
     fn a_molecule_with_every_pair_excluded_writes() {
         let (ff, frame) = read_system(
@@ -2675,14 +2676,14 @@ water
 SOL  1
 ",
         );
+        let writer = GromacsTopForcefieldWriter::new();
+        let top = system(&writer, &ff, &frame).unwrap();
+        assert!(top.contains("[ molecules ]"), "{top}");
+        assert!(!top.contains("[ pairs ]"), "{top}");
         let mut bare = frame.clone();
         bare.remove("pairs");
-        let writer = GromacsTopForcefieldWriter::new();
-        for f in [&frame, &bare] {
-            let top = system(&writer, &ff, f).unwrap();
-            assert!(top.contains("[ molecules ]"), "{top}");
-            assert!(!top.contains("[ pairs ]"), "{top}");
-        }
+        let err = system(&writer, &ff, &bare).unwrap_err();
+        assert!(err.contains("generate_topology"), "{err}");
     }
 
     /// A pair the frame prices that GROMACS cannot (a regular pair within
@@ -2698,12 +2699,17 @@ SOL  1
             edit(f.get_mut("pairs").unwrap());
             system(&writer, &ff, &f)
         };
-        // C1-C4, a 1-4 pair, flagged regular.
+        let row = |p: &molrs::core::Block, a: u64, b: u64| -> Option<usize> {
+            let i = p.get("atomi").unwrap().get::<u64>().unwrap();
+            let j = p.get("atomj").unwrap().get::<u64>().unwrap();
+            (0..i.len()).find(|&r| (i[[r]], j[[r]]) == (a, b))
+        };
+        // C1-C4, a 1-4 pair, with no row: priced at full strength by the
+        // frame, excluded by nrexcl 3.
         let err = with_pairs(&|p| {
-            let mut flags = p.get("is_14").unwrap().get::<bool>().unwrap().to_owned();
-            let r = flags.iter().position(|&b| b).unwrap();
-            flags[[r]] = false;
-            p.insert("is_14", flags, None).unwrap();
+            let gone = row(p, 0, 3).unwrap();
+            let keep: Vec<usize> = (0..p.n_rows().unwrap()).filter(|&r| r != gone).collect();
+            *p = p.select_rows(&keep).unwrap();
         })
         .unwrap_err();
         assert!(err.contains("within three bonds"), "{err}");
@@ -2713,23 +2719,63 @@ SOL  1
         })
         .unwrap_err();
         assert!(err.contains("epsilon and sigma"), "{err}");
-        // A regular pair the frame does not price: an [ exclusions ] row.
+        // A pair beyond three bonds the frame weighs 0: an [ exclusions ] row.
         let top = with_pairs(&|p| {
-            let keep: Vec<usize> = {
-                let i = p.get("atomi").unwrap().get::<u64>().unwrap();
-                let j = p.get("atomj").unwrap().get::<u64>().unwrap();
-                (0..i.len())
-                    .filter(|&r| (i[[r]], j[[r]]) != (3, 4))
-                    .collect()
-            };
-            *p = p.select_rows(&keep).unwrap();
+            let rows = pairs_of_block(p);
+            let mut rows: Vec<_> = rows.into_iter().collect();
+            rows.push((3, 4, 4, vec![None, None, None, Some(0.0), Some(0.0)]));
+            *p = block_of(&rows);
         })
         .unwrap();
         assert!(top.contains("[ exclusions ]\n  4  5\n"), "{top}");
         let (_, back) = read_system(&top);
-        assert!(!pairs_of(&back).iter().any(|p| (p.0, p.1) == (3, 4)));
+        let excluded = pairs_of(&back)
+            .into_iter()
+            .find(|p| (p.0, p.1) == (3, 4))
+            .expect("the exclusion reads back as a row");
+        assert_eq!(excluded.3[3], Some(0.0));
         // A pair of two molecules is no exclusion: GROMACS prices it.
         assert_eq!(top.matches("[ exclusions ]").count(), 1, "{top}");
+    }
+
+    type Row = (u64, u64, u64, Vec<Option<f64>>);
+
+    fn pairs_of_block(p: &molrs::core::Block) -> Vec<Row> {
+        let mut frame = molrs::core::Frame::new();
+        frame.insert("pairs", p.clone());
+        pairs_of(&frame)
+    }
+
+    fn block_of(rows: &[Row]) -> molrs::core::Block {
+        let mut block = molrs::core::Block::new();
+        for (key, col) in [
+            ("atomi", rows.iter().map(|r| r.0).collect::<Vec<u64>>()),
+            ("atomj", rows.iter().map(|r| r.1).collect()),
+            ("n_bonds", rows.iter().map(|r| r.2).collect()),
+        ] {
+            block
+                .insert(key, ndarray::Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
+        }
+        for (c, key) in molrs::core::schema::PAIR_OVERRIDE_COLUMNS
+            .iter()
+            .enumerate()
+        {
+            let cells: Vec<Option<f64>> = rows.iter().map(|r| r.3[c]).collect();
+            if cells.iter().all(Option::is_none) {
+                continue;
+            }
+            let valid: Vec<bool> = cells.iter().map(Option::is_some).collect();
+            let values: Vec<f64> = cells.iter().map(|v| v.unwrap_or(0.0)).collect();
+            block
+                .insert(
+                    *key,
+                    ndarray::Array1::from_vec(values).into_dyn(),
+                    Some(valid),
+                )
+                .unwrap();
+        }
+        block
     }
 
     /// The Coulomb constant is the engine's, not written: a field stating

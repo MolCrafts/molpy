@@ -30,7 +30,7 @@ XYZ = np.array(
 TYPES = [("t", 20.0, 2.45), ("u", 11.0, 2.2)]
 
 # The public registration path: the process-wide registry gains the category.
-mp.ff.style_registry.register_category("urey_bradley", 3)
+mp.ff.style_registry.GlobalRegistry().register_category("urey_bradley", 3)
 
 
 def _frame(block: str) -> mp.core.Frame:
@@ -55,7 +55,7 @@ def _reference() -> tuple[float, np.ndarray]:
     for name, k_ub, r_ub in TYPES:
         style.def_type(name, a, a, a, k=0.0, theta0=109.5, k_ub=k_ub, r_ub=r_ub)
     frame = _frame("angles")
-    return mp.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)
+    return mp.ff.PotentialCompiler(ff).compile(frame).evaluate(frame)
 
 
 def _ub_ff(category: str = "urey_bradley") -> mp.ff.forcefield.ForceField:
@@ -71,7 +71,7 @@ def _assert_prices_like_the_reference(ff: mp.ff.forcefield.ForceField) -> None:
     e_ref, f_ref = _reference()
     assert e_ref > 0.0
     frame = _frame("urey_bradleys")
-    e, f = mp.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)
+    e, f = mp.ff.PotentialCompiler(ff).compile(frame).evaluate(frame)
     assert e == pytest.approx(e_ref, rel=1e-12)
     np.testing.assert_allclose(f, f_ref, rtol=0, atol=1e-12 * np.abs(f_ref).max())
 
@@ -84,7 +84,7 @@ def test_a_registered_category_is_a_relation_style() -> None:
     assert style.params == {"expression": UB_EXPRESSION}
     t = style.get_type_by_name("t")
     assert isinstance(t, mp.ff.forcefield.RelationType)
-    assert (t["k_ub"], t["r_ub"]) == (20.0, 2.45)
+    assert (t.params["k_ub"], t.params["r_ub"]) == (20.0, 2.45)
     assert [e.name for e in t.endpoints] == ["A", "A", "A"]
     assert style in ff.get_styles(mp.ff.forcefield.Style)
     assert ff.get_styles("urey_bradley") == [style]
@@ -179,7 +179,7 @@ def test_an_unregistered_category_is_kept_and_refused_by_name_without_an_express
     )
     pickled = pickle.loads(pickle.dumps(back))
     assert pickled.get_style("bespoke", "spring").arity == 3
-    compiler = mp.ff.compile.PotentialCompiler(back)
+    compiler = mp.ff.PotentialCompiler(back)
     with pytest.raises(ValueError, match="no kernel for bespoke `spring`"):
         compiler.compile(_frame("bespokes"))
     # Without its block there is nothing to price.
@@ -193,5 +193,5 @@ def test_an_unregistered_category_with_an_expression_is_priced_by_it() -> None:
     back = _unregistered_section(UB_EXPRESSION).to_forcefield()
     e_ref, _ = _reference()
     frame = _frame("bespokes")
-    e = mp.ff.compile.PotentialCompiler(back).compile(frame).evaluate(frame)[0]
+    e = mp.ff.PotentialCompiler(back).compile(frame).evaluate(frame)[0]
     assert e == pytest.approx(e_ref, rel=1e-12)

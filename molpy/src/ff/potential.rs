@@ -5,11 +5,10 @@
 //!   (`evaluate`, the mirror of `Potential::evaluate` into a fresh
 //!   `Accumulator`); `push` moves one more member in. A force field compiles
 //!   into one (or into [`PyWeightedTerms`], each kernel with its
-//!   special-bonds weights) through `molpy.ff.compile`.
+//!   special-bonds weights) through `molpy.ff.PotentialCompiler`.
 //! * [`PyPairLjCut`] — the one-type `lj/cut` kernel a neighbour loop feeds (the
 //!   MD integrators' nonbond kernel): `pair_energy_force` for one pair,
 //!   `evaluate_pairs` (`PairDriven::evaluate_pairs`) over a pair table.
-//! * `intramolecular_pairs` — the special-bonds pair list of a typed frame.
 //!
 //! ```text
 //! pots = Potentials()
@@ -32,12 +31,8 @@
 
 use super::ir;
 use crate::array::{ArrayArg1, ArrayArg2};
-use crate::core::block::PyBlock;
 use crate::core::frame::PyFrame;
 use crate::core::neighborlist::PyNeighbors;
-use crate::ff::forcefield::PyForceField;
-use molrs::ff::compile::PotentialCompiler;
-use molrs::ff::forcefield::ForceField;
 use molrs::ff::potential::pair::{PairLjCut, PairPotential};
 use molrs::ff::potential::{Accumulator, ForceTerm, PairDriven, Potential, Potentials};
 use molrs::op::F;
@@ -52,11 +47,6 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPotentials>()?;
     m.add_class::<PyWeightedTerms>()?;
     m.add_class::<PyPairLjCut>()?;
-    crate::add_function(
-        m,
-        "molpy.ff.potential",
-        wrap_pyfunction!(intramolecular_pairs_py, m)?,
-    )?;
     Ok(())
 }
 
@@ -227,28 +217,16 @@ impl PyWeightedTerms {
 /// --------
 /// >>> typifier = Mmff94Typifier()
 /// >>> frame = typifier.typify(mol).to_frame()
-/// >>> frame["pairs"] = molpy.ff.potential.intramolecular_pairs(frame)
-/// >>> potentials = molpy.ff.compile.PotentialCompiler(typifier.forcefield()).compile(frame)
+/// >>> potentials = molpy.ff.PotentialCompiler(typifier.forcefield()).compile(frame)
 /// >>> energy, forces = potentials.evaluate(coords)
 #[pyclass(module = "molpy.ff.potential", name = "Potentials", subclass)]
 pub struct PyPotentials {
-    pub(crate) inner: PotBacking,
+    /// The compiled kernels; `None` once moved into an integrator or another
+    /// collection.
+    pub(crate) inner: Option<Potentials>,
     /// Error slots of every Python-callable member (see `ErrSlot`);
     /// checked after each evaluation so a callable's exception re-raises.
     pub(crate) err_slots: Vec<ErrSlot>,
-}
-
-/// A [`PyPotentials`] is either already compiled against a molecule's topology
-/// (the MMFF / pre-bound path), *deferred* (it holds the force field and binds
-/// the topology lazily from the `Frame` passed to
-/// ``evaluate`` — what ``PotentialCompiler.defer()``
-/// returns, matching the molpy evaluation model), or *moved*: the
-/// Rust `Potentials` has been moved into an MD integrator or another
-/// collection.
-pub(crate) enum PotBacking {
-    Compiled(Potentials),
-    Deferred(ForceField),
-    Moved,
 }
 
 pub(crate) fn potentials_moved_err() -> PyErr {
@@ -258,68 +236,37 @@ pub(crate) fn potentials_moved_err() -> PyErr {
     )
 }
 
-impl PotBacking {
-    /// The compiled potentials, or an error if this set is still deferred and
-    /// no `Frame` has been supplied to bind its topology (or already moved).
-    pub(crate) fn compiled(&self) -> PyResult<&Potentials> {
-        match self {
-            PotBacking::Compiled(p) => Ok(p),
-            PotBacking::Deferred(_) => Err(PyValueError::new_err(
-                "this Potentials is not bound to a molecule; \
-                 call evaluate(frame) with a Frame, \
-                 or build it from a typifier",
-            )),
-            PotBacking::Moved => Err(potentials_moved_err()),
-        }
-    }
-
-    /// Mutable access with the same gating as [`compiled`](Self::compiled).
-    fn compiled_mut(&mut self) -> PyResult<&mut Potentials> {
-        match self {
-            PotBacking::Compiled(p) => Ok(p),
-            PotBacking::Deferred(_) => Err(PyValueError::new_err(
-                "this Potentials is not bound to a molecule; \
-                 call evaluate(frame) with a Frame, \
-                 or build it from a typifier",
-            )),
-            PotBacking::Moved => Err(potentials_moved_err()),
-        }
-    }
-}
-
 impl PyPotentials {
-    /// Evaluate energy + forces against either a [`PyFrame`] (binds topology and
-    /// reads coordinates from the frame's ``atoms`` block — the molpy model) or a
-    /// flat coordinate array (requires already-compiled potentials).
+    /// Kernels compiled by a [`PotentialCompiler`] door, ready to evaluate.
+    pub(crate) fn of(potentials: Potentials) -> Self {
+        Self {
+            inner: Some(potentials),
+            err_slots: vec![crate::ff::style_registry::kernel_err_slot()],
+        }
+    }
+
+    /// The compiled kernels, or the error of a moved collection.
+    pub(crate) fn compiled(&self) -> PyResult<&Potentials> {
+        self.inner.as_ref().ok_or_else(potentials_moved_err)
+    }
+
+    /// Evaluate energy + forces at a [`PyFrame`]'s ``atoms`` coordinates or at a
+    /// flat coordinate array.
     ///
     /// A Python-callable member's exception is re-raised afterwards (see
     /// `ErrSlot`).
     fn eval_any(&self, arg: &Bound<'_, PyAny>) -> PyResult<(f64, Vec<f64>)> {
-        fn run(p: &Potentials, coords: &[F]) -> PyResult<(F, Vec<F>)> {
-            // A pair kernel over a type table reads a neighbour table and
-            // adds nothing here: refuse it instead of returning its zero.
-            p.require_pair_lists().map_err(ir::compile_err)?;
-            let mut acc = Accumulator::new(coords.len());
-            p.evaluate(coords, &mut acc);
-            Ok((acc.energy(), acc.into_forces()))
-        }
-        let ef = if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
-            let core = frame.clone_core_frame()?;
-            let coords: Vec<f64> = core
+        let p = self.compiled()?;
+        // A pair kernel over a type table reads a neighbour table and adds
+        // nothing here: refuse it instead of returning its zero.
+        p.require_pair_lists().map_err(ir::compile_err)?;
+        let coords: Vec<f64> = if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
+            frame
+                .clone_core_frame()?
                 .coords()
                 .map_err(|e| PyValueError::new_err(e.to_string()))?
                 .into_iter()
-                .collect();
-            match &self.inner {
-                PotBacking::Compiled(p) => run(p, &coords)?,
-                PotBacking::Deferred(ff) => run(
-                    &PotentialCompiler::new(ff)
-                        .compile(&core)
-                        .map_err(ir::compile_err)?,
-                    &coords,
-                )?,
-                PotBacking::Moved => return Err(potentials_moved_err()),
-            }
+                .collect()
         } else {
             let arr = arg.extract::<crate::array::ArrayArg1<'_, f64>>()?;
             let slice = arr.as_slice()?;
@@ -329,28 +276,20 @@ impl PyPotentials {
                     slice.len()
                 )));
             }
-            run(self.inner.compiled()?, slice)?
+            slice.to_vec()
         };
+        let mut acc = Accumulator::new(coords.len());
+        p.evaluate(&coords, &mut acc);
         take_err(&self.err_slots)?;
-        Ok(ef)
+        Ok((acc.energy(), acc.into_forces()))
     }
 
     /// Move the compiled Rust `Potentials` (and the error slots of its
     /// Python-callable members) out, leaving this object in the moved state —
     /// the MD integrators and `Potentials.push` consume through here.
     pub(crate) fn take_compiled(&mut self) -> PyResult<(Potentials, Vec<ErrSlot>)> {
-        match std::mem::replace(&mut self.inner, PotBacking::Moved) {
-            PotBacking::Compiled(p) => Ok((p, std::mem::take(&mut self.err_slots))),
-            deferred @ PotBacking::Deferred(_) => {
-                self.inner = deferred;
-                Err(PyValueError::new_err(
-                    "this Potentials is not bound to a molecule; \
-                     compile with PotentialCompiler.compile(frame) before moving it into \
-                     an integrator",
-                ))
-            }
-            PotBacking::Moved => Err(potentials_moved_err()),
-        }
+        let p = self.inner.take().ok_or_else(potentials_moved_err)?;
+        Ok((p, std::mem::take(&mut self.err_slots)))
     }
 }
 
@@ -360,18 +299,15 @@ impl PyPotentials {
     #[new]
     fn new() -> Self {
         Self {
-            inner: PotBacking::Compiled(Potentials::new()),
+            inner: Some(Potentials::new()),
             err_slots: Vec::new(),
         }
     }
 
-    /// Number of compiled potential kernels, or ``0`` while still deferred
-    /// (not yet bound to a molecule) or moved into an integrator.
+    /// Number of compiled potential kernels, or ``0`` once moved into an
+    /// integrator.
     fn __len__(&self) -> usize {
-        match &self.inner {
-            PotBacking::Compiled(p) => p.len(),
-            PotBacking::Deferred(_) | PotBacking::Moved => 0,
-        }
+        self.inner.as_ref().map_or(0, Potentials::len)
     }
 
     /// Move one more member into the collection: a ``PairLjCut`` nonbond term, a
@@ -382,9 +318,12 @@ impl PyPotentials {
     /// :meth:`evaluate` or a minimizer, which refuse it.
     fn push(&mut self, potential: &Bound<'_, PyAny>) -> PyResult<()> {
         // Gate first so a failed push does not consume the pushed potential.
-        self.inner.compiled_mut()?;
+        self.compiled()?;
         let (member, mut slots) = take_potential(potential)?;
-        self.inner.compiled_mut()?.push(member);
+        self.inner
+            .as_mut()
+            .ok_or_else(potentials_moved_err)?
+            .push(member);
         self.err_slots.append(&mut slots);
         Ok(())
     }
@@ -393,9 +332,8 @@ impl PyPotentials {
     /// into a fresh accumulator): ``(energy, forces)``, forces of shape
     /// ``(N, 3)``.
     ///
-    /// ``arg`` is a :class:`Frame` (its ``atoms`` coordinates; a deferred
-    /// collection binds the frame's topology first) or flat coordinates
-    /// ``[x0, y0, z0, x1, ...]`` of length ``3N``.
+    /// ``arg`` is a :class:`Frame` (its ``atoms`` coordinates) or flat
+    /// coordinates ``[x0, y0, z0, x1, ...]`` of length ``3N``.
     fn evaluate<'py>(
         &self,
         py: Python<'py>,
@@ -407,79 +345,10 @@ impl PyPotentials {
 
     fn __repr__(&self) -> String {
         match &self.inner {
-            PotBacking::Compiled(p) => format!("Potentials(n_kernels={})", p.len()),
-            PotBacking::Deferred(_) => "Potentials(deferred)".to_string(),
-            PotBacking::Moved => "Potentials(<moved into integrator>)".to_string(),
+            Some(p) => format!("Potentials(n_kernels={})", p.len()),
+            None => "Potentials(<moved into integrator>)".to_string(),
         }
     }
-}
-
-/// Build the intramolecular non-bonded neighbour list for a typed frame.
-///
-/// Returns a :class:`Block` with ``atomi`` / ``atomj`` / ``is_14`` columns — the
-/// exact list :meth:`PotentialCompiler.compile` consumes for the pair (van der
-/// Waals + Coulomb) kernels. Pairs three bonds apart are flagged 1-4 so the
-/// kernels apply the force field's 1-4 scaling.
-///
-/// Which 1-2 / 1-3 neighbours belong in the list is the **force field's**
-/// decision, read from its declared ``special_bonds``: LAMMPS
-/// ``special_bonds fene`` (``[0, 1, 1]``) keeps 1-3 pairs at full strength, and
-/// a bead-spring chain without them has nothing holding it open. A force
-/// field that declares none raises ``ValueError``.
-///
-/// Insert the result as the frame's ``"pairs"`` block before
-/// :meth:`PotentialCompiler.compile` when you need the non-bonded terms — e.g. a
-/// single-molecule geometry optimization where intramolecular van der Waals
-/// drives chain collapse. (``compile`` silently drops the pair styles when
-/// no ``"pairs"`` block is present, so bonded-only optimizations need nothing.)
-/// Cells already on ``pairs``, or on ``pair_overrides`` when ``pairs`` is
-/// absent (an AMBER prmtop's 1-4 rows whose ``SCEE`` / ``SCNB`` differ from
-/// the field), are kept on the pairs they name. An override on a pair the
-/// list excludes is an error.
-///
-/// Parameters
-/// ----------
-/// frame : Frame
-///     A typed frame with ``atoms`` and ``bonds``; a pair's 1-2 / 1-3 / 1-4
-///     class is its bond distance.
-/// forcefield : ForceField
-///     The force field whose declared ``special_bonds`` decide the 1-2 / 1-3
-///     rows.
-/// neighbors : Neighbors, optional
-///     A cutoff-bounded neighbour table to take the candidate pairs from
-///     (each unordered pair once, as ``(lo, hi)``, in the order the table
-///     first reports it). ``None``: every ``i < j`` pair of the frame, refused
-///     past the full-pair-list size limit.
-///
-/// Returns
-/// -------
-/// Block
-///
-/// Raises
-/// ------
-/// ValueError
-///     The force field declares no ``special_bonds``; or it scales 1-2 or
-///     1-3 neighbours by a fraction, or scales
-///     them differently for van der Waals and Coulomb. A list of rows cannot
-///     say either; use :meth:`PotentialCompiler.compile_typed`, which carries a
-///     per-pair weight.
-#[pyfunction]
-#[pyo3(name = "intramolecular_pairs", signature = (frame, forcefield, neighbors = None))]
-pub fn intramolecular_pairs_py(
-    frame: &PyFrame,
-    forcefield: &PyForceField,
-    neighbors: Option<&PyNeighbors>,
-) -> PyResult<PyBlock> {
-    let special = forcefield
-        .inner
-        .required_special_bonds()
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let block = frame
-        .with_frame(|core| {
-            molrs::ff::potential::intramolecular_pairs(core, special, neighbors.map(|n| &n.inner))
-        })?
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    PyBlock::from_core_block(block)
 }
 
 pub(crate) fn check_nx3(arr: &ArrayArg2<'_, f64>, label: &str) -> PyResult<()> {

@@ -61,8 +61,9 @@ atoms are donors — that is your topology's job, and being made to state it is 
 feature.
 
 The candidates come from the core neighbour search, one table per frame: the
-donor sites are the query points, the acceptors the reference points, searched
-out to at least the cutoff. The table also carries the box it was searched
+donor sites are the query points — the donor heavy atoms, or the hydrogens
+under `"hydrogen_acceptor"`, in `donors` order — and the acceptors the
+reference points, searched out to at least the cutoff. The table also carries the box it was searched
 in, which is how the criterion gets minimum-image distances.
 
 ```python
@@ -118,9 +119,10 @@ print(tighter.counts.tolist())              # -> [1]
 ```
 
 `counts` is the per-frame bond count and `per_frame` the detected `HBond`s of
-each frame. Averaging `counts` over a trajectory and dividing by the number of
-donors gives hydrogen bonds per molecule — about 3.5 for bulk water with the
-Luzar–Chandler criterion, which is the number to sanity-check against.
+each frame. Each bond belongs to two molecules, so twice the trajectory average
+of `counts`, divided by the number of molecules, gives hydrogen bonds per
+molecule — about 3.5 for bulk water with the Luzar–Chandler criterion, which is
+the number to sanity-check against.
 `components(frame)` labels every atom by the hydrogen-bonded network it belongs
 to in that frame — a partition, ready for the [Cluster](cluster.md) and
 [Shape](shape.md) computes.
@@ -204,7 +206,7 @@ points, one table per frame, with as many query points as donor pairs.
   acceptor until the angle falls below the cutoff and confirm the bond vanishes.
 - Compute $g_{DA}(r)$ for your own system and find the first minimum. If it is
   not near 3.5 Å, do not use 3.5 Å.
-- Count bonds per donor in bulk water; you should get roughly 3.5 with the
+- Count bonds per molecule in bulk water; you should get roughly 3.5 with the
   default criterion.
 
 ## References

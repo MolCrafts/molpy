@@ -19,7 +19,7 @@ build. Examples below are frozen illustrations — full API lives in the
 |--------|---------|---------------|
 | `GencanPack` | `molpack` | Rigid-body packing of several species |
 | `Target` | `molpack` | One species + count + restraints |
-| `Cuboid` / `Sphere` / `HalfSpace` | `molpy` (molrs regions) | Restraints: box, droplet, slab; combine with `&`, `\|`, `~` |
+| `Cuboid` / `Sphere` / `HalfSpace` | `mp.core` | Restraints: box, droplet, slab; combine with `&`, `\|`, `~` |
 | `State` | `molpack` | `run` result: `.frame`, `.converged`, `.fdist`, … |
 | `PackingTemplate` | `molpy.builder` | A built molecule's `.frame` plus the `.hydrogens` indices into it, for per-atom settings such as `Target(...).with_atom_radius(...)` |
 

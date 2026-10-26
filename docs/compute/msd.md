@@ -374,7 +374,7 @@ diffusing particle drags the surrounding fluid with it, and under periodic
 boundaries it also drags the fluid around all of its own periodic images, which
 holds it back. The resulting error shrinks only as $1/L$, so it does not go away
 quickly. Compare against other simulations at the same box size, or apply the
-Yeh–Hummer correction below.
+Yeh–Hummer correction cited below.
 
 **The centre of mass of the whole system drifts.**
 Any net momentum adds a spurious ballistic $\propto \tau^2$ term at long times.

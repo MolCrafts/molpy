@@ -47,7 +47,7 @@ def price(
     """Energy and forces of ``ff`` over the frame, exactly, or the refusal."""
     f = frame(block, rows, types)
     try:
-        e, forces = mp.ff.compile.PotentialCompiler(ff).compile(f).evaluate(f)
+        e, forces = mp.ff.PotentialCompiler(ff).compile(f).evaluate(f)
     except ValueError as err:
         return {"error": str(err)}
     return {"e": float(e).hex(), "f": [float(x).hex() for x in np.ravel(forces)]}

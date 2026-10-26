@@ -1,18 +1,16 @@
 """CL&Pol fragment scaling of Lennard-Jones parameters — ``molrs::ff::clpol_scaling``.
 
-:func:`scale_lj` returns a copy of a force field whose LJ well depths (and,
-optionally, diameters) are scaled per fragment pair by the SAPT factor
-:func:`compute_k_ij`; :class:`FragmentScaling` is one fragment's charge,
-dipole and polarizability. The table molrs ships is
-:func:`fragment_table`, which :func:`scale_lj` reads
-when no ``fragment_table`` is given.
+:class:`ClpolScaling` holds the fragment table it reads (CL&Pol's own unless
+one is given) and whether it scales σ; ``apply(ff, fragment_atoms)`` returns a
+copy of a force field whose cross-fragment LJ well depths (and, optionally,
+diameters) are scaled per fragment pair by the SAPT factor.
+:class:`FragmentScaling` is one fragment's charge, dipole and polarizability,
+and ``k_ij`` its SAPT factor with another fragment.
 """
 
-from molpy._core import FragmentScaling, compute_k_ij, fragment_table, scale_lj
+from molpy._core import ClpolScaling, FragmentScaling
 
 __all__ = [
+    "ClpolScaling",
     "FragmentScaling",
-    "compute_k_ij",
-    "fragment_table",
-    "scale_lj",
 ]

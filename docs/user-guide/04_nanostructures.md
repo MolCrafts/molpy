@@ -1,7 +1,7 @@
 # Nanostructures
 
-Nanotubes and graphene sheets are built by `mp.builder`, whose
-`CarbonTubeBuilder` and `GrapheneBuilder` are molrs's. `CarbonTubeBuilder`
+Nanotubes and graphene sheets are built by `mp.builder`'s
+`CarbonTubeBuilder` and `GrapheneBuilder`. `CarbonTubeBuilder`
 rolls an exact graphene lattice into a single-wall carbon nanotube;
 `GrapheneBuilder` emits a flat honeycomb sheet. Each `build()` returns the
 structure as a `Frame`; `mp.Atomistic.from_frame` makes it an editable graph.
@@ -9,7 +9,7 @@ The tube's shape is fixed when the builder is constructed;
 unit-cell enumeration, seam closure, and connectivity are implementation
 details.
 
-Bulk crystals are molpy's `Lattice`, built from a CIF or from a cell and a
+Bulk crystals are `mp.builder.Lattice`, built from a CIF or from a cell and a
 basis; see [Bulk crystals from a CIF](#bulk-crystals-from-a-cif).
 
 ## Zigzag, armchair, and chiral tubes

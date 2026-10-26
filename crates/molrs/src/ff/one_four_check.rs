@@ -16,8 +16,7 @@ use ndarray::Array1;
 use crate::ff::compile::PotentialCompiler;
 use crate::ff::compile::exceptions;
 use crate::ff::forcefield::ForceField;
-use crate::ff::ir::SpecialBonds;
-use crate::ff::potential::intramolecular_pairs;
+use crate::ff::special_pairs::SpecialPairs;
 use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
 use crate::io::reader::ForceFieldReader;
 use molrs::core::Block;
@@ -115,9 +114,9 @@ fn relation(rows: &[Vec<usize>]) -> Block {
     block
 }
 
-/// The molecule's frame, its `pairs` built under `special`; `dihedrals`
-/// lists the third dihedral twice when `dup`.
-fn frame(special: &SpecialBonds, dup: bool) -> Frame {
+/// The molecule's frame with its special pairs; `dihedrals` lists the third
+/// dihedral twice when `dup`.
+fn frame(dup: bool) -> Frame {
     let mut atoms = Block::new();
     for (d, key) in ["x", "y", "z"].iter().enumerate() {
         let col: Vec<F> = XYZ.iter().map(|p| p[d]).collect();
@@ -151,9 +150,17 @@ fn frame(special: &SpecialBonds, dup: bool) -> Frame {
         dihedrals.push(DIHEDRALS[2].to_vec());
     }
     frame.insert("dihedrals", relation(&dihedrals));
-    let pairs = intramolecular_pairs(&frame, special, None).unwrap();
+    let pairs = molrs::core::Topology::from_frame(&frame)
+        .unwrap()
+        .pairs_block();
     frame.insert("pairs", pairs);
     frame
+}
+
+/// The exceptions plan of `ff` on `frame`'s special pairs.
+fn plan_of(ff: &ForceField, frame: &Frame) -> Result<exceptions::Exceptions, String> {
+    let pairs = SpecialPairs::of(frame)?.unwrap_or_default();
+    exceptions::plan(ff, frame, &pairs, ff.required_special_bonds()?)
 }
 
 fn coords() -> Vec<F> {
@@ -218,11 +225,11 @@ pair_coeff CT3 OH1 0.12 3.3
 fn a_weight_beside_global_1_4_weights_is_refused() {
     let ff = read(AMBER_LIKE, "1.0");
     let err = PotentialCompiler::new(&ff)
-        .compile(&frame(ff.special_bonds().unwrap(), false))
+        .compile(&frame(false))
         .unwrap_err();
     assert!(err.to_string().contains("special_bonds charmm"), "{err}");
     let err = PotentialCompiler::new(&ff)
-        .compile_typed(&frame(ff.special_bonds().unwrap(), false))
+        .compile_typed(&frame(false))
         .unwrap_err();
     assert!(err.to_string().contains("special_bonds charmm"), "{err}");
 }
@@ -233,8 +240,8 @@ fn a_weight_beside_global_1_4_weights_is_refused() {
 #[test]
 fn a_weight_of_one_is_the_1_4_parameters_priced_directly() {
     let ff = read(CHARMM, "1.0");
-    let frame = frame(ff.special_bonds().unwrap(), false);
-    let k = exceptions::plan(&ff, &frame, true).unwrap().kernel.unwrap();
+    let frame = frame(false);
+    let k = plan_of(&ff, &frame).unwrap().kernel.unwrap();
     let one_four = |t: &str| match t {
         "CT3" | "CT2" => (0.01, 3.385),
         "OH1" => (0.1521, 3.1508),
@@ -263,8 +270,8 @@ fn a_weight_of_one_is_the_1_4_parameters_priced_directly() {
     close("1-4 Coulomb", got_coul, coul, 1e-12);
 }
 
-/// A copy of `frame` whose `pairs` rows flagged 1-4 carry `cells` (column,
-/// value per such row), every other row null.
+/// A copy of `frame` whose 1-4 `pairs` rows (`n_bonds` 3) carry `cells`
+/// (column, value per such row), every other row null.
 /// One override column and its value for the pair `(i, j)`.
 type Cell<'a> = (&'a str, &'a dyn Fn(usize, usize) -> F);
 
@@ -272,12 +279,12 @@ fn with_overrides(frame: &Frame, cells: &[Cell<'_>]) -> Frame {
     let mut out = frame.clone();
     let mut pairs = frame.get("pairs").unwrap().clone();
     let is_14: Vec<bool> = pairs
-        .get("is_14")
+        .get("n_bonds")
         .unwrap()
-        .get::<bool>()
+        .get::<u64>()
         .unwrap()
         .iter()
-        .copied()
+        .map(|&d| d == 3)
         .collect();
     let ai: Vec<usize> = pairs
         .get("atomi")
@@ -327,7 +334,7 @@ fn plain(special: &str) -> ForceField {
 fn global_half_equals_per_pair_scales_equals_per_pair_parameters() {
     let half = plain("special_bonds lj 0.0 0.0 0.5 coul 0.0 0.0 0.5");
     let zero = plain(CHARMM);
-    let base = frame(half.special_bonds().unwrap(), false);
+    let base = frame(false);
     let pots = |ff: &ForceField, frame: &Frame| {
         PotentialCompiler::new(ff)
             .compile(frame)
@@ -386,7 +393,7 @@ fn global_half_equals_per_pair_scales_equals_per_pair_parameters() {
 fn a_dihedral_weight_equals_per_pair_rows_of_its_parameters() {
     let with_w = read(CHARMM, "1.0");
     let without = read(CHARMM, "0.0");
-    let base = frame(with_w.special_bonds().unwrap(), false);
+    let base = frame(false);
     let want = energy(&with_w, &base);
     let p14 = |i: usize, j: usize| {
         let lj = with_w.get_style("pair", "lj/charmm").unwrap();
@@ -418,8 +425,8 @@ fn a_dihedral_weight_equals_per_pair_rows_of_its_parameters() {
 #[test]
 fn an_override_cell_beats_the_weight_and_a_null_cell_keeps_it() {
     let ff = read(CHARMM, "1.0");
-    let base = frame(ff.special_bonds().unwrap(), false);
-    let (lj_w, coul_w) = exceptions::plan(&ff, &base, true)
+    let base = frame(false);
+    let (lj_w, coul_w) = plan_of(&ff, &base)
         .unwrap()
         .kernel
         .unwrap()
@@ -427,7 +434,7 @@ fn an_override_cell_beats_the_weight_and_a_null_cell_keeps_it() {
     // The coul_scale cell only: the Coulomb part of every 1-4 pair is
     // quartered, its van der Waals is the dihedral's.
     let quarter = with_overrides(&base, &[("coul_scale", &|_, _| 0.25)]);
-    let (lj, coul) = exceptions::plan(&ff, &quarter, true)
+    let (lj, coul) = plan_of(&ff, &quarter)
         .unwrap()
         .kernel
         .unwrap()
@@ -435,8 +442,8 @@ fn an_override_cell_beats_the_weight_and_a_null_cell_keeps_it() {
     close("LJ kept", lj, lj_w, 1e-14);
     close("Coulomb quartered", coul, 0.25 * coul_w, 1e-13);
     // And the regular kernels price none of those rows.
-    let plan = exceptions::plan(&ff, &quarter, true).unwrap();
-    assert_eq!(plan.override_rows.len(), 5);
+    let plan = plan_of(&ff, &quarter).unwrap();
+    assert_eq!(plan.replaced.len(), 5);
 }
 
 /// An override cell is priced only by the style it belongs to: a field
@@ -446,7 +453,7 @@ fn an_override_cell_beats_the_weight_and_a_null_cell_keeps_it() {
 #[test]
 fn an_override_cell_is_priced_only_by_its_own_style() {
     let ff = plain(AMBER_LIKE);
-    let base = frame(ff.special_bonds().unwrap(), false);
+    let base = frame(false);
     let lj_cells = with_overrides(
         &base,
         &[
@@ -502,9 +509,7 @@ fn an_override_cell_is_priced_only_by_its_own_style() {
 fn forces_are_the_gradient_inside_the_switches() {
     let text = ff_text(CHARMM, "1.0").replace("3.5 4.2 3.0 5.0", "12.0 14.0");
     let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
-    let pots = PotentialCompiler::new(&ff)
-        .compile(&frame(ff.special_bonds().unwrap(), false))
-        .unwrap();
+    let pots = PotentialCompiler::new(&ff).compile(&frame(false)).unwrap();
     let x = coords();
     let (_, f) = pots.energy_forces_at(&x);
     let h = 1e-6;
@@ -522,7 +527,6 @@ fn forces_are_the_gradient_inside_the_switches() {
 fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
     use crate::ff::potential::ForceTerm;
     use crate::ff::potential::pair::fixtures::table_over;
-    let topo = molrs::core::Topology::from_frame(frame).unwrap();
     let x = coords();
     let links: Vec<(usize, usize)> = (0..7)
         .flat_map(|i| ((i + 1)..7).map(move |j| (i, j)))
@@ -531,13 +535,12 @@ fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
     let mut out = vec![0.0; x.len()];
     let mut acc = crate::ff::potential::Accumulator::adding_into(&mut out);
     for (member, weights) in PotentialCompiler::new(ff).compile_typed(frame).unwrap() {
-        match (&member, weights) {
-            (ForceTerm::Pair(p), Some(w)) => {
-                let special = w.special_weights(&topo);
-                let factor: Vec<F> = links.iter().map(|&(i, j)| special.weight(i, j)).collect();
+        match &member {
+            ForceTerm::Pair(p) => {
+                let factor: Vec<F> = links.iter().map(|&(i, j)| weights.weight(i, j)).collect();
                 p.evaluate_pairs(&x, &table, &factor, &mut acc);
             }
-            (m, _) => m.as_potential().evaluate(&x, &mut acc),
+            m => m.as_potential().evaluate(&x, &mut acc),
         }
     }
     let e = acc.energy();
@@ -557,7 +560,7 @@ fn compile_equals_compile_typed() {
     ];
     for (special, w, text) in cases {
         let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
-        let frame = frame(ff.special_bonds().unwrap(), false);
+        let frame = frame(false);
         let (e, f) = PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap()
@@ -586,7 +589,7 @@ fn an_override_beside_a_non_lj_style_is_refused() {
             crate::ff::ir::Params::from_iter([("a", 1.0), ("rho", 0.3), ("c", 1.0)]),
         )
         .unwrap();
-    let base = frame(buck.special_bonds().unwrap(), false);
+    let base = frame(false);
     let over = with_overrides(&base, &[("lj_scale", &|_, _| 0.5)]);
     let err = PotentialCompiler::new(&buck).compile(&over).unwrap_err();
     assert!(err.to_string().contains("buck"), "{err}");
@@ -596,11 +599,13 @@ fn an_override_beside_a_non_lj_style_is_refused() {
 /// the LAMMPS reader and writer are the identity on `lj/charmm/coul/charmm`.
 #[test]
 fn lammps_round_trip_and_override_refusal() {
-    use crate::io::lammps::forcefield_writer::{LammpsForcefieldWriter, refuse_pair_overrides};
+    use crate::io::lammps::forcefield_writer::{
+        LammpsForcefieldWriter, refuse_inexpressible_pairs,
+    };
     use molrs::core::TypeLabels;
 
     let ff = read(CHARMM, "0.5");
-    let frame = frame(ff.special_bonds().unwrap(), false);
+    let frame = frame(false);
     let labels = TypeLabels::from_frame(&frame).unwrap();
     let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
     assert!(
@@ -643,9 +648,9 @@ fn lammps_round_trip_and_override_refusal() {
         assert_eq!(sorted(a), sorted(b), "{category}/{name}");
     }
 
-    refuse_pair_overrides(&frame).unwrap();
+    refuse_inexpressible_pairs(&frame).unwrap();
     let over = with_overrides(&frame, &[("coul_scale", &|_, _| 0.5)]);
-    let err = refuse_pair_overrides(&over).unwrap_err();
+    let err = refuse_inexpressible_pairs(&over).unwrap_err();
     assert!(err.contains("coul_scale"), "{err}");
 
     let mut data = Vec::new();

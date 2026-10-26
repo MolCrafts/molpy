@@ -81,6 +81,11 @@ impl DrudeBuilder {
         )
     }
 
+    /// The polarizability table, type name → row.
+    pub fn polarizability(&self) -> &HashMap<String, Polarizability> {
+        &self.table
+    }
+
     /// Type each shell `<prefix><core type>`.
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = prefix.into();

@@ -43,13 +43,13 @@ antechamber, cut into residues by prepgen and joined by tleap `sequence`.
 `AntechamberTypifier` runs an antechamber charge method other than AM1-BCC /
 ABCG2. A term `GaffTypifier` estimated exports to every engine: the writers
 skip its provenance. Every entry point takes
-molrs's `parameter_set` (`"gaff"` or `"gaff2"`), which has no default, so a
+the same `parameter_set` (`"gaff"` or `"gaff2"`), which has no default, so a
 chain and the molecules it is mixed with always name the same set:
 
 | Surface | Role |
 |---------|------|
-| `molpy.ff.charge.Am1BccModel` | AM1-BCC (or ABCG2) charges: sqm's AM1 charges through antechamber `-c mul`, corrected by molrs `BccModel`; net charge from the atoms' formal charges. Types and bonded terms stay native |
-| `molpy.ff.typifier.AntechamberTypifier` | antechamber (types + charges, any `-c` method) → parmchk2 → tleap for one complete molecule; net charge from the atoms' formal charges. For a charge method the native route lacks, and for exporting an estimated GAFF term while molrs's writers refuse it |
+| `molpy.ff.charge.Am1BccModel` | AM1-BCC (or ABCG2) charges: sqm's AM1 charges through antechamber `-c mul`, corrected by molpy's `BccModel`; net charge from the atoms' formal charges. Types and bonded terms stay native |
+| `molpy.ff.typifier.AntechamberTypifier` | antechamber (types + charges, any `-c` method) → parmchk2 → tleap for one complete molecule; net charge from the atoms' formal charges. For a charge method the native route lacks |
 | `molpy.ff.typifier.TleapTypifier` | tleap only, for a finished graph whose atoms already carry AMBER types and charges, with parameters of your own (`forcefield=`) loaded as a frcmod on top of the leaprc; a graph with ports is refused |
 | `molpy.builder.AmberPolymerBuilder` | antechamber + parmchk2 on an oligomer, prepgen per residue (`AmberCut`), tleap `sequence` over a linear site graph; `AmberPieces` writes the oligomer and cuts from three SMILES |
 
@@ -102,8 +102,8 @@ End-to-end recipes that use this path:
 - [AmberTools electrolyte workflow](../user-guide/13_ambertools_integration.md)
 
 Unit tests never shell out to antechamber/tleap — the programs and the
-shared pipeline are mocked under `tests/test_tool/test_ambertools`, the
-typifiers and `Am1BccModel` under `tests/test_ff`. Offline recipes in the user guide mark those blocks with
+shared pipeline are mocked under `molpy/tests/test_tool/test_ambertools`, the
+typifiers and `Am1BccModel` under `molpy/tests/test_ff`. Offline recipes in the user guide mark those blocks with
 `# docs: skip` so the doc gate does not re-run them.
 
 ## MD engines (input decks and optional run)
@@ -137,7 +137,7 @@ These are Python package groups, not scientific executables:
 
 | Extra | Command | Role |
 |-------|---------|------|
-| `dev` | `pip install molcrafts-molpy[dev]` | pytest, ruff, ty, tox |
+| `dev` | `pip install molcrafts-molpy[dev]` | maturin, pytest, mypy, ruff, ty |
 | `doc` | `pip install molcrafts-molpy[doc]` | zensical + theme for docs builds |
 
 ## See also

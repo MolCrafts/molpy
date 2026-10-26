@@ -1,4 +1,4 @@
-"""OpenMM force-field XML across the FFI seam, and ``ForceField.materialize_one_four``.
+"""OpenMM force-field XML across the FFI seam, and its 1-4 pairs compiled.
 
 The fixtures are the Rust check's (``crates/molrs/src/ff/testdata/openmm``): XML
 cut from CHARMM36, AMBER ff14SB and OPLS-AA, whose energies the Rust tests
@@ -26,7 +26,7 @@ def test_a_charmm_port_reads_every_section() -> None:
     assert ff.get_style("angle", "charmm") is not None
     assert ff.get_style("improper", "harmonic") is not None
     (cmap,) = ff.get_types("cmap")
-    assert cmap["grid"].shape == (24, 24)
+    assert cmap.params["grid"].shape == (24, 24)
     assert ff.special_bonds == ([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
 
 
@@ -63,6 +63,7 @@ def _chain() -> mp.core.Frame:
     for k, key in enumerate("xyz"):
         atoms.insert(key, x[:, k].copy())
     atoms.insert("type", ["CT3", "C", "NH1", "CT1"])
+    atoms.insert("atomic_number", np.array([6, 6, 7, 6], dtype=np.uint64))
     atoms.insert("charge", np.array([0.2, -0.2, 0.2, -0.2]))
     frame["atoms"] = atoms
     for name, rows, labels in (
@@ -78,21 +79,32 @@ def _chain() -> mp.core.Frame:
     return frame
 
 
-def test_materialize_one_four_writes_the_one_four_rows() -> None:
-    ff = OpenmmXmlReader().read(FIXTURES / "charmm.xml")
+def _lj_charmm_14(ff: mp.ff.forcefield.ForceField, frame: mp.core.Frame) -> float:
+    """The CHARMM fixture's 1-4 pricing of ``frame``: everything but the
+    Lennard-Jones and Coulomb pair styles' pricing, with no switch."""
     for name in ("lj/charmm", "coul/charmm"):
         style = ff.get_style("pair", name)
-        style["inner"] = 900.0
-        style["cutoff"] = 1000.0
+        style.set(inner=900.0)
+        style.set(cutoff=1000.0)
+    return mp.ff.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
+
+
+def test_the_one_four_pair_is_priced_at_epsilon14_once_generated() -> None:
+    ff = OpenmmXmlReader().read(FIXTURES / "charmm.xml")
     frame = _chain()
-    compiler = mp.ff.compile.PotentialCompiler(ff)
-    with pytest.raises(ValueError, match="materialize_one_four"):
-        compiler.compile(frame)
-    assert ff.materialize_one_four(frame) == 1
-    pairs = frame["pairs"]
-    is_14 = np.asarray(pairs["is_14"])
-    eps = np.asarray(pairs["epsilon"])[is_14]
-    # CT3's and CT1's epsilon14 (0.04184 kJ/mol each) mixed, in kcal/mol.
-    np.testing.assert_allclose(eps, [0.01], rtol=1e-15)
-    energy, _forces = compiler.compile(frame).evaluate(frame)
-    assert np.isfinite(energy)
+    with pytest.raises(ValueError, match="generate_topology"):
+        _lj_charmm_14(ff, frame)
+    graph = mp.core.Atomistic.from_frame(frame)
+    graph.generate_topology(gen_angle=False, gen_dihedral=False)
+    typed = graph.to_frame()
+    pairs = typed["pairs"]
+    rows = list(zip(pairs["atomi"], pairs["atomj"], pairs["n_bonds"], strict=True))
+    assert [tuple(int(v) for v in r) for r in rows] == [
+        (0, 1, 1),
+        (0, 2, 2),
+        (0, 3, 3),
+        (1, 2, 1),
+        (1, 3, 2),
+        (2, 3, 1),
+    ]
+    assert np.isfinite(_lj_charmm_14(ff, typed))

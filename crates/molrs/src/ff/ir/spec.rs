@@ -302,6 +302,31 @@ impl StyleSpec {
         self.style_params.iter().find(|p| p.name == name)
     }
 
+    /// The declaration a parameter key of this style names, and whether it
+    /// is a style parameter: a declared parameter, a member `<name><m>` of an
+    /// indexed family, or — on a `pair` style — `q1`, `q2`, `<name>1`,
+    /// `<name>2`, the per-atom values (declaration `None`). `None` for a key
+    /// the style does not declare.
+    pub fn declaration(&self, key: &str, pair: bool) -> Option<(Option<&ParamSpec>, bool)> {
+        if let Some(p) = self.param(key) {
+            return Some((Some(p), false));
+        }
+        if let Some(p) = self.style_param(key) {
+            return Some((Some(p), true));
+        }
+        let base = key.trim_end_matches(|c: char| c.is_ascii_digit());
+        if base.len() < key.len()
+            && let Some(p) = self.param(base).filter(|p| p.indexed)
+        {
+            return Some((Some(p), false));
+        }
+        let per_atom = matches!(key, "q1" | "q2")
+            || key
+                .strip_suffix(['1', '2'])
+                .is_some_and(|b| self.param(b).is_some());
+        (pair && per_atom).then_some((None, false))
+    }
+
     /// The special-bonds weights that scale this (pair) style: its own, else
     /// molrec's default `lj`.
     pub fn special_class(&self) -> SpecialClass {
@@ -587,13 +612,6 @@ fn cutoff() -> ParamSpec {
     p("cutoff", "L")
 }
 
-/// The `cutoff` of a pair style whose compiled kernel needs none: absent,
-/// the pair list is priced untruncated (∞). A neighbour-driven evaluation
-/// still needs a finite one, and refuses ∞ by name.
-fn untruncated() -> ParamSpec {
-    cutoff().default_num(F::INFINITY)
-}
-
 /// `mixing`, absent the IR's undeclared rule ([`CombiningRule::UNDECLARED`],
 /// arithmetic). Not every engine's default: LAMMPS mixes `lj/cut`
 /// geometrically, which its reader states explicitly.
@@ -847,7 +865,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         s("pair", "lj/cut")
             .params(vec![eps("sigma"), sig("epsilon")])
             .style_params(vec![
-                untruncated(),
+                cutoff(),
                 mixing(),
                 p("n", "1").default_num(12.0),
                 p("m", "1").default_num(6.0),
@@ -862,19 +880,19 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         s("pair", "lj/class2")
             .params(vec![eps("sigma"), sig("epsilon")])
             // LAMMPS mixes `lj/class2` sixthpower unless told otherwise.
-            .style_params(vec![untruncated(), mixing_by(CombiningRule::SixthPower)])
+            .style_params(vec![cutoff(), mixing_by(CombiningRule::SixthPower)])
             .special(Vdw)
             .expression("epsilon*(2*(sigma/r)^9-3*(sigma/r)^6)")
             .lammps(custom(&lc::LJ_CLASS2)),
         s("pair", "buck")
             .params(vec![p("a", "E"), p("rho", "L"), p("c", "E*L^6")])
-            .style_params(vec![untruncated()])
+            .style_params(vec![cutoff()])
             .special(Vdw)
             .expression("a*exp(-r/rho)-c/r^6")
             .lammps(positional()),
         s("pair", "morse")
             .params(vec![p("d0", "E"), p("alpha", "1/L"), p("r0", "L")])
-            .style_params(vec![untruncated()])
+            .style_params(vec![cutoff()])
             .special(Vdw)
             .expression("d0*((1-exp(-alpha*(r-r0)))^2-1)")
             .lammps(positional()),
@@ -907,7 +925,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 coulomb(),
                 dielectric(),
                 p("delta", "L").default_num(0.0),
-                untruncated(),
+                cutoff(),
             ])
             .source(PerInstance)
             .special(Coulomb)

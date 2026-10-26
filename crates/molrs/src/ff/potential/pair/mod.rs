@@ -8,7 +8,8 @@
 //! [`ScalarForm`]: crate::ff::potential::form_kernel::ScalarForm
 //! [`ScalarPair`]: crate::ff::potential::form_kernel::ScalarPair
 
-use molrs::core::schema::block_names::{ATOMS, PAIRS};
+use crate::ff::ir::SpecialClass;
+use molrs::core::schema::block_names::ATOMS;
 
 use crate::ff::potential::Accumulator;
 use molrs::core::Frame;
@@ -51,33 +52,40 @@ where
     acc.add_energy(energy);
 }
 
-/// The `pairs` block's `atomi`, `atomj` and (optional) `is_14` columns — the
-/// list every compiled pair kernel reads, parsed once. `who` names the kernel
-/// in the error.
+/// The pairs a compiled pair kernel prices, each with its weight in the
+/// van-der-Waals and in the electrostatic styles (0: not priced).
 ///
-/// # Errors
-///
-/// A frame without a `pairs` block, or a block without a u64 `atomi` /
-/// `atomj` column.
-pub(crate) type PairColumns<'f> = (
-    &'f ndarray::ArrayD<u64>,
-    &'f ndarray::ArrayD<u64>,
-    Option<&'f ndarray::ArrayD<bool>>,
-);
+/// The compiler builds it from the atoms and the frame's special pairs
+/// ([`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile));
+/// [`ExplicitTerms`](crate::ff::compile::ExplicitTerms) from the pairs it was
+/// handed, at full strength.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CandidatePairs {
+    pub(crate) i: Vec<usize>,
+    pub(crate) j: Vec<usize>,
+    pub(crate) lj: Vec<F>,
+    pub(crate) coul: Vec<F>,
+}
 
-/// See [`PairColumns`].
-pub(crate) fn pair_columns<'f>(frame: &'f Frame, who: &str) -> Result<PairColumns<'f>, String> {
-    let block = frame
-        .get(PAIRS)
-        .ok_or_else(|| format!("{who}: frame missing \"pairs\" block"))?;
-    let column = |key: &str| {
-        block
-            .get(key)
-            .and_then(|c| c.get::<u64>())
-            .ok_or_else(|| format!("{who}: pairs block missing \"{key}\" column"))
-    };
-    let is_14 = block.get("is_14").and_then(|c| c.get::<bool>());
-    Ok((column("atomi")?, column("atomj")?, is_14))
+impl CandidatePairs {
+    /// The weights the styles of `class` take.
+    pub(crate) fn weights(&self, class: SpecialClass) -> &[F] {
+        match class {
+            SpecialClass::Vdw => &self.lj,
+            SpecialClass::Coulomb => &self.coul,
+        }
+    }
+
+    pub(crate) fn push(&mut self, i: usize, j: usize, lj: F, coul: F) {
+        self.i.push(i);
+        self.j.push(j);
+        self.lj.push(lj);
+        self.coul.push(coul);
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.i.len()
+    }
 }
 
 /// Map each atom to a dense type index, and hand back the labels in that order.
@@ -240,8 +248,56 @@ pub use uff::UffLj;
 
 #[cfg(test)]
 pub(crate) mod fixtures {
-    use molrs::core::{NeighborColumns, NeighborPair, Neighbors, QueryMode};
-    use molrs::op::F;
+    use molrs::core::{Block, NeighborColumns, NeighborPair, Neighbors, QueryMode};
+    use molrs::op::{F, Idx};
+    use ndarray::Array1;
+
+    /// The `pairs` block under which the pair styles price exactly `links`
+    /// of `n_atoms` atoms: each link flagged in `is_14` (empty: none) as a
+    /// 1-4 pair (`n_bonds` 3, weighed by `special_bonds`), every other link
+    /// at full strength, and every pair not linked weighed 0.
+    pub(crate) fn pricing_only(n_atoms: usize, links: &[(usize, usize)], is_14: &[bool]) -> Block {
+        let listed = |i: usize, j: usize| {
+            links
+                .iter()
+                .position(|&(a, b)| (a.min(b), a.max(b)) == (i, j))
+        };
+        let (mut ai, mut aj, mut hops, mut excluded) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for i in 0..n_atoms {
+            for j in (i + 1)..n_atoms {
+                let row = match listed(i, j) {
+                    Some(k) if is_14.get(k) == Some(&true) => Some((3, false)),
+                    Some(_) => None,
+                    None => Some((0, true)),
+                };
+                if let Some((d, gone)) = row {
+                    ai.push(i as Idx);
+                    aj.push(j as Idx);
+                    hops.push(d as Idx);
+                    excluded.push(gone);
+                }
+            }
+        }
+        let mut block = Block::new();
+        for (key, col) in [("atomi", ai), ("atomj", aj), ("n_bonds", hops)] {
+            block
+                .insert(key, Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
+        }
+        if excluded.iter().any(|&e| e) {
+            for key in ["lj_scale", "coul_scale"] {
+                block
+                    .insert(
+                        key,
+                        Array1::from_vec(vec![0.0; excluded.len()]).into_dyn(),
+                        Some(excluded.clone()),
+                    )
+                    .unwrap();
+            }
+        }
+        block
+    }
 
     /// A neighbour table over exactly `links`, with the displacements a
     /// neighbour engine would have computed for them.

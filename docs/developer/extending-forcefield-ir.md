@@ -5,8 +5,8 @@ The force-field IR (it adopts the LAMMPS standard, see
 a *category* (how many atoms a term has, which Frame block holds its terms,
 which coordinate its energy is a function of) and a *style* (its ordered
 parameters, each with a dimension, and its energy) — and anything that has
-that shape extends it: from Rust, from Python, from molpy, with nothing in
-molrs rebuilt. A registered style prices at both compile doors and in MD,
+that shape extends it, from Rust or from Python, with nothing in the core
+rebuilt. A registered style prices at both compile doors and in MD,
 persists in a `.mrec` record, is written to every engine that can hold it
 and refused by name by every engine that cannot, and joins the form
 conversions — exactly as a built-in does. The built-ins are themselves
@@ -15,8 +15,8 @@ registrations of the same form, sealed.
 The form — categories, styles, parameters, refusals — is `molrs::ff::ir`
 (Rust) and `mp.ff.ir` (Python); registering into it is
 `molrs::ff::style_registry` and `mp.ff.style_registry`; compiling a force
-field against it is `molrs::ff::compile` and `mp.ff.compile`. molpy
-re-exports the Python modules. The engine files a registered
+field against it is `molrs::ff::compile` and `mp.ff.PotentialCompiler`; the
+Python modules are the core's, bound in `molpy._core`. The engine files a registered
 style is read from and written to are `mp.io`'s (`LammpsForcefieldReader`,
 `OpenmmXmlWriter`, `write_mrec`, …; the same names in Rust's `molrs::io`), the
 one owner of every file reader and writer.
@@ -67,6 +67,7 @@ pub struct StyleSpec {
     pub style_params: Vec<ParamSpec>,  // cutoff, mixing, special keep their reserved meanings
     pub source: ParamSource,           // TypeRows or PerInstance (Frame columns)
     pub special: Option<SpecialClass>, // a pair style's special-bonds weights (default lj)
+    pub role: Option<PairRole>,        // a pair style's part in the nonbonded treatment (None: from `special`)
     pub expression: Option<String>,    // the energy, a Lepton expression, kept byte for byte
     pub force_is_gradient: bool,       // false only for coul/charmm
     pub unindexed_one_term: bool,
@@ -158,7 +159,7 @@ The kernel contract, every tier:
   time.
 
 LAMMPS's `pair_style lj/smooth/linear` as a Tier-2 form, written as a crate
-outside molrs would write it (its `pub` API only):
+outside the core would write it (its `pub` API only):
 
 ```rust
 pub struct LjSmoothLinear;
@@ -199,6 +200,7 @@ term at once:
 ```python
 import numpy as np
 from molpy.ff import ir, style_registry
+registry = style_registry.GlobalRegistry()
 
 def fene(r, k, r0, epsilon, sigma):
     x = (r / r0) ** 2
@@ -208,7 +210,7 @@ def fene(r, k, r0, epsilon, sigma):
     de = k * r / (1 - x) + np.where(inner, 4 * epsilon * (-12 * s6 * s6 + 6 * s6) / r, 0.0)
     return e, de
 
-style_registry.register_style("bond", "fene/np",
+registry.register_style("bond", "fene/np",
                               params={"k": "E/L^2", "r0": "L", "epsilon": "E", "sigma": "L"},
                               kernel=fene)
 ```
@@ -219,9 +221,9 @@ evaluation that met it.
 
 `PotentialCompiler::with_registry(ff, &registry)` compiles against a
 registry of one's own; `PotentialCompiler::new` reads the process-wide one
-(`molrs::ff::style_registry::register_style`, Python `style_registry.register_style`).
+(`molrs::ff::style_registry::GlobalRegistry::register_style`, Python `style_registry.GlobalRegistry().register_style`).
 
-Without a force field, `mp.ff.compile.ExplicitTerms(category, style, atoms, *,
+Without a force field, `mp.ff.ExplicitTerms(category, style, atoms, *,
 charges=None, **params).compile()` builds the kernel of any style the IR prices — a
 built-in, a registered one, a custom category's — over explicit terms: an
 `(n, arity)` array of atom indices and each parameter as stored, one number
@@ -245,9 +247,10 @@ registry.register_style(
 
 ```python
 import molpy as mp
+registry = mp.ff.style_registry.GlobalRegistry()
 
-style_registry.register_category("urey_bradley", 3)          # block "urey_bradleys", coordinate compound
-style_registry.register_style("urey_bradley", "spring", params={"k_ub": "E/L^2", "r_ub": "L"},
+registry.register_category("urey_bradley", 3)          # block "urey_bradleys", coordinate compound
+registry.register_style("urey_bradley", "spring", params={"k_ub": "E/L^2", "r_ub": "L"},
                               expression="k_ub*(distance(p1,p3)-r_ub)^2")
 ff = mp.ff.forcefield.ForceField(name="ub-demo", units="real")
 atom_style = ff.def_style("atom", "full")
@@ -259,8 +262,7 @@ ff.def_style("urey_bradley", "spring").def_type("A-B-A", a, b, a, k_ub=20.0, r_u
 `def_type(name, *endpoints, **params)` takes exactly the category's arity
 (`Arity` otherwise); the terms are the rows of the Frame block `<name>s`. A
 typifier's `TypeAssignment(links={kind: rows})` fills any registered relation kind
-(by `MolGraph` kind name or class); `assign_terms` matches endpoints by the
-category's `EndpointOrder` and molrec's wildcard rule.
+(by `MolGraph` kind name or class).
 
 A category nobody registered — one a record brought in — behaves as
 `CategorySpec::custom(name, arity of its endpoint columns, Compound,
@@ -310,7 +312,7 @@ registered nothing can price it), and its table (array columns included,
 `f64[T, S…]`). A category beyond the built-ins is kept with the arity of
 its endpoint columns. Reading never evaluates an expression: a style with
 no expression reads whole, and compiling it is `NoKernel` — "no kernel for
-`<category>` `` `<style>` ``: register it (mp.ff.style_registry.register_style) or
+`<category>` `` `<style>` ``: register it (mp.ff.style_registry.GlobalRegistry().register_style) or
 give it an expression". Parameter dimensions are not persisted: a style read
 from a record has no `ParamDimension`s until it is registered again.
 
@@ -396,15 +398,13 @@ checked once per process at its first compile, on up to 8 real terms.
 Relative errors are measured against `max(|value|, RMS over the sample
 set)`. The checks never run per evaluation.
 
-## From molpy
+## From Python
 
-molpy keeps no IR of its own: `molpy.ff.style_registry` re-exports
-`mp.ff.style_registry`, so `molpy.ff.style_registry.StyleDeclaration is
-mp.ff.style_registry.StyleDeclaration`, and a style declared from either
-package is the same registration. molpy's own guide
-(`docs/developer/extending-forcefield.md`, "A new style in 30 lines") declares
-`bond fene` by its expression, types a bead-spring chain with it and prices
-it.
+The Python binding keeps no IR of its own: `mp.ff.style_registry` is the
+core's registry, so a style declared from Python is the same registration a
+Rust caller makes. [Extending the Force Field](extending-forcefield.md#a-new-style-in-30-lines)
+declares `bond fene` by its expression, types a bead-spring chain with it and
+prices it.
 
 ## How this is checked
 
@@ -418,17 +418,12 @@ it.
 | `urey_bradley` from Python | arity 3, block `urey_bradleys`, not built in | as stated |
 | `pair lj/smooth/linear` by expression and by a numpy kernel, written as LAMMPS `lj/smooth/linear`, its 5 Å cutoff straddling the pairs; `compile_typed` (an integrator's first force call) = `compile` | the deck's style; doors rel ≤ 1e-12 | doors bit for bit |
 | `.mrec` round trip; a subprocess that registered nothing | bit for bit, expression byte for byte | bit for bit |
-| a callable-only style in a fresh process | `NoKernel` naming the style and `mp.ff.style_registry.register_style` | as stated |
+| a callable-only style in a fresh process | `NoKernel` naming the style and `mp.ff.style_registry.GlobalRegistry().register_style` | as stated |
 | refusals: unknown function, unbound variable, sealed `bond harmonic`, wrong `def_type` arity, kernel of the wrong shape, kernel raising, `GromacsTopForcefieldWriter.write`, missing parameter | each its `IrError` subclass naming the item | as stated |
 | `dihedral table/linear` (`table: f64[N]`) by a numpy kernel = hand linear interpolation; round trip | rel ≤ 1e-12; bits | 0 |
 | class2 bond-angle: expression = numpy = −π/60 (= the Rust form) | rel ≤ 1e-12 | 2.4·10⁻¹⁵ |
 
-**molpy** — `tests/test_ff/test_user_style.py`: its guide's snippet, run as written,
-energy = the analytic FENE sum to 1.1·10⁻¹⁶ relative, forces to 2.1·10⁻¹⁶ of
-the largest, and a fresh process that registered nothing prices the saved
-`.mrec` bit for bit.
-
-**The built-ins conform** — `ff::ir::builtin_conformance`:
+**The built-ins conform** — `ff::style_registry::builtin_conformance`:
 
 - Every built-in with an Appendix-A expression prices identically by its
   native kernel and by the expression registered as a style of its own, on
@@ -453,4 +448,4 @@ the largest, and a fresh process that registered nothing prices the saved
 
 The engine codecs of extension styles (`fene`, `lj/smooth/linear`, a
 compound `urey_bradley` as OpenMM's `CustomCompoundBondForce`) are written,
-read back and priced by molrs in `ff::engine_codec_check`.
+read back and priced by the core in `ff::engine_codec_check`.

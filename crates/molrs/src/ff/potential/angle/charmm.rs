@@ -14,8 +14,8 @@ use molrs::op::F;
 /// r₁₃ is the distance between the angle's end atoms `i` and `k`, so the
 /// energy is no function of θ alone: an N-body form of the three positions.
 /// The Urey–Bradley term is a 1-3 harmonic spring that this angle owns: it
-/// adds no exclusion and changes no pair list (which 1-3 pairs a non-bonded
-/// style sees is `special_bonds`'s answer, as for any angle).
+/// adds no special pair (how a non-bonded style prices a 1-3 pair is its
+/// `pairs` row under `special_bonds`, as for any angle).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Charmm;
 
@@ -68,11 +68,9 @@ mod tests {
     use crate::ff::compile::{ExplicitTerms, PotentialCompiler};
     use crate::ff::forcefield::ForceField;
     use crate::ff::ir::Params;
-    use crate::ff::ir::SpecialBonds;
     use crate::ff::potential::Potentials;
     use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::flat_coords::{compute_angle, sub3};
-    use crate::ff::potential::intramolecular_pairs;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::op::F;
@@ -273,7 +271,7 @@ mod tests {
         assert_eq!(typed.len(), 1);
         let (member, weights) = &typed[0];
         assert!(
-            weights.is_none(),
+            weights.is_empty(),
             "a bonded member takes no special weights"
         );
         let (e2, f2) = member.energy_forces_at(&coords);
@@ -306,33 +304,6 @@ mod tests {
             ),
             "{err}"
         );
-    }
-
-    /// Urey–Bradley creates no exclusion: whether the 1-3 pair of a charmm
-    /// angle is in the pair list is `special_bonds`'s answer alone, exactly as
-    /// for any other angle style.
-    #[test]
-    fn urey_bradley_changes_no_pair_list() {
-        let f = frame("HA-CT-HA", &geometry(1.0, 1.0, 100.0));
-        let has_13 = |special: &SpecialBonds| {
-            // Every pair of the three atoms is 1-2 or 1-3: excluding both
-            // leaves an empty list.
-            let p = intramolecular_pairs(&f, special, None).unwrap();
-            let (Some(i), Some(j)) = (p.get("atomi"), p.get("atomj")) else {
-                return false;
-            };
-            let (i, j) = (i.get::<u64>().unwrap(), j.get::<u64>().unwrap());
-            i.iter().zip(j.iter()).any(|(&a, &b)| (a, b) == (0, 2))
-        };
-        let keep_13 = SpecialBonds {
-            lj: [0.0, 1.0, 1.0],
-            coul: [0.0, 1.0, 1.0],
-        };
-        assert!(
-            has_13(&keep_13),
-            "special_bonds keeps 1-3; UB must not drop it"
-        );
-        assert!(!has_13(&SpecialBonds::EXCLUDE_12_13));
     }
 
     /// A frame of `xyz` with one `angles` row per `(i, j, k, type)`.

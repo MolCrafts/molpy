@@ -10,8 +10,7 @@
 //! | [`charge`]         | `ff::charge`         | `molpy.ff.charge`      |
 //! | [`ir`]             | `ff::ir`             | `molpy.ff.ir`          |
 //! | [`style_registry`] | `ff::style_registry` | `molpy.ff.style_registry` |
-//! | [`compile`]        | `ff::compile`        | `molpy.ff.compile`     |
-//! | [`params`]         | `ff::params`         | `molpy.ff.params`      |
+//! | [`compile`]        | `ff::compile`        | `molpy.ff` (its classes sit on the package) |
 //! | [`clpol_scaling`]  | `ff::clpol_scaling`  | `molpy.ff.clpol_scaling` |
 //!
 //! No file format is here: force-field files, like every other file, are
@@ -22,7 +21,6 @@ pub mod clpol_scaling;
 pub mod compile;
 pub mod forcefield;
 pub mod ir;
-pub mod params;
 pub mod potential;
 pub mod style_registry;
 pub mod typifier;
@@ -37,7 +35,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     potential::register(m)?;
     typifier::register(m)?;
     charge::register(m)?;
-    params::register(m)?;
     clpol_scaling::register(m)?;
     compile::register(m)?;
     crate::add_submodule(m, "ir", "molpy.ff.ir", ir::register)?;

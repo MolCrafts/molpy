@@ -7,7 +7,7 @@ use ndarray::{Array1, ArrayD};
 
 use super::{Directives, Kind, Row, Table, convert};
 use crate::core::unit_factors::{KCAL_TO_KJ, NM_TO_ANGSTROM};
-use crate::ff::potential::MAX_ATOMS_FOR_A_FULL_PAIR_LIST;
+use crate::ff::ir::SpecialBonds;
 use molrs::core::Frame;
 use molrs::core::TypeName;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
@@ -16,7 +16,8 @@ use molrs::op::{F, Idx};
 
 /// A molecule type's priced pairs `(i, j, is_14, cells)` and its excluded
 /// pairs.
-type PairLists = (Vec<(usize, usize, bool, Cells)>, Vec<(usize, usize)>);
+/// A molecule type's special pairs: `(i, j, n_bonds, cells)`, `i < j`.
+type SpecialRows = Vec<(usize, usize, usize, Cells)>;
 
 /// One `pairs` row's override cells, in [`PAIR_OVERRIDE_COLUMNS`] order
 /// (`epsilon`, `sigma`, `charge_product`, `lj_scale`, `coul_scale`).
@@ -193,7 +194,7 @@ pub(super) fn build(rows: &[Row], d: &mut Directives) -> Result<Frame, String> {
             _ => {}
         }
     }
-    assemble(&moltypes, &molecules)
+    assemble(&moltypes, &molecules, d.defaults.as_ref())
 }
 
 /// The 0-based molecule atom of a 1-based index token.
@@ -519,6 +520,131 @@ impl OwnTypes {
     }
 }
 
+/// The chemical-bond distance of every pair `(i < j)` of a molecule within
+/// `depth` bonds.
+fn hops(mt: &MolType, depth: usize) -> HashMap<(usize, usize), usize> {
+    let n = mt.atoms.len();
+    let mut adjacent = vec![Vec::new(); n];
+    for &(i, j) in &mt.chemical {
+        adjacent[i].push(j);
+        adjacent[j].push(i);
+    }
+    let mut out = HashMap::new();
+    for start in 0..n {
+        let mut dist = vec![usize::MAX; n];
+        dist[start] = 0;
+        let mut queue = VecDeque::from([start]);
+        while let Some(a) = queue.pop_front() {
+            if dist[a] == depth {
+                continue;
+            }
+            for &b in &adjacent[a] {
+                if dist[b] == usize::MAX {
+                    dist[b] = dist[a] + 1;
+                    queue.push_back(b);
+                }
+            }
+        }
+        for (b, &d) in dist.iter().enumerate() {
+            if b > start && d != usize::MAX {
+                out.insert((start, b), d);
+            }
+        }
+    }
+    out
+}
+
+/// The chemical-bond distance between atoms `a` and `b`, if bonds connect
+/// them.
+fn hops_between(mt: &MolType, a: usize, b: usize) -> Option<usize> {
+    let n = mt.atoms.len();
+    let mut adjacent = vec![Vec::new(); n];
+    for &(i, j) in &mt.chemical {
+        adjacent[i].push(j);
+        adjacent[j].push(i);
+    }
+    let mut dist = vec![usize::MAX; n];
+    dist[a] = 0;
+    let mut queue = VecDeque::from([a]);
+    while let Some(x) = queue.pop_front() {
+        if x == b {
+            return Some(dist[x]);
+        }
+        for &y in &adjacent[x] {
+            if dist[y] == usize::MAX {
+                dist[y] = dist[x] + 1;
+                queue.push_back(y);
+            }
+        }
+    }
+    None
+}
+
+/// A molecule type's special pairs as GROMACS prices them: every pair within
+/// three chemical bonds (its class), every excluded pair (within `nrexcl`,
+/// and `[ exclusions ]`), every `[ pairs ]` row. A row's cells state only
+/// what `special` (the `[ defaults ]` weights) does not already give it: an
+/// excluded 1-4 pair no `[ pairs ]` row prices is weighed 0, a pair beyond
+/// `nrexcl` and within three bonds 1, a `[ pairs ]` row beyond three bonds
+/// the 1-4 fudges.
+fn special_rows(mt: &MolType, special: &SpecialBonds) -> Result<SpecialRows, String> {
+    let excl = excluded(mt);
+    let mut distance = hops(mt, mt.nrexcl.max(3));
+    // An `[ exclusions ]` row beyond the walk: its own distance, 0 when no
+    // bonds connect it.
+    for &key in &excl {
+        distance
+            .entry(key)
+            .or_insert_with(|| hops_between(mt, key.0, key.1).unwrap_or(0));
+    }
+    let listed: HashMap<(usize, usize), (Cells, &str)> = mt
+        .pairs
+        .iter()
+        .map(|(i, j, cells, at)| (((*i).min(*j), (*i).max(*j)), (*cells, at.as_str())))
+        .collect();
+    for (&(i, j), (_, at)) in &listed {
+        if !excl.contains(&(i, j)) {
+            return Err(format!(
+                "{at}: [ pairs ] {} {} of '{}' is not an excluded pair (beyond nrexcl {} \
+                 and not in [ exclusions ]): GROMACS would price it twice",
+                i + 1,
+                j + 1,
+                mt.name,
+                mt.nrexcl
+            ));
+        }
+    }
+    let mut keys: Vec<(usize, usize)> = distance
+        .iter()
+        .filter(|&(_, &d)| d <= 3)
+        .map(|(&k, _)| k)
+        .chain(excl.iter().copied())
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    let mut rows = Vec::with_capacity(keys.len());
+    for key in keys {
+        let n_bonds = distance.get(&key).copied().unwrap_or(0);
+        let class = |table: [f64; 3]| match n_bonds {
+            d @ 1..=3 => table[d - 1],
+            _ => 1.0,
+        };
+        let (want_lj, want_coul, mut cells) = match listed.get(&key) {
+            Some((cells, _)) => (special.lj[2], special.coul[2], *cells),
+            None if excl.contains(&key) => (0.0, 0.0, [None; 5]),
+            None => (1.0, 1.0, [None; 5]),
+        };
+        if cells[3].is_none() && class(special.lj) != want_lj {
+            cells[3] = Some(want_lj);
+        }
+        if cells[4].is_none() && class(special.coul) != want_coul {
+            cells[4] = Some(want_coul);
+        }
+        rows.push((key.0, key.1, n_bonds, cells));
+    }
+    Ok(rows)
+}
+
 /// The excluded pairs `(i < j)` of a molecule: within `nrexcl` chemical
 /// bonds, and `[ exclusions ]`.
 fn excluded(mt: &MolType) -> HashSet<(usize, usize)> {
@@ -585,49 +711,28 @@ fn relation(rows: Vec<(Vec<Idx>, String)>) -> Result<Option<Block>, String> {
     Ok(Some(block))
 }
 
-/// The frame of `molecules` (`(molecule type, count)` in order).
-fn assemble(moltypes: &[MolType], molecules: &[(usize, usize)]) -> Result<Frame, String> {
-    // Per molecule type: the pairs GROMACS prices, and its exclusions.
-    let mut pair_lists: HashMap<usize, PairLists> = HashMap::new();
+/// The frame of `molecules` (`(molecule type, count)` in order), its special
+/// pairs weighed against `defaults` (the force field's `special_bonds`).
+fn assemble(
+    moltypes: &[MolType],
+    molecules: &[(usize, usize)],
+    defaults: Option<&super::Defaults>,
+) -> Result<Frame, String> {
+    let special = match defaults {
+        Some(d) => SpecialBonds {
+            lj: [0.0, 0.0, if d.gen_pairs { d.fudge_lj } else { 1.0 }],
+            coul: [0.0, 0.0, d.fudge_qq],
+        },
+        None => SpecialBonds {
+            lj: [0.0, 0.0, 1.0],
+            coul: [0.0, 0.0, 1.0],
+        },
+    };
+    let mut special_lists: HashMap<usize, SpecialRows> = HashMap::new();
     for &(m, _) in molecules {
-        if pair_lists.contains_key(&m) {
-            continue;
+        if let std::collections::hash_map::Entry::Vacant(slot) = special_lists.entry(m) {
+            slot.insert(special_rows(&moltypes[m], &special)?);
         }
-        let mt = &moltypes[m];
-        let n = mt.atoms.len();
-        if n > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
-            return Err(format!(
-                "molecule type '{}' has {n} atoms: its intramolecular pair list would be \
-                 n(n-1)/2 rows, and above {MAX_ATOMS_FOR_A_FULL_PAIR_LIST} atoms that is not \
-                 built",
-                mt.name
-            ));
-        }
-        let excl = excluded(mt);
-        let mut list = Vec::new();
-        for i in 0..n {
-            for j in i + 1..n {
-                if !excl.contains(&(i, j)) {
-                    list.push((i, j, false, [None; 5]));
-                }
-            }
-        }
-        for (i, j, cells, at) in &mt.pairs {
-            if !excl.contains(&((*i).min(*j), (*i).max(*j))) {
-                return Err(format!(
-                    "{at}: [ pairs ] {} {} of '{}' is not an excluded pair (beyond nrexcl {} \
-                     and not in [ exclusions ]): GROMACS would price it twice",
-                    i + 1,
-                    j + 1,
-                    mt.name,
-                    mt.nrexcl
-                ));
-            }
-            list.push((*i, *j, true, *cells));
-        }
-        let mut exclusions: Vec<(usize, usize)> = excl.into_iter().collect();
-        exclusions.sort_unstable();
-        pair_lists.insert(m, (list, exclusions));
     }
 
     let mut atoms = (
@@ -641,18 +746,17 @@ fn assemble(moltypes: &[MolType], molecules: &[(usize, usize)]) -> Result<Frame,
     );
     let mut relations: HashMap<&str, Vec<(Vec<Idx>, String)>> = HashMap::new();
     let mut constraints = (Vec::<Idx>::new(), Vec::<Idx>::new(), Vec::<F>::new());
-    let mut exclusions = (Vec::<Idx>::new(), Vec::<Idx>::new());
     let mut pairs = (
         Vec::<Idx>::new(),
         Vec::<Idx>::new(),
-        Vec::<bool>::new(),
+        Vec::<Idx>::new(),
         Vec::<Cells>::new(),
     );
     let mut offset = 0usize;
     let mut mol_id: Idx = 0;
     for &(m, count) in molecules {
         let mt = &moltypes[m];
-        let (list, excl) = &pair_lists[&m];
+        let rows = &special_lists[&m];
         for _ in 0..count {
             mol_id += 1;
             let at = |i: usize| (offset + i) as Idx;
@@ -685,36 +789,16 @@ fn assemble(moltypes: &[MolType], molecules: &[(usize, usize)]) -> Result<Frame,
                 constraints.1.push(at(j));
                 constraints.2.push(r0);
             }
-            for &(i, j) in excl {
-                exclusions.0.push(at(i));
-                exclusions.1.push(at(j));
-            }
-            for &(i, j, is_14, cells) in list {
+            for &(i, j, n_bonds, cells) in rows {
                 pairs.0.push(at(i));
                 pairs.1.push(at(j));
-                pairs.2.push(is_14);
+                pairs.2.push(n_bonds as Idx);
                 pairs.3.push(cells);
             }
             offset += mt.atoms.len();
         }
     }
 
-    // GROMACS prices every pair of two molecules: up to the size a full list
-    // is built for, the frame's list holds them too, so `compile` prices
-    // what GROMACS does. (Above it, a neighbour list does: `compile_typed`.)
-    if offset <= MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
-        let mol = &atoms.6;
-        for a in 0..offset {
-            for b in a + 1..offset {
-                if mol[a] != mol[b] {
-                    pairs.0.push(a as Idx);
-                    pairs.1.push(b as Idx);
-                    pairs.2.push(false);
-                    pairs.3.push([None; 5]);
-                }
-            }
-        }
-    }
     let mut frame = Frame::new();
     if offset == 0 {
         return Ok(frame);
@@ -740,35 +824,28 @@ fn assemble(moltypes: &[MolType], molecules: &[(usize, usize)]) -> Result<Frame,
         column(&mut block, "r0", constraints.2)?;
         frame.insert("constraints", block);
     }
-    if !exclusions.0.is_empty() {
-        let mut block = Block::new();
-        column(&mut block, "atomi", exclusions.0)?;
-        column(&mut block, "atomj", exclusions.1)?;
-        frame.insert("exclusions", block);
-    }
-    if !pairs.0.is_empty() {
-        let mut block = Block::new();
-        column(&mut block, "atomi", pairs.0)?;
-        column(&mut block, "atomj", pairs.1)?;
-        column(&mut block, "is_14", pairs.2)?;
-        for (c, key) in PAIR_OVERRIDE_COLUMNS.iter().enumerate() {
-            let cells: Vec<Option<f64>> = pairs.3.iter().map(|row| row[c]).collect();
-            if cells.iter().all(Option::is_none) {
-                continue;
-            }
-            let values: Vec<F> = cells.iter().map(|v| v.unwrap_or(0.0)).collect();
-            let valid: Vec<bool> = cells.iter().map(Option::is_some).collect();
-            block
-                .insert(
-                    *key,
-                    ArrayD::from_shape_vec(vec![values.len()], values)
-                        .map_err(|e| e.to_string())?,
-                    Some(valid),
-                )
-                .map_err(|e| e.to_string())?;
+    // Every molecule's special pairs, an empty block for a system with none:
+    // that no pair is special is what the file says.
+    let mut block = Block::new();
+    column(&mut block, "atomi", pairs.0)?;
+    column(&mut block, "atomj", pairs.1)?;
+    column(&mut block, "n_bonds", pairs.2)?;
+    for (c, key) in PAIR_OVERRIDE_COLUMNS.iter().enumerate() {
+        let cells: Vec<Option<f64>> = pairs.3.iter().map(|row| row[c]).collect();
+        if cells.iter().all(Option::is_none) {
+            continue;
         }
-        frame.insert("pairs", block);
+        let values: Vec<F> = cells.iter().map(|v| v.unwrap_or(0.0)).collect();
+        let valid: Vec<bool> = cells.iter().map(Option::is_some).collect();
+        block
+            .insert(
+                *key,
+                ArrayD::from_shape_vec(vec![values.len()], values).map_err(|e| e.to_string())?,
+                Some(valid),
+            )
+            .map_err(|e| e.to_string())?;
     }
+    frame.insert("pairs", block);
     Ok(frame)
 }
 
@@ -963,56 +1040,60 @@ SOL  2
         );
     }
 
-    /// nrexcl 3 excludes every pair of the 5-atom chain but C4-H1 (4 bonds
-    /// apart); the [ pairs ] rows are the 1-4 rows; water's are all excluded.
+    /// The row of the pair `(i, j)` in the frame's `pairs`.
+    fn row_of(frame: &Frame, i: u64, j: u64) -> usize {
+        let (a, b) = (
+            uints(frame, "pairs", "atomi"),
+            uints(frame, "pairs", "atomj"),
+        );
+        (0..a.len())
+            .find(|&r| (a[r], b[r]) == (i.min(j), i.max(j)))
+            .unwrap_or_else(|| panic!("no pairs row for {i}-{j}"))
+    }
+
+    /// The special pairs are what GROMACS prices otherwise than at full
+    /// strength: the nine pairs of the 5-atom chain within three bonds
+    /// (C4-H1 is four apart, a regular pair), with their `n_bonds`, and
+    /// each water's three. The [ pairs ] rows are 1-4 pairs, priced at the
+    /// fudges; the one with its own σ, ε carries them, at full LJ weight and
+    /// fudgeQQ Coulomb. No pair of two molecules is special.
     #[test]
-    fn pairs_are_what_gromacs_prices() {
+    fn pairs_are_what_gromacs_prices_otherwise() {
         let (_, frame) = system();
-        let (i, j) = (
+        let (i, j, hops) = (
             uints(&frame, "pairs", "atomi"),
             uints(&frame, "pairs", "atomj"),
+            uints(&frame, "pairs", "n_bonds"),
         );
-        let is_14: Vec<bool> = frame
-            .get("pairs")
-            .unwrap()
-            .get("is_14")
-            .unwrap()
-            .get::<bool>()
-            .unwrap()
-            .iter()
-            .copied()
-            .collect();
-        let rows: Vec<(u64, u64, bool)> = (0..i.len()).map(|r| (i[r], j[r], is_14[r])).collect();
-        // Per molecule (the butane's; a water's are all excluded), then every
-        // pair of two molecules.
-        assert_eq!(rows[..3], [(3, 4, false), (0, 3, true), (4, 2, true)]);
+        assert_eq!(i.len(), 9 + 3 + 3);
         let mol = |a: u64| if a < 5 { 0 } else { (a - 5) / 3 + 1 };
-        assert_eq!(rows.len(), 3 + 5 * 6 + 3 * 3);
-        assert!(rows[3..].iter().all(|&(a, b, f)| !f && mol(a) != mol(b)));
+        assert!((0..i.len()).all(|r| mol(i[r]) == mol(j[r]) && i[r] < j[r]));
+        assert!((0..i.len()).all(|r| !(i[r] == 3 && j[r] == 4)));
+        assert_eq!(hops[row_of(&frame, 0, 3)], 3);
+        assert_eq!(hops[row_of(&frame, 2, 4)], 3);
+        assert_eq!(hops[row_of(&frame, 0, 1)], 1);
+
         let pairs = frame.get("pairs").unwrap();
-        // The second [ pairs ] row carries its own σ, ε, at full LJ weight,
-        // fudgeQQ Coulomb; the first carries nothing.
+        let with = row_of(&frame, 2, 4);
         let eps = floats(&frame, "pairs", "epsilon");
-        assert!((eps[2] - 0.5 / 4.184).abs() < 1e-15);
-        assert_eq!(floats(&frame, "pairs", "sigma")[2], 3.0);
-        assert_eq!(floats(&frame, "pairs", "lj_scale")[2], 1.0);
-        assert_eq!(floats(&frame, "pairs", "coul_scale")[2], 0.8333);
+        assert!((eps[with] - 0.5 / 4.184).abs() < 1e-15);
+        assert_eq!(floats(&frame, "pairs", "sigma")[with], 3.0);
+        assert_eq!(floats(&frame, "pairs", "lj_scale")[with], 1.0);
+        assert_eq!(floats(&frame, "pairs", "coul_scale")[with], 0.8333);
         let valid = pairs.validity("epsilon").unwrap();
-        assert_eq!(valid[..3], [false, false, true]);
-        assert!(valid[3..].iter().all(|v| !v));
+        assert_eq!(valid.iter().filter(|v| **v).count(), 1);
+        assert!(valid[with]);
         assert!(pairs.get("charge_product").is_none());
     }
 
+    /// A water's `[ exclusions ]` are its three pairs, weighed 0; `settles`
+    /// are two O-H and one H-H constraints.
     #[test]
     fn exclusions_and_settles() {
         let (_, frame) = system();
-        let (i, j) = (
-            uints(&frame, "exclusions", "atomi"),
-            uints(&frame, "exclusions", "atomj"),
-        );
-        // 9 of the chain (10 pairs, C4-H1 not) and 3 per water.
-        assert_eq!(i.len(), 9 + 3 + 3);
-        assert!((0..i.len()).all(|r| i[r] < j[r]));
+        for (a, b) in [(5, 6), (5, 7), (6, 7), (8, 9), (8, 10), (9, 10)] {
+            row_of(&frame, a, b);
+        }
         assert_eq!(uints(&frame, "constraints", "atomi"), [5, 5, 6, 8, 8, 9]);
         let r0 = floats(&frame, "constraints", "r0");
         assert!((r0[0] - 0.9572).abs() < 1e-12 && (r0[2] - 1.5139).abs() < 1e-12);
@@ -1024,9 +1105,10 @@ SOL  2
         let text = format!("{DIRECTIVES}{MOLECULES}")
             .replace("5  3  1  0.3  0.5", "5  3  2  0.5  0.2  -0.3  0.31  0.4");
         let (_, frame) = read(&text);
-        assert!((floats(&frame, "pairs", "charge_product")[2] - (-0.06)).abs() < 1e-15);
-        assert_eq!(floats(&frame, "pairs", "coul_scale")[2], 0.5);
-        assert!((floats(&frame, "pairs", "sigma")[2] - 3.1).abs() < 1e-12);
+        let r = row_of(&frame, 2, 4);
+        assert!((floats(&frame, "pairs", "charge_product")[r] - (-0.06)).abs() < 1e-15);
+        assert_eq!(floats(&frame, "pairs", "coul_scale")[r], 0.5);
+        assert!((floats(&frame, "pairs", "sigma")[r] - 3.1).abs() < 1e-12);
     }
 
     #[test]

@@ -37,8 +37,8 @@ use crate::ff::forcefield::ForceField;
 use crate::ff::ir::Params;
 use crate::ff::ir::{LammpsForm, ParamKind, ParamSource, StyleSpec};
 use crate::ff::potential::ForceTerm;
-use crate::ff::style_registry::Registry;
 use crate::ff::style_registry::conformance::{Rng, SEED};
+use crate::ff::style_registry::{Registry, RowSource};
 use crate::io::lammps::LammpsForcefieldWriter;
 use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
 use crate::io::reader::ForceFieldReader;
@@ -54,8 +54,9 @@ const CONFIGS: usize = 64;
 
 /// Four atoms of type `A`, a non-planar chain (`super::tests::chain`'s,
 /// moved by up to ±0.2 Å per coordinate), with charges; one term of
-/// `category` over the first `arity` atoms typed `t`, and the `pairs` list
-/// of the three pairs that are no chain neighbours.
+/// `category` over the first `arity` atoms typed `t`, and the `pairs` block
+/// under which the pair styles price the three pairs that are no chain
+/// neighbours.
 fn chain(category: &str, arity: usize, rng: &mut Rng) -> (Frame, Vec<F>) {
     const XYZ: [F; 12] = [
         0.0, 0.0, 0.0, 1.52, 0.1, 0.05, 2.1, 1.45, -0.1, 3.55, 1.6, 0.6,
@@ -91,22 +92,10 @@ fn chain(category: &str, arity: usize, rng: &mut Rng) -> (Frame, Vec<F>) {
         block.insert("type", strings(vec!["t"]), None).unwrap();
         frame.insert(format!("{category}s"), block);
     }
-    let mut pairs = Block::new();
-    pairs
-        .insert(
-            "atomi",
-            Array1::from_vec(vec![0 as Idx, 0, 1]).into_dyn(),
-            None,
-        )
-        .unwrap();
-    pairs
-        .insert(
-            "atomj",
-            Array1::from_vec(vec![2 as Idx, 3, 3]).into_dyn(),
-            None,
-        )
-        .unwrap();
-    frame.insert("pairs", pairs);
+    frame.insert(
+        "pairs",
+        crate::ff::potential::pair::fixtures::pricing_only(4, &[(0, 2), (0, 3), (1, 3)], &[]),
+    );
     (frame, x)
 }
 
@@ -671,9 +660,15 @@ fn every_param_source_is_what_its_kernel_reads() {
         let (mut frame, x) = chain(&spec.category, arity, &mut rng);
         // The frame's own periodic box — frame data, which a kernel that
         // needs it (PME's Ewald sums) reads off the frame, never off the
-        // style: every style builds from its declared parameters alone.
-        frame.simbox =
-            Some(SimBox::new(Cell::Lengths([20.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap());
+        // style: every style builds from its declared parameters alone. A
+        // pair style compile prices from its candidate pairs is priced in
+        // free space (compile refuses it a periodic box).
+        let candidate_priced = category.is_pair_driven()
+            && builtin.row_source(&spec.category, &spec.name) != Some(RowSource::Atoms);
+        if !candidate_priced {
+            frame.simbox =
+                Some(SimBox::new(Cell::Lengths([20.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap());
+        }
         // A per-instance style's every declared parameter as a per-instance
         // column: the block's (one row), or the atoms' for a pair. A
         // table-driven style is handed none — a bonded form reads a column

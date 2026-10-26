@@ -4,12 +4,12 @@ use crate::io::mrec::zarr_storage::frame_io::{
 use crate::io::mrec::zarr_storage::record_io::zerr;
 use molrs::core::DType;
 use molrs::core::MolRsError;
-use std::sync::{Arc, Once};
+use std::sync::Arc;
 use zarrs::array::codec::array_to_bytes::sharding::{ShardingCodecOptions, SubchunkWriteOrder};
 use zarrs::array::codec::bytes_to_bytes::crc32c::Crc32cCodec;
 use zarrs::array::data_type::{Float16DataType, Float32DataType};
 use zarrs::array::{ArraySubset, BytesToBytesCodecTraits, CodecOptions, CodecSpecificOptions};
-use zarrs::config::{global_config, global_config_mut};
+use zarrs::config::global_config;
 
 use super::layout::{
     ASSUMED_STRING_ITEMSIZE, MAX_CHUNKS_PER_SHARD, MIN_CHUNK_BYTES, SHARD_TARGET_BYTES,
@@ -174,16 +174,6 @@ pub(super) fn deterministic_shard_layout() -> CodecSpecificOptions {
     CodecSpecificOptions::default().with_option(
         ShardingCodecOptions::default().with_subchunk_write_order(SubchunkWriteOrder::C),
     )
-}
-
-/// Switch off zarrs' `_zarrs` provenance attribute on every array this process
-/// creates. Done once: the attribute is bundle noise on a contract layout, and
-/// the flag is process-wide by the library's design.
-pub(super) fn quiet_zarrs_metadata() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        global_config_mut().set_include_zarrs_metadata(false);
-    });
 }
 
 /// The bytes-to-bytes codecs of one inner chunk: the byte shuffle of a

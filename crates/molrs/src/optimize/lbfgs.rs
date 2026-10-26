@@ -242,8 +242,11 @@ where
                 s *= BACKTRACK;
             }
             if !made {
-                // Stationary point — no decrease possible.
-                converged = true;
+                // No step lowers the energy, yet the gradient test at the top
+                // of this iteration failed: the line search is stuck (a
+                // gradient inconsistent with its energy, or a singular term),
+                // not at a minimum. Stop without claiming convergence; a
+                // stationary point is caught by that gradient test instead.
                 break;
             }
         }
@@ -359,5 +362,17 @@ mod tests {
         for xi in &x {
             assert!(xi.abs() < 1e-4, "coord should reach 0, got {xi}");
         }
+    }
+
+    /// A line search that finds no lower energy is not convergence: the
+    /// force here is 5 everywhere, but the energy (a flat 0) never drops, so
+    /// no step passes Armijo. The run must stop and say it did not converge.
+    #[test]
+    fn a_failed_line_search_is_not_convergence() {
+        let eval = |x: &[f64]| -> (f64, Vec<f64>) { (0.0, vec![5.0; x.len()]) };
+        let mut x = vec![0.0; 6];
+        let report = minimize_lbfgs_rms(&mut x, 200, 1e-6, eval);
+        assert!(!report.converged, "{report:?}");
+        assert!(report.final_grad_rms > 1.0, "{report:?}");
     }
 }

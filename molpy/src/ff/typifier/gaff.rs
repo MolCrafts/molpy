@@ -66,8 +66,7 @@ use super::PyTypifier;
 /// >>> labelled = molpy.ff.typifier.AtdTypifier(parameter_set="gaff2").typify(mol)
 /// >>> gaff = molpy.ff.typifier.GaffTypifier(parameter_set="gaff2")
 /// >>> frame = gaff.typify(labelled).to_frame()
-/// >>> frame["pairs"] = molpy.ff.potential.intramolecular_pairs(frame)
-/// >>> pots = molpy.ff.compile.PotentialCompiler(gaff.forcefield()).compile(frame)
+/// >>> pots = molpy.ff.PotentialCompiler(gaff.forcefield()).compile(frame)
 #[pyclass(module = "molpy.ff.typifier", name = "GaffTypifier", extends = PyTypifier, subclass)]
 #[derive(Debug)]
 pub struct PyGaffTypifier {

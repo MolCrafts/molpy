@@ -51,7 +51,7 @@ solvent) in one run.
 | Object | Role |
 |---|---|
 | `Target(frame, count)` | One species: template `Frame` + number of copies. Immutable builders: `.with_name`, `.with_restraint`, … |
-| `mp.core.Cuboid(origin, lengths)` | A molrs region used as a restraint: keep atoms inside an axis-aligned box (Å). |
+| `mp.core.Cuboid(origin, lengths)` | A region used as a restraint: keep atoms inside an axis-aligned box (Å). |
 | `GencanPack()` | Rigid-body packer. Chain `.with_seed`, `.with_tolerance`, `.with_periodic_box`, … |
 | `packer.run([targets], max_loops=…)` | Run packing; returns a `State` — `.frame` (the packed `Frame`), `.converged`, `.fdist`, … |
 

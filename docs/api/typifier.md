@@ -34,7 +34,7 @@ creation — and it is the only writer of `forcefield()`.
 | `ElementTypifier` | `type` labels from element symbols; defines no force field | Writers that need labels on an untyped molecule |
 | `AtdTypifier` | `AtdTypifier(parameter_set="gaff2")`: antechamber's atom-type tables (`gaff`, `gaff2`, `amber`, `bcc`, …) evaluated natively — atom types only, no charges or parameters | GAFF / GAFF2 or BCC atom types without running antechamber |
 | `GaffTypifier` | `GaffTypifier(parameter_set="gaff2")`: GAFF / GAFF2 bonded terms and parameters, natively, for atoms `AtdTypifier` already typed (exact `gaff.dat` rows, wildcards, or `parmchk2`-style estimates marked `estimated`) | GAFF / GAFF2 parameters without AmberTools |
-| `AntechamberTypifier` | `AntechamberTypifier(parameter_set="gaff2")`: antechamber → parmchk2 → tleap for one complete molecule; needs AmberTools | An antechamber charge method other than AM1-BCC / ABCG2; exporting an estimated GAFF term while molrs's LAMMPS / GROMACS writers refuse it |
+| `AntechamberTypifier` | `AntechamberTypifier(parameter_set="gaff2")`: antechamber → parmchk2 → tleap for one complete molecule; needs AmberTools | An antechamber charge method other than AM1-BCC / ABCG2 |
 | `TleapTypifier` | `TleapTypifier(parameter_set="gaff2")`: tleap alone over a finished graph that already carries AMBER types and charges (a graph with ports is refused); needs AmberTools | Extra frcmod parameters on top of the leaprc |
 
 Every name is on `mp.ff.typifier`: the native typifiers and the two
@@ -48,9 +48,9 @@ them. A native GAFF force field merges with one read from tleap's prmtop, an
 chain is typed natively too. The AmberTools typifiers read tleap's prmtop
 back; they are for what only that pipeline does: parameters of your own on
 top of the leaprc (`TleapTypifier`) and antechamber's other charge methods
-(`AntechamberTypifier`). molrs 0.18.0's LAMMPS and GROMACS writers refuse the
-`estimated` parameter `GaffTypifier` puts on a term it estimated, so such a
-molecule is exported through `AntechamberTypifier` for now. Every GAFF entry
+(`AntechamberTypifier`). The engine writers pass over the `estimated`
+provenance `GaffTypifier` puts on a term it estimated, so a natively typed
+molecule exports as is. Every GAFF entry
 point takes the same required `parameter_set` (`"gaff"` or `"gaff2"`, no
 default). The AmberTools typifiers shell out through [`mp.tool`](tool.md); see
 [Optional external tools](../getting-started/external-tools.md#ambertools-gaff-parameters).
@@ -119,7 +119,8 @@ class Tip3pTypifier(mp.ff.typifier.Typifier):
         return mp.ff.typifier.TypeAssignment(
             nodes,
             {mp.Bond: bonds},
-            styles=[("atom", "full", {}), ("bond", "harmonic", {}), ("pair", "lj/cut", {})],
+            # a pair style states its cutoff: the typifier declares its convention
+            styles=[("atom", "full", {}), ("bond", "harmonic", {}), ("pair", "lj/cut", {"cutoff": 10.0})],
             pairs=[
                 ("lj/cut", "OW", ["OW"], {"epsilon": 0.1521, "sigma": 3.1507}),
                 ("lj/cut", "HW", ["HW"], {"epsilon": 0.0, "sigma": 0.0}),
@@ -130,7 +131,7 @@ class Tip3pTypifier(mp.ff.typifier.Typifier):
 tip3p = Tip3pTypifier()
 water = tip3p.typify(mp.io.smiles.read_smiles("[H]O[H]").to_atomistic())
 assert [bond["type"] for bond in water.bonds] == ["OW-HW", "OW-HW"]
-assert tip3p.forcefield().get_style("bond", "harmonic").get_type_by_name("OW-HW")["k"] == 450.0
+assert tip3p.forcefield().get_style("bond", "harmonic").get_type_by_name("OW-HW").params["k"] == 450.0
 ```
 
 ## Related

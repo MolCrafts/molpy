@@ -12,11 +12,12 @@ use zarrs::storage::{
 
 use super::codec::{
     Extents, Pipeline, deterministic_shard_layout, dtype_from_tag, inner_codecs, meta_layout,
-    quiet_zarrs_metadata, rows_subset,
+    rows_subset,
 };
 use super::frame_content::empty_column;
 use super::schema::BlockSchema;
 use super::store_access::inner_rows_of;
+use crate::io::mrec::zarr_storage::frame_io::quiet_zarrs_metadata;
 
 // ---------------------------------------------------------------------------
 // Growth arrays

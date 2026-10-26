@@ -1,4 +1,4 @@
-//! Python bindings for `molrs::ff::compile` (`molpy.ff.compile`): a force
+//! Python bindings for `molrs::ff::compile` (on `molpy.ff` itself): a force
 //! field bound to its kernels.
 //!
 //! * [`PyPotentialCompiler`] — a `ForceField` compiled into kernels:
@@ -24,8 +24,8 @@ use molrs::op::F;
 use crate::core::frame::PyFrame;
 use crate::ff::forcefield::PyForceField;
 use crate::ff::ir;
-use crate::ff::potential::{PotBacking, PyPotentials, PyWeightedTerms};
-use crate::ff::style_registry::{column, declared};
+use crate::ff::potential::{PyPotentials, PyWeightedTerms};
+use crate::ff::style_registry::column;
 
 /// The terms' atoms: an ``(n, arity)`` array of indices.
 fn term_atoms(atoms: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<usize>>> {
@@ -123,12 +123,12 @@ fn per_term(
 /// Examples
 /// --------
 /// >>> import numpy as np
-/// >>> from molpy.ff.compile import ExplicitTerms
+/// >>> from molpy.ff import ExplicitTerms
 /// >>> pots = ExplicitTerms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.5).compile()
-/// >>> e, f = pots.calc_energy_forces(np.array([0.0, 0, 0, 1.6, 0, 0]))
+/// >>> e, f = pots.evaluate(np.array([0.0, 0, 0, 1.6, 0, 0]))
 /// >>> round(e, 12)
 /// 3.0
-#[pyclass(module = "molpy.ff.compile", name = "ExplicitTerms", frozen)]
+#[pyclass(module = "molpy.ff", name = "ExplicitTerms", frozen)]
 pub struct PyExplicitTerms {
     inner: ExplicitTerms,
 }
@@ -167,10 +167,7 @@ impl PyExplicitTerms {
         crate::ff::style_registry::clear_kernel_err();
         let pots = self.inner.compile().map_err(ir::compile_err)?;
         crate::ff::style_registry::take_kernel_err()?;
-        Ok(PyPotentials {
-            inner: PotBacking::Compiled(pots),
-            err_slots: vec![crate::ff::style_registry::kernel_err_slot()],
-        })
+        Ok(PyPotentials::of(pots))
     }
 }
 
@@ -187,7 +184,7 @@ fn explicit_terms(
     let atoms = term_atoms(atoms)?;
     let n = atoms.len();
     let (pair, spec): (bool, Option<StyleSpec>) =
-        molrs::ff::style_registry::with_global_registry(|r| {
+        molrs::ff::style_registry::GlobalRegistry.with(|r| {
             (
                 r.category(category).is_some_and(|c| c.is_pair_driven()),
                 r.style(category, style).map(|(s, _)| s.clone()),
@@ -200,7 +197,7 @@ fn explicit_terms(
         let what = format!("{who}: `{key}`");
         let decl =
             match &spec {
-                Some(spec) => Some(declared(spec, pair, &key).ok_or_else(|| {
+                Some(spec) => Some(spec.declaration(&key, pair).ok_or_else(|| {
                     PyTypeError::new_err(format!("{who} has no parameter `{key}`"))
                 })?),
                 None => None,
@@ -250,7 +247,7 @@ fn explicit_terms(
 
 /// Compiles a :class:`ForceField` into evaluable kernels.
 ///
-/// Exposed to Python as ``molpy.ff.compile.PotentialCompiler``. It owns a **copy** of
+/// Exposed to Python as ``molpy.ff.PotentialCompiler``. It owns a **copy** of
 /// the force field, taken at construction: later edits to that
 /// :class:`ForceField` do not reach a compiler that already exists — make a
 /// new one.
@@ -258,17 +255,15 @@ fn explicit_terms(
 /// Three doors, each doing one thing:
 ///
 /// * :meth:`compile` — bind a typed :class:`Frame` now;
-/// * :meth:`defer` — a :class:`Potentials` that binds the topology of the
-///   :class:`Frame` it is evaluated on;
 /// * :meth:`compile_typed` — the kernels of a neighbour-driven evaluation,
 ///   for MD.
 ///
 /// Examples
 /// --------
-/// >>> compiler = molpy.ff.compile.PotentialCompiler(typifier.forcefield())
+/// >>> compiler = molpy.ff.PotentialCompiler(typifier.forcefield())
 /// >>> potentials = compiler.compile(frame)
 /// >>> energy = potentials.calc_energy(frame)
-#[pyclass(module = "molpy.ff.compile", name = "PotentialCompiler", subclass)]
+#[pyclass(module = "molpy.ff", name = "PotentialCompiler", subclass)]
 pub struct PyPotentialCompiler {
     ff: ForceField,
 }
@@ -292,24 +287,21 @@ impl PyPotentialCompiler {
     /// Build evaluable :class:`Potentials` against a typed ``frame``.
     ///
     /// The frame must carry the topology + ``type`` columns each style
-    /// resolves (``atoms``/``bonds``/``angles``/``dihedrals``/``impropers``/
-    /// ``pairs``), as produced by a typifier or an external emitter. Every
-    /// pair style is resolved against the frame's ``pairs`` block — a fixed
-    /// list, right for a molecule in free space — and prices a row only
-    /// inside its ``cutoff`` (``r < cutoff``, with its switch where it has
-    /// one), as :meth:`compile_typed` and LAMMPS do; a style stating no
-    /// ``cutoff`` prices every row. ``pair coul/long/pme`` reads the
-    /// frame's periodic ``box``. When the frame has a ``pairs`` block, the
-    /// real-space erfc term is priced over that list (an exclusion row
-    /// omitted, a 1-4 row at the Coulomb 1-4 scale); with no ``pairs``
-    /// block that term stays the minimum-image loop inside the kernel.
-    /// The reciprocal sum still reads the box.
+    /// resolves (``atoms``/``bonds``/``angles``/``dihedrals``/``impropers``)
+    /// and its special pairs (``pairs``), as a typifier produces them. The
+    /// pair styles price every pair of atoms — right for a molecule in free
+    /// space — inside their ``cutoff`` (``r < cutoff``, with the switch of a
+    /// style that has one), as :meth:`compile_typed` and LAMMPS do. A pair
+    /// the ``pairs`` block names takes its weight (its ``lj_scale`` /
+    /// ``coul_scale`` cell, else the force field's ``special_bonds`` for its
+    /// ``n_bonds``); every other pair is at full strength. ``pair
+    /// coul/long/pme`` prices the same weights in its own minimum-image loop
+    /// over the frame's periodic ``box``.
     ///
     /// Parameters
     /// ----------
     /// frame : Frame
-    ///     Typed molecular data. Required; for potentials that bind at
-    ///     evaluation time use :meth:`defer`.
+    ///     Typed molecular data.
     ///
     /// Returns
     /// -------
@@ -321,55 +313,36 @@ impl PyPotentialCompiler {
     ///     If ``frame`` is not a :class:`Frame` (``None`` included).
     /// ValueError
     ///     If a style has no registered kernel, a type label is unknown, the
-    ///     force field's 1-2 / 1-3 weights are not 0 or 1, or a style that
-    ///     reads the box (``coul/long/pme``) meets a frame without a periodic
-    ///     one.
+    ///     frame's bonds name a pair no ``pairs`` row does (generate them with
+    ///     the angles and dihedrals), a pair style priced from every pair
+    ///     meets a periodic frame (use :meth:`compile_typed`), or a style that
+    ///     reads the box (``coul/long/pme``) meets a frame without one.
     fn compile(&self, frame: &PyFrame) -> PyResult<PyPotentials> {
         crate::ff::style_registry::clear_kernel_err();
         let potentials = frame
             .with_frame(|core| PotentialCompiler::new(&self.ff).compile(core))?
             .map_err(ir::compile_err)?;
         crate::ff::style_registry::take_kernel_err()?;
-        Ok(PyPotentials {
-            inner: PotBacking::Compiled(potentials),
-            err_slots: vec![crate::ff::style_registry::kernel_err_slot()],
-        })
-    }
-
-    /// A :class:`Potentials` that compiles when it is evaluated.
-    ///
-    /// It holds this compiler's force field and binds the topology and
-    /// coordinates of the :class:`Frame` passed to ``calc_energy(frame)`` /
-    /// ``calc_forces(frame)`` (the molpy evaluation model). It has no members
-    /// until then, so ``len`` is ``0``, and it cannot be evaluated on a bare
-    /// coordinate array or moved into an integrator.
-    ///
-    /// Returns
-    /// -------
-    /// Potentials
-    fn defer(&self) -> PyPotentials {
-        PyPotentials {
-            inner: PotBacking::Deferred(self.ff.clone()),
-            err_slots: vec![crate::ff::style_registry::kernel_err_slot()],
-        }
+        Ok(PyPotentials::of(potentials))
     }
 
     /// Build the kernels for a **neighbour-driven** evaluation, with the
     /// special-bonds weights each one takes.
     ///
     /// The counterpart of :meth:`compile`, and what periodic MD needs. That
-    /// one resolves every pair style against the frame's ``pairs`` block — a
-    /// fixed list, right for a free-boundary molecule and wrong for a
-    /// periodic system; over the same pairs the two price the same energy. This one resolves them against the
-    /// **atoms**, reads no ``pairs`` block, and requires the style's declared
-    /// cutoff. ``pair coul/long/pme`` prices its real-space erfc over the
-    /// neighbour table; the reciprocal sum still reads the periodic box and
-    /// takes no pair weight.
+    /// one prices every pair of atoms at raw distances, right for a
+    /// free-boundary molecule and wrong for a periodic system; over the same
+    /// pairs the two price the same energy. This one resolves the pair styles
+    /// against the **atoms**, so they price whatever pairs a neighbour table
+    /// holds, and requires each style's declared cutoff. ``pair
+    /// coul/long/pme`` prices its real-space erfc over the neighbour table;
+    /// its reciprocal sum reads the periodic box and corrects the special
+    /// pairs by their weights.
     ///
-    /// The weights come from the force field's ``special_bonds`` walked over
-    /// the frame's bond graph. Without them a neighbour table would count a
-    /// bonded pair twice: once by the bond term and once at full non-bonded
-    /// strength, at bond length.
+    /// The weights are the frame's special pairs (``pairs``) under the force
+    /// field's ``special_bonds``, as :meth:`compile` weighs them. Without
+    /// them a neighbour table would count a bonded pair twice: once by the
+    /// bond term and once at full non-bonded strength, at bond length.
     ///
     /// Parameters
     /// ----------
@@ -386,27 +359,13 @@ impl PyPotentialCompiler {
     ///     If a style cannot be built, or a pair style has no
     ///     neighbour-driven form.
     fn compile_typed(&self, frame: &PyFrame) -> PyResult<PyWeightedTerms> {
-        let (topo, members) = frame.with_frame(|core| -> PyResult<_> {
-            let topo = molrs::core::Topology::from_frame(core)
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
-            crate::ff::style_registry::clear_kernel_err();
-            let members = PotentialCompiler::new(&self.ff)
-                .compile_typed(core)
-                .map_err(ir::compile_err)?;
-            crate::ff::style_registry::take_kernel_err()?;
-            Ok((topo, members))
-        })??;
-        let bound = members
-            .into_iter()
-            .map(|(pot, weights)| {
-                let special = weights
-                    .map(|w| w.special_weights(&topo))
-                    .unwrap_or_default();
-                (pot, special)
-            })
-            .collect();
+        crate::ff::style_registry::clear_kernel_err();
+        let members = frame
+            .with_frame(|core| PotentialCompiler::new(&self.ff).compile_typed(core))?
+            .map_err(ir::compile_err)?;
+        crate::ff::style_registry::take_kernel_err()?;
         Ok(PyWeightedTerms {
-            members: Some(bound),
+            members: Some(members),
         })
     }
 
@@ -419,7 +378,7 @@ impl PyPotentialCompiler {
     }
 }
 
-/// Register `molpy.ff.compile`.
+/// Register the compiler classes `molpy.ff` re-exports.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPotentialCompiler>()?;
     m.add_class::<PyExplicitTerms>()?;

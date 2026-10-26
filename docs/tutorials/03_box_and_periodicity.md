@@ -41,9 +41,10 @@ print(cubic.style, ortho.style, tric.style) # orthogonal orthogonal triclinic
 ```
 
 You can also pass the cell `h` directly: a 3×3 matrix whose columns are the
-lattice vectors. The constructor is `Box(cell, origin=(0, 0, 0),
-pbc=(True, True, True))`, where `cell` is that matrix or a `mp.core.Cell`;
-`mp.Box(mp.core.Cell.undefined(), pbc=[False] * 3)` is a free box with no cell.
+lattice vectors. The constructor is `Box(cell, origin=(0, 0, 0), pbc=None)`,
+where `cell` is that matrix or a `mp.core.Cell`; an omitted `pbc` is periodic
+on every axis of a defined cell and on none of an undefined one, so
+`mp.Box(mp.core.Cell.undefined())` is a free box with no cell.
 
 ```python
 matrix = np.array([[10.0, 1.0, 0.5],
@@ -159,7 +160,9 @@ frame = mp.io.read_lammps_data(Path("system.data"), atom_style="atomic")
 print(frame.box.lengths) # [10. 10. 10.], from the data file header
 ```
 
-All compute operators (MSD, RDF, etc.) read the box from `frame.box`.
+Compute operators take the box as an argument — `NeighborList.build(points,
+frame.box)` before an RDF, `simbox=` on an MSD accumulator's `push` — and
+`frame.box` is where a workflow reads it from.
 
 ## When the box matters
 

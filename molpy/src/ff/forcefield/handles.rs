@@ -75,9 +75,9 @@ impl Category {
         if let Some(builtin) = Self::BUILTIN.into_iter().find(|c| c.name() == name) {
             return Ok(builtin);
         }
-        let declared =
-            molrs::ff::style_registry::with_global_registry(|r| r.category(name).is_some())
-                || ff.styles().iter().any(|s| s.category() == name);
+        let declared = molrs::ff::style_registry::GlobalRegistry
+            .with(|r| r.category(name).is_some())
+            || ff.styles().iter().any(|s| s.category() == name);
         if declared {
             Ok(Self::Relation(Arc::from(name)))
         } else {
@@ -230,6 +230,21 @@ fn missing_style(category: &Category, name: &str) -> PyErr {
 // Styles
 // ---------------------------------------------------------------------------
 
+/// Every ``**params`` value as a param, all checked before any is written.
+fn checked_params(
+    params: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Vec<(String, molrs::ff::ir::ParamValue)>> {
+    params
+        .into_iter()
+        .flat_map(|d| d.iter())
+        .map(|(k, v)| {
+            let key: String = k.extract()?;
+            let value = param_from_py(&key, &v)?;
+            Ok((key, value))
+        })
+        .collect()
+}
+
 /// Handle of one style of a :class:`ForceField`.
 ///
 /// Made by ``ForceField.def_style`` / ``get_style`` / ``get_styles``; its
@@ -373,27 +388,26 @@ impl PyStyle {
         self.with_style(py, |style| params_to_dict(py, style.params()))?
     }
 
-    /// One style-level param, or ``None``.
-    fn __getitem__<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
-        self.params(py)?.get_item(key)
-    }
-
-    /// Set one style-level param (``Style::set_param``): a number (how a
-    /// caller declares a cutoff), a string (``s["mixing"] = "geometric"``) or
-    /// an array of numbers (stored as float64).
+    /// Set style-level params (``Style::set_param``), each a number (how a
+    /// caller declares a cutoff: ``s.set(cutoff=12.0)``), a string
+    /// (``s.set(mixing="geometric")``) or an array of numbers (stored as
+    /// float64). Every value is checked before any is written.
     ///
     /// Raises
     /// ------
     /// TypeError
-    ///     If ``value`` is neither a number, a str nor an array of numbers.
-    fn __setitem__(&self, py: Python<'_>, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = param_from_py(key, value)?;
+    ///     If a value is neither a number, a str nor an array of numbers.
+    #[pyo3(signature = (**params))]
+    fn set(&self, py: Python<'_>, params: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+        let values = checked_params(params)?;
         let mut ff = self.ff.bind(py).try_borrow_mut()?;
         let style = ff
             .inner
             .get_style_mut(self.category.name(), &self.name)
             .ok_or_else(|| missing_style(&self.category, &self.name))?;
-        style.set_param(key, value);
+        for (key, value) in values {
+            style.set_param(&key, value);
+        }
         Ok(())
     }
 
@@ -695,9 +709,8 @@ impl PyRelationStyle {
 
 /// Handle of one type of a :class:`ForceField`.
 ///
-/// Its params read as a mapping (``t["k"]``, ``"k" in t``, ``t.keys()``) and
-/// write one at a time (``t["k"] = 300.0``, ``t["element"] = "C"``,
-/// ``t["grid"] = np.zeros((24, 24))``).
+/// Its params read as one dict (``t.params["k"]``) and are written by
+/// ``t.set(k=300.0, element="C", grid=np.zeros((24, 24)))``.
 /// ``endpoints`` are the ``AtomType`` handles it is defined on. Two handles
 /// are equal when they name the same category, style and type of the same
 /// force field.
@@ -761,68 +774,41 @@ impl PyFfType {
         self.params_of(py)
     }
 
-    /// One param, or ``None``.
-    fn __getitem__<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
-        self.params_of(py)?.get_item(key)
-    }
-
-    /// One param, or `default`.
-    #[pyo3(signature = (key, default = None))]
-    fn get<'py>(
-        &self,
-        py: Python<'py>,
-        key: &str,
-        default: Option<Bound<'py, PyAny>>,
-    ) -> PyResult<Option<Bound<'py, PyAny>>> {
-        Ok(self.params_of(py)?.get_item(key)?.or(default))
-    }
-
-    fn __contains__(&self, py: Python<'_>, key: &str) -> PyResult<bool> {
-        self.params_of(py)?.contains(key)
-    }
-
-    /// Set one param: a number, a string (``t["element"] = "C"``) or an
-    /// array (a numpy array or nested sequence of numbers, stored as
-    /// float64: ``t["grid"] = np.zeros((24, 24))``).
+    /// Set params, each a number, a string (``t.set(element="C")``) or an
+    /// array (a numpy array or nested sequence of numbers, stored as float64:
+    /// ``t.set(grid=np.zeros((24, 24)))``). Every value is checked before any
+    /// is written.
     ///
     /// Raises
     /// ------
     /// TypeError
-    ///     If ``value`` is neither a number, a str nor an array of numbers.
+    ///     If a value is neither a number, a str nor an array of numbers.
     /// ValueError
     ///     If the type is an endpoint no atom style defines.
-    fn __setitem__(&self, py: Python<'_>, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    #[pyo3(signature = (**params))]
+    fn set(&self, py: Python<'_>, params: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let Some(style) = &self.style else {
             return Err(PyValueError::new_err(format!(
                 "atom type '{}' is defined by no atom style; it has no params to set",
                 self.name
             )));
         };
-        let value = param_from_py(key, value)?;
+        let values = checked_params(params)?;
         let mut ff = self.ff.bind(py).try_borrow_mut()?;
         let style = ff
             .inner
             .get_style_mut(self.category.name(), style)
             .ok_or_else(|| missing_style(&self.category, style))?;
-        let set = style.set_type_param(&self.name, key, value);
-        if !set {
-            return Err(PyValueError::new_err(format!(
-                "no {} type named '{}'",
-                self.category.name(),
-                self.name
-            )));
+        for (key, value) in values {
+            if !style.set_type_param(&self.name, &key, value) {
+                return Err(PyValueError::new_err(format!(
+                    "no {} type named '{}'",
+                    self.category.name(),
+                    self.name
+                )));
+            }
         }
         Ok(())
-    }
-
-    /// The param names.
-    fn keys(&self, py: Python<'_>) -> PyResult<Vec<String>> {
-        self.params_of(py)?.keys().extract()
-    }
-
-    /// ``(name, value)`` param pairs.
-    fn items<'py>(&self, py: Python<'py>) -> PyResult<Vec<(String, Bound<'py, PyAny>)>> {
-        self.params_of(py)?.items().extract()
     }
 
     /// The ``AtomType`` handles this type is defined on (none for an atom

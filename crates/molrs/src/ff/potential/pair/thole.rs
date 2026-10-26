@@ -142,16 +142,8 @@ mod tests {
                 None,
             )
             .unwrap();
-        let mut pairs = Block::new();
-        pairs
-            .insert("atomi", Array1::from_vec(vec![0_u64]).into_dyn(), None)
-            .unwrap();
-        pairs
-            .insert("atomj", Array1::from_vec(vec![1_u64]).into_dyn(), None)
-            .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        frame.insert("pairs", pairs);
         frame
     }
 
@@ -202,16 +194,8 @@ mod tests {
                 .insert(k, Array1::from_vec(v.to_vec()).into_dyn(), None)
                 .unwrap();
         }
-        let mut pairs = Block::new();
-        pairs
-            .insert("atomi", Array1::from_vec(vec![0_u64]).into_dyn(), None)
-            .unwrap();
-        pairs
-            .insert("atomj", Array1::from_vec(vec![1_u64]).into_dyn(), None)
-            .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        frame.insert("pairs", pairs);
 
         let energy = |style: &[(&str, f64)]| {
             let mut ff = ForceField::new("clpol");

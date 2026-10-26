@@ -1,6 +1,6 @@
 # Extending Typifiers
 
-Typifiers operate on molecular graphs. The core contract is the molrs base
+Typifiers operate on molecular graphs. The core contract is the native base
 `mp.ff.typifier.Typifier`:
 
 ```python
@@ -87,7 +87,7 @@ assert {t.name for t in typifier.forcefield().get_style("bond", "harmonic").get_
 ## Matcher Boundary
 
 The matcher is an implementation detail of a typifier, not the typifier itself.
-Use molrs SMARTS matching directly:
+Use the core's SMARTS matching directly:
 
 ```python
 mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
@@ -95,14 +95,15 @@ pattern = mp.perceive.SmartsPattern("[C:1][O:2]")
 matches = pattern.find_matches(mol)
 ```
 
-Matches are bindings: atom ids plus optional mapping labels. They are not
-graphs and not frames. Do not use a Python igraph matcher or
-MolPy-side layered matcher classes; OPLS-AA and MMFF matching live in molrs.
+Each match is a `SmartsMatch`: the matched atoms (live `Atom` views) and the
+mapping from atom-map labels to atoms. Matches are not graphs and not frames. Do not use a Python igraph matcher or
+MolPy-side layered matcher classes; OPLS-AA and MMFF matching live in the Rust core.
 
 ## Where a Typifier Lives
 
-Force-field typifiers that decide types by SMARTS rules (OPLS-AA, MMFF94) are
-native: they live in molrs and `mp.ff.typifier` re-exports them one by one. A new
+Force-field typifiers that decide types by rules (OPLS-AA, MMFF94, and GAFF
+through `AtdTypifier` + `GaffTypifier`) are native: they live in the Rust core and
+`mp.ff.typifier` re-exports them one by one. A new
 rule-based force field belongs there too.
 
 A MolPy-side typifier is one that drives an external tool, as
@@ -120,7 +121,7 @@ AmberTools caller uses it rather than a copy. Keep the rules explicit:
 - Never read an earlier run's output: delete each step's output before the
   step runs, and key the work directory by the input and every setting that
   reaches a tool.
-- Name the GAFF generation `parameter_set`, required, as molrs does.
+- Name the GAFF generation `parameter_set`, required, as the native typifiers do.
 - Declare units and scaling in `source_forcefield()`, not by patching the output.
 
 ## Tests

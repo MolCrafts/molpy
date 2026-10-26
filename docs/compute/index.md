@@ -66,7 +66,8 @@ print(result.rdf.shape, result.bin_centers.shape)  # -> (100,) (100,)
 ### What comes back is a typed result
 
 Every compute returns one result object with named fields, never a bare list
-or tuple. `Rdf` gives `.rdf`, `.bin_centers`, `.n_frames`; `LocalDensity`
+or tuple; only a compute whose answer is itself one array — `Derivative`,
+`Unwrap`, `FiniteFieldPolarizability` — returns that NumPy array. `Rdf` gives `.rdf`, `.bin_centers`, `.n_frames`; `LocalDensity`
 gives one `.density` and one `.n_neighbors` entry per particle:
 
 ```python
@@ -145,8 +146,9 @@ your script where a reviewer can see it — not buried in a library default.
 !!! note "Units and coordinates"
     - **Time is femtoseconds** (LAMMPS *real* units): every `dt` is in fs.
       Vibrational spectra report cm⁻¹.
-    - **Length is Å**, charge is $e$, volume Å³, temperature K. GROMACS is
-      nm-native — multiply lengths by 10 on the way in.
+    - **Length is Å**, charge is $e$, volume Å³, temperature K. GROMACS
+      files are nm-native; the readers convert them to Å, so a `Frame` is
+      always in Å.
     - **Displacement kernels need unwrapped coordinates.** Dynamics dumps are
       normally written that way already (`xu yu zu`, no-jump, …). Wrapped
       `x y z` without images turns a diffusion curve into box-sized jumps;
@@ -306,7 +308,7 @@ their initial velocities, because one run of a chaotic liquid is one noisy draw,
 and quote each coefficient with its spread over the runs; their mean
 temperature is 84.9 K. A caption names the run its numbers come from.
 Every run is a pure function of its seed, with nothing cached between runs.
-The generator lives in `scripts/docs_series/` and writes to `docs/series/`, so any
+The generator lives in `molpy/scripts/docs_series/` and writes to `docs/series/`, so any
 figure can be reproduced or challenged:
 
 ```python

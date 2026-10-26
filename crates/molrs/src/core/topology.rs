@@ -6,11 +6,10 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::core::BondDistanceWeights;
 use crate::core::MolRsError;
 use crate::core::schema::block_names::{ATOMS, BONDS};
-use crate::core::{Frame, keys};
-use crate::op::F;
+use crate::core::{Block, Frame, keys};
+use crate::op::Idx;
 
 /// Why [`Topology::from_frame`] could not read a frame's bond graph.
 ///
@@ -210,97 +209,6 @@ impl Topology {
         Ok(topology)
     }
 
-    /// Per-atom partners whose bond-distance weight is exactly `0.0`.
-    ///
-    /// Each inner list is root-inclusive and sorted ascending. Exemption is
-    /// `weights.weight(distance) == 0.0` (distance 0 is always the root).
-    ///
-    /// Walk bound: if the table's last entry (the 1-N tail) is `0.0`, BFS the
-    /// connected component; otherwise do not expand past the last distance
-    /// whose weight is `0`, then keep partners iff `weight(d) == 0.0`. A hole
-    /// table such as `[0, 0.5, 0, 1]` therefore lists 1-4 and not 1-3.
-    ///
-    /// This method does not read or write `frame["exclusions"]` (that schema
-    /// block is a PME/prmtop pair list, a different authority). There is no
-    /// `exclusions(&self, depth)` entry point; write
-    /// `BondDistanceWeights::from_exclusion_depth(3)` instead.
-    ///
-    /// `molrs::ff::potential::intramolecular_pairs` classifies its pairs by
-    /// the same bond distance ([`close_pairs`](Self::close_pairs)).
-    pub fn exclusions(&self, weights: &BondDistanceWeights) -> Vec<Vec<usize>> {
-        let tail_zero = weights.as_slice().last() == Some(&0.0);
-        let cap = if tail_zero {
-            None
-        } else {
-            let mut last_zero = 0usize;
-            for d in 1..=weights.as_slice().len() {
-                if weights.weight(d) == 0.0 {
-                    last_zero = d;
-                }
-            }
-            Some(last_zero)
-        };
-        (0..self.n)
-            .map(|root| {
-                let mut list = Vec::new();
-                for (p, d) in self.hops_within(root, cap) {
-                    if weights.weight(d) == 0.0 {
-                        list.push(p);
-                    }
-                }
-                list.sort_unstable();
-                list
-            })
-            .collect()
-    }
-
-    /// Per-atom partners whose interaction is **scaled**, with their weights.
-    ///
-    /// The generalisation of [`exclusions`](Self::exclusions): that one keeps
-    /// the partners whose weight is exactly zero, this one keeps every partner
-    /// whose weight is not one, and says what the weight is. A force field
-    /// that *excludes* 1-2 and 1-3 but *scales* 1-4 — which is most of them —
-    /// needs both facts, and an exclusion list can only carry the first.
-    ///
-    /// Each inner list is sorted by partner and contains no duplicates, so a
-    /// caller may binary-search it. It is **root-inclusive**, exactly as
-    /// [`exclusions`](Self::exclusions) is — distance 0 has weight zero — so
-    /// that one is precisely the zero-weight subset of this. Two sibling
-    /// methods that disagreed about whether an atom is its own partner would
-    /// be a trap for whoever used both.
-    ///
-    /// The walk bound is the same as [`exclusions`](Self::exclusions)': if the
-    /// table's 1-N tail is not one, the whole connected component is eligible;
-    /// otherwise the walk stops at the last distance whose weight differs from
-    /// one.
-    pub fn special_weights(&self, weights: &BondDistanceWeights) -> Vec<Vec<(usize, F)>> {
-        let tail_special = weights.as_slice().last() != Some(&1.0);
-        let cap = if tail_special {
-            None
-        } else {
-            let mut last = 0usize;
-            for d in 1..=weights.as_slice().len() {
-                if weights.weight(d) != 1.0 {
-                    last = d;
-                }
-            }
-            Some(last)
-        };
-        (0..self.n)
-            .map(|root| {
-                let mut list = Vec::new();
-                for (p, d) in self.hops_within(root, cap) {
-                    let w = weights.weight(d);
-                    if w != 1.0 {
-                        list.push((p, w));
-                    }
-                }
-                list.sort_unstable_by_key(|&(p, _)| p);
-                list
-            })
-            .collect()
-    }
-
     // -----------------------------------------------------------------------
     // Count accessors
     // -----------------------------------------------------------------------
@@ -484,11 +392,10 @@ impl Topology {
     /// component) with its hop count, in BFS order, `source` first at 0; empty
     /// for an out-of-range `source`.
     ///
-    /// The one breadth-first walk of index space — [`distances`](Self::distances),
-    /// [`exclusions`](Self::exclusions), [`special_weights`](Self::special_weights)
-    /// and [`close_pairs`](Self::close_pairs) all read it — and a bounded walk
+    /// The one breadth-first walk of index space — [`distances`](Self::distances)
+    /// and [`close_pairs`](Self::close_pairs) read it — and a bounded walk
     /// costs its ball, not the molecule.
-    fn hops_within(&self, source: usize, cap: Option<usize>) -> Vec<(usize, usize)> {
+    pub(crate) fn hops_within(&self, source: usize, cap: Option<usize>) -> Vec<(usize, usize)> {
         if source >= self.n {
             return Vec::new();
         }
@@ -509,14 +416,40 @@ impl Topology {
         order
     }
 
+    /// The `pairs` block of this bond graph: every 1-2, 1-3 and 1-4 pair
+    /// ([`close_pairs`](Self::close_pairs)), `atomi < atomj` in order, with
+    /// its `n_bonds` — the non-bonded exceptions a force field's
+    /// `special_bonds` weigh, which
+    /// [`Atomistic::generate_topology`](crate::core::Atomistic::generate_topology)
+    /// writes beside the angles and dihedrals, and a reader of a format that
+    /// states none (a LAMMPS data file: LAMMPS derives them the same way)
+    /// writes from its bonds.
+    pub fn pairs_block(&self) -> Block {
+        let mut close: Vec<((usize, usize), usize)> = self.close_pairs(3).into_iter().collect();
+        close.sort_unstable();
+        let (mut ai, mut aj, mut hops) = (Vec::new(), Vec::new(), Vec::new());
+        for ((a, b), d) in close {
+            ai.push(a as Idx);
+            aj.push(b as Idx);
+            hops.push(d as Idx);
+        }
+        let mut block = Block::new();
+        for (key, column) in [(keys::ATOMI, ai), (keys::ATOMJ, aj), (keys::N_BONDS, hops)] {
+            block
+                .insert(key, ndarray::Array1::from_vec(column).into_dyn(), None)
+                .expect("a fresh block takes columns of one length");
+        }
+        block
+    }
+
     /// Every pair `(i, j)`, `i < j`, at most `max_hops` bonds apart, with its
     /// bond distance — the **shortest** path, so the diagonal of a four-ring
     /// is a 1-3 pair, not a 1-4 one.
     ///
-    /// The one answer to "is this pair 1-2, 1-3 or 1-4": the compiled pair
-    /// list, the neighbour-driven weights and the 1-4 exceptions all read
-    /// bond-graph distance from here, so no two of them can classify a pair
-    /// differently.
+    /// The one answer to "is this pair 1-2, 1-3 or 1-4": the special pairs
+    /// ([`pairs_block`](Self::pairs_block), `Atomistic::generate_topology`)
+    /// and the readers' rows read bond-graph distance from here, so no two of
+    /// them can classify a pair differently.
     pub fn close_pairs(&self, max_hops: usize) -> HashMap<(usize, usize), usize> {
         let mut out = HashMap::new();
         for i in 0..self.n {
@@ -728,51 +661,35 @@ mod tests {
         topo
     }
 
-    /// `special_weights` says *how much*, where `exclusions` only says *which*.
-    ///
-    /// A force field that excludes 1-2 and 1-3 but scales 1-4 — which is most
-    /// of them — cannot be described by a list of partners alone, and a caller
-    /// handed only the list would either drop the 1-4 pairs or score them at
-    /// full strength. Neither is what the force field says.
+    /// A four-ring with a two-atom tail: every pair within three bonds, in
+    /// order, at its shortest distance — the ring's diagonals are 1-3, and
+    /// the tail's far end is four bonds from the ring atom across.
     #[test]
-    fn special_weights_carries_the_scale_an_exclusion_list_cannot() {
-        // A four-atom chain: 0-1-2-3.
-        let topo = bonded(4, &[[0, 1], [1, 2], [2, 3]]);
-        // 1-2 and 1-3 excluded, 1-4 at half, everything beyond at full.
-        let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
-
-        let special = topo.special_weights(&w);
-        assert_eq!(special[0], vec![(0, 0.0), (1, 0.0), (2, 0.0), (3, 0.5)]);
-        assert_eq!(special[1], vec![(0, 0.0), (1, 0.0), (2, 0.0), (3, 0.0)]);
-        assert_eq!(special[3], vec![(0, 0.5), (1, 0.0), (2, 0.0), (3, 0.0)]);
-
-        // The exclusion list is exactly the zero-weight subset, and the 1-4
-        // pair is what it cannot express.
-        for (root, list) in topo.exclusions(&w).iter().enumerate() {
-            let zeros: Vec<usize> = special[root]
-                .iter()
-                .filter(|&&(_, x)| x == 0.0)
-                .map(|&(p, _)| p)
-                .collect();
-            assert_eq!(*list, zeros, "atom {root}");
-        }
-        assert!(
-            !topo.exclusions(&w)[0].contains(&3),
-            "a scaled pair is not an excluded one"
+    fn pairs_block_is_every_close_pair_at_its_shortest_distance() {
+        let topo = bonded(6, &[[0, 1], [1, 2], [2, 3], [3, 0], [3, 4], [4, 5]]);
+        let block = topo.pairs_block();
+        let col = |k: &str| block.get(k).unwrap().get::<Idx>().unwrap().to_owned();
+        let (i, j, n) = (col("atomi"), col("atomj"), col("n_bonds"));
+        let rows: Vec<(Idx, Idx, Idx)> = (0..i.len()).map(|r| (i[r], j[r], n[r])).collect();
+        assert_eq!(
+            rows,
+            [
+                (0, 1, 1),
+                (0, 2, 2),
+                (0, 3, 1),
+                (0, 4, 2),
+                (0, 5, 3),
+                (1, 2, 1),
+                (1, 3, 2),
+                (1, 4, 3),
+                (2, 3, 1),
+                (2, 4, 2),
+                (2, 5, 3),
+                (3, 4, 1),
+                (3, 5, 2),
+                (4, 5, 1),
+            ]
         );
-    }
-
-    /// Every list is sorted, because callers binary-search them.
-    #[test]
-    fn special_weights_lists_are_sorted_by_partner() {
-        let topo = bonded(5, &[[0, 1], [1, 2], [2, 3], [3, 4], [0, 4]]);
-        let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
-        for (root, list) in topo.special_weights(&w).iter().enumerate() {
-            assert!(
-                list.windows(2).all(|p| p[0].0 < p[1].0),
-                "atom {root}: {list:?} is not strictly sorted"
-            );
-        }
     }
 
     use super::*;
@@ -1127,7 +1044,6 @@ mod tests {
         topo.del_bonds(&[1]);
     }
 
-    use crate::core::BondDistanceWeights;
     use crate::core::MolRsError;
     use crate::core::{Block, Frame};
     use ndarray::Array1;
@@ -1341,182 +1257,5 @@ mod tests {
             (topo.n_atoms(), topo.n_bonds(), topo.n_components()),
             (7, 7, 1)
         );
-    }
-
-    #[test]
-    fn exclusions_c12_depth_three_literals() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&c12_chain_pairs())),
-        ))
-        .unwrap();
-        let ex = topo.exclusions(&BondDistanceWeights::from_exclusion_depth(3));
-        assert_eq!(ex[0], vec![0, 1, 2, 3]);
-        assert_eq!(ex[5], vec![2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(ex[11], vec![8, 9, 10, 11]);
-    }
-
-    #[test]
-    fn exclusions_c12_depth_one_at_midchain() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&c12_chain_pairs())),
-        ))
-        .unwrap();
-        assert_eq!(
-            topo.exclusions(&BondDistanceWeights::from_exclusion_depth(1))[5],
-            vec![4, 5, 6]
-        );
-    }
-
-    #[test]
-    fn exclusions_c12_depth_two_at_midchain() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&c12_chain_pairs())),
-        ))
-        .unwrap();
-        assert_eq!(
-            topo.exclusions(&BondDistanceWeights::from_exclusion_depth(2))[5],
-            vec![3, 4, 5, 6, 7]
-        );
-    }
-
-    #[test]
-    fn exclusions_every_list_contains_root_and_is_sorted() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&c12_chain_pairs())),
-        ))
-        .unwrap();
-        for (root, list) in topo
-            .exclusions(&BondDistanceWeights::from_exclusion_depth(3))
-            .iter()
-            .enumerate()
-        {
-            assert!(list.contains(&root));
-            let mut sorted = list.clone();
-            sorted.sort_unstable();
-            assert_eq!(list, &sorted);
-        }
-    }
-
-    #[test]
-    fn exclusions_amber_one_four_weight_is_not_exemption() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&c12_chain_pairs())),
-        ))
-        .unwrap();
-        let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
-        let ex = topo.exclusions(&w);
-        for (root, list) in ex.iter().enumerate() {
-            for (p, &d) in topo.distances(root).iter().enumerate() {
-                if d == 3 {
-                    assert!(!list.contains(&p));
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn exclusions_zero_tail_reaches_far_end() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&c12_chain_pairs())),
-        ))
-        .unwrap();
-        assert!(topo.exclusions(&BondDistanceWeights::new(vec![0.0]).unwrap())[0].contains(&11));
-    }
-
-    #[test]
-    fn exclusions_one_then_zero_tail_skips_one_two() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&c12_chain_pairs())),
-        ))
-        .unwrap();
-        let ex = topo.exclusions(&BondDistanceWeights::new(vec![1.0, 0.0]).unwrap());
-        assert!(ex[0].contains(&11));
-        assert!(!ex[0].contains(&1));
-    }
-
-    #[test]
-    fn exclusions_hole_table_lists_one_four_not_one_three() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&c12_chain_pairs())),
-        ))
-        .unwrap();
-        let ex = topo.exclusions(&BondDistanceWeights::new(vec![0.0, 0.5, 0.0, 1.0]).unwrap());
-        assert!(ex[0].contains(&3));
-        assert!(!ex[0].contains(&2));
-    }
-
-    #[test]
-    fn exclusions_zero_tail_stays_in_component() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(5),
-            Some(bonds_pairs(&[[0, 1], [1, 2], [3, 4]])),
-        ))
-        .unwrap();
-        let ex = topo.exclusions(&BondDistanceWeights::new(vec![0.0]).unwrap());
-        assert!(!ex[0].contains(&3) && !ex[0].contains(&4));
-        assert!(ex[0].contains(&2));
-    }
-
-    #[test]
-    fn exclusions_partner_iff_zero_weight_at_distance() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&c12_chain_pairs())),
-        ))
-        .unwrap();
-        let tables = [
-            BondDistanceWeights::from_exclusion_depth(3),
-            BondDistanceWeights::new(vec![0.0, 0.5, 0.0, 1.0]).unwrap(),
-            BondDistanceWeights::new(vec![1.0, 0.0]).unwrap(),
-        ];
-        for w in &tables {
-            let ex = topo.exclusions(w);
-            for (r, list) in ex.iter().enumerate() {
-                let dist = topo.distances(r);
-                for (p, &hop) in dist.iter().enumerate() {
-                    let should = hop >= 0 && w.weight(hop as usize) == 0.0;
-                    assert_eq!(list.contains(&p), should, "r={r} p={p} hop={hop}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn exclusions_six_ring_plus_tail_is_root_inclusive_sorted() {
-        let pairs = [[0u64, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0], [5, 6]];
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(7),
-            Some(bonds_pairs(&pairs)),
-        ))
-        .unwrap();
-        for (root, list) in topo
-            .exclusions(&BondDistanceWeights::from_exclusion_depth(2))
-            .iter()
-            .enumerate()
-        {
-            assert!(list.contains(&root));
-            let mut sorted = list.clone();
-            sorted.sort_unstable();
-            assert_eq!(list, &sorted);
-        }
-    }
-
-    #[test]
-    fn exclusions_branched_template_is_root_inclusive_sorted() {
-        let topo = Topology::from_frame(&frame_from_parts(
-            atoms_id_only(4),
-            Some(bonds_pairs(&[[0, 1], [0, 2], [0, 3]])),
-        ))
-        .unwrap();
-        let ex = topo.exclusions(&BondDistanceWeights::from_exclusion_depth(1));
-        assert_eq!(ex[0], vec![0, 1, 2, 3]);
     }
 }

@@ -46,8 +46,7 @@ pub enum CompileError {
         reason: String,
     },
     /// Anything else that stops the compile: a missing block or column, an
-    /// unknown type label, special-bonds weights a compiled pair list cannot
-    /// carry.
+    /// unknown type label, special pairs that are not a valid `pairs` block.
     Invalid(String),
 }
 

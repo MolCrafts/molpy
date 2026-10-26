@@ -580,7 +580,7 @@ impl Transform {
         self.apply_after_delete(mol, binding, &mut touched, &mut created)?;
 
         if refresh {
-            mol.generate_topology(true, true, false, false)?;
+            mol.generate_topology(true, true, false, true, false)?;
             rewrite_aromatic_flags(mol)?;
         }
 
@@ -643,7 +643,7 @@ impl Transform {
             created_per_edit.push(created);
         }
         if refresh {
-            mol.generate_topology(true, true, false, false)?;
+            mol.generate_topology(true, true, false, true, false)?;
             rewrite_aromatic_flags(mol)?;
         }
         Ok(ReactionBatch {

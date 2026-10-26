@@ -6,7 +6,7 @@ After following this page you will have a working local environment with editabl
 
 You need Python 3.12 or newer, Git, [uv](https://docs.astral.sh/uv/), and the
 Rust toolchain ([`rustup`](https://rustup.rs/)): molpy builds
-its Rust core ([molrs](molrs-backend.md)) from source. The repository pins
+its [Rust core](rust-core.md) from source. The repository pins
 the toolchain channel and components in `rust-toolchain.toml`, so no manual
 component setup is required. Everything else is installed by the commands
 below.
@@ -25,7 +25,7 @@ git clone https://github.com/MolCrafts/molpy.git
 cd molpy
 uvx pre-commit install
 uv --directory molpy sync --extra dev   # builds molpy in place (editable)
-cd molpy && uv run pytest               # the Python suite
+cd molpy && uv run --no-sync pytest     # the Python suite
 ```
 
 Run `pytest`, not `python -m pytest`. The suite imports the installed wheel.
@@ -47,7 +47,7 @@ leg and `docs` on the Linux wheel. mollog and molcfg come from PyPI, within
 Use the pinned Rust toolchain and Python 3.12 for the local gates. On Windows,
 run the shell hooks in Git Bash with Python and uv on PATH; a WSL run proves
 Linux behavior, so native Windows CI must still pass. The CI matrix separately
-checks all three native OSes and the additional Python version.
+checks all three native OSes, one abi3 wheel per OS built on Python 3.12.
 
 Write text with `encoding="utf-8"`, use `pathlib` for Python paths, and preserve
 LF endings through `.gitattributes`. Avoid filenames that differ only by case
@@ -59,10 +59,12 @@ but cannot validate Windows or macOS native bindings.
 
 The doc site is built with [Zensical](https://zensical.org) (Material for MkDocs'
 successor), configured by `zensical.toml` at the repository root. Install the doc
-extras into molpy's environment and start a local preview server.
+extras into molpy's environment and start a local preview server from the
+repository root. The server runs from `molpy/`, so `DOCS_DIR` tells the theme
+where a figure's `$file` data lives.
 
 ```bash
-uv --directory molpy run --locked --extra doc zensical serve -f ../zensical.toml
+DOCS_DIR="$PWD/docs" uv --directory molpy run --locked --extra doc zensical serve -f ../zensical.toml
 ```
 
 The site is at `http://localhost:8000`. Changes to `.md` files are reflected immediately.
@@ -95,4 +97,4 @@ cd molpy && uv run --no-sync ruff format python tests   # auto-format Python
 
 ## Troubleshooting
 
-If imports fail after pulling new code, rebuild molpy in place: `uv --directory molpy sync --extra dev --reinstall-package molcrafts-molpy` (the Rust side changed). The manual builds with `scripts/check.sh docs`. If formatting checks fail, run `uv --directory molpy run ruff format python tests` before pushing.
+If imports fail after pulling new code, rebuild molpy in place: `uv --directory molpy sync --extra dev --reinstall-package molcrafts-molpy` (the Rust side changed). The manual builds with `scripts/check.sh docs`. If formatting checks fail, run `uv --directory molpy run --no-sync ruff format python tests` before pushing.

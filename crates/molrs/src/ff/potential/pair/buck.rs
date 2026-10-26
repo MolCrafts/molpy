@@ -44,7 +44,6 @@ mod tests {
     fn a_1_4_pair_is_scaled_in_both_buckingham_terms() {
         use molrs::core::Block;
         use molrs::core::Frame;
-        use molrs::op::Idx;
         use ndarray::Array1;
 
         let build = |scale: f64| {
@@ -58,17 +57,10 @@ mod tests {
                 )
                 .unwrap();
             frame.insert("atoms", atoms);
-            let mut pairs = Block::new();
-            pairs
-                .insert("atomi", Array1::from(vec![0 as Idx]).into_dyn(), None)
-                .unwrap();
-            pairs
-                .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn(), None)
-                .unwrap();
-            pairs
-                .insert("is_14", Array1::from(vec![true]).into_dyn(), None)
-                .unwrap();
-            frame.insert("pairs", pairs);
+            frame.insert(
+                "pairs",
+                crate::ff::potential::pair::fixtures::pricing_only(2, &[(0, 1)], &[true]),
+            );
 
             let mut ff = crate::ff::forcefield::ForceField::new("t");
             ff.set_special_bonds(crate::ff::ir::SpecialBonds {
@@ -79,7 +71,7 @@ mod tests {
             tp.set("a", 12000.0);
             tp.set("rho", 0.31);
             tp.set("c", 280.0);
-            ff.def_style("pair", "buck", Params::new())
+            ff.def_style("pair", "buck", Params::from_iter([("cutoff", F::INFINITY)]))
                 .unwrap()
                 .def_type("a", &["a"], tp)
                 .unwrap();
@@ -124,6 +116,7 @@ mod tests {
 
     fn one() -> Potentials {
         ExplicitTerms::new("pair", "buck")
+            .style_params(Params::from_iter([("cutoff", F::INFINITY)]))
             .term(
                 &[0, 1],
                 Params::from_iter([("a", 1000.0), ("rho", 0.3), ("c", 100.0)]),

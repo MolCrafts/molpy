@@ -40,6 +40,7 @@ mod tests {
 
     fn one() -> Potentials {
         ExplicitTerms::new("pair", "morse")
+            .style_params(Params::from_iter([("cutoff", F::INFINITY)]))
             .term(
                 &[0, 1],
                 Params::from_iter([("d0", 5.0), ("alpha", 1.5), ("r0", 3.0)]),

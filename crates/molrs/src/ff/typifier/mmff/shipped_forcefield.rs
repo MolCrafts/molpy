@@ -25,6 +25,12 @@ use crate::ff::params::mmff::{
 /// by analogy with Amber would corrupt every MMFF vdW energy with a 1-4 pair.
 const VDW_SCALE_14: f64 = 1.0;
 
+/// The cutoff of MMFF's electrostatics, Å: RDKit's `nonBondedThresh` default
+/// (100 Å), which in practice prices every pair of a molecule. Not a table
+/// value — MMFF states none — but where the Coulomb style stops is the force
+/// field's to declare, so the shipped field states RDKit's.
+const MMFF_COULOMB_CUTOFF: f64 = 100.0;
+
 /// The shipped library of `variant`, built on first use and shared after.
 ///
 /// [`force_field`] runs once per variant, under the variant's own name
@@ -110,6 +116,7 @@ fn try_force_field(name: &str) -> Result<ForceField, DefError> {
                         ("coulomb", MMFF_ELE_STYLE.coulomb),
                         ("dielectric", MMFF_ELE_STYLE.dielectric),
                         ("delta", MMFF_ELE_STYLE.delta),
+                        ("cutoff", MMFF_COULOMB_CUTOFF),
                     ]),
                 )?;
             }
@@ -136,5 +143,20 @@ mod tests {
         for name in ["MMFF94", "MMFF94s"] {
             assert_eq!(try_force_field(name).err(), None, "{name}");
         }
+    }
+
+    /// MMFF's Coulomb style stops at RDKit's 100 Å; its vdW style states no
+    /// cutoff of its own.
+    #[test]
+    fn the_coulomb_style_states_rdkit_s_cutoff() {
+        let ff = try_force_field("MMFF94").unwrap();
+        let cutoff = |name: &str| {
+            ff.get_style("pair", name)
+                .unwrap()
+                .params()
+                .get("cutoff")
+                .and_then(|v| v.as_num())
+        };
+        assert_eq!(cutoff("coul/cut"), Some(MMFF_COULOMB_CUTOFF));
     }
 }

@@ -502,6 +502,10 @@ mod tests {
         }
         angles.insert("type", strings(&["HW-OW-HW"]), None).unwrap();
         frame.insert("angles", angles);
+        let pairs = molrs::core::Topology::from_frame(&frame)
+            .unwrap()
+            .pairs_block();
+        frame.insert("pairs", pairs);
         let mut ff = ForceField::new("t");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds {
             lj: [0.0, 0.0, 0.5],

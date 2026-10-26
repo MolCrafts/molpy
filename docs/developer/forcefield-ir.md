@@ -1,9 +1,9 @@
 # Force-field IR
 
-molrs holds every force field in one intermediate representation, the
+The Rust core holds every force field in one intermediate representation, the
 **force-field IR**: one set of styles, each with a fixed energy expression,
 parameter meanings and parameter units. The IR adopts LAMMPS's definitions as
-its standard — for every style molrs registers, the expression, the factors
+its standard — for every style the core registers, the expression, the factors
 (no hidden ½), the parameter meanings and the units are those of the LAMMPS
 style of the same name, or of the LAMMPS style it corresponds to. Reading a
 LAMMPS force field and writing it back is therefore the identity on
@@ -33,13 +33,14 @@ a source a path or a whole file's bytes and a sink a path or a `Vec<u8>`.
 This page is the reference for the IR: what each style computes, what its
 parameters mean, which engine form maps onto it and how, and how Urey–Bradley,
 explicit 1-4 pairs and CMAP are represented. The IR is also a protocol: a
-new style or category, from Rust, Python or molpy, registers into it with
+new style or category, from Rust or Python, registers into it with
 nothing rebuilt — see [Extending the force-field IR](extending-forcefield-ir.md).
 
 ## Units
 
 A `ForceField` declares a LAMMPS unit preset (`ForceField.units`: `real`,
-`metal`, `lj`; `real` when undeclared). Every parameter is a number in that
+`metal`, `lj`; `None` when undeclared, and whatever reads its numbers — a unit
+conversion, a record — refuses undeclared units rather than assume one). Every parameter is a number in that
 preset. Two rules are LAMMPS's own and hold in every preset:
 
 !!! important "Angles are degrees"
@@ -69,7 +70,7 @@ force field's. Every other reader produces `real`.
 `k`, `r0`, `theta0`, … are the parameter names. They are LAMMPS's symbols,
 lower-cased, with one exception: LAMMPS spells two different things `d` — a
 phase (`dihedral charmm`, `fourier`) and a sign (`dihedral harmonic`,
-`improper cvff`) — and its multiplicity `n`, so molrs names those slots
+`improper cvff`) — and its multiplicity `n`, so the IR names those slots
 `phase`, `sign` and `periodicity`. The values and their order are LAMMPS's.
 
 A parameter with a default may be left out: the compile fills the spec's
@@ -131,11 +132,11 @@ number, a `mixing` outside its choices) is `BadValue`.
 | `lj/class2` | ε [2(σ/r)⁹ − 3(σ/r)⁶] | `epsilon`, `sigma`; style `cutoff`, `mixing` (default `sixthpower`, LAMMPS's) | `pair_style lj/class2` (LAMMPS mixes it `sixthpower` whatever `pair_modify` says: another `mixing` is refused, and it reads as `sixthpower`) |
 | `buck` | a e^(−r/rho) − c/r⁶ | `a` (E), `rho` (L), `c` (E·L⁶) | `pair_style buck` `A rho C` |
 | `morse` | d0 [(1 − e^(−alpha (r − r0)))² − 1] | `d0` (E), `alpha` (1/L), `r0` (L) | `pair_style morse` `D0 alpha r0` |
-| `coul/cut` | coulomb qᵢqⱼ / (dielectric (r + delta)) | style `coulomb` (E·L/e²), `dielectric` (default 1), `delta` (L, default 0), `cutoff` (default ∞) | `pair_style coul/cut` with `delta = 0` (the buffer is molrs's, for MMFF; the LAMMPS writer refuses `delta ≠ 0` and `dielectric ≠ 1`). LAMMPS fixes the constant (`qqr2e`) per `units` |
+| `coul/cut` | coulomb qᵢqⱼ / (dielectric (r + delta)) | style `coulomb` (E·L/e²), `dielectric` (default 1), `delta` (L, default 0), `cutoff` (default ∞) | `pair_style coul/cut` with `delta = 0` (the buffer is the core's, for MMFF; the LAMMPS writer refuses `delta ≠ 0` and `dielectric ≠ 1`). LAMMPS fixes the constant (`qqr2e`) per `units` |
 | `lj/charmm` | 4ε[(σ/r)¹² − (σ/r)⁶]·S(r), S CHARMM's switch from `inner` to `cutoff` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`); style `inner`, `cutoff`, `mixing` (default `arithmetic`), `one_four` (`"regular"`, the default, or `"epsilon14"`: what a `special_bonds` 1-4 pair is priced at, see [1-4](#1-4-interactions)) | `pair_style lj/charmm/coul/charmm`, van-der-Waals half; `pair_coeff i j ε σ ε₁₄ σ₁₄` (`one_four = "epsilon14"` has no LAMMPS form) |
 | `coul/charmm` | coulomb qᵢqⱼ/(dielectric r)·S(r); force (C qᵢqⱼ/r²)·S(r), LAMMPS's switched force, not the gradient | style `coulomb`, `dielectric` (default 1), `inner`, `cutoff` | `pair_style lj/charmm/coul/charmm`, Coulomb half (`inner2 outer2` when its cutoffs differ) |
 | `coul/long/pme` | Ewald-summed coulomb qᵢqⱼ/r over the frame's periodic box | style `coulomb`, `cutoff`, `alpha`, `order`, `grid_*`; the cell is the frame's box (`frame.box`), as LAMMPS's kspace reads its simulation box | `pair_style lj/cut/coul/long` (the real-space half; `kspace_style` states an accuracy, not `alpha`, so the Ewald parameters are neither read nor written, and a LAMMPS-read style is refused (`MissingParam`) until they are stated) |
-| `thole` | T(r) qᵢqⱼ/r, T = 1 − (1 + s r/2) e^(−s r), s = ½(aᵢ + aⱼ)/(αᵢαⱼ)^(1/6) | per type `charge`, `alpha` (L³), `damp` | `pair_style thole` `alpha damp` (LAMMPS damps the Drude charges of the atoms; molrs's per-type `charge` is its own) |
+| `thole` | T(r) qᵢqⱼ/r, T = 1 − (1 + s r/2) e^(−s r), s = ½(aᵢ + aⱼ)/(αᵢαⱼ)^(1/6) | per type `charge`, `alpha` (L³), `damp` | `pair_style thole` `alpha damp` (LAMMPS damps the Drude charges of the atoms; the core's per-type `charge` is its own) |
 | `coul/tt` | fₙ(r) qᵢqⱼ/r (Tang–Toennies) | per type `charge`; style `b`, `c`, `order` | `pair_style coul/tt` (`n` = `order`) |
 | `uff_lj`, `mmff_vdw` | UFF x/D LJ; MMFF buffered 14-7 | per-instance / per-type | none |
 
@@ -178,20 +179,20 @@ scale changes only the real-space term.
 
 Every LAMMPS improper style that is a dihedral (`harmonic`, `cvff`) prices
 the dihedral **I-J-K-L of the atoms in the order the data file lists them**,
-and so does every molrs kernel of such a style. LAMMPS names the first atom
+and so does every kernel of such a style. LAMMPS names the first atom
 the centre ("atom of symmetry") of `harmonic` and `cvff`; CHARMM writes its
-impropers that way. The out-of-plane styles (`fourier`, `umbrella`; molrs's
+impropers that way. The out-of-plane styles (`fourier`, `umbrella`; the core's
 `uff_inversion`, `mmff_oop`) take the centre first too.
 
 AMBER prices its improper over the dihedral with the centre **third**. No
 order with the centre first has that dihedral — an AMBER improper's axis runs
 through its centre — so an AMBER improper cannot be re-ordered centre-first
-and keep its energy. molrs therefore stores `improper periodic` (the AMBER /
+and keep its energy. The IR therefore stores `improper periodic` (the AMBER /
 GAFF / OpenMM improper) in **AMBER's order**: the order whose dihedral is the
 improper angle, which is also the order a LAMMPS data file lists it in for
 `cvff` to reproduce AMBER (verified with LAMMPS: the AMBER improper of the
 hand molecule below gives `0.00338479168892827` kcal/mol as `cvff` in AMBER
-order; molrs gives `0.003384791688934619`).
+order; the core gives `0.003384791688934619`).
 
 | Source | File order | Stored order |
 |---|---|---|
@@ -204,7 +205,7 @@ order; molrs gives `0.003384791688934619`).
 | OpenMM, `ordering="smirnoff"` | three permutations averaged | refused |
 | OpenMM `<CustomTorsionForce>` harmonic improper (default ordering `charmm`) | OpenMM prices φ(c1, c2, c3, c4) without a wildcard, φ(c2, c3, c1, c4) with one | as OpenMM prices; the writer refuses a wildcard |
 | OpenMM `<RBTorsionForce><Improper>` | — | refused (no improper style is a cosine polynomial) |
-| molrs topology perception (`generate_topology`, `trivalent_impropers`) | centre first | a force field that wants AMBER's order re-orders (GAFF does) |
+| topology perception (`generate_topology`, `Topology.impropers`) | centre first | a force field that wants AMBER's order re-orders (GAFF does) |
 | UFF, MMFF typifiers | — | centre first |
 
 A frame's `impropers` row lists its atoms in the order of its type's
@@ -218,7 +219,7 @@ The OpenMM reader re-orders each improper row so the kernel prices
 
 ## 1-4 interactions
 
-LAMMPS has three mechanisms, and molrs represents each with LAMMPS's
+LAMMPS has three mechanisms, and the IR represents each with LAMMPS's
 parameters:
 
 1. **Global weights** — `special_bonds lj w12 w13 w14 coul w12 w13 w14`:
@@ -228,7 +229,7 @@ parameters:
    times the weight.
 2. **Per-type 1-4 Lennard-Jones** — `pair_style lj/charmm/coul/charmm inner
    outer [inner2 outer2]`, `pair_coeff I J epsilon sigma [epsilon14
-   sigma14]`. In molrs, a pair style `lj/charmm` (van der Waals half, as
+   sigma14]`. In the IR, a pair style `lj/charmm` (van der Waals half, as
    `lj/cut` is of `lj/cut/coul/cut`) with columns `epsilon`, `sigma`,
    `epsilon14`, `sigma14` and style params `inner`, `cutoff`, `mixing`
    (LAMMPS's default for these styles is `arithmetic`; `epsilon14` /
@@ -257,18 +258,12 @@ parameters:
    | `"epsilon14"` | `epsilon14` / `sigma14` (the cross row's for an explicit pair, else the two types' mixed by `mixing`) |
 
    Any other value is refused (by the compile doors, `ForceFieldSection.from_forcefield` /
-   `to_forcefield` and every reader of a record). LAMMPS's pair style has no
-   `"epsilon14"` form, so the IR holds those pairs as per-pair override
-   rows (below): **`ForceField.materialize_one_four(frame)`** (Rust
-   `ForceField::materialize_one_four`) writes, on every `is_14` row of the
-   frame's `pairs` (built when absent) that no `w > 0` dihedral covers,
-   `epsilon`, `sigma` = the pair's 1-4 parameters and `lj_scale`,
-   `coul_scale` = the `special_bonds` 1-4 weights, keeping a cell already
-   set; under `"regular"` (or `lj/cut`) it writes the regular parameters, so
-   the energy does not change. A field declaring `"epsilon14"` needs it on
-   its frames before compiling: both compile doors refuse a 1-4 pair whose
-   1-4 parameters differ from its regular ones and that neither an override
-   nor `w` covers, naming `materialize_one_four`, and the LAMMPS writer
+   `to_forcefield` and every reader of a record). Under `"epsilon14"` both
+   compile doors price each 1-4 special pair (a `pairs` row of `n_bonds` 3)
+   that no `w > 0` dihedral covers in the exceptions kernel (below), at its
+   1-4 parameters and the `special_bonds` 1-4 weights, as LAMMPS's
+   `dihedral charmm` prices a `w` pair; the regular pair styles weigh it 0.
+   LAMMPS's pair style has no `"epsilon14"` form, so the LAMMPS writer
    refuses the param (its deck would price the regular parameters).
 3. **Per-dihedral weight** — `dihedral_style charmm` `w`: each dihedral
    prices the pair of its own end atoms,
@@ -285,14 +280,20 @@ parameters:
    style and a Coulomb style; `w` outside [0, 1] is refused. `w = 0` (AMBER's
    use of the style) prices LAMMPS's `K[1 + cos(nφ − d)]` alone.
 
-**Per-pair exceptions LAMMPS cannot express** — a GROMACS `[ pairs ]` row
-with explicit parameters, an OpenMM `NonbondedForce` exception — are
-per-instance float columns on the Frame's `pairs` block, the rows the pair
-kernels already price (`atomi`, `atomj`, `is_14`). An AMBER dihedral whose
-`SCEE`/`SCNB` differ from the field's is those same columns on
-`pair_overrides` (see [AMBER prmtop](#amber-prmtop)): a sparse overlay, not
-an evaluation list. `intramolecular_pairs` carries its cells onto `pairs`.
-The columns, on either block:
+**Special pairs.** The pair styles price every pair of atoms. A frame's
+`pairs` block names the pairs they price otherwise — its *special pairs* —
+one row per unordered pair: `atomi`, `atomj` and `n_bonds`, the pair's class,
+its shortest bond distance (1, 2, 3; a pair a format excludes beyond three
+bonds carries its own distance, 0 when no bonds connect it). A row of class
+1-3 is weighed by `special_bonds` of that class; any other row by 1; a pair
+no row names is at full strength. The rows are topology, generated with the
+angles and dihedrals (`Atomistic::generate_topology`, which every typifier
+runs; `Topology::pairs_block`), and a frame whose bonds name a pair no row
+does is refused by both compile doors and by the GROMACS writer. Exceptions
+LAMMPS cannot express — a GROMACS `[ pairs ]` row with explicit parameters,
+an OpenMM `NonbondedForce` exception, an AMBER dihedral whose `SCEE`/`SCNB`
+differ from the field's, a pair a format excludes — are nullable float
+columns on the same rows:
 
 | Column | Meaning |
 |---|---|
@@ -325,31 +326,30 @@ E = lj_w·4ε[(σ/r)¹² − (σ/r)⁶] + coul_w·C qᵢqⱼ/r   (no cutoff, no 
 where each of ε, σ, qᵢqⱼ, lj_w, coul_w is the override cell if there is one,
 else the dihedral's (ε₁₄, σ₁₄, qᵢqⱼ, Σw, Σw) when `w > 0`, else the pair
 style's (ε, σ, qᵢqⱼ, `special_bonds` weight of the pair's bond-distance
-class). The regular pair kernels price an override pair at weight 0: the
-compiled door leaves its `pairs` row out, the neighbour-driven door zeroes
-its weight (`PairWeights`). A `w` pair needs no such step — its
-`special_bonds` 1-4 weight is 0. A cell is priced only by the style it
-belongs to: `epsilon`, `sigma`, `lj_scale` under a Lennard-Jones style,
-`charge_product`, `coul_scale` under a Coulomb style. A field without that
-style ignores them, so a bonded-only (or Coulomb-only) field compiled on a
-frame with materialized 1-4 cells prices no Lennard-Jones. Converting an exception table to a global
+class). The regular pair kernels price such a pair at weight 0, at both
+compile doors (`SpecialWeights`). A `w` pair needs no such step — its `special_bonds` 1-4
+weight is 0. A cell is priced only by the style it belongs to: `epsilon`,
+`sigma`, `lj_scale` under a Lennard-Jones style, `charge_product`,
+`coul_scale` under a Coulomb style. A field without that style ignores them,
+so a bonded-only (or Coulomb-only) field prices no Lennard-Jones whatever the
+rows state. Converting an exception table to a global
 weight is not exact (r₁₄ depends on φ and on the other coordinates), so no
 reader or writer does it.
 
 ## Urey–Bradley
 
-LAMMPS carries Urey–Bradley in one angle style, and so does molrs:
+LAMMPS carries Urey–Bradley in one angle style, and so does the IR:
 **`angle charmm`**, E = k(θ − theta0)² + k_ub(r₁₃ − r_ub)², parameters `k`
 (E/rad²), `theta0` (deg), `k_ub` (E/L²), `r_ub` (L) — `angle_coeff t K theta0
 K_ub r_ub`, r₁₃ the distance between the angle's end atoms. It adds no
 exclusion (the 1-3 pair is excluded by `special_bonds`). There is no separate
 Urey–Bradley category. A field that mixes it with other angle styles is
 LAMMPS's `angle_style hybrid harmonic charmm` (`angle_coeff t charmm K theta0
-K_ub r_ub`), which the LAMMPS reader and writer read and write; molrs prices
+K_ub r_ub`), which the LAMMPS reader and writer read and write; the core prices
 each angle row under the style that defines its type. The LAMMPS, OpenMM
 and GROMACS readers and writers and the prmtop reader (a chamber file) hold
 it; the maps below are how each source writes it and maps onto the IR
-(molrs has no reader of CHARMM's own `.prm`):
+(there is no reader of CHARMM's own `.prm`):
 
 | Source | `angle charmm` |
 |---|---|
@@ -366,7 +366,7 @@ kernel is `cmap charmm`, a step-for-step port of LAMMPS's
 
 - a crossterm names five atoms `(atomi, atomj, atomk, atoml, atomm)`;
   φ = dihedral(atomi, atomj, atomk, atoml), ψ = dihedral(atomj, atomk, atoml,
-  atomm) — LAMMPS's `atan2` dihedrals, in degrees, the IUPAC sign (molrs's
+  atomm) — LAMMPS's `atan2` dihedrals, in degrees, the IUPAC sign (the core's
   `compute_dihedral`), in [−180°, 180°) with 180° read as −180°;
 - a map is an N×N grid (CHARMM and LAMMPS: N = 24, 15° spacing) of energies
   in the force field's energy unit, stored **φ-major**: element `[i][j]` (flat
@@ -435,12 +435,12 @@ with a degenerate dihedral plane (any of the four cross products
 2-D function — no sum of 1-D torsions reproduces it. One is generalised: LAMMPS
 fixes N = 24 and at most six maps, the kernel takes any N ≥ 2 and any number
 of maps (LAMMPS stores the derivative grids rotated by N/2 and finds their cell
-from φ wrapped to [0°, 360°); molrs stores them unrotated and reads them at the
+from φ wrapped to [0°, 360°); the core stores them unrotated and reads them at the
 value cell — the same numbers but for float ties on a cell edge).
 
 ### Crossterms and LAMMPS files
 
-- `assign_cmaps(mol, ff)` (Rust `molrs::ff::typifier::cmap::assign_cmaps`) replaces a
+- `ff.assign_cmaps(mol)` (Rust `ForceField::assign_cmaps`) replaces a
   typed molecule's `cmaps` terms (written by `to_frame` as the `cmaps` block):
   five atoms whose dihedrals `(a, b, c, d)` and `(b, c, d, e)` are both
   dihedrals of the molecule (either stored direction) and whose atom types
@@ -461,7 +461,7 @@ value cell — the same numbers but for float ties on a cell edge).
 
 OpenMM's `CMAPTorsionForce` stores `energy[i + N·j]` at φ = 2πi/N, ψ = 2πj/N
 (origin 0, φ fastest — `CMAPTorsionForce::addMap`): its reader maps element
-`(i, j)` to molrs `[(i + N/2) mod N][(j + N/2) mod N]` (each index shifted by
+`(i, j)` to the IR's `[(i + N/2) mod N][(j + N/2) mod N]` (each index shifted by
 N/2, the axes swapped into φ-major), and refuses an odd N, which puts no
 OpenMM node on −180°; the writer is the inverse. OpenMM takes its node slopes
 from periodic splines where LAMMPS splines the doubled map with natural ends,
@@ -478,14 +478,14 @@ A prmtop stores a map as ParmEd's `CmapType.grid` — CHARMM's parameter-file
 order, φ-major from −180° — in `CHARMM_CMAP_PARAMETER_nn` (a chamber file)
 or `CMAP_PARAMETER_nn` (ff19SB), and the prmtop reader takes it as written.
 sander's CMAP energy on a CHARMM36 alanine dipeptide and on an ff19SB one
-off the grid points equals molrs's and LAMMPS's to 1e-14 relative (see
+off the grid points equals the core's and LAMMPS's to 1e-14 relative (see
 [AMBER prmtop](#amber-prmtop)): sander interpolates as LAMMPS does.
 
 ## Torsion forms and their exact conversions
 
 Every Class-I torsion and dihedral-angle improper style above is a finite
 Fourier series in φ — the signed dihedral of the atoms as stored, the angle
-every molrs kernel and LAMMPS compute:
+every kernel of the core and LAMMPS compute:
 
     E(φ) = Σₙ₌₀ aₙ cos nφ + bₙ sin nφ
 
@@ -553,7 +553,7 @@ The familiar chains are instances:
   γ = n·chi0 + 180°. The quartic terms differ by −k n⁴ δ⁴/24.
 - `dihedral class2`'s cross terms (`mbt`, `ebt`, `at`, `aat`, `bb13`) couple
   the torsion to bonds and angles: outside the Class-I IR.
-- `improper fourier` (molrs `uff_inversion`) and `mmff_oop` price an
+- `improper fourier` (the core's `uff_inversion`) and `mmff_oop` price an
   out-of-plane (Wilson) angle, not a dihedral.
 
 In Rust:
@@ -763,7 +763,7 @@ same function as `improper periodic` over the same atoms and goes to OpenMM
 as one; an `improper periodic` row's two outer atoms must be in the order
 OpenMM's AMBER rule puts them (by element, then index). The equivalence
 check ([Cross-engine equivalence](#cross-format-equivalence)) builds the
-templates from the frame and holds OpenMM's energies to molrs's.
+templates from the frame and holds OpenMM's energies to the core's.
 
 `OpenmmXmlWriter().write_system(sink, ff, frame)` (Rust
 `OpenmmXmlWriter::write_system`) writes those templates: the field as
@@ -804,25 +804,23 @@ CTITLE`) reads through the same pair.
 | `LENNARD_JONES_ACOEF/BCOEF` via ICO | `lj/cut` (`lj/charmm` in a chamber file) self rows; a cross row where the entry is not Lorentz–Berthelot (NBFIX) |
 | `LENNARD_JONES_14_ACOEF/BCOEF` (chamber) | `lj/charmm` `epsilon14` / `sigma14` (cross rows where not Lorentz–Berthelot) and `one_four = "epsilon14"` when the table differs from the regular one |
 | `CHARGE` | ÷ 18.2223, `coul/cut` at 332.0522173; ÷ √332.0716 and `coul/charmm` at 332.0716 in a chamber file |
-| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; `AmberPrmtopForcefieldReader::read_system` (Python `AmberPrmtopForcefieldReader().read_system(source)`) writes `pair_overrides` (`coul_scale` / `lj_scale`) for every 1-4 pair weighted otherwise, and no `pairs` block |
+| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; `AmberPrmtopForcefieldReader::read_system` (Python `AmberPrmtopForcefieldReader().read_system(source)`) writes the special pairs, with `coul_scale` / `lj_scale` on every pair weighted otherwise |
 | `AMBER_ATOM_TYPE` | the type name; `<name>~<class>` where one name stands for two LJ classes or masses (a chamber file cuts CHARMM's types to four characters) |
 
 sander prices a 1-4 pair once per proper row whose 3rd pointer is not
 negative, at that row's `1/SCEE`, `1/SCNB` (never an improper's, whatever its
-pointer). The field's weights are the divisors most such rows carry; the
-frame reader's `pair_overrides` block lists the pairs whose summed weight
-differs — another divisor (GLYCAM's 1.0 beside ff14SB's 1.2 / 2.0), a pair
-two rows list, a 1-4 pair of the topology no row lists (weight 0, or 1 if
-the exclusion list leaves it out) — with only the differing cells set.
-`intramolecular_pairs` keeps those cells when it builds the full pair list.
-A chamber file's 1-4 Lennard-Jones (`one_four = "epsilon14"`) reaches a
-frame through `ForceField.materialize_one_four`. Build the full list first
-(`intramolecular_pairs`, which keeps the overlay's cells), then
-materialize: `materialize_one_four` builds a list only when the frame has
-no `pairs`, so the overlay is carried rather than read as that list.
+pointer). The field's weights are the divisors most such rows carry. The
+frame's special pairs are every pair within three bonds with its `n_bonds`,
+and the pairs whose summed weight differs from the field's carry their own
+`coul_scale` / `lj_scale` (only the differing cells set): another divisor
+(GLYCAM's 1.0 beside ff14SB's 1.2 / 2.0), a pair two rows list, a 1-4 pair
+of the topology no row lists (weight 0, or 1 if the exclusion list leaves it
+out), a pair `EXCLUDED_ATOMS_LIST` adds beyond three bonds (weight 0). A
+chamber file's 1-4 Lennard-Jones (`one_four = "epsilon14"`) is priced at
+`epsilon14` / `sigma14` by the compile doors directly.
 
 sander clamps the cosine of a harmonic angle to ±0.999 before taking its
-arccosine, so it prices an angle beyond 177.44° as 177.44°; LAMMPS and molrs
+arccosine, so it prices an angle beyond 177.44° as 177.44°; LAMMPS and the core
 price the IR's `k (θ − theta0)²` at the angle itself. A prmtop with a
 near-linear angle (an `sp` carbon, θ₀ ≈ 180°) therefore prices its angle term
 differently in sander, and only there.
@@ -893,17 +891,18 @@ non-wildcard matches, either way, with all of a funct-9 row's terms; a row
 with parameters of its own (an OPLS-AA `improper_*` macro, expanded) gets a
 type of its own, `<labels>@gmx_<n>`. Its frame holds `atoms`, `bonds`,
 `angles`, `dihedrals` (funct 1, 9, 3, 5), `impropers` (funct 2, 4), `cmaps`,
-`constraints` (`[ constraints ]`, `[ settles ]`; `r0` in Å), `exclusions`
-and `pairs`: every pair GROMACS prices — per molecule, and every pair of
-two molecules (up to `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms; above it a
-neighbour list, `compile_typed`, finds those) — the `[ pairs ]` rows
-flagged `is_14`. A `[ pairs ]` row with parameters carries them as per-pair
-overrides — funct 1 `sigma`, `epsilon`, `lj_scale` 1, `coul_scale` fudgeQQ;
-funct 2 also `charge_product` and its own fudgeQQ — which LAMMPS cannot hold.
-Virtual sites, restraints, polarization and free-energy B states have no IR
-form and are refused by name. A system whose field reads with
-`one_four = "epsilon14"` (CHARMM's pairtypes) compiles once its 1-4 pairs
-are written out as per-pair rows, `ForceField.materialize_one_four(frame)`.
+`constraints` (`[ constraints ]`, `[ settles ]`; `r0` in Å) and its special
+pairs (`pairs`): per molecule, every pair within three chemical bonds (bonds
+funct 1 and 3, constraints funct 1) with its `n_bonds`, weighed 0 where
+`nrexcl` excludes it and no `[ pairs ]` row names it; a `[ pairs ]` row at
+the fudges, or with parameters of its own carried as cells — funct 1
+`sigma`, `epsilon`, `lj_scale` 1, `coul_scale` fudgeQQ; funct 2 also
+`charge_product` and its own fudgeQQ — which LAMMPS cannot hold; an
+`[ exclusions ]` pair weighed 0 at its own distance. Every pair of two
+molecules is at full strength. Virtual sites, restraints, polarization and
+free-energy B states have no IR form and are refused by name. A field read
+with `one_four = "epsilon14"` (CHARMM's pairtypes) prices its 1-4 special
+pairs at `epsilon14` / `sigma14`.
 
 `write_system(sink, ff, frame)` writes the directives (no bonded
 `[ *types ]` tables: each row carries its type's parameters on its line,
@@ -913,14 +912,14 @@ and one `[ moleculetype ]` (`nrexcl` 3) per molecule — a bond-graph
 component, a run of consecutive atoms — with `[ atoms ]` (each atom's
 charge and mass), `[ bonds ]`, `[ pairs ]`, `[ angles ]`, `[ dihedrals ]`
 (propers and impropers), `[ cmap ]`, `[ exclusions ]` and `[ constraints ]`,
-then `[ molecules ]`. `[ pairs ]` lists the frame's 1-4 pairs: funct 1, with
-`σ ε` when only the override cells `epsilon` / `sigma` differ from the
-generated pair, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε` — so every
-override cell holds. `[ exclusions ]` holds each pair of a molecule beyond
-three bonds the frame does not price, so GROMACS prices exactly the
-frame's `pairs` (built by `intramolecular_pairs` when absent). Refused by
-name: a priced pair within three bonds that is no 1-4 pair (or a 1-4 pair
-beyond them), override cells without `epsilon` and `sigma`, a crossterm
+then `[ molecules ]`. `[ pairs ]` lists the frame's priced 1-4 special
+pairs: funct 1, with `σ ε` when only the cells `epsilon` / `sigma` differ
+from the generated pair, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε` — so
+every cell holds. `[ exclusions ]` holds each special pair beyond three
+bonds the frame weighs 0, so GROMACS prices every pair as the frame does.
+Refused by name: a frame whose bonds have no special pairs, a pair within
+three bonds the frame prices other than `nrexcl` 3 and the fudges would,
+cells without `epsilon` and `sigma`, a crossterm
 GROMACS would give another grid, a molecule whose atoms are not
 consecutive or a row across two molecules, and every force-field refusal
 above. A topology `read_system` reads from it is the system: written again,
@@ -931,7 +930,7 @@ it is the same file.
 `GaffTypifier` (Python `mp.ff.typifier.GaffTypifier(parameter_set=
 "gaff" | "gaff2")`) matches a molecule whose atoms carry GAFF types —
 `AtdTypifier` with the same `parameter_set` stamps them — against the
-`gaff.dat` / `gaff2.dat` tables compiled into molrs (GAFF 1.81, GAFF2 2.2.30,
+`gaff.dat` / `gaff2.dat` tables compiled into the core (GAFF 1.81, GAFF2 2.2.30,
 AmberTools 26.1), and writes the IR: `atom full` (mass), `pair lj/cut`
 (σ = 2·R\*/2^(1/6), ε), `pair coul/cut` at AMBER's 332.0522173,
 `bond harmonic` and `angle harmonic` (`k = K`, θ₀ in degrees),
@@ -990,7 +989,7 @@ triple — and the atom types follow that structure. `AtdTypifier` does the
 same by default (`bond_orders=BondOrderSource.Connectivity`; Rust
 `BondOrderSource::Connectivity`):
 it types a molecule as antechamber types the mol2 file holding the same atoms
-and bonds in the same order, whatever orders the molrs graph carries. Where a
+and bonds in the same order, whatever orders the graph carries. Where a
 molecule has more than one Kekulé structure (azulene, cyclooctatetraene,
 polycyclic aromatics) the structure — and with it the `cc` / `cd`, `ce` /
 `cf`, `nc` / `nd`, `cp` / `cq` colouring — is antechamber's, and is decided
@@ -1025,7 +1024,7 @@ Checked against AmberTools 26.1:
   dihedral with impropers, 1-4 and other van der Waals and Coulomb — agree.
   The angle energy agrees to the 4·10⁻⁷ by which tleap's π (3.141594) moves
   θ₀, except at a near-linear angle: sander clamps cos θ to ±0.999 (θ never
-  above 177.44°), LAMMPS and molrs do not (phenylacetylene's `c1` / `cg`
+  above 177.44°), LAMMPS and the core do not (phenylacetylene's `c1` / `cg`
   angles, 0.055 kcal/mol).
 - parmchk2 on 800 type graphs built to need bond and angle estimates: every
   bond and angle it writes — parameters, analog, penalty, and every `ATTN`
@@ -1166,7 +1165,7 @@ Registering a LAMMPS form:
 
 ```rust
 use molrs::ff::ir::{ParamDimension, LammpsForm, ParamSpec, StyleSpec};
-use molrs::ff::style_registry::register_style;
+use molrs::ff::style_registry::GlobalRegistry;
 
 let fene = StyleSpec::new("bond", "fene")
     .params(vec![
@@ -1177,20 +1176,21 @@ let fene = StyleSpec::new("bond", "fene")
     ])
     .expression("-0.5*k*r0^2*log(1-(r/r0)^2)+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
     .lammps(LammpsForm::positional());
-register_style(fene, None)?;
+GlobalRegistry.register_style(fene, None)?;
 ```
 
 ```python
 from molpy.ff import ir, style_registry
+registry = style_registry.GlobalRegistry()
 
 FENE = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
         "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
-style_registry.register_style("bond", "fene", params={"k": "E/L^2", "r0": "L",
+registry.register_style("bond", "fene", params={"k": "E/L^2", "r0": "L",
     "epsilon": "E", "sigma": "L"}, expression=FENE, lammps="positional")
-style_registry.register_style("bond", "other", params={"k": "E/L^2", "r0": "L",
+registry.register_style("bond", "other", params={"k": "E/L^2", "r0": "L",
     "epsilon": "E", "sigma": "L"}, expression=FENE)  # no LAMMPS form yet
-style_registry.register_engine_form("lammps", "bond", "other", "positional:fene")  # afterwards
-[s.lammps for s in style_registry.styles("dihedral") if s.name == "periodic"]  # ['custom:fourier']
+registry.register_engine_form("lammps", "bond", "other", "positional:fene")  # afterwards
+[s.lammps for s in registry.styles("dihedral") if s.name == "periodic"]  # ['custom:fourier']
 ```
 
 `register_engine_form(engine, category, style, form)` gives a style
@@ -1238,7 +1238,7 @@ only ([GROMACS topologies](#gromacs-topologies), [AMBER prmtop](#amber-prmtop)).
 ## Cross-format equivalence
 
 One molecule per force-field family, read from its native format into the
-IR and written by molrs to every format that can hold it
+IR and written by the core to every format that can hold it
 (`ff::equivalence_check`):
 
 | Source | Family, molecule | Native format |
@@ -1252,11 +1252,11 @@ IR and written by molrs to every format that can hold it
 Each source's IR is written as a LAMMPS data file and include, an OpenMM
 `<ForceField>` XML (with residue templates built from the frame) and a
 GROMACS topology (`write_system`). Every file written reads back into the
-IR it was written from — written again it is the same file, and molrs
+IR it was written from — written again it is the same file, and the core
 prices it the same (`every_written_file_reads_back_as_written`) — and every
 source's IR, and each format's form of it, persists through a record.
 
-Where a format holds a field in another exact form, molrs writes that form,
+Where a format holds a field in another exact form, the core writes that form,
 and prices it as the source to 10⁻¹² (`each_engine_form_prices_as_the_source`):
 CHARMM's 1-4 table goes to LAMMPS as `special_bonds` 0 and one zero-`K`
 `dihedral charmm` row of `w` = 1 per 1-4 pair; to OpenMM, OPLS-AA's funct-1
@@ -1264,13 +1264,13 @@ impropers (dihedral rows on atoms that are no bonded chain) go as the
 `improper periodic` they are, and charges per atom in the residue
 templates.
 
-molrs writes engine inputs; pricing them with LAMMPS, GROMACS, OpenMM or
+The core writes engine inputs; pricing them with LAMMPS, GROMACS, OpenMM or
 sander is an out-of-tree script, and no engine number is kept here.
 
 ## Completeness
 
-Every style molrs registers a kernel for, and every field-level setting,
-against every engine format molrs reads or writes and the record (molrec
+Every style the core registers a kernel for, and every field-level setting,
+against every engine format the core reads or writes and the record (molrec
 v2): **✓** exact — priced, read or written as the IR means it, held by the
 tests `ff::completeness` names (a numbered note bounds a ✓ or states the
 condition it holds under); **refused** — an error naming the style or
@@ -1342,7 +1342,7 @@ failure prints the table to put between the markers).
 2. through its codec (cross-term lines at zero, a non-zero one refused); not run by LAMMPS: the installed lmp has no CLASS2 package
 3. the CustomBondForce / CustomAngleForce of its expression, rewritten exactly (held by OpenMM on bond fene, bond morse, angle class2)
 4. GROMACS has no directive of its form (NoEngineForm)
-5. molrs's own definition (a typifier's), no engine style
+5. the core's own definition (a typifier's), no engine style
 6. a wildcard Urey–Bradley row is refused
 7. w = 0 (a periodic term); w ≠ 0 refused
 8. w = 0 (funct 9); w > 0 refused
@@ -1362,7 +1362,7 @@ failure prints the table to put between the markers).
 22. delta = 0 and dielectric = 1; the Coulomb constant is LAMMPS's own
 23. the Coulomb constant is GROMACS's own
 24. lj/cut/coul/long: cutoff and constant; its kspace_style states an accuracy, not an alpha, so pricing is refused until the Ewald parameters are stated
-25. the real-space lj/cut/coul/long; stated Ewald parameters refused (molrs's smooth PME is not LAMMPS's PPPM)
+25. the real-space lj/cut/coul/long; stated Ewald parameters refused (the core's smooth PME is not LAMMPS's PPPM)
 26. the charges; PME / Ewald is a createSystem argument; stated Ewald parameters refused
 27. the charges; coulombtype = PME is an .mdp setting; stated Ewald parameters refused
 28. through its codec, mixing sixthpower as LAMMPS's always does; not run by LAMMPS: the installed lmp has no CLASS2 package
@@ -1390,14 +1390,14 @@ failure prints the table to put between the markers).
 50. no `*_style` command (NoEngineForm)
 <!-- completeness:end -->
 
-The styles outside the Class-I IR (Thole, Tang–Toennies) and molrs's own
+The styles outside the Class-I IR (Thole, Tang–Toennies) and the core's own
 typifier styles (MMFF94, UFF) are priced and persisted, and no engine
 reader or writer maps them; the Class II styles, `pair buck` and `pair
-morse` are LAMMPS's, read and written as the table says. Every Class-I style of molrec's registry is a molrs style of the
-same name with a native kernel, but two: `dihedral rb`, priced by its
-expression (no molrs reader produces it: each reads Ryckaert–Bellemans as the
+morse` are LAMMPS's, read and written as the table says. Every Class-I style of molrec's registry is a style of the
+same name in the core, with a native kernel, but two: `dihedral rb`, priced by its
+expression (no reader produces it: each reads Ryckaert–Bellemans as the
 `multi/harmonic` / `nharmonic` polynomial it is, constant included), and
-`improper trefoil` (the SMIRNOFF average over three orderings), which molrs
+`improper trefoil` (the SMIRNOFF average over three orderings), which the core
 does not register and `compile` refuses by name (`NoKernel`; the OpenMM
 reader refuses `ordering="smirnoff"`).
 
@@ -1429,6 +1429,5 @@ reader refuses `ordering="smirnoff"`).
   writer read as the same force field, and per-pair `[ pairs ]` parameters
   are refused by the LAMMPS writer by name.
 - OpenMM XML (`ff::openmm_check`): CHARMM36, AMBER ff14SB and OPLS-AA
-  fixtures read → write → read as the identity; `materialize_one_four` fills
-  each 1-4 pair once, and CHARMM's `dihedral charmm` form prices as its
-  override form.
+  fixtures read → write → read as the identity, and CHARMM's
+  `dihedral charmm` form prices as its `one_four = "epsilon14"` form.

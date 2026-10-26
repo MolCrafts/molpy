@@ -15,10 +15,8 @@ __all__ = [
     "ColumnSpec",
     "DIHEDRALS",
     "DRUDES",
-    "EXCLUSIONS",
     "IMPROPERS",
     "MEMBERS",
-    "PAIR_OVERRIDES",
     "PAIRS",
     "TOPOLOGY",
     "VIRTUAL_SITES",
@@ -48,10 +46,8 @@ CMAPS: str
 CONSTRAINTS: str
 DIHEDRALS: str
 DRUDES: str
-EXCLUSIONS: str
 IMPROPERS: str
 MEMBERS: str
-PAIR_OVERRIDES: str
 PAIRS: str
 TOPOLOGY: tuple[str, ...]
 VIRTUAL_SITES: str

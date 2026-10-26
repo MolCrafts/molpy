@@ -182,7 +182,6 @@ columns! {
     IBEAD: "ibead", Uint, Scalar, NotAQuantity, "`members`: the bead's row in `atoms`, 0-indexed.";
     ICODE: "icode", Str, Scalar, NotAQuantity, "Residue insertion code (PDB iCode, mmCIF pdbx_PDB_ins_code); \"\" for none.";
     ID: "id", Uint, Scalar, NotAQuantity, "Identifier carried by the source file. Never an index — endpoints are 0-based row indices and a reader that must map labels to rows does so locally.";
-    IS_14: "is_14", DType::Bool, Scalar, NotAQuantity, "Whether a non-bonded pair is a 1-4 (third-neighbour) pair.";
     IS_AROMATIC: "is_aromatic", DType::Bool, Scalar, NotAQuantity, "Whether an atom is aromatic, as a line notation declared it or aromaticity perception decided.";
     ISOTOPE: "isotope", Uint, Scalar, NotAQuantity, "Mass number a line-notation bracket atom states (SMILES `[13C]`).";
     IX: "ix", Int, Scalar, NotAQuantity, "Periodic image flag along the first lattice vector: how many cells this atom has crossed. The continuous position is `xyz + H·(ix, iy, iz)`; the stored coordinate itself stays wrapped. Signed, because an atom can cross back.";
@@ -193,6 +192,7 @@ columns! {
     MUX: "mux", Float, Scalar, Product(Charge, Length), "x-component of a per-atom electric dipole moment.";
     MUY: "muy", Float, Scalar, Product(Charge, Length), "y-component of a per-atom electric dipole moment.";
     MUZ: "muz", Float, Scalar, Product(Charge, Length), "z-component of a per-atom electric dipole moment.";
+    N_BONDS: "n_bonds", Uint, Scalar, NotAQuantity, "`pairs`: the bonds between the two atoms along the shortest path — 1, 2 or 3 for a 1-2, 1-3 or 1-4 pair, whose weights are the force field's `special_bonds`; a pair a file declares beyond them (a GROMACS `[ exclusions ]` row) carries its own distance, and 0 when no bonds connect it.";
     NAME: "name", Str, Scalar, NotAQuantity, "Human-readable atom name (e.g. \"CA\").";
     OCCUPANCY: "occupancy", Float, Scalar, Dimensionless, "Crystallographic occupancy of a site, a fraction.";
     QUATI: "quati", Float, Scalar, Dimensionless, "First imaginary component of a per-atom orientation quaternion.";
@@ -312,12 +312,6 @@ blocks! {
     &[consts::ATOMI, consts::ATOMJ],
     &[consts::TYPE, consts::TYPE_ID, consts::STYLE],
     "Drude oscillators: `atomi` is the core atom, `atomj` its Drude particle; both are `atoms` rows.";
-    EXCLUSIONS = "exclusions",
-    RowKind::Relation { arity: 2 },
-    Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS))] }),
-    &[consts::ATOMI, consts::ATOMJ],
-    &[],
-    "Pairs excluded from non-bonded interaction (PME real-space correction).";
     IMPROPERS = "impropers",
     RowKind::Relation { arity: 4 },
     Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMK, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOML, EndpointTarget::Block(block_names::ATOMS))] }),
@@ -330,18 +324,12 @@ blocks! {
     &[consts::IBEAD, MEMBER_ATOM],
     &[],
     "Coarse-grained membership, one row per (bead, atom): `ibead` is the bead's `atoms` row; `atom` indexes the all-atom block its `targets` names (`/frame/atoms`, …) and is an opaque handle without one.";
-    PAIR_OVERRIDES = "pair_overrides",
-    RowKind::Relation { arity: 2 },
-    Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS))] }),
-    &[consts::ATOMI, consts::ATOMJ],
-    &[],
-    "Sparse per-pair non-bonded overrides (`atomi`, `atomj`, and the override columns) that are not an evaluation list. `ff::potential::intramolecular_pairs` carries them onto `pairs`. `PotentialCompiler::compile` refuses a pair style while this block is present and `pairs` is absent.";
     PAIRS = "pairs",
     RowKind::Relation { arity: 2 },
     Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS))] }),
-    &[consts::ATOMI, consts::ATOMJ],
-    &[consts::TYPE, consts::TYPE_ID, consts::STYLE, consts::IS_14],
-    "The non-bonded pairs `PotentialCompiler::compile` prices: `atomi`, `atomj`, `is_14`, and optional per-pair override columns. Built by `ff::potential::intramolecular_pairs` or `install_pairs`, or written complete by a reader (a GROMACS system). A sparse 1-4 overlay is `pair_overrides`, not this block.";
+    &[consts::ATOMI, consts::ATOMJ, consts::N_BONDS],
+    &[],
+    "The non-bonded exceptions: one row per pair (`atomi < atomj`) the pair styles do not price at full strength — every 1-2, 1-3 and 1-4 pair (`n_bonds`, weighted by `special_bonds`) and every pair a file declares — with the optional per-pair override columns. A pair no row names is priced at full strength. `Atomistic::generate_topology` writes the 1-2, 1-3 and 1-4 rows beside the angles and dihedrals.";
     VIRTUAL_SITES = "virtual_sites",
     RowKind::Relation { arity: 4 },
     Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMK, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOML, EndpointTarget::Block(block_names::ATOMS))] }),
@@ -355,12 +343,13 @@ blocks! {
 /// in the vocabulary.
 pub const MEMBER_ATOM: &str = "atom";
 
-/// The per-pair override columns a `pairs` or `pair_overrides` row may carry:
+/// The per-pair override columns a `pairs` row may carry:
 /// what LAMMPS cannot express per pair (a GROMACS `[ pairs ]` row with
 /// parameters, an OpenMM exception, an AMBER dihedral's own SCEE / SCNB).
 /// `epsilon` / `sigma` (the
 /// pair's LJ parameters), `charge_product` (qᵢqⱼ, e²), `lj_scale` /
-/// `coul_scale` (its weights in place of `special_bonds`). Float, a null cell
+/// `coul_scale` (its weights in place of `special_bonds`; 0 excludes the
+/// pair). Float, a null cell
 /// (validity mask) taking the force field's value. Not canonical keys —
 /// `epsilon` names other things elsewhere — so they live here, as the one
 /// list the force-field compiler reads and the LAMMPS writers refuse.
@@ -696,8 +685,8 @@ mod tests {
     #[test]
     fn exclude_14_registered_bool_scalar() {
         // amber-prmtop-complete-01-structure ac-001: the AMBER negative-3rd-
-        // pointer flag is the sibling of `is_14`, so it carries the same
-        // dtype convention — registered, not left to a reader's discipline.
+        // pointer flag is a registered bool, not left to a reader's
+        // discipline.
         let spec = column("exclude_14").expect("exclude_14 must be in SCHEMA_COLUMNS");
         assert_eq!(spec.const_name, "EXCLUDE_14");
         assert_eq!(spec.dtype, DType::Bool);

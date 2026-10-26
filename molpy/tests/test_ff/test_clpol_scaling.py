@@ -1,4 +1,4 @@
-"""CL&Pol scaleLJ epsilon scaling — ``mp.ff.clpol_scaling``, molrs's by identity."""
+"""CL&Pol scaleLJ epsilon scaling — ``mp.ff.clpol_scaling.ClpolScaling``."""
 
 import pytest
 import molpy as mp
@@ -41,7 +41,7 @@ DATA = {
 
 
 # --- ac-005: closed form ------------------------------------------------------
-def test_compute_k_ij_closed_form():
+def test_k_ij_closed_form():
     # fr_i non-polarizable, fr_j polarizable -> single induction term from fr_j
     fi = mp.ff.clpol_scaling.FragmentScaling(
         "a", q=-1.0, mu=0.0, alpha=3.0, polarizable=False
@@ -53,23 +53,17 @@ def test_compute_k_ij_closed_form():
     expected = 1.0 / (
         1.0 + 0.254952 * r**2 * fj.q**2 / fj.alpha + 0.106906 * fj.mu**2 / fj.alpha
     )
-    assert mp.ff.clpol_scaling.compute_k_ij(fi, fj, r) == pytest.approx(
-        expected, rel=1e-6
-    )
+    assert fi.k_ij(fj, r) == pytest.approx(expected, rel=1e-6)
 
 
 def test_k_ij_in_unit_interval():
-    assert (
-        0.0
-        < mp.ff.clpol_scaling.compute_k_ij(DATA["c2c1im"], DATA["bf4"], 3.088)
-        <= 1.0
-    )
+    assert 0.0 < DATA["c2c1im"].k_ij(DATA["bf4"], 3.088) <= 1.0
 
 
 def test_alpha_zero_raises():
     bad = mp.ff.clpol_scaling.FragmentScaling("x", 1.0, 0.0, 0.0)
     with pytest.raises(ValueError):
-        mp.ff.clpol_scaling.compute_k_ij(bad, DATA["bf4"], 4.0)
+        bad.k_ij(DATA["bf4"], 4.0)
 
 
 # --- ac-006: mu^2 term carries no r^2 prefactor -------------------------------
@@ -81,48 +75,52 @@ def test_mu_term_has_no_r2_prefactor():
         "b", q=1.0, mu=2.0, alpha=8.0, polarizable=True
     )
     r1, r2 = 3.0, 6.0
-    inv1 = 1.0 / mp.ff.clpol_scaling.compute_k_ij(fi, fj, r1)
-    inv2 = 1.0 / mp.ff.clpol_scaling.compute_k_ij(fi, fj, r2)
+    inv1 = 1.0 / fi.k_ij(fj, r1)
+    inv2 = 1.0 / fi.k_ij(fj, r2)
     # difference in 1/k is purely the q^2 (r^2) term; mu^2 term cancels exactly
     only_q = 0.254952 * (r1**2 - r2**2) * fj.q**2 / fj.alpha
     assert (inv1 - inv2) == pytest.approx(only_q, rel=1e-9)
 
 
-# --- ac-002/003/004: scale_lj operator ----------------------------------------
-def test_scale_lj_scales_cross_epsilon():
+# --- ac-002/003/004: ClpolScaling.apply ----------------------------------------
+def test_apply_scales_cross_epsilon():
     ff = _ff()
     r = 4.0
-    out = mp.ff.clpol_scaling.scale_lj(ff, _fragments(r), DATA)
-    k = mp.ff.clpol_scaling.compute_k_ij(DATA["c2c1im"], DATA["bf4"], r)
-    assert _pt(out, "CR", "B").get("epsilon") == pytest.approx(1.0 * k)
+    out = mp.ff.clpol_scaling.ClpolScaling(DATA).apply(ff, _fragments(r))
+    k = DATA["c2c1im"].k_ij(DATA["bf4"], r)
+    assert _pt(out, "CR", "B").params.get("epsilon") == pytest.approx(1.0 * k)
     assert 0.0 < k <= 1.0
 
 
-def test_scale_lj_leaves_intra_and_sigma_and_input():
+def test_apply_leaves_intra_and_sigma_and_input():
     ff = _ff()
-    out = mp.ff.clpol_scaling.scale_lj(ff, _fragments(4.0), DATA)
+    out = mp.ff.clpol_scaling.ClpolScaling(DATA).apply(ff, _fragments(4.0))
     # intra-fragment CR-CR untouched
-    assert _pt(out, "CR", "CR").get("epsilon") == 2.0
+    assert _pt(out, "CR", "CR").params.get("epsilon") == 2.0
     # sigma untouched on the scaled cross pair
-    assert _pt(out, "CR", "B").get("sigma") == 3.5
+    assert _pt(out, "CR", "B").params.get("sigma") == 3.5
     # input FF not mutated
-    assert _pt(ff, "CR", "B").get("epsilon") == 1.0
+    assert _pt(ff, "CR", "B").params.get("epsilon") == 1.0
     assert out is not ff
 
 
 def test_scale_sigma_flag():
-    out = mp.ff.clpol_scaling.scale_lj(_ff(), _fragments(4.0), DATA, scale_sigma=True)
-    assert _pt(out, "CR", "B").get("sigma") == pytest.approx(3.5 * 0.985)
+    out = mp.ff.clpol_scaling.ClpolScaling(DATA, scale_sigma=True).apply(
+        _ff(), _fragments(4.0)
+    )
+    assert _pt(out, "CR", "B").params.get("sigma") == pytest.approx(3.5 * 0.985)
 
 
 def test_missing_fragment_data_raises():
     with pytest.raises(KeyError):
-        mp.ff.clpol_scaling.scale_lj(_ff(), _fragments(4.0), {"c2c1im": DATA["c2c1im"]})
+        mp.ff.clpol_scaling.ClpolScaling({"c2c1im": DATA["c2c1im"]}).apply(
+            _ff(), _fragments(4.0)
+        )
 
 
 # --- ac-008: data file --------------------------------------------------------
 def test_fragment_data_file_loads():
-    table = mp.ff.clpol_scaling.fragment_table()
+    table = mp.ff.clpol_scaling.ClpolScaling().fragments
     for name in ("c2c1im", "bf4", "pf6", "ntf2", "dca"):
         assert name in table
     bf4 = table["bf4"]

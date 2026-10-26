@@ -86,10 +86,10 @@ const RUNTIME_LMP: &str =
 const NO_CUSTOM_READ: &str = "io/openmm_xml/reader.rs::other_custom_forces_are_refused_by_name";
 const PERSIST_CUSTOM: &str = "ff/ir/tests.rs::custom_styles_persist_to_a_fresh_process";
 
-/// A style of molrs's own definition (MMFF94, UFF, …): no engine format has
+/// A style of the core's own definition (MMFF94, UFF, …): no engine format has
 /// it.
 const fn own(kernel: &'static [&'static str]) -> [Cell; 9] {
-    const WHY: &str = "molrs's own definition (a typifier's), no engine style";
+    const WHY: &str = "the core's own definition (a typifier's), no engine style";
     [
         Exact(kernel),
         Na(WHY),
@@ -645,7 +645,7 @@ const MATRIX: &[Row] = &[
                 ],
             ),
             ExactWhere(
-                "the real-space lj/cut/coul/long; stated Ewald parameters refused (molrs's smooth PME is not LAMMPS's PPPM)",
+                "the real-space lj/cut/coul/long; stated Ewald parameters refused (the core's smooth PME is not LAMMPS's PPPM)",
                 &["io/lammps/forcefield_writer.rs::pair_settings_are_written_or_refused_by_name"],
             ),
             Na("the long-range method is a createSystem argument"),

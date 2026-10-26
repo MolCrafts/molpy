@@ -265,12 +265,13 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
     # Term blocks come back through the typed `add_term`.
     termed = mp.core.Atomistic()
     ends = [termed.add_atom(atomic_number=6) for _ in range(2)]
-    termed.add_term("exclusions", ends, weight=0.5)
+    termed.add_term("pairs", ends, n_bonds=0, coul_scale=0.5)
     restored_termed = roundtrip(termed)
-    assert restored_termed.term_blocks() == ["exclusions"]
-    (exclusion,) = restored_termed.terms("exclusions")
-    assert exclusion["weight"] == 0.5
-    assert exclusion.endpoints == tuple(restored_termed.atoms)
+    assert restored_termed.term_blocks() == ["pairs"]
+    (pair,) = restored_termed.terms("pairs")
+    assert pair["n_bonds"] == 0
+    assert pair["coul_scale"] == 0.5
+    assert pair.endpoints == tuple(restored_termed.atoms)
 
     # Unpickling adds every node through the leaf's checked add: a state whose
     # atom has no valid ``atomic_number`` (or bead no ``bead_type``) raises.

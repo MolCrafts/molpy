@@ -149,16 +149,16 @@
 //! priced by the force field (`special_bonds` and `epsilon14` above); with
 //! gen-pairs `no` it needs a `[ pairtypes ]` row, as in GROMACS.
 //!
-//! `pairs` lists every pair GROMACS prices: per molecule, the pairs beyond
-//! `nrexcl` chemical bonds (bonds funct 1 and 3, constraints funct 1) and not
-//! in `[ exclusions ]`, and the `[ pairs ]` rows (which must be excluded, else
-//! GROMACS would price them twice); and every pair of two molecules, up to
-//! `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms (above it the list is the
-//! intramolecular one, and a neighbour list — `compile_typed` — finds the
-//! others). LAMMPS derives its exclusions and its
-//! 1-4 list from the bonds alone; a topology whose `[ pairs ]` and exclusions
-//! are those of `nrexcl` 3 (every `pdb2gmx` topology) is priced the same by
-//! both.
+//! `pairs` lists the special pairs, the ones GROMACS prices otherwise than at
+//! full strength: per molecule, every pair within three chemical bonds
+//! (bonds funct 1 and 3, constraints funct 1) with its `n_bonds`, each
+//! weighed 0 when `nrexcl` excludes it and is no `[ pairs ]` row, a
+//! `[ pairs ]` row at the fudges or its own parameters, and an
+//! `[ exclusions ]` pair weighed 0 at its own distance (0 when no bonds
+//! connect it). Every other pair, of one molecule or two, is priced at full
+//! strength. LAMMPS derives its special pairs from the bonds alone; a
+//! topology whose `[ pairs ]` and exclusions are those of `nrexcl` 3 (every
+//! `pdb2gmx` topology) is priced the same by both.
 //!
 //! # Refusals
 //!

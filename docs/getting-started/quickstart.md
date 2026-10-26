@@ -45,7 +45,7 @@ import molpy as mp
 
 `Atomistic` is MolPy's chemistry-first container: a molecular graph where atoms
 are nodes and bonds are edges. The bundled `tip3p.xml` is read into the store
-units, **Å** and radians, so the coordinates are in Å too.
+units, **Å** and degrees, so the coordinates are in Å too.
 
 ```python
 water_template = mp.Atomistic(name="water_tip3p")
@@ -136,7 +136,7 @@ print("box lengths (Å):", box.lengths.tolist())
 print("box atoms:", len(water_box.atoms), "box bonds:", len(water_box.bonds))
 ```
 
-`merge` copies the type labels with the atoms, bonds and angles, so the box is
+`merge` moves the type labels with the atoms, bonds and angles, so the box is
 typed without a second pass.
 
 ### 5. Convert `Atomistic` to `Frame`
@@ -164,13 +164,13 @@ not optional.
 
 The force-field writer takes the frame as well: every type label of the frame
 is looked up in `ff`, and only the coefficients the system uses are written.
-The `pair_style` line needs a cutoff. A cutoff is a run setting, not a
-force-field parameter, so you declare it on the pair styles; molpy never
-invents one.
+The `pair_style` line needs a cutoff. An OpenMM force-field file states none
+(OpenMM takes it when it builds a system), so you declare it on the pair
+styles; molpy never invents one for a file it reads.
 
 ```python
-ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
-ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
+for style in ("lj/cut", "coul/cut"):
+    ff.get_style("pair", style).set(cutoff=10.0)
 
 out_dir = Path("quickstart-output")
 out_dir.mkdir(parents=True, exist_ok=True)

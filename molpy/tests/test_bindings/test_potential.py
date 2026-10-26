@@ -1,4 +1,4 @@
-"""``mp.ff.compile.ExplicitTerms``: any style's kernel over explicit instances.
+"""``mp.ff.ExplicitTerms``: any style's kernel over explicit instances.
 
 One builder for every style the force-field IR prices — the built-ins, a
 style registered from Python by expression or by a numpy kernel, a style of a
@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from molpy.ff.potential import Potentials
 from molpy.ff import ir, style_registry
-from molpy.ff.compile import ExplicitTerms
+from molpy.ff import ExplicitTerms
 
 # A non-planar four-atom chain: every angle and the dihedral are generic.
 XYZ = np.array(
@@ -35,8 +35,10 @@ def registered() -> Iterator[list[tuple[str, str]]]:
     names: list[tuple[str, str]] = []
     yield names
     for category, name in names:
-        if any(s.name == name for s in style_registry.styles(category)):
-            style_registry.unregister_style(category, name)
+        if any(
+            s.name == name for s in style_registry.GlobalRegistry().styles(category)
+        ):
+            style_registry.GlobalRegistry().unregister_style(category, name)
 
 
 def _dist(a: int, b: int) -> float:
@@ -132,7 +134,12 @@ class TestBuiltins:
 
     def test_a_pair_term_is_priced_with_its_own_row(self) -> None:
         pots = ExplicitTerms(
-            "pair", "lj/cut", [[0, 3], [1, 3]], epsilon=[0.2, 0.1], sigma=3.1
+            "pair",
+            "lj/cut",
+            [[0, 3], [1, 3]],
+            epsilon=[0.2, 0.1],
+            sigma=3.1,
+            cutoff=math.inf,
         ).compile()
         want = sum(
             4 * eps * ((3.1 / _dist(i, 3)) ** 12 - (3.1 / _dist(i, 3)) ** 6)
@@ -143,7 +150,13 @@ class TestBuiltins:
     def test_coul_cut_reads_per_atom_charges(self) -> None:
         q = [0.3, 0.0, 0.0, -0.4]
         pots = ExplicitTerms(
-            "pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0
+            "pair",
+            "coul/cut",
+            [[0, 3]],
+            charges=q,
+            coulomb=332.06371,
+            dielectric=1.0,
+            cutoff=math.inf,
         ).compile()
         want = 332.06371 * 0.3 * -0.4 / _dist(0, 3)
         assert math.isclose(_energy(pots), want, rel_tol=1e-12)
@@ -151,14 +164,16 @@ class TestBuiltins:
 
 class TestCustomStyles:
     def test_a_style_registered_by_expression(self, registered) -> None:
-        class Quartic(style_registry.StyleDeclaration):
-            category = "bond"
-            name = "quartic/kernel-test"
-            params = {"k": "E/L^4", "r0": "L"}
-            expression = "k*(r-r0)^4"
-
-        registered.append(("bond", Quartic.name))
-        pots = ExplicitTerms("bond", Quartic.name, [[0, 1]], k=2.0, r0=1.0).compile()
+        style_registry.GlobalRegistry().register_style(
+            "bond",
+            "quartic/kernel-test",
+            params={"k": "E/L^4", "r0": "L"},
+            expression="k*(r-r0)^4",
+        )
+        registered.append(("bond", "quartic/kernel-test"))
+        pots = ExplicitTerms(
+            "bond", "quartic/kernel-test", [[0, 1]], k=2.0, r0=1.0
+        ).compile()
         assert math.isclose(
             _energy(pots), 2.0 * (_dist(0, 1) - 1.0) ** 4, rel_tol=1e-12
         )
@@ -168,7 +183,7 @@ class TestCustomStyles:
             d = r - r0
             return k * d**3, 3 * k * d**2
 
-        style_registry.register_style(
+        style_registry.GlobalRegistry().register_style(
             "bond", "cubic/kernel-test", params={"k": "E/L^3", "r0": "L"}, kernel=cubic
         )
         registered.append(("bond", "cubic/kernel-test"))
@@ -180,8 +195,8 @@ class TestCustomStyles:
         )
 
     def test_a_style_of_a_custom_category(self, registered) -> None:
-        style_registry.register_category("urey_bradley", 3)
-        style_registry.register_style(
+        style_registry.GlobalRegistry().register_category("urey_bradley", 3)
+        style_registry.GlobalRegistry().register_style(
             "urey_bradley",
             "kernel-test",
             params={"k_ub": "E/L^2", "r_ub": "L"},
@@ -231,7 +246,7 @@ class TestRefusals:
             ("dihedral", "charmm", [[0, 1, 2, 3]], {"k": 1.0}, "periodicity"),
             ("dihedral", "periodic", [[0, 1, 2, 3]], {"k1": 1.0}, "periodicity1"),
             ("improper", "cvff", [[0, 1, 2, 3]], {"k": 1.0}, "sign"),
-            ("pair", "coul/cut", [[0, 1]], {}, "coulomb"),
+            ("pair", "coul/cut", [[0, 1]], {"cutoff": math.inf}, "coulomb"),
             ("pair", "lj/charmm", [[0, 1]], {"cutoff": 10.0}, "inner"),
         ],
     )
@@ -310,7 +325,7 @@ class TestPotentialsAssembly:
                 topo.insert(column, np.array(atom, dtype=np.uint32))
             topo.insert("type", [label] * len(rows))
             frame[name] = topo
-        compiled = mp.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(FLAT)
+        compiled = mp.ff.PotentialCompiler(ff).compile(frame).evaluate(FLAT)
 
         pots = Potentials()
         pots.push(ExplicitTerms("bond", "harmonic", bonds, k=300.0, r0=1.4).compile())
@@ -331,7 +346,12 @@ class TestDefaults:
         coords = np.array([0.0, 0.0, 0.0, 2.5, 0.0, 0.0])
         with pytest.raises(ValueError, match="dielectric"):
             ExplicitTerms(
-                "pair", "coul/cut", [[0, 1]], charges=[0.5, -0.4], coulomb=332.06371
+                "pair",
+                "coul/cut",
+                [[0, 1]],
+                charges=[0.5, -0.4],
+                coulomb=332.06371,
+                cutoff=math.inf,
             ).compile()
         stated = ExplicitTerms(
             "pair",
@@ -340,6 +360,7 @@ class TestDefaults:
             charges=[0.5, -0.4],
             coulomb=332.06371,
             dielectric=2.0,
+            cutoff=math.inf,
         ).compile()
         e = stated.evaluate(coords)[0]
         assert math.isclose(e, 332.06371 / 2.0 * 0.5 * -0.4 / 2.5, rel_tol=1e-12)
@@ -361,7 +382,7 @@ class TestDefaults:
         assert _energy(bare) != 0.0
 
     def test_lj_cut_exponents_and_shift_default_to_12_6_no(self) -> None:
-        params = {"epsilon": 0.2, "sigma": 1.1}
+        params = {"epsilon": 0.2, "sigma": 1.1, "cutoff": math.inf}
         bare = ExplicitTerms("pair", "lj/cut", [[0, 1]], **params).compile()
         stated = ExplicitTerms(
             "pair", "lj/cut", [[0, 1]], n=12.0, m=6.0, shift=0.0, **params

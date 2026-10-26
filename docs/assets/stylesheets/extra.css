@@ -5,11 +5,10 @@
  * feature-matrix, doc-map, tile-grid, link-list, figures (molvis/molplot).
  * Accent: zensical.toml → [project.extra.molcrafts].
  *
- * Only the short-wordmark tweak below is product-specific.
- * Do not re-skin .molcrafts-* components here.
+ * Zensical sets data-md-color-scheme on <body>, not <html>.
  */
 
-/* Short "MolPy" wordmark — theme title gradient spans a short name tightly. */
+/* Short wordmark title. */
 html[data-molcrafts-product="molpy"] .molcrafts-home-hero h1 {
   max-width: 13rem;
 }
@@ -20,9 +19,197 @@ html[data-molcrafts-product="molpy"] .molcrafts-home-hero h1 {
   }
 }
 
-/* The hidden permalink (¶) after a home-section title wraps onto its own line
-   whenever the title fills its line, leaving a blank gap under it. Take it out
-   of the line box. Belongs in the shared theme; remove once the theme does it. */
-.md-typeset .molcrafts-manual-section__header h2 .headerlink {
-  position: absolute;
+/* ---- Home --------------------------------------------------------------
+ * Bands under the hero: what MolPy is, one row per module (prose left, code
+ * right), a gallery of structures it built, and the learning resources.
+ */
+
+.md-typeset .molpy-home {
+  padding-top: 0.6rem;
+}
+
+.md-typeset .molpy-band + .molpy-band {
+  padding-top: 4rem;
+}
+
+.md-typeset .molpy-home h2 {
+  margin: 0;
+  font-size: 1.38rem;
+  line-height: 1.22;
+  letter-spacing: -0.018em;
+}
+
+.md-typeset .molpy-home h2 + p {
+  max-width: 36rem;
+  margin: 0.7rem 0 0;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.md-typeset .molpy-home h3 a {
+  color: var(--md-default-fg-color);
+  text-decoration: none;
+}
+
+.md-typeset .molpy-home h3 a:hover {
+  color: var(--molcrafts-product-accent);
+}
+
+/* ---- Intro ---- */
+
+.md-typeset .molpy-intro p {
+  max-width: 44rem;
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.6;
+  letter-spacing: -0.005em;
+}
+
+/* ---- Modules: prose left, code right, one row each ---- */
+
+.md-typeset .molpy-module {
+  display: grid;
+  grid-template-columns: minmax(0, 0.36fr) minmax(0, 1fr);
+  gap: 1rem 2.4rem;
+  align-items: start;
+  padding: 1.6rem 0;
+  border-top: 1px solid var(--molcrafts-rule);
+}
+
+.md-typeset .molpy-module:last-child {
+  border-bottom: 1px solid var(--molcrafts-rule);
+}
+
+.md-typeset .molpy-module__copy h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.md-typeset .molpy-module__copy p {
+  margin: 0.45rem 0 0;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.md-typeset .molpy-module__copy .molpy-module__name {
+  padding: 0;
+  background: none;
+  color: var(--molcrafts-product-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.md-typeset .molpy-module > .highlight {
+  margin: 0;
+}
+
+/* ---- Gallery ---- */
+
+.md-typeset .molpy-gallery__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1.4rem;
+}
+
+.md-typeset .molpy-tile {
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+
+/* The viewer sizes itself to its box (inline width/height 100%), so the
+   square comes from the stage around it. */
+.md-typeset .molpy-tile__stage {
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--molcrafts-radius);
+  box-shadow: var(--molcrafts-shadow);
+  background: #14291d;
+}
+
+.md-typeset .molpy-tile molvis-viewer {
+  display: block;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* A vertical swipe over a tile scrolls the page; a sideways drag turns the
+   structure. */
+.md-typeset .molpy-tile canvas {
+  touch-action: pan-y !important;
+}
+
+.md-typeset .molpy-tile figcaption {
+  max-width: none;
+  margin: 0.6rem 0 0;
+  font-size: 0.75rem;
+  font-style: normal;
+  font-weight: 600;
+  text-align: center;
+}
+
+.md-typeset .molpy-tile figcaption a {
+  color: var(--md-default-fg-color--light);
+  text-decoration: none;
+}
+
+.md-typeset .molpy-tile figcaption a:hover {
+  color: var(--molcrafts-product-accent);
+}
+
+/* ---- Learning resources: one column of links per kind ---- */
+
+.md-typeset .molpy-resources__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.6rem;
+  margin-top: 1.4rem;
+}
+
+.md-typeset .molpy-resource h3 {
+  margin: 0 0 0.6rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--molcrafts-product-accent);
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.md-typeset .molpy-resource ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset .molpy-resource ul li {
+  margin: 0;
+  padding: 0.3rem 0;
+  font-size: 0.8rem;
+}
+
+.md-typeset .molpy-resource li a {
+  color: var(--md-default-fg-color--light);
+  text-decoration: none;
+}
+
+.md-typeset .molpy-resource li a:hover {
+  color: var(--molcrafts-product-accent);
+}
+
+@media screen and (max-width: 60em) {
+  .md-typeset .molpy-module {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .md-typeset .molpy-gallery__grid,
+  .md-typeset .molpy-resources__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

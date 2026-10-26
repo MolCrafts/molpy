@@ -1,10 +1,12 @@
 # Unit Systems
 
-A frame stores `x = 3.0`. Is that 3 Å or 3 nm? The array does not say.
+A frame stores `x = 3.0`. Is that 3 Å or 3 nm? The array does not say; the
+convention does: a `Frame`'s lengths are always Å, and a reader of an nm format
+(GROMACS) converts at its boundary.
 
 **A unit preset names the convention that gives bare numbers meaning**, and a
 unit registry converts explicitly when two conventions meet (for example
-LAMMPS `real` vs `metal`). Both are molrs's: `mp.core.UnitPreset` and
+LAMMPS `real` vs `metal`). Both live in the core: `mp.core.UnitPreset` and
 `mp.core.UnitRegistry` are `molpy.core.UnitPreset` and `molpy.core.UnitRegistry`.
 
 What it is **not**: automatic unit tracking on every `Frame` column. Numbers stay
@@ -12,9 +14,11 @@ plain; *you* attach a convention when you convert or compare.
 
 ## Why conventions matter
 
-A TIP3P field authored in nanometres expects nm coordinates; an OPLS field in
-ångström expects Å. Mixing them silently produces wrong physics. MolPy does not
-guess: the force field and the unit preset you choose fix the interpretation.
+A TIP3P field authored in nanometres and an OPLS field authored in ångström
+write the same lengths as different numbers. Mixing them silently produces wrong
+physics. MolPy does not guess: a `ForceField` declares its unit preset
+(`ForceField.units`), every force-field reader but LAMMPS's converts the file
+into `real` (Å, kcal/mol), and the LAMMPS reader keeps the file's `units`.
 
 ## Using a preset
 
@@ -102,8 +106,8 @@ that registry's unit object: `q.to(argon.lj_sigma)`, or
 - **A `Frame`'s numbers still carry no unit.** The registry converts
   *quantities* you build; it does not tag your coordinate arrays. Keep your
   inputs consistent with the force field's convention.
-- **Match the force field.** If a field was authored in `real` (Å), don't feed it
-  nm coordinates.
+- **Match the force field.** A number you supply by hand (a cutoff, a
+  parameter) is in the force field's preset (`ff.units`); coordinates are Å.
 - `UnitPreset.register(..., overwrite=False)` raises if the name exists — pass
   `overwrite=True` deliberately.
 - **Not Pint.** There is no `pint` runtime dependency and no Pint-only context

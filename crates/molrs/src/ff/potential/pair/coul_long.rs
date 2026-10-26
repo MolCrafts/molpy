@@ -70,7 +70,8 @@ mod tests {
             .expect("pair coul/long/pme")
     }
 
-    /// Two charges, the pair list one row, `is_14` as given. The caller places the atoms.
+    /// Two charges, one candidate pair at weight `scale` when `is_14` (else
+    /// 1). The caller places the atoms.
     fn kernel(q1: F, q2: F, alpha: F, cutoff: F, scale: F, is_14: bool) -> ScalarPair<CoulLong> {
         let spec = spec();
         let style = Params::from_iter([
@@ -82,7 +83,6 @@ mod tests {
             ("grid_x", 4.0),
             ("grid_y", 4.0),
             ("grid_z", 4.0),
-            ("coulomb14scale", scale),
         ]);
         let (style, rows) = spec.gather(&style, &[]).unwrap();
         let refs: Vec<(&str, &Params)> = rows.iter().map(|(l, p)| (l.as_str(), p)).collect();
@@ -90,22 +90,21 @@ mod tests {
         atoms
             .insert("charge", Array1::from_vec(vec![q1, q2]).into_dyn(), None)
             .unwrap();
-        let mut pairs = Block::new();
-        pairs
-            .insert("atomi", Array1::from_vec(vec![0_u64]).into_dyn(), None)
-            .unwrap();
-        pairs
-            .insert("atomj", Array1::from_vec(vec![1_u64]).into_dyn(), None)
-            .unwrap();
-        pairs
-            .insert("is_14", Array1::from_vec(vec![is_14]).into_dyn(), None)
-            .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        frame.insert("pairs", pairs);
-        ScalarPair::compiled(Arc::new(CoulLong), &spec, &style, &refs, &frame)
-            .unwrap()
-            .fused()
+        let mut candidates = crate::ff::potential::pair::CandidatePairs::default();
+        let w = if is_14 { scale } else { 1.0 };
+        candidates.push(0, 1, w, w);
+        ScalarPair::compiled(
+            Arc::new(CoulLong),
+            &spec,
+            &style,
+            &refs,
+            &frame,
+            &candidates,
+        )
+        .unwrap()
+        .fused()
     }
 
     #[test]

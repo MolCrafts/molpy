@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 
-from . import aggregate, angles, dynamics, order, structure, transport
+from . import aggregate, angles, dynamics, order, showcase, structure, transport
 from .run import SEEDS, argon_ensemble, argon_trajectory
 
 #: Groups whose builders take the seed ensemble rather than the reference run.
@@ -44,6 +44,7 @@ GROUPS = {
         dynamics.debye_reference,
         dynamics.rotational_relaxation,
     ),
+    "showcase": (showcase.gallery,),
 }
 
 

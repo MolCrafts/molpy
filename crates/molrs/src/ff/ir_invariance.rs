@@ -24,7 +24,6 @@ use ndarray::Array1;
 
 use crate::ff::compile::PotentialCompiler;
 use crate::ff::forcefield::ForceField;
-use crate::ff::potential::intramolecular_pairs;
 use crate::io::gromacs::top_reader::GromacsTopForcefieldReader;
 use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
 use crate::io::openmm_xml::reader::OpenmmXmlReader;
@@ -34,6 +33,10 @@ use molrs::core::Frame;
 use molrs::op::{F, Idx};
 
 /// Per `(category/style)`, the energy of that style alone on `frame`.
+///
+/// The references price every pair: a GROMACS `.top` and an OpenMM force
+/// field state no cutoff (the `.mdp`'s, `createSystem`'s), so a pair style
+/// that states none is priced at `cutoff = inf` here.
 fn per_style(ff: &ForceField, frame: &Frame) -> BTreeMap<String, f64> {
     let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
     let mut out = BTreeMap::new();
@@ -42,8 +45,12 @@ fn per_style(ff: &ForceField, frame: &Frame) -> BTreeMap<String, f64> {
             continue;
         }
         let mut one = ff.empty_like();
+        let mut params = style.params().clone();
+        if style.category() == "pair" && params.get("cutoff").is_none() {
+            params.set("cutoff", F::INFINITY);
+        }
         let s = one
-            .def_style(style.category(), style.name(), style.params().clone())
+            .def_style(style.category(), style.name(), params)
             .unwrap();
         for (name, ends, params) in style.type_rows() {
             s.def_type(name, &ends, params.clone()).unwrap();
@@ -264,7 +271,9 @@ pub(crate) fn hand_frame(ff: &ForceField) -> Frame {
             frame.insert(block, b);
         }
     }
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds().unwrap(), None).unwrap();
+    let pairs = molrs::core::Topology::from_frame(&frame)
+        .unwrap()
+        .pairs_block();
     frame.insert("pairs", pairs);
     frame
 }
@@ -561,9 +570,10 @@ fn acetanilide() -> molrs::core::Atomistic {
     mol
 }
 
-/// The frame of a typed molecule with its intramolecular pair list, and, when
-/// the typifier assigns none, the fixed test charges `0.1·(i mod 5 − 2)`.
-fn typed_frame(typed: &molrs::core::Atomistic, ff: &ForceField) -> Frame {
+/// The frame of a typed molecule (its special pairs the typing generated),
+/// and, when the typifier assigns none, the fixed test charges
+/// `0.1·(i mod 5 − 2)`.
+fn typed_frame(typed: &molrs::core::Atomistic) -> Frame {
     let mut frame = typed.to_frame().unwrap();
     let mut atoms = frame.get("atoms").unwrap().clone();
     if atoms.get("charge").is_none() {
@@ -572,8 +582,6 @@ fn typed_frame(typed: &molrs::core::Atomistic, ff: &ForceField) -> Frame {
         atoms.insert("charge", col_f(q), None).unwrap();
         frame.insert("atoms", atoms);
     }
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds().unwrap(), None).unwrap();
-    frame.insert("pairs", pairs);
     frame
 }
 
@@ -598,7 +606,7 @@ fn typed_molecules_price_at_the_reference_energies() {
     let ff = gaff.forcefield();
     assert_energies(
         "GAFF",
-        &per_style(ff, &typed_frame(&typed, ff)),
+        &per_style(ff, &typed_frame(&typed)),
         &[
             ("angle/harmonic", 2.2194097346204344),
             ("bond/harmonic", 7.3769495524832465),
@@ -617,7 +625,7 @@ fn typed_molecules_price_at_the_reference_energies() {
     let ff = opls.forcefield();
     assert_energies(
         "OPLS-AA",
-        &per_style(ff, &typed_frame(&typed, ff)),
+        &per_style(ff, &typed_frame(&typed)),
         &[
             ("angle/harmonic", 2.828467617797212),
             ("bond/harmonic", 8.89620781373482),
@@ -632,7 +640,7 @@ fn typed_molecules_price_at_the_reference_energies() {
     let ff = mmff.forcefield();
     assert_energies(
         "MMFF94",
-        &per_style(ff, &typed_frame(&typed, ff)),
+        &per_style(ff, &typed_frame(&typed)),
         &[
             ("angle/mmff_angle", 3.4673399764538027),
             ("angle/mmff_stbn", 0.289919226317351),
@@ -649,7 +657,7 @@ fn typed_molecules_price_at_the_reference_energies() {
     let ff = uff.forcefield();
     assert_energies(
         "UFF",
-        &per_style(ff, &typed_frame(&typed, ff)),
+        &per_style(ff, &typed_frame(&typed)),
         &[
             // UFF's atom labels come from RDKit's hybridization and
             // conjugation (`perceive::perceive_hybridizations`): the amide N,

@@ -124,7 +124,7 @@ CHAIN = np.array(
 UB_ROWS = [((0, 1, 2), "A-B-B", 22.5, 2.45), ((1, 2, 3), "B-B-A", 18.0, 2.62)]
 TABLE = np.array([1.25 + math.sin(0.7 * i) / 3.0 - 0.01 * i * i for i in range(12)])
 NO_KERNEL = (
-    "no kernel for {} `{}`: register it (molpy.ff.style_registry.register_style) "
+    "no kernel for {} `{}`: register it (molpy.ff.style_registry.GlobalRegistry().register_style) "
     "or give it an expression"
 )
 
@@ -208,17 +208,17 @@ def table_kernel(phi, table):
 def extensions() -> Iterator[None]:
     """Everything this module adds to the IR, taken out again at the end
     (the categories stay: a registered category is not removed)."""
-    style_registry.register_style(
+    style_registry.GlobalRegistry().register_style(
         "bond",
         "fene/proof",
         params=FENE_PARAMS,
         expression=FENE,
         lammps="positional:fene",
     )
-    style_registry.register_style(
+    style_registry.GlobalRegistry().register_style(
         "bond", "fene/proof-np", params=FENE_PARAMS, kernel=fene_kernel
     )
-    style_registry.register_style(
+    style_registry.GlobalRegistry().register_style(
         "pair",
         "lj/smooth/linear/proof",
         params=SMOOTH_PARAMS,
@@ -227,7 +227,7 @@ def extensions() -> Iterator[None]:
         expression=SMOOTH,
         lammps="positional:lj/smooth/linear",
     )
-    style_registry.register_style(
+    style_registry.GlobalRegistry().register_style(
         "pair",
         "lj/smooth/linear/proof-np",
         params=SMOOTH_PARAMS,
@@ -235,15 +235,15 @@ def extensions() -> Iterator[None]:
         special="lj",
         kernel=smooth_kernel,
     )
-    style_registry.register_category("urey_bradley", 3)
-    style_registry.register_style(
+    style_registry.GlobalRegistry().register_category("urey_bradley", 3)
+    style_registry.GlobalRegistry().register_style(
         "urey_bradley", "proof", params={"k_ub": "E/L^2", "r_ub": "L"}, expression=UB
     )
-    style_registry.register_category("bond_angle", 3)
-    style_registry.register_style(
+    style_registry.GlobalRegistry().register_category("bond_angle", 3)
+    style_registry.GlobalRegistry().register_style(
         "bond_angle", "class2", params=BA_PARAMS, expression=BOND_ANGLE
     )
-    style_registry.register_style(
+    style_registry.GlobalRegistry().register_style(
         "bond_angle",
         "class2/np",
         params=BA_PARAMS,
@@ -260,7 +260,7 @@ def extensions() -> Iterator[None]:
             }
         ],
     )
-    style_registry.register_style(
+    style_registry.GlobalRegistry().register_style(
         "dihedral",
         "table/linear",
         params=[ir.ParamSpec("table", "E", kind="array", rank=1)],
@@ -277,7 +277,7 @@ def extensions() -> Iterator[None]:
         ("bond_angle", "class2/np"),
         ("dihedral", "table/linear"),
     ]:
-        style_registry.unregister_style(category, name)
+        style_registry.GlobalRegistry().unregister_style(category, name)
 
 
 # ---------------------------------------------------------------------------
@@ -349,18 +349,15 @@ def smooth_ff(style: str) -> mp.ff.forcefield.ForceField:
     return ff
 
 
-def smooth_frame(xyz: np.ndarray, ff: mp.ff.forcefield.ForceField) -> mp.core.Frame:
-    """The six atoms at ``xyz`` and their ``pairs`` list under ``ff``'s
-    weights: every pair, none bonded."""
-    f = frame(xyz, SMOOTH_TYPES)
-    f["pairs"] = mp.ff.potential.intramolecular_pairs(f, ff)
-    return f
+def smooth_frame(xyz: np.ndarray) -> mp.core.Frame:
+    """The six atoms at ``xyz``, none bonded: every pair at full strength."""
+    return frame(xyz, SMOOTH_TYPES)
 
 
 def price(
     ff: mp.ff.forcefield.ForceField, f: mp.core.Frame
 ) -> tuple[float, np.ndarray]:
-    e, forces = mp.ff.compile.PotentialCompiler(ff).compile(f).evaluate(f)
+    e, forces = mp.ff.PotentialCompiler(ff).compile(f).evaluate(f)
     return float(e), np.asarray(forces)
 
 
@@ -446,7 +443,7 @@ def typed_energy_forces(
     sim = MD()
     sim.set_integrator(VelocityVerlet(1.0))
     sim.set_neighbor(mp.core.NeighborList(30.0), skin=1.0)
-    sim.set_evaluator(mp.ff.compile.PotentialCompiler(ff).compile_typed(f))
+    sim.set_evaluator(mp.ff.PotentialCompiler(ff).compile_typed(f))
     sim.run(work, 0)
     forces = np.column_stack(
         [np.asarray(work["atoms"][key]) for key in ("fx", "fy", "fz")]
@@ -472,7 +469,7 @@ def test_a_python_pair_style_writes_as_lj_smooth_linear_and_prices_alike_at_both
         assert (r < SMOOTH_RC).any() and (r >= SMOOTH_RC).any(), r
         for style in ("lj/smooth/linear/proof", "lj/smooth/linear/proof-np"):
             ff = smooth_ff(style)
-            f = smooth_frame(xyz, ff)
+            f = smooth_frame(xyz)
             e, forces = price(ff, f)
             e_t, f_t = typed_energy_forces(ff, f, xyz)
             scale = float(np.abs(forces).max())
@@ -484,7 +481,9 @@ def test_a_python_pair_style_writes_as_lj_smooth_linear_and_prices_alike_at_both
 
 
 def test_a_python_category_registers_as_urey_bradley() -> None:
-    cat = {c.name: c for c in style_registry.categories()}["urey_bradley"]
+    cat = {c.name: c for c in style_registry.GlobalRegistry().categories()}[
+        "urey_bradley"
+    ]
     assert (cat.arity, cat.block, cat.builtin) == (3, "urey_bradleys", False)
 
 
@@ -499,7 +498,7 @@ FRESH = textwrap.dedent(
     import numpy as np
 
     path, frames = pathlib.Path(sys.argv[1]), json.loads(sys.argv[2])
-    registered = [(s.category, s.name) for s in mp.ff.style_registry.styles() if not s.builtin]
+    registered = [(s.category, s.name) for s in mp.ff.style_registry.GlobalRegistry().styles() if not s.builtin]
     ff = mp.io.mrec.MrecFile(path).forcefield().to_forcefield()
     out = {"registered": registered, "styles": [[s.category, s.name] for s in ff.get_styles(mp.ff.forcefield.Style)]}
     for name, spec in frames.items():
@@ -516,7 +515,7 @@ FRESH = textwrap.dedent(
         terms.insert("type", spec["row_types"])
         f[spec["block"]] = terms
         try:
-            e, forces = mp.ff.compile.PotentialCompiler(ff).compile(f).evaluate(f)
+            e, forces = mp.ff.PotentialCompiler(ff).compile(f).evaluate(f)
             out[name] = {"e": float(e).hex(), "f": [float(v).hex() for v in np.ravel(forces)]}
         except ValueError as err:
             out[name] = {"error": type(err).__name__, "message": str(err),
@@ -642,7 +641,7 @@ def _raising(r, k, r0):
 
 
 def _compile_with(kernel: Callable, name: str) -> None:
-    style_registry.register_style(
+    style_registry.GlobalRegistry().register_style(
         "bond", name, params={"k": "E/L^2", "r0": "L"}, kernel=kernel
     )
     try:
@@ -651,7 +650,7 @@ def _compile_with(kernel: Callable, name: str) -> None:
         ff.def_style("bond", name).def_type("B-B", t["B"], t["B"], k=1.0, r0=1.0)
         price(ff, bead_frame())
     finally:
-        style_registry.unregister_style("bond", name)
+        style_registry.GlobalRegistry().unregister_style("bond", name)
 
 
 def _wrong_arity() -> None:
@@ -673,7 +672,7 @@ def _gromacs(tmp: Path) -> None:
 REFUSALS = [
     (
         "unknown function",
-        lambda tmp: style_registry.register_style(
+        lambda tmp: style_registry.GlobalRegistry().register_style(
             "bond", "x/proof", params={"k": "E"}, expression="k*sinh(r)"
         ),
         ir.UnknownFunctionError,
@@ -681,7 +680,7 @@ REFUSALS = [
     ),
     (
         "unbound variable",
-        lambda tmp: style_registry.register_style(
+        lambda tmp: style_registry.GlobalRegistry().register_style(
             "bond", "x/proof", params={"k": "E"}, expression="k*theta"
         ),
         ir.UnboundVariableError,
@@ -689,7 +688,7 @@ REFUSALS = [
     ),
     (
         "sealed bond harmonic",
-        lambda tmp: style_registry.register_style(
+        lambda tmp: style_registry.GlobalRegistry().register_style(
             "bond",
             "harmonic",
             params={"k": "E/L^2", "r0": "L"},
@@ -743,7 +742,9 @@ def test_what_does_not_conform_is_refused_by_name(
     assert {k: getattr(err.value, k) for k in names} == names
     if what == "kernel raising":
         assert isinstance(err.value.__cause__, ZeroDivisionError)
-    assert "x/proof" not in {s.name for s in style_registry.styles("bond")}
+    assert "x/proof" not in {
+        s.name for s in style_registry.GlobalRegistry().styles("bond")
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -754,7 +755,11 @@ def test_what_does_not_conform_is_refused_by_name(
 def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(
     tmp_path,
 ) -> None:
-    (info,) = [s for s in style_registry.styles("dihedral") if s.name == "table/linear"]
+    (info,) = [
+        s
+        for s in style_registry.GlobalRegistry().styles("dihedral")
+        if s.name == "table/linear"
+    ]
     assert [(p.name, p.kind, p.rank) for p in info.params] == [("table", "array", 1)]
     ff, frames = everything()
     worst = 0.0
@@ -822,14 +827,20 @@ def test_class2_bond_angle_is_one_energy_three_ways() -> None:
     want = -math.pi / 60
     worst = 0.0
     for style in ("class2", "class2/np"):
-        (e,), _ = style_registry.evaluate("bond_angle", style, x=hand, **BA)
+        (e,), _ = style_registry.GlobalRegistry().evaluate(
+            "bond_angle", style, x=hand, **BA
+        )
         worst = max(worst, abs(e - want) / abs(want))
     e_np, g_np = bond_angle_kernel(hand, **BA)
     worst = max(worst, abs(e_np[0] - want) / abs(want))
     # Expression = numpy over the chain's terms, energy and gradient.
     x = np.stack([CHAIN[[0, 1, 2]], CHAIN[[1, 2, 3]], moved(CHAIN, 0.09)[[0, 1, 2]]])
-    e_x, g_x = style_registry.evaluate("bond_angle", "class2", x=x, **BA)
-    e_n, g_n = style_registry.evaluate("bond_angle", "class2/np", x=x, **BA)
+    e_x, g_x = style_registry.GlobalRegistry().evaluate(
+        "bond_angle", "class2", x=x, **BA
+    )
+    e_n, g_n = style_registry.GlobalRegistry().evaluate(
+        "bond_angle", "class2/np", x=x, **BA
+    )
     scale = max(np.abs(e_x).max(), np.abs(g_x).max())
     worst = max(worst, rel(e_n, e_x, scale), rel(g_n, g_x, scale))
     assert worst <= 1e-12

@@ -834,17 +834,17 @@ class TestForceFieldCoeffs:
     def test_coeffs_are_extracted(self, ff_file):
         ff = _read_lammps_data_coeffs(ff_file)
         pair = {
-            t.name: (t.get("epsilon"), t.get("sigma"))
+            t.name: (t.params.get("epsilon"), t.params.get("sigma"))
             for s in ff.get_styles(mp.ff.forcefield.PairStyle)
             for t in s.get_types(mp.ff.forcefield.ForceFieldType)
         }
         bond = {
-            t.name: (t.get("k"), t.get("r0"))
+            t.name: (t.params.get("k"), t.params.get("r0"))
             for s in ff.get_styles(mp.ff.forcefield.BondStyle)
             for t in s.get_types(mp.ff.forcefield.ForceFieldType)
         }
         angle = {
-            t.name: (t.get("k"), t.get("theta0"))
+            t.name: (t.params.get("k"), t.params.get("theta0"))
             for s in ff.get_styles(mp.ff.forcefield.AngleStyle)
             for t in s.get_types(mp.ff.forcefield.ForceFieldType)
         }
@@ -888,7 +888,7 @@ class TestCoeffsAreText:
         ff = _read_lammps_data_coeffs(lammps_dir / "coeffs.lmp", units="metal")
         assert ff.units == "metal"
         epsilon = {
-            t.name: t.get("epsilon")
+            t.name: t.params.get("epsilon")
             for s in ff.get_styles(mp.ff.forcefield.PairStyle)
             for t in s.get_types(mp.ff.forcefield.ForceFieldType)
         }

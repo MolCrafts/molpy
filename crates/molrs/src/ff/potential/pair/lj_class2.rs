@@ -43,6 +43,7 @@ mod tests {
 
     fn one(eps: F, sigma: F) -> Potentials {
         ExplicitTerms::new("pair", "lj/class2")
+            .style_params(Params::from_iter([("cutoff", F::INFINITY)]))
             .term(
                 &[0, 1],
                 Params::from_iter([("epsilon", eps), ("sigma", sigma)]),
@@ -117,25 +118,28 @@ mod tests {
         use crate::ff::forcefield::ForceField;
         use crate::ff::ir::CombiningRule;
         use molrs::core::Block;
-        use molrs::op::Idx;
         use ndarray::Array1;
 
         let mut ff = ForceField::new("t");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style("pair", "lj/class2", Params::new())
-            .unwrap()
-            .def_type(
-                "A",
-                &["A"],
-                Params::from_iter([("epsilon", 0.1), ("sigma", 3.0)]),
-            )
-            .unwrap()
-            .def_type(
-                "B",
-                &["B"],
-                Params::from_iter([("epsilon", 0.4), ("sigma", 3.6)]),
-            )
-            .unwrap();
+        ff.def_style(
+            "pair",
+            "lj/class2",
+            Params::from_iter([("cutoff", F::INFINITY)]),
+        )
+        .unwrap()
+        .def_type(
+            "A",
+            &["A"],
+            Params::from_iter([("epsilon", 0.1), ("sigma", 3.0)]),
+        )
+        .unwrap()
+        .def_type(
+            "B",
+            &["B"],
+            Params::from_iter([("epsilon", 0.4), ("sigma", 3.6)]),
+        )
+        .unwrap();
         let mut atoms = Block::new();
         atoms
             .insert(
@@ -149,16 +153,8 @@ mod tests {
                 .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
                 .unwrap();
         }
-        let mut pairs = Block::new();
-        pairs
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
-            .unwrap();
-        pairs
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None)
-            .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        frame.insert("pairs", pairs);
 
         let (eps, sigma) = CombiningRule::SixthPower.combine((0.1, 3.0), (0.4, 3.6));
         let s = sigma / 3.4;

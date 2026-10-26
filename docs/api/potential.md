@@ -10,9 +10,9 @@ through its styles (`ff.def_style(kind, name)`); `PotentialCompiler` binds them
 to a typed `Frame` as a `Potentials` evaluator. There is no Python-side
 potential class per style. Each module is its Rust owner's:
 `mp.ff.potential` (`Potentials`, `WeightedTerms`, `PairLjCut`, `Potential`,
-…), `mp.ff.compile` (`PotentialCompiler`, `ExplicitTerms`), `mp.ff.ir` the force-field
+…), `mp.ff` itself (`PotentialCompiler`, `ExplicitTerms`), `mp.ff.ir` the force-field
 IR's vocabulary (`ParamSpec`, `StyleSpec`, `CategorySpec`, `IrError`, …),
-and `mp.ff.style_registry` (`StyleDeclaration`, `register_style`, `register_category`, `styles`, …): a new
+and `mp.ff.style_registry` (`GlobalRegistry`: `register_style`, `register_category`, `styles`, …): a new
 style or category is registered from Python with nothing rebuilt — see
 [Extending the Force Field](../developer/extending-forcefield.md).
 
@@ -20,19 +20,18 @@ style or category is registered from Python with nothing rebuilt — see
 |--------|---------|---------------|
 | `mp.ff.forcefield.ForceField` | Styles and types by category; `def_style(kind, name)` | Declaring parameters |
 | `mp.ff.forcefield.BondStyle` / `mp.ff.forcefield.AngleStyle` / `mp.ff.forcefield.DihedralStyle` / `mp.ff.forcefield.ImproperStyle` / `mp.ff.forcefield.PairStyle` | One kernel name per style, `def_type(...)` for its parameters | Bonded and nonbonded terms |
-| `mp.ff.compile.PotentialCompiler` | `PotentialCompiler(ff).compile(frame)` → `Potentials` | Binding a force field to a typed frame |
+| `mp.ff.PotentialCompiler` | `PotentialCompiler(ff).compile(frame)` → `Potentials` | Binding a force field to a typed frame |
 | `mp.ff.potential.Potentials` | `evaluate(frame)` → `(energy, forces)`, forces of shape `(N, 3)`; `push` moves more members in | Energy / force computation |
-| `mp.ff.compile.ExplicitTerms` | `ExplicitTerms(category, style, atoms, **params).compile()` → `Potentials`: any registered style over explicit instances | Assembling terms by hand |
+| `mp.ff.ExplicitTerms` | `ExplicitTerms(category, style, atoms, **params).compile()` → `Potentials`: any registered style over explicit instances | Assembling terms by hand |
 | `mp.ff.potential.PairLjCut` | The one-type `lj/cut` kernel an MD integrator feeds from a neighbour list | `mp.md` integrators |
 | `mp.ff.potential.Potential` | The protocol: `evaluate(pos) -> (energy, forces)`, `pos` and forces `(N, 3)` | Custom (NN / external) forces in MD |
-| `mp.ff.style_registry.StyleDeclaration`, `register_style`, `register_category`; `mp.ff.ir.ParamSpec` | Declare a style (expression or Python kernel) or a category; `StyleSpec` / `CategorySpec` are the registered records `styles()` / `categories()` return | Extending the force field |
+| `mp.ff.style_registry.GlobalRegistry` (`register_style`, `register_category`); `mp.ff.ir.ParamSpec` | Declare a style (expression or Python kernel) or a category; `StyleSpec` / `CategorySpec` are the registered records `styles()` / `categories()` return | Extending the force field |
 
 ## Canonical example
 
 Define styles and types on a `ForceField`, then compile it against a typed
-`Frame` with `mp.ff.compile.PotentialCompiler(ff).compile(frame)`. There is no
-per-style `to_potential()`, no `ff.to_potentials()`, and no parameter-array
-lookup; the math runs in the high-performance backend.
+`Frame` with `mp.ff.PotentialCompiler(ff).compile(frame)`; the math
+runs in the native core.
 
 ```python
 import molpy as mp
@@ -52,7 +51,7 @@ frame = mp.Frame(
     }
 )
 
-pots = mp.ff.compile.PotentialCompiler(ff).compile(frame)
+pots = mp.ff.PotentialCompiler(ff).compile(frame)
 energy, forces = pots.evaluate(frame)  # forces: shape (2, 3)
 ```
 
@@ -66,7 +65,9 @@ energy, forces = pots.evaluate(frame)  # forces: shape (2, 3)
 
 ::: molpy.ff.potential
 
-::: molpy.ff.compile
+::: molpy.ff.PotentialCompiler
+
+::: molpy.ff.ExplicitTerms
 
 ::: molpy.ff.ir
 

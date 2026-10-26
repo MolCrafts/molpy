@@ -42,12 +42,12 @@ types and parameter values tleap gives the same molecule, and antechamber
 the AmberTools pipeline: it is cut by prepgen and joined by tleap, and its
 force field is read back from tleap's prmtop.
 
-The two force fields merge. molrs's `ForceField.merge` compares what each
+The two force fields merge. `ForceField.merge` compares what each
 style prices (defaults filled in, within a relative 1e-6), and native GAFF
 names its terms and rounds its estimates as tleap's prmtop does, so a type or
 term the chain and TFSI share (`c3`) is one definition.
-Every GAFF entry point takes `parameter_set` (`"gaff"` or `"gaff2"`, as
-molrs names it); it has no default, so name the same set for every
+Every GAFF entry point takes `parameter_set` (`"gaff"` or `"gaff2"`); it has
+no default, so name the same set for every
 component.
 
 A polymer is not typed as one molecule. You build one oligomer in which the head, chain and tail monomers are already bonded, and you say how prepgen cuts it (`AmberCut`: the atoms each residue omits, and the atom across each junction). `AmberPolymerBuilder` then runs antechamber and parmchk2 on that oligomer, prepgen for each cut, and tleap `sequence`. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and `LammpsEngine` writes the LAMMPS deck.
@@ -268,7 +268,7 @@ print(sorted(deck))  # ['data', 'init', 'input', 'settings']
 `LammpsEngine().run(deck["input"], workdir=output_dir / "lammps")` runs it;
 it is the starting point for the equilibration you add to `body`. The four
 terms `GaffTypifier` estimated for TFSI (it marks them `estimated`, with the
-penalty, method and analog) export like any other: every molrs writer skips
+penalty, method and analog) export like any other: every writer skips
 the provenance and writes the parameters.
 
 ## When the AmberTools typifiers are still the route

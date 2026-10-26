@@ -3,8 +3,9 @@
 Trajectory and structure analyses, reached as `mp.compute.<Name>`.
 
 Numerical kernels live in the native core, and there is no second science
-implementation in Python. Every public name on `mp.compute` is a native
-class; there is no wrapper and no free function.
+implementation in Python. Every class on `mp.compute` is the native core
+type of the same name, beside the two structural protocols `Compute` and
+`Stream`; there is no wrapper and no free function.
 
 ## A compute is configured once and fed data by keyword
 
@@ -12,7 +13,10 @@ Every analysis is a class with one method. The constructor takes the
 configuration that defines the measurement — bins, cutoffs, `max_lag`, a
 window, a tolerance — and nothing else. `compute(...)` takes the data, always
 by keyword: arrays, the sample interval `dt`, neighbour tables, a partition,
-or the result of another compute. Every optional setting defaults to `None`,
+or the result of another compute. Three are streams instead: `Msd`, `Vacf`
+and `Rdf` have no `compute`; `x.accumulator()` hands out an accumulator that
+takes one frame per `push(...)`, and `finish()` reads the result. Every
+optional setting defaults to `None`,
 which means "the core default"; `X.spec()` lists a class's parameters with
 their defaults and `x.tunables()` reads an instance's.
 
@@ -59,10 +63,11 @@ unit conversion in a library default. The [MSD](../compute/msd.md),
 
 !!! note "Analysis units (LAMMPS *real*)"
     Length **Å**, charge **e**, **time fs**, volume Å³, temperature K.
-    Vibrational spectra report cm⁻¹. GROMACS trajectories are nm-native —
-    scale lengths ×10 before analysis. Displacement correlations need
-    **unwrapped** coordinates; given per-frame `boxes`, `Msd` refuses a
-    wrapped trajectory, and `Unwrap` produces the continuous one.
+    Vibrational spectra report cm⁻¹. The GROMACS readers convert nm to Å,
+    so their frames need no rescaling. Displacement correlations need
+    **unwrapped** coordinates; given each frame's box
+    (`push(positions, dt=..., simbox=box)`), `Msd` refuses a wrapped
+    trajectory, and `Unwrap` produces the continuous one.
 
 ## Family index
 
@@ -79,12 +84,12 @@ analysis family has its own page under [Compute](../compute/index.md).
 | distribution | `DistributionFunction`, `CombinedDistribution`, `Axis` | [Distribution](../compute/distribution.md) |
 | spatial | `SpatialDistribution`, `RegularGrid` | [Spatial](../compute/spatial.md) |
 | order | `Steinhardt`, `Hexatic`, `SolidLiquid`, `ContinuousCoordination`, `Nematic`, `Cubatic` | [Order](../compute/order.md) |
-| environment | `BondOrientationalOrder`, `LocalDescriptors`, `EnvironmentMatch`, `AngularSeparationNeighbor` | [Environment](../compute/environment.md) |
-| shape | `CenterOfMass`, `GyrationTensor`, `InertiaTensor` | [Shape](../compute/shape.md) |
+| environment | `BondOrientationalOrder`, `LocalDescriptors`, `EnvironmentMatch`, `AngularSeparationNeighbor`, `AngularSeparationGlobal`, `LocalBondProjection` | [Environment](../compute/environment.md) |
+| shape | `CenterOfMass`, `GyrationTensor`, `InertiaTensor`, `KineticEnergy` | [Shape](../compute/shape.md) |
 | cluster | `Cluster` | [Cluster](../compute/cluster.md) |
 | decomposition | `Pca`, `Kmeans` | [Decomposition](../compute/decomposition.md) |
 | hbond | `HBonds` | [HBond](../compute/hbond.md) |
-| voronoi | `RadicalVoronoi`, `VoronoiIntegration`, `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis` | [Voronoi](../compute/voronoi.md) |
+| voronoi | `RadicalVoronoi`, `VoronoiIntegration`, `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`, `MolecularMoments`, `FiniteFieldPolarizability` | [Voronoi](../compute/voronoi.md) |
 | msd | `Msd`, `Unwrap` → `LinearFit` | [MSD](../compute/msd.md) |
 | vacf | `Vacf` → `CumulativeTrapezoid` → `Plateau` | [VACF](../compute/vacf.md) |
 | pmsd | `DipoleMoment` → `Msd` → `LinearFit` | [PMSD](../compute/pmsd.md) |
@@ -100,12 +105,18 @@ analysis family has its own page under [Compute](../compute/index.md).
 
 ## Shared types
 
-### The `Compute` contract
+### The `Compute` and `Stream` contracts
 
-`Compute` is not a base class to inherit from. It is a structural
-`typing.Protocol` owned by the native backend and re-exported here: any class
-that defines a `compute(...)` method taking its data as keyword arguments
-satisfies it, with no subclassing and no registration. Writing one is covered
-in [Adding a Compute Operation](../developer/extending-compute.md).
+`Compute` is not a base class to inherit from. It is a runtime-checkable
+`typing.Protocol` defined in `mp.compute`, mirroring the core's
+`Compute` trait: any class that defines a `compute(...)`
+method taking its data as keyword arguments satisfies it, with no subclassing
+and no registration. `Stream` is the same for the core `Stream` trait: one
+method, `accumulator()`, as on `Msd`, `Vacf` and `Rdf`. Writing a compute is
+covered in [Adding a Compute Operation](../developer/extending-compute.md).
+`ComputeSpec.all()` describes every native compute type: its parameters
+(`ParamSpec`) and input fields (`InputSpec`).
 
 ::: molpy.compute.Compute
+
+::: molpy.compute.Stream

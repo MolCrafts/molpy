@@ -9,15 +9,19 @@ that ``minimize(frame)`` honours the frame's ``atoms.free`` mask.
 
 from __future__ import annotations
 
+import math
+
 import molpy as mp
 import numpy as np
 import pytest
-from molpy.ff.compile import ExplicitTerms
+from molpy.ff import ExplicitTerms
 
 
 def _lj_dimer():
     # One LJ pair at 1.5 sigma: the minimum is at 2^(1/6) sigma.
-    return ExplicitTerms("pair", "lj/cut", [[0, 1]], epsilon=1.0, sigma=1.0).compile()
+    return ExplicitTerms(
+        "pair", "lj/cut", [[0, 1]], epsilon=1.0, sigma=1.0, cutoff=math.inf
+    ).compile()
 
 
 def _dimer_frame(free: list[bool] | None = None) -> mp.core.Frame:

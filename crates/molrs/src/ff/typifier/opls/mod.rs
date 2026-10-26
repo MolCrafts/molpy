@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use molrs::core::{Atomistic, NodeId};
 
 use crate::ff::forcefield::ForceField;
+use crate::ff::ir::builtin_style;
 
 use crate::ff::typifier::{TypeAssignment, Typifier, TypingError};
 
@@ -17,6 +18,29 @@ pub(crate) mod typing_metadata;
 
 pub use assign::{CandidateTables, NoMatch};
 pub use typing_metadata::{OplsTypeRow, OplsTypingMetadata};
+
+/// OPLS-AA's conventional non-bonded cutoff, Å: what [`OplsAaTypifier`]
+/// declares on a pair style its force field states none for.
+pub const OPLS_AA_CUTOFF: f64 = 12.0;
+
+/// State `cutoff` on every pair style of `ff` that declares a cutoff and
+/// states none; a stated one is the force field's and stays.
+fn declare_cutoff(ff: &mut ForceField, cutoff: f64) {
+    let open: Vec<String> = ff
+        .get_styles("pair")
+        .into_iter()
+        .filter(|s| {
+            builtin_style("pair", s.name()).is_some_and(|spec| spec.style_param("cutoff").is_some())
+                && s.params().get("cutoff").is_none()
+        })
+        .map(|s| s.name().to_owned())
+        .collect();
+    for name in open {
+        ff.get_style_mut("pair", &name)
+            .expect("a style just listed")
+            .set_param("cutoff", cutoff);
+    }
+}
 
 use assign::typify_bonded_with;
 use layered::LayeredTypingEngine;
@@ -192,7 +216,8 @@ impl OplsAaTypifier {
     /// [`TypingError::Malformed`] naming the type for a malformed SMARTS
     /// `def`, naming both types for an override of a type absent from `meta`,
     /// naming every member for an overrides cycle.
-    pub fn new(meta: OplsTypingMetadata, ff: ForceField) -> Result<Self, TypingError> {
+    pub fn new(meta: OplsTypingMetadata, mut ff: ForceField) -> Result<Self, TypingError> {
+        declare_cutoff(&mut ff, OPLS_AA_CUTOFF);
         let engine = LayeredTypingEngine::build(&meta).map_err(TypingError::malformed)?;
         let tables = CandidateTables::build(&ff, &meta);
         Ok(Self {
@@ -516,6 +541,45 @@ mod tests {
             }
         }
         g
+    }
+
+    /// The cutoff of every pair style of `ff`.
+    fn cutoffs(ff: &ForceField) -> Vec<(String, Option<f64>)> {
+        ff.get_styles("pair")
+            .into_iter()
+            .map(|s| {
+                let c = s.params().get("cutoff").and_then(|v| v.as_num());
+                (s.name().to_owned(), c)
+            })
+            .collect()
+    }
+
+    /// The shipped field's pair styles are at OPLS-AA's 12 Å; a field that
+    /// states a cutoff keeps it, and one that states none gets 12 Å.
+    #[test]
+    fn the_typifier_declares_its_cutoff_where_the_field_states_none() {
+        let shipped = OplsAaTypifier::oplsaa();
+        let stated = cutoffs(shipped.source_forcefield());
+        assert!(!stated.is_empty());
+        assert!(
+            stated.iter().all(|(_, c)| *c == Some(OPLS_AA_CUTOFF)),
+            "{stated:?}"
+        );
+
+        let mut ff = ForceField::new("x");
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
+            .unwrap();
+        ff.def_style("pair", "coul/cut", Params::new()).unwrap();
+        let typifier = OplsAaTypifier::new(OplsTypingMetadata::new(), ff).unwrap();
+        let mut got = cutoffs(typifier.source_forcefield());
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            [
+                ("coul/cut".to_owned(), Some(OPLS_AA_CUTOFF)),
+                ("lj/cut".to_owned(), Some(9.0)),
+            ]
+        );
     }
 
     /// A two-type library (`opls_135` CT carbon, `opls_140` HC hydrogen) plus

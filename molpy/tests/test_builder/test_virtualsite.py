@@ -53,7 +53,7 @@ def _rows(struct, block):
 
 
 def test_the_clpol_table_is_molrs_s():
-    table = mp.ff.params.clpol_polarizability()
+    table = mp.builder.DrudeBuilder().polarizability
     assert table["CR"]["k_D"] == 4184.0 and table["CR"]["alpha"] > 0
     assert table["HC"]["k_D"] == 0.0
 
@@ -125,7 +125,7 @@ def test_drude_spring_force_constant(cation):
 def test_drude_rows_carry_alpha_and_thole(cation):
     """CL&Pol's ``a_thole`` survives as the ``drudes`` row's ``thole``."""
     out = mp.builder.DrudeBuilder().apply(cation)
-    table = mp.ff.params.clpol_polarizability()
+    table = mp.builder.DrudeBuilder().polarizability
     atoms = _atoms_by_row(out)
     rows = _rows(out, "drudes")
     assert rows
@@ -156,7 +156,7 @@ def test_alpha_recovered_from_drude_params(cation):
         k_d = 2.0 * row["k"] / kcal_per_kj
         assert q_d**2 / (FOUR_PI_EPS0 * k_d) == pytest.approx(row["alpha"], rel=1e-7)
         assert row["alpha"] > 0
-    assert mp.ff.params.clpol_polarizability()["CR"]["alpha"] == 1.122
+    assert mp.builder.DrudeBuilder().polarizability["CR"]["alpha"] == 1.122
 
 
 def test_cation_charge_conserved(cation):
@@ -167,7 +167,7 @@ def test_cation_charge_conserved(cation):
 
 def test_drude_accepts_read_clpol_alpha_rows(cation, tmp_path):
     """``mp.io.read_clpol_alpha`` returns a list of rows; the builder takes it."""
-    table = mp.ff.params.clpol_polarizability()
+    table = mp.builder.DrudeBuilder().polarizability
     lines = [
         f"{t} {p['m_D']} {p['q_D_sign']} {p['k_D']} {p['alpha']} {p['a_thole']}"
         for t, p in table.items()
@@ -183,7 +183,7 @@ def test_drude_accepts_read_clpol_alpha_rows(cation, tmp_path):
 
 def test_drude_later_row_wins(cation):
     """A type given twice keeps the file's last word (``read_clpol_alpha``)."""
-    table = mp.ff.params.clpol_polarizability()
+    table = mp.builder.DrudeBuilder().polarizability
     rows = [{"type_name": t, **p} for t, p in table.items()]
     rows.append({**rows[[r["type_name"] for r in rows].index("CR")], "a_thole": 1.5})
     out = mp.builder.DrudeBuilder(rows).apply(cation)

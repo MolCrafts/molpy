@@ -31,10 +31,8 @@ use std::collections::{BTreeMap, HashMap};
 use ndarray::Array1;
 use serde_json::Value;
 
-use crate::ff::compile::PotentialCompiler;
 use crate::ff::forcefield::ForceField;
 use crate::ff::ir::Params;
-use crate::ff::potential::intramolecular_pairs;
 use crate::io::openmm_xml::reader::OpenmmXmlReader;
 use crate::io::openmm_xml::writer::OpenmmXmlWriter;
 use crate::io::reader::ForceFieldReader;
@@ -233,7 +231,9 @@ pub(crate) fn frame(c: &Case, ff: &ForceField) -> Frame {
         .map(|r| (r, String::new()))
         .collect();
     out.insert("dihedrals", relation(&all));
-    let pairs = intramolecular_pairs(&out, ff.special_bonds().unwrap(), None).unwrap();
+    let pairs = molrs::core::Topology::from_frame(&out)
+        .unwrap()
+        .pairs_block();
     out.insert("pairs", pairs);
     out.insert(
         "dihedrals",
@@ -275,14 +275,11 @@ fn molrs_terms(ff: &ForceField, frame: &Frame) -> BTreeMap<&'static str, F> {
     equivalence_check::molrs_terms(ff, frame, &x, equivalence_check::coulomb(ff), false)
 }
 
-/// The field and frame molrs prices `c` with: `charmm`'s 1-4 pairs as
-/// per-pair rows ([`ForceField::materialize_one_four`]).
+/// The field and frame molrs prices `c` with (`charmm`'s 1-4 pairs at
+/// their own parameters, `one_four = "epsilon14"`).
 fn system(c: &Case) -> (ForceField, Frame) {
     let ff = read(c);
-    let mut frame = frame(c, &ff);
-    if c.name == "charmm" {
-        assert!(ff.materialize_one_four(&mut frame).unwrap() > 0);
-    }
+    let frame = frame(c, &ff);
     (ff, frame)
 }
 
@@ -305,9 +302,9 @@ fn rel(got: F, want: F) -> F {
 }
 
 /// `charmm`'s LAMMPS form (`special_bonds` 0, a `w` = 1 `dihedral charmm`
-/// row per 1-4 pair) prices as its per-pair override form.
+/// row per 1-4 pair) prices as its `one_four = "epsilon14"` form.
 #[test]
-fn the_lammps_form_of_charmm_prices_as_its_override_form() {
+fn the_lammps_form_of_charmm_prices_as_its_epsilon14_form() {
     let c = &CASES[0];
     let (ff, frame) = system(c);
     let (lff, lframe) = lammps_form(c);
@@ -315,79 +312,6 @@ fn the_lammps_form_of_charmm_prices_as_its_override_form() {
     for t in TERMS {
         assert!(rel(a[t], b[t]) <= 1e-13, "{t}: {} vs {}", a[t], b[t]);
     }
-}
-
-/// A `one_four = "epsilon14"` field compiles only for a frame whose 1-4
-/// pairs carry their per-pair rows; the refusal names the operation.
-#[test]
-fn an_unmaterialized_epsilon14_frame_is_refused() {
-    let c = &CASES[0];
-    let ff = read(c);
-    let bare = frame(c, &ff);
-    let err = PotentialCompiler::new(&ff).compile(&bare).err().unwrap();
-    assert!(err.to_string().contains("materialize_one_four"), "{err}");
-    let err = PotentialCompiler::new(&ff)
-        .compile_typed(&bare)
-        .err()
-        .unwrap();
-    assert!(err.to_string().contains("materialize_one_four"), "{err}");
-}
-
-/// `materialize_one_four` fills each 1-4 pair once (OpenMM's 1-4 list) and
-/// nothing else, keeps a cell already set, and is idempotent.
-#[test]
-fn materialize_one_four_fills_each_one_four_pair_once() {
-    let c = &CASES[0];
-    let ff = read(c);
-    let mut f = frame(c, &ff);
-    let n14 = {
-        let p = f.get("pairs").unwrap();
-        p.get("is_14")
-            .unwrap()
-            .get::<bool>()
-            .unwrap()
-            .iter()
-            .filter(|b| **b)
-            .count()
-    };
-    assert_eq!(ff.materialize_one_four(&mut f).unwrap(), n14);
-    let p = f.get("pairs").unwrap();
-    let flags: Vec<bool> = p
-        .get("is_14")
-        .unwrap()
-        .get::<bool>()
-        .unwrap()
-        .iter()
-        .copied()
-        .collect();
-    for key in ["epsilon", "sigma", "lj_scale", "coul_scale"] {
-        let mask = p.validity(key).unwrap();
-        assert_eq!(mask, &flags[..], "{key}");
-    }
-    assert!(p.get("charge_product").is_none());
-    // A set cell is final; a second call fills nothing.
-    let mut again = f.clone();
-    let first = (0..flags.len()).find(|&r| flags[r]).unwrap();
-    {
-        let pairs = again.get_mut("pairs").unwrap();
-        let mut eps = pairs
-            .get("epsilon")
-            .unwrap()
-            .get::<f64>()
-            .unwrap()
-            .to_owned();
-        eps[[first]] = 0.5;
-        pairs.insert("epsilon", eps, Some(flags.clone())).unwrap();
-    }
-    assert_eq!(ff.materialize_one_four(&mut again).unwrap(), 0);
-    let eps = again
-        .get("pairs")
-        .unwrap()
-        .get("epsilon")
-        .unwrap()
-        .get::<f64>()
-        .unwrap()[[first]];
-    assert_eq!(eps, 0.5);
 }
 
 /// The two `(name, endpoints, params)` lists of `a` and `b`, style by style.
