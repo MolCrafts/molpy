@@ -275,7 +275,7 @@ jobs:
         with:
           targets: wasm32-unknown-emscripten
           cache: release-py-pyodide
-      - uses: pypa/cibuildwheel@v4.3.1
+      - uses: pypa/cibuildwheel@v4.3.4
         env:
           CIBW_PLATFORM: pyodide
           CIBW_BUILD: cp314-pyodide_wasm32
