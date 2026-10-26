@@ -12,6 +12,7 @@ from __future__ import annotations
 import shlex
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -218,6 +219,82 @@ class TestAmberPieces:
         assert "HEAD_NAME O2" in controls["chain"]
         assert "TAIL_NAME C5" in controls["chain"]
         assert "HEAD_NAME O3" in controls["tail"]
+
+
+def _prepgen_residues(tools: _FakeTools) -> list[str]:
+    return [
+        args[args.index("-rn") + 1] for name, args in tools.calls if name == "prepgen"
+    ]
+
+
+def _named_cuts(**resnames: str) -> dict[str, mp.builder.AmberCut]:
+    return {
+        variant: replace(cut, resname=resnames.get(variant))
+        for variant, cut in _cuts()["EO"].items()
+    }
+
+
+class TestResidueNames:
+    def test_bead_types_with_a_common_prefix_get_distinct_residues(
+        self, tools, tmp_path
+    ):
+        _build(
+            tmp_path,
+            "{[#PEO][#PEO][#PEG][#PEG]}",
+            library={"PEO": _ether(), "PEG": _ether()},
+            cuts={"PEO": _cuts()["EO"], "PEG": _cuts()["EO"]},
+        )
+        assert "MOL = sequence { HPE PEO PEG TP0 }" in _script(tmp_path)
+        assert sorted(_prepgen_residues(tools)) == ["HPE", "PEG", "PEO", "TP0"]
+        assert 'TP0.prepi"' in _script(tmp_path)
+
+    def test_a_chain_name_and_a_tail_name_that_meet(self):
+        builder = mp.builder.AmberPolymerBuilder(
+            {"PEO": _ether(), "TPE": _ether()}, {}, parameter_set="gaff"
+        )
+        assert builder.residues == {
+            "PEO": {"head": "HPE", "chain": "PEO", "tail": "TPE"},
+            "TPE": {"head": "HTP", "chain": "TP0", "tail": "TTP"},
+        }
+
+    def test_a_cut_names_its_residue(self, tools, tmp_path):
+        cuts = {"PEO": _named_cuts(head="EOH", chain="EO", tail="EOT")}
+        _build(tmp_path, "{[#PEO]|3}", library={"PEO": _ether()}, cuts=cuts)
+        assert "MOL = sequence { EOH EO EOT }" in _script(tmp_path)
+        assert _prepgen_residues(tools) == ["EOH", "EO", "EOT"]
+
+    def test_a_named_residue_is_never_derived_again(self):
+        builder = mp.builder.AmberPolymerBuilder(
+            {"EO": _ether(), "PEO": _ether()},
+            {"EO": _cuts()["EO"], "PEO": _named_cuts(chain="HEO")},
+            parameter_set="gaff",
+        )
+        assert builder.residues["PEO"]["chain"] == "HEO"
+        assert builder.residues["EO"]["head"] == "HE0"
+
+    def test_a_renamed_residue_reruns_its_prepgen(self, tools, tmp_path):
+        _build(tmp_path)
+        before = len(tools.calls)
+        _build(tmp_path, cuts={"EO": _named_cuts(tail="EOT")})
+        assert tools.names()[before:] == ["prepgen", "tleap"]
+        assert _prepgen_residues(tools)[-1] == "EOT"
+
+    @pytest.mark.parametrize("resname", ["PEOX", "", "E O", "E/O"])
+    def test_a_resname_that_is_no_pdb_residue_name(self, resname):
+        with pytest.raises(ValueError, match="one to three letters"):
+            mp.builder.AmberPolymerBuilder(
+                {"EO": _ether()},
+                {"EO": _named_cuts(chain=resname)},
+                parameter_set="gaff",
+            )
+
+    def test_two_cuts_that_name_one_residue(self):
+        with pytest.raises(ValueError, match="both name tleap residue 'EO'"):
+            mp.builder.AmberPolymerBuilder(
+                {"EO": _ether()},
+                {"EO": _named_cuts(head="EO", chain="EO")},
+                parameter_set="gaff",
+            )
 
 
 class TestAssemble:
@@ -495,12 +572,6 @@ class TestRefused:
                 {"EO": _ether()}, {"EO": {variant: cut}}, parameter_set="gaff"
             )
         assert tools.calls == []
-
-    def test_bead_types_that_share_a_residue_name(self):
-        with pytest.raises(ValueError, match="tleap residue 'HPE'"):
-            mp.builder.AmberPolymerBuilder(
-                {"PEO": _ether(), "PEOX": _ether()}, {}, parameter_set="gaff"
-            )
 
     def test_a_repeated_atom_name(self):
         ether = _ether()

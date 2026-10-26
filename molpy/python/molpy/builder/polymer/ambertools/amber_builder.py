@@ -9,8 +9,11 @@ site graph only chooses the tleap ``sequence``. This does not call
 
 from __future__ import annotations
 
+import itertools
+import re
+import string
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -44,6 +47,10 @@ _VARIANTS: tuple[Variant, ...] = ("head", "chain", "tail")
 # of what produced them. A directory without it holds files the user put there.
 _STAMP = "antechamber.sha1"
 
+# A PDB residue name is three columns wide.
+_RESNAME = re.compile(r"[A-Za-z0-9_]{1,3}")
+_RESNAME_CHARS = string.digits + string.ascii_uppercase
+
 
 @dataclass
 class _Prepared:
@@ -61,6 +68,14 @@ class AmberPolymerBuilder:
     once. prepgen writes the residues the sequence uses. tleap loads each
     frcmod and prepi and runs ``sequence``. Neither tool sees the assembled
     chain. The box is packed afterwards with molpack.
+
+    Every residue has a name of at most three characters, distinct across
+    the library: the cut's ``resname`` when it gives one, otherwise
+    derived from the bead type — its first three characters for the chain
+    residue, ``H`` / ``T`` and its first two for the head and tail. A
+    derived name another residue already holds ends in a digit or letter
+    instead (``HP1``), assigned in library order. :attr:`residues` lists
+    them.
 
     Everything is written under ``work_dir``: ``monomers/<label>/`` holds the
     oligomer's input mol2, ac, frcmod, control files and prepi files, and
@@ -97,7 +112,8 @@ class AmberPolymerBuilder:
         ValueError: A cut is not head, chain or tail, names an atom the
             oligomer lacks, or gives a head residue a head connection (a
             tail residue a tail connection); two bead types share a tleap
-            residue name; a template repeats an atom name.
+            residue name, or a ``resname`` is not one to three letters,
+            digits or underscores; a template repeats an atom name.
 
     Example:
         >>> oligomer, cuts = AmberPieces("COCC", "OCC", "OCCOC").oligomer()
@@ -126,16 +142,8 @@ class AmberPolymerBuilder:
             label: _checked_cuts(label, group, self.library.get(label))
             for label, group in cuts.items()
         }
-        residues: dict[str, str] = {}
-        for label in self.library:
-            for variant in _VARIANTS:
-                residue = _resname(label, variant)
-                if residues.setdefault(residue, label) != label:
-                    raise ValueError(
-                        f"bead types {residues[residue]!r} and {label!r} both "
-                        f"make tleap residue {residue!r}; residue names come "
-                        "from the first characters of the bead type"
-                    )
+        #: Bead type → variant → its tleap residue name.
+        self.residues = _residue_names(self.library, self.cuts)
         self.parameter_set = parameter_set
         self.charge_method = charge_method
         self.net_charges = dict(net_charges) if net_charges is not None else None
@@ -228,10 +236,12 @@ class AmberPolymerBuilder:
                 charge=cut.charge,
             )
             control.write_text(text, encoding="utf-8")
-            output = directory / _prepi_name(label, variant)
+            residue = self.residues[label][variant]
+            # Named by its residue, so a renamed residue gets a new prepgen run.
+            output = directory / f"{residue}.prepi"
             prepi[variant] = output
             if stale or not output.is_file() or text != previous:
-                steps.prepgen(ac, output, control, _resname(label, variant))
+                steps.prepgen(ac, output, control, residue)
         return _Prepared(frcmod, prepi)
 
     def _antechamber(
@@ -273,7 +283,7 @@ class AmberPolymerBuilder:
         self, labels: list[str], prepared: dict[str, _Prepared]
     ) -> AmberBuildResult:
         residues = [
-            _resname(label, _variant(index, len(labels)))
+            self.residues[label][_variant(index, len(labels))]
             for index, label in enumerate(labels)
         ]
         frcmods = [prepared[label].frcmod for label in sorted(prepared)]
@@ -495,16 +505,54 @@ def _connection_type(
     return types[ac_name]
 
 
-def _resname(label: str, variant: Variant) -> str:
-    if variant == "chain":
-        return label[:3].upper()
-    prefix = "H" if variant == "head" else "T"
-    return f"{prefix}{label[:2].upper()}"
+def _residue_names(
+    library: Mapping[str, Atomistic], cuts: Mapping[str, Mapping[Variant, AmberCut]]
+) -> dict[str, dict[Variant, str]]:
+    """Each bead type's residue names, distinct across the library.
+
+    The names the cuts give are kept (two alike are refused); the rest are
+    derived in library order, each the first candidate no residue holds.
+    """
+    names: dict[str, dict[Variant, str]] = {label: {} for label in library}
+    holder: dict[str, str] = {}
+    for label in library:
+        for variant, cut in cuts.get(label, {}).items():
+            if cut.resname is None:
+                continue
+            if not _RESNAME.fullmatch(cut.resname):
+                raise ValueError(
+                    f"{label!r} {variant} resname {cut.resname!r} is not one to "
+                    "three letters, digits or underscores (a PDB residue name)"
+                )
+            owner = holder.setdefault(cut.resname, f"{label!r} {variant}")
+            if owner != f"{label!r} {variant}":
+                raise ValueError(
+                    f"{owner} and {label!r} {variant} both name tleap residue "
+                    f"{cut.resname!r}"
+                )
+            names[label][variant] = cut.resname
+    for label in library:
+        for variant in _VARIANTS:
+            if variant in names[label]:
+                continue
+            free = next(
+                (c for c in _candidates(label, variant) if c not in holder), None
+            )
+            if free is None:
+                raise ValueError(
+                    f"no free tleap residue name for {label!r} {variant}; "
+                    "give its cut a resname"
+                )
+            holder[free] = f"{label!r} {variant}"
+            names[label][variant] = free
+    return names
 
 
-def _prepi_name(label: str, variant: Variant) -> str:
-    if variant == "head":
-        return f"H{label}.prepi"
-    if variant == "tail":
-        return f"T{label}.prepi"
-    return f"{label}.prepi"
+def _candidates(label: str, variant: Variant) -> Iterator[str]:
+    """Residue names for ``label``'s ``variant``, the plainest first."""
+    stem = label.upper()
+    preferred = stem[:3] if variant == "chain" else f"{variant[0].upper()}{stem[:2]}"
+    yield preferred
+    for width in (1, 2):
+        for suffix in itertools.product(_RESNAME_CHARS, repeat=width):
+            yield preferred[: 3 - width] + "".join(suffix)

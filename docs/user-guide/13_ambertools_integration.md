@@ -133,6 +133,15 @@ the atom across each junction), spreading the omitted charge over the atoms
 it keeps; the builder does not edit the prepi afterwards. tleap `sequence`
 joins the residues.
 
+Each residue needs a name of at most three characters, the width of a PDB
+residue name, and no two residues may share one. By default the builder
+derives it from the bead type: the first three characters for the chain
+residue, `H` or `T` and the first two for the head and tail (`HPE`, `PEO`,
+`TPE` for `PEO`). Two bead types with a common prefix would derive the same
+name; the later one in the library then ends in a digit or letter instead
+(`HP0`), and the builder's `residues` lists every name it chose. To name a
+residue yourself, give its cut a `resname`.
+
 `AmberPieces` writes the oligomer from three SMILES — head, repeat and tail,
 each in backbone order — and the three cuts with it: each residue keeps its
 own monomer and omits the other two.
@@ -298,7 +307,7 @@ read back from tleap's prmtop, is kept for what it alone does:
 | tleap fails on the chain | A junction term missing from the leaprc (`leaprc.gaff2` here); the error carries tleap's output. The connection atoms are the ones in the oligomer you cut |
 | `ValueError: … still has N ports` | `TleapTypifier` was given a template. A polymer goes through `AmberPolymerBuilder` |
 | Polymer assembly fails | The site graph is one path of at least two sites, and every bead type has an oligomer and a cut for the residue that site uses |
-| `ValueError: … both make tleap residue …` | Residue names are the first characters of the bead type (`HPE`, `PEO`, `TPE` for `PEO`); give the bead types distinct prefixes |
+| `ValueError: … both name tleap residue …` | Two cuts give the same `resname`; every residue name is distinct across the library |
 | Force field merge conflict | Every component names the same `parameter_set`; a type you define yourself (Li⁺) does not reuse a GAFF type name |
 | Packing fails | Increase box size or reduce molecule count |
 

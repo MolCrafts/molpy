@@ -31,6 +31,10 @@ class AmberCut:
         pre_head_type: ``PRE_HEAD_TYPE`` written as given.
         post_tail_type: ``POST_TAIL_TYPE`` written as given.
         charge: The residue's net charge (``CHARGE``).
+        resname: The residue's name in prepgen (``-rn``), tleap's
+            ``sequence`` and the chain it writes: one to three letters,
+            digits or underscores, as a PDB residue name holds. ``None``
+            lets :class:`AmberPolymerBuilder` derive one from the bead type.
     """
 
     omit: tuple[str, ...] = ()
@@ -41,3 +45,4 @@ class AmberCut:
     pre_head_type: str | None = None
     post_tail_type: str | None = None
     charge: int = 0
+    resname: str | None = None
