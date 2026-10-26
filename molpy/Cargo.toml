@@ -1,6 +1,6 @@
 [package]
 name = "molpy"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -28,7 +28,7 @@ serde_json = "1"
 # `ForceField._ffi_forcefield_capsule()` (the force-field analogue of the frame
 # capsule). `default-features = false` is the same Pyodide exemption as the
 # molrs dep below: a transitive default cannot be switched off from here.
-molrs-ffi = { path = "../crates/molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.19.0", default-features = false, features = ["ff"] }
+molrs-ffi = { path = "../crates/molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.20.0", default-features = false, features = ["ff"] }
 # Base: full (no zarr). Host zarr + path I/O is optional (`fs` feature) so
 # Pyodide builds can omit zarrs/libz-sys (emscripten cannot link host zlib).
 #
@@ -42,7 +42,7 @@ molrs-ffi = { path = "../crates/molrs-ffi", package = "molcrafts-molrs-ffi", ver
 # cannot link host zlib or a thread pool, so the minimal `full + stream` base
 # must remain reachable via `maturin … --no-default-features`; `fs` and `rayon`
 # below add the native pieces back.
-molrs = { path = "../crates/molrs", package = "molcrafts-molrs", version = "0.19.0", default-features = false, features = ["full", "stream"] }
+molrs = { path = "../crates/molrs", package = "molcrafts-molrs", version = "0.20.0", default-features = false, features = ["full", "stream"] }
 
 [features]
 default = ["fs", "rayon"]

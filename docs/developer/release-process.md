@@ -1,11 +1,27 @@
 # Release Process
 
-**Releases are frozen** until the downstream migration of the
-molpy-unification restructure lands (the repository's
-`.claude/specs/molpy-unification.md`, link 04). Until then, push no `v*` tag. The last release is 0.19.0
-(`v0.19.0`).
+Releases are cut from `master` of MolCrafts/molpy, the project repository;
+MolCrafts/molrs is retired. 0.20.0 is the first release of the unified
+project, and the downstream repositories move to it after that release
+(the repository's `.claude/specs/molpy-unification.md`, link 04). The last
+releases before it were 0.19.0 (`v0.19.0`) of the two former repositories.
 
-From then on, one version and one tag cover the whole project.
+One version and one tag cover the whole project.
+
+## Before the first release from MolCrafts/molpy
+
+The registries trusted the former repositories, so each needs, once:
+
+- crates.io `molcrafts-molrs`: a trusted publisher for MolCrafts/molpy,
+  workflow `release.yml`, environment `crates-io`;
+- npm `@molcrafts/molwasm`: a new package. npm configures trusted
+  publishing only on a package that exists, so its first version is
+  published by hand, then the trusted publisher (MolCrafts/molpy,
+  `release.yml`, environment `npm`) is added;
+- PyPI `molcrafts-molpy`: its trusted publisher already names MolCrafts/molpy,
+  `release.yml` and environment `pypi`;
+- the GitHub environments `crates-io` and `npm` on MolCrafts/molpy (`pypi`
+  and `pypi-nightly` exist).
 
 ## One version
 

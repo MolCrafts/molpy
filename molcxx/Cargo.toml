@@ -5,7 +5,7 @@ publish = false
 # [workspace] below), so there is no workspace.package to inherit from. Keep
 # these in step with ../Cargo.toml's [workspace.package] by hand — same rule the
 # other standalone binder roots already live by.
-version = "0.19.0"
+version = "0.20.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -36,8 +36,8 @@ strip = "symbols"
 # core only, so the set is spelled here: `full` + `filesystem` + `rayon` +
 # `serde` — the same set molc links (build 2 in .cargo/config.toml), so
 # the two compile molrs once. Never `stream`.
-molrs = { path = "../crates/molrs", package = "molcrafts-molrs", version = "0.19.0", default-features = false, features = ["full", "filesystem", "rayon", "serde"] }
-molrs-ffi = { path = "../crates/molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.19.0" }
+molrs = { path = "../crates/molrs", package = "molcrafts-molrs", version = "0.20.0", default-features = false, features = ["full", "filesystem", "rayon", "serde"] }
+molrs-ffi = { path = "../crates/molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.20.0" }
 cxx = "1"
 ndarray = "0.17"
 

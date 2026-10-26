@@ -62,7 +62,7 @@ mod virtual_sites;
 ///
 /// Returns ``(abi_line, version, frameref_capsule_name, forcefield_capsule_name,
 /// regionref_capsule_name)``
-/// — e.g. ``("0.19", "0.19.0", "molrs.FrameRef/0.19+<fingerprint>", …)``, the
+/// — e.g. ``("0.20", "0.20.0", "molrs.FrameRef/0.20+<fingerprint>", …)``, the
 /// fingerprint naming the compiler and handle layout of this build.
 ///
 /// A downstream extension that exchanges ``molrs_ffi`` handle capsules with

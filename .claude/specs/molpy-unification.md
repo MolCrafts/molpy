@@ -102,6 +102,12 @@ molpy/                     the project repository (today's molrs repo, renamed)
 - **D14. This round changes this repository only.** Downstream repositories
   migrate in 04, after the operator reviews the structure. Releases stay
   frozen until then. The result is force-pushed after review.
+- **D15. The project lives at MolCrafts/molpy; release before downstream
+  (ruled 2026-10-26).** MolCrafts/molrs is retired. The unified history was
+  pushed to MolCrafts/molpy `dev` as a fast-forward, with that repository's
+  former history merged in (`-s ours`; its tree is `molpy/`). 0.20.0 is
+  released from MolCrafts/molpy `master` before 04, and 05 has nothing left
+  to rename. This supersedes the release freeze of D14 and the chain below.
 ## Chain
 
 No release happens from 02 until 04 is done.

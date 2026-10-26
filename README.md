@@ -72,7 +72,7 @@ features you need, or `full` while exploring. `full` does not include
 `stream`, and `*.mrec` paths need `filesystem`.
 
 ```toml
-molrs = { package = "molcrafts-molrs", version = "0.19", features = ["io", "smiles"] }
+molrs = { package = "molcrafts-molrs", version = "0.20", features = ["io", "smiles"] }
 ```
 
 The Python wheel carries the native core as `molpy._core`. AmberTools is

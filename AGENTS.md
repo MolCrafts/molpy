@@ -29,8 +29,10 @@ Cargo.toml, and every standalone binder manifest carries the same number;
 maturin reads `molpy/Cargo.toml`, and `molpy.version` re-exports
 `molpy._core.__version__`.
 
-**Releases are frozen** until 04-downstream lands (see
-`.claude/specs/molpy-unification.md`): push no `v*` tag, and push nothing
+**Releases** are cut from `master` of MolCrafts/molpy, the project
+repository (MolCrafts/molrs is retired). 0.20.0 is the first release of the
+unified project and precedes the downstream migration (see
+`.claude/specs/molpy-unification.md`). Push no `v*` tag, and push nothing,
 without the operator confirming the target remote and branch.
 
 **ABI.** The minor line is the ABI contract. Capsule names
