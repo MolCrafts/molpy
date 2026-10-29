@@ -171,6 +171,43 @@ impl Vacf {
     }
 }
 
+output! {
+    /// The drift of a conserved energy: `drift` (per atom per time unit),
+    /// `rms` (per atom), `n_samples`, `duration`.
+    EnergyDriftResult => mc::EnergyDriftResult
+}
+
+/// Energy drift per atom: the least-squares slope of a conserved energy over
+/// time, divided by the atom count.
+#[wasm_bindgen]
+pub struct EnergyDrift {
+    inner: mc::EnergyDrift,
+}
+
+#[wasm_bindgen]
+impl EnergyDrift {
+    #[wasm_bindgen(constructor)]
+    pub fn new(n_atoms: usize) -> Result<EnergyDrift, JsError> {
+        Ok(Self {
+            inner: mc::EnergyDrift::new(n_atoms)?,
+        })
+    }
+
+    /// `[{ time, energy }, …]`, one record per sample, in time order:
+    /// `energy` the conserved total (not per atom).
+    pub fn compute(&self, frames: &JsValue) -> Result<EnergyDriftResult, JsError> {
+        let mut accumulator = self.inner.accumulator();
+        for frame in records(frames, "EnergyDrift")? {
+            let data = Fields::new(&frame, "EnergyDrift")?;
+            accumulator.push(mc::EnergyDriftSample {
+                time: data.scalar("time")?,
+                energy: data.scalar("energy")?,
+            })?;
+        }
+        Ok(accumulator.finish()?.into())
+    }
+}
+
 /// Cross displacement correlation of two collective coordinates (Onsager).
 #[wasm_bindgen]
 pub struct OnsagerCorrelation {
@@ -481,6 +518,7 @@ described!(
     ReorientationAcf => mc::ReorientationAcf,
     RotationalAutocorrelation => mc::RotationalAutocorrelation,
     Survival => mc::Survival,
+    EnergyDrift => mc::EnergyDrift,
     Derivative => mc::Derivative,
     Unwrap => mc::Unwrap,
     Spectrum => mc::Spectrum,

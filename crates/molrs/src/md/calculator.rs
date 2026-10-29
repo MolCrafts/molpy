@@ -46,8 +46,11 @@ pub struct CalculatorStep<'a> {
 pub struct CalculatorResult {
     /// Potential energy.
     pub energy: F,
-    /// `W = Σ_pairs f ⊗ d` (symmetric), equivalently `−∂E/∂ε` at zero strain, in
+    /// `W = Σ_pairs f ⊗ d` (symmetric), equivalently `−∂E/∂ε` at zero strain:
+    /// positive under compression, in the calculator's energy unit and in
     /// `[xx, yy, zz, xy, xz, yz]` order; `None` when the calculator has none.
+    /// ASE's stress is `−W/V` in `[xx, yy, zz, yz, xz, xy]` order, so
+    /// `stress · V` is `−W` and must be negated and reordered.
     pub virial: Option<Virial>,
 }
 
@@ -459,5 +462,23 @@ mod tests {
         let mut md = md(Bond::new(UnitPreset::si()));
         let err = md.run(&mut two_atoms(1.2), 1).unwrap_err();
         assert!(err.to_string().contains("lengths"), "{err}");
+    }
+
+    /// Under a barostat the rescaled cell reaches the calculator at the next
+    /// evaluation. Step 1's force precedes its own rescale (at `end_of_step`),
+    /// so the cell is new at the setup evaluation and from step 2 on.
+    #[test]
+    fn a_barostat_cell_reaches_the_calculator_each_step() {
+        let calc = Bond::new(UnitPreset::real());
+        let seen = Arc::clone(&calc.seen);
+        let mut md = md(calc);
+        md.set_barostat(crate::md::BerendsenBarostat::new(1.0, 500.0, 2.2e4, 0.5).unwrap())
+            .unwrap();
+        let mut frame = two_atoms(0.8);
+        let before = frame.simbox.as_ref().unwrap().volume();
+        md.run(&mut frame, 3).unwrap();
+        assert!(frame.simbox.as_ref().unwrap().volume() > before);
+        assert_eq!(seen.lock().unwrap().cells, [true, false, true, true]);
+        assert!(columns::meta_f64(&frame, "pressure") > 0.0);
     }
 }

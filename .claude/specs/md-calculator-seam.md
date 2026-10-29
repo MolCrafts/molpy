@@ -1,7 +1,7 @@
 ---
 title: molpy.md calculator seam — CPU integrator, GPU force model, one cheap exchange per step
 slug: md-calculator-seam
-status: approved — 01–05 implemented 2026-10-29 (uncommitted)
+status: approved — 01–05 committed (ee4be918); 06–08 implemented 2026-10-29 (uncommitted); 09 open
 created: 2026-10-29
 chain: md-calculator-seam (01-step-hygiene → 02-units → 03-cadence → 04-calculator-core → 05-calculator-binding → 06-barostat → 07-dump-checkpoint → 08-energy-drift → 09-gate) → molnex (adapter, delete molix.md)
 repos: molpy (01–08), out-of-source script (09), molnex (downstream)
@@ -297,11 +297,38 @@ science):
 - `MD`'s components are no longer taken out of their slot to launch, so a
   panic cannot leave the driver without one.
 
+As built, 06–08 (2026-10-29):
+- **06.** `md::BerendsenBarostat::new(pressure, tau, bulk_modulus, dt)`
+  follows the LAMMPS `fix press/berendsen` spelling, `B = 1/β`. The step is
+  `μ³ = 1 − (Δt/τ)(P₀ − P)/B`, applied as `H' = μH` and `x' = o + μ(x − o)`.
+  The step's pressure goes into `meta["pressure"]` through the new
+  `UnitPreset::nktv2p`. `MD::set_barostat` (singular) checks that the dt
+  agrees with the integrator's. A step without a virial is refused, and so is
+  `μ³ ≤ 0`.
+- **07, deliberately smaller than D10.** There is no `Dump` and no
+  `Checkpoint` component. A run is a sequence of `run(frame, k)` calls: the
+  step counter carries over and the calculator is bound only once. Between
+  two calls the frame *is* the state, so the caller writes a trajectory with
+  the format's writer (`mp.io.xyz.XyzWriter`, …), and a checkpoint is
+  `write_mrec(frame=…, meta={"step": …})` (AGENTS.md: callers compose).
+  The one missing piece was `MD::resume(step)`. It resumes the count, and the
+  next run takes the frame's forces as step `k`'s instead of evaluating them
+  again: re-evaluated, the Langevin drag would see the full-step velocity
+  where the uninterrupted run saw the half-step one. A Rust test shows the
+  restart is bit-identical to running straight through; through mrec with a
+  neighbour list it agrees to rounding, because the list is searched again.
+  `Writer::new`'s `Self: Sized` is no longer needed.
+- **08.** `compute::EnergyDrift(n_atoms)` is a stream only
+  (`accumulator → push(time, energy) → finish`), giving `drift = slope/N`
+  and `rms` about the fit, per atom. It is computed in one pass with centred
+  Welford co-moments: the raw-sum OLS of `LinearFit` loses the slope under a
+  ~10⁴ offset. It is bound in molpy and molwasm, and registered in
+  `ComputeSpec::all`.
+- **Manual.** `docs/user-guide/16_molecular_dynamics.md` covers NVT, the
+  barostat, trajectories and checkpoints, energy drift, and the calculator,
+  including a torch sketch marked `docs: skip`.
+
 Deferred:
-- The md manual page (`docs/`) waits for 06–07, so the page shows NVT/NPT
-  and output once.
-- Link 07's checkpoint must reach the cadence inside `Mounted` and the step
-  counter (`MD::step` is read-only today).
 - `molpy/stubtest-allowlist.txt` exempts `molpy._core.md` as a whole, so
   stubtest does not check the md signatures. They were checked by hand on
   2026-10-29.

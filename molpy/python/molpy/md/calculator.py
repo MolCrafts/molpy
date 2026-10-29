@@ -67,8 +67,10 @@ class Calculator(Protocol):
             calculator that computes a virial. Each is a writeable C-contiguous
             float64 array, ``(N, 3)``, ``(N, 3)`` and ``(6,)``, kept alive by
             the calculator. They must not share memory. The virial is
-            ``W = Σ_pairs f ⊗ d`` (``−∂E/∂ε`` at zero strain) in
-            ``[xx, yy, zz, xy, xz, yz]`` order.
+            ``W = Σ_pairs f ⊗ d`` (``−∂E/∂ε`` at zero strain): positive under
+            compression, in ``units``' energy unit, in
+            ``[xx, yy, zz, xy, xz, yz]`` order. An ASE stress is ``−W/V`` in
+            ``[xx, yy, zz, yz, xz, xy]`` order; negate and reorder it.
 
             The driver holds these exact arrays until the next ``bind``. Fill
             them in place (``forces[:] = …``). An array rebound to a new name

@@ -39,3 +39,53 @@ def test_one_step_writes_energy_and_forces_onto_the_frame():
 def test_a_non_positive_timestep_is_refused(dt):
     with pytest.raises(ValueError, match="dt"):
         mp.md.VelocityVerlet(dt)
+
+
+def _argon() -> mp.Frame:
+    # Eight argon atoms on a cubic lattice of spacing 4 Å in a 12 Å box.
+    grid = np.array([[i, j, k] for i in range(2) for j in range(2) for k in range(2)])
+    pos = 4.0 * grid + 1.0
+    atoms = mp.Block()
+    for d, key in enumerate("xyz"):
+        atoms.insert(key, np.ascontiguousarray(pos[:, d], dtype=float))
+    for key in ("vx", "vy", "vz"):
+        atoms.insert(key, np.zeros(len(pos)))
+    atoms.insert("mass", np.full(len(pos), 39.948))
+    frame = mp.Frame()
+    frame["atoms"] = atoms
+    frame.box = mp.Box(mp.core.Cell.lengths([12.0] * 3))
+    return frame
+
+
+def _langevin_md() -> mp.md.MD:
+    sim = mp.md.MD("real")
+    sim.set_integrator(mp.md.VelocityVerlet(2.0))
+    sim.set_neighbor(mp.core.NeighborList(5.5), skin=1.0)
+    sim.set_evaluator(mp.ff.potential.PairLjCut(0.238, 3.405, 4.5))
+    sim.set_thermostat(mp.md.FixLangevin(120.0, 100.0, 2.0, seed=3))
+    return sim
+
+
+def test_a_checkpoint_through_mrec_resumes_the_run():
+    whole = _argon()
+    _langevin_md().run(whole, 10)
+
+    first = _langevin_md()
+    frame = _argon()
+    first.run(frame, 5)
+    record = bytearray()
+    mp.io.write_mrec(record, frame=frame, meta={"step": first.step})
+    stored = mp.io.mrec.MrecFile(bytes(record))
+    restored = stored.frame()
+    resumed = _langevin_md()
+    resumed.resume(stored.meta()["step"])
+    resumed.run(restored, 5)
+
+    assert resumed.step == 10
+    for key in ("x", "y", "z", "vx", "vy", "vz"):
+        np.testing.assert_allclose(
+            np.asarray(restored["atoms"][key]),
+            np.asarray(whole["atoms"][key]),
+            rtol=1e-10,
+            atol=1e-12,
+        )

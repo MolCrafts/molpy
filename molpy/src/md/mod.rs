@@ -14,7 +14,8 @@ use crate::ff::potential::{
 };
 use calculator::PyCalculator;
 use molrs::md::{
-    FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, TimestepProvider, VelocityVerlet,
+    BerendsenBarostat, FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, TimestepProvider,
+    VelocityVerlet,
 };
 use molrs::op::F;
 use ndarray::Array1;
@@ -161,6 +162,41 @@ impl PyFixLangevin {
     }
 }
 
+/// Isotropic Berendsen pressure coupling, mounted at `end_of_step`.
+///
+/// `pressure` and `bulk_modulus` are in the run's pressure unit (atm in
+/// `real`, bar in `metal`), `tau` and `dt` in its time unit.
+#[pyclass(
+    name = "BerendsenBarostat",
+    module = "molpy.md",
+    subclass,
+    skip_from_py_object
+)]
+pub struct PyBerendsenBarostat {
+    inner: BerendsenBarostat,
+}
+
+#[pymethods]
+impl PyBerendsenBarostat {
+    #[new]
+    #[pyo3(signature = (pressure, tau, bulk_modulus, dt))]
+    fn new(pressure: F, tau: F, bulk_modulus: F, dt: F) -> PyResult<Self> {
+        Ok(Self {
+            inner: BerendsenBarostat::new(pressure, tau, bulk_modulus, dt).map_err(md_err)?,
+        })
+    }
+
+    #[getter]
+    fn pressure(&self) -> F {
+        self.inner.pressure()
+    }
+
+    #[getter]
+    fn dt(&self) -> F {
+        self.inner.dt()
+    }
+}
+
 /// The phase driver. `run` writes the frame it is given.
 #[pyclass(name = "MD", module = "molpy.md", unsendable, subclass)]
 pub struct PyMD {
@@ -190,12 +226,26 @@ impl PyMD {
         self.inner.step()
     }
 
+    /// Continue from a checkpoint: a frame written after step ``step``,
+    /// forces included. The next :meth:`run` resumes the count there and
+    /// takes the frame's forces as that step's instead of evaluating them
+    /// again.
+    fn resume(&mut self, step: u64) {
+        self.inner.resume(step);
+    }
+
     fn set_integrator(&mut self, integrator: &PyVelocityVerlet) -> PyResult<()> {
         self.inner.set_integrator(integrator.inner).map_err(md_err)
     }
 
     fn set_thermostat(&mut self, thermostat: &PyFixLangevin) -> PyResult<()> {
         self.inner.set_thermostat(thermostat.inner).map_err(md_err)
+    }
+
+    /// Mount ``barostat``, replacing any before it. Every force provider must
+    /// give the step a virial; ``meta["pressure"]`` is written each step.
+    fn set_barostat(&mut self, barostat: &PyBerendsenBarostat) -> PyResult<()> {
+        self.inner.set_barostat(barostat.inner).map_err(md_err)
     }
 
     /// Mount ``list`` (moved in) as the run's neighbour list. It searches at
@@ -317,6 +367,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMD>()?;
     m.add_class::<PyVelocityVerlet>()?;
     m.add_class::<PyFixLangevin>()?;
+    m.add_class::<PyBerendsenBarostat>()?;
     m.add_class::<PyMaxwellBoltzmann>()?;
     Ok(())
 }

@@ -471,8 +471,9 @@ pub use spectroscopy::{
 };
 pub use time_series::{
     Correlator, CorrelatorAccumulator, CorrelatorFrame, CorrelatorInput, CurrentAcf,
-    CurrentAcfInput, Derivative, DerivativeInput, DipoleAcf, DipoleAcfInput, FrequencyGrid,
-    LagKernel, LagKernelKind, MeanPolicy, Msd, Normalization, OneSidedSpectrum, OnsagerCorrelation,
+    CurrentAcfInput, Derivative, DerivativeInput, DipoleAcf, DipoleAcfInput, EnergyDrift,
+    EnergyDriftAccumulator, EnergyDriftResult, EnergyDriftSample, FrequencyGrid, LagKernel,
+    LagKernelKind, MeanPolicy, Msd, Normalization, OneSidedSpectrum, OnsagerCorrelation,
     OnsagerInput, Origins, Reduction, ReorientationAcf, ReorientationAcfInput,
     RotationalAutocorrelation, RotationalAutocorrelationInput, Spectrum, SpectrumInput, Stencil,
     Survival, SurvivalAccumulator, SurvivalFrame, SurvivalInput, SurvivalKind,

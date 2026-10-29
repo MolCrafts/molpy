@@ -56,6 +56,9 @@ pub trait Integrator: Component + TimestepProvider {}
 /// Modifies the force or the velocities to control temperature.
 pub trait Thermostat: Component + TimestepProvider {}
 
+/// Rescales the cell and the positions to control pressure.
+pub trait Barostat: Component + TimestepProvider {}
+
 /// What the driver recorded at registration, so a later scan does not need
 /// the concrete type.
 #[derive(Clone, Copy, Debug)]
@@ -84,6 +87,7 @@ pub(crate) enum Kind {
     Integrator,
     Evaluator,
     Thermostat,
+    Barostat,
     Neighbor,
     Calculator,
     /// Infrastructure and user `on(phase).add` components.

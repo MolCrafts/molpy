@@ -268,3 +268,29 @@ def test_a_python_evaluate_inside_potentials_is_refused_by_md():
     holder.push(Evaluate())
     with pytest.raises(TypeError, match="set_calculator"):
         mp.md.MD("real").set_evaluator(holder)
+
+
+def test_a_barostat_rescales_the_cell_and_hands_it_to_the_calculator():
+    calc = Bond()
+    sim = _md(calc)
+    sim.set_barostat(mp.md.BerendsenBarostat(1.0, 500.0, 2.2e4, 0.5))
+    frame = _pair(0.8)
+    before = frame.box.volume()
+    sim.run(frame, 3)
+    # A compressed bond pushes the cell out, and the new cell reaches the
+    # calculator from the step after the first rescale.
+    assert frame.box.volume() > before
+    assert frame.meta["pressure"] > 1.0
+    assert [c[2] for c in calc.calls] == [True, False, True, True]
+
+
+def test_a_barostat_without_a_virial_is_refused():
+    class NoVirial(Bond):
+        def bind(self, frame, skin):
+            positions, forces, _ = super().bind(frame, skin)
+            return positions, forces
+
+    sim = _md(NoVirial())
+    sim.set_barostat(mp.md.BerendsenBarostat(1.0, 500.0, 2.2e4, 0.5))
+    with pytest.raises(ValueError, match="virial"):
+        sim.run(_pair(0.8), 1)

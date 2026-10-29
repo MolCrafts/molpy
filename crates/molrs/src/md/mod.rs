@@ -15,6 +15,7 @@
 //! force provider of its own, mounted with
 //! [`MD::set_calculator`](crate::md::MD::set_calculator).
 
+mod barostat;
 mod calculator;
 mod columns;
 mod component;
@@ -30,8 +31,9 @@ mod phase;
 mod scratch;
 mod verlet;
 
+pub use barostat::BerendsenBarostat;
 pub use calculator::{Calculator, CalculatorError, CalculatorResult, CalculatorStep};
-pub use component::{Component, Integrator, Thermostat, TimestepProvider};
+pub use component::{Barostat, Component, Integrator, Thermostat, TimestepProvider};
 pub use driver::MD;
 pub use error::MdError;
 pub use evaluator::FfEvaluator;

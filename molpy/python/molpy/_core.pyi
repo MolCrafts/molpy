@@ -5455,6 +5455,35 @@ class EinsteinHelfandSpectrum:
     def tunables(self) -> list[tuple[str, Any]]: ...
 
 @final
+class EnergyDrift:
+    """Energy drift per atom (``molrs::compute::EnergyDrift``) — a stream
+    only: push ``(time, energy)`` per sample into :meth:`accumulator`."""
+    def __new__(cls, n_atoms: int) -> Self: ...
+    def accumulator(self) -> EnergyDriftAccumulator: ...
+    @staticmethod
+    def spec() -> ComputeSpec: ...
+    def tunables(self) -> list[tuple[str, Any]]: ...
+
+@final
+class EnergyDriftAccumulator:
+    """The running fit of an :class:`EnergyDrift`."""
+    def push(self, *, time: float, energy: float) -> None: ...
+    def finish(self) -> EnergyDriftResult: ...
+
+@final
+class EnergyDriftResult:
+    """The drift (per atom per time unit) and rms (per atom) of a conserved
+    energy (``molrs::compute::EnergyDriftResult``)."""
+    @property
+    def drift(self) -> float: ...
+    @property
+    def duration(self) -> float: ...
+    @property
+    def n_samples(self) -> int: ...
+    @property
+    def rms(self) -> float: ...
+
+@final
 class EnvironmentMatch:
     """Cluster particles whose neighbour environments match within
     ``rmsd_threshold`` (``molrs::compute::EnvironmentMatch``)."""
@@ -6861,6 +6890,20 @@ class md:
         @property
         def dt(self) -> float: ...
 
+    class BerendsenBarostat:
+        """Isotropic Berendsen pressure coupling at ``end_of_step``:
+        ``μ³ = 1 − (dt/tau)(pressure − P)/bulk_modulus``. ``pressure`` and
+        ``bulk_modulus`` in the run's pressure unit, ``tau`` and ``dt`` in its
+        time unit."""
+
+        def __init__(
+            self, pressure: float, tau: float, bulk_modulus: float, dt: float
+        ) -> None: ...
+        @property
+        def pressure(self) -> float: ...
+        @property
+        def dt(self) -> float: ...
+
     class MD:
         """Phase driver in one unit system. :meth:`run` writes the frame it
         is given."""
@@ -6872,8 +6915,14 @@ class md:
         def step(self) -> int:
             """The step index of the last force evaluation; it counts across
             runs."""
+        def resume(self, step: int) -> None:
+            """Continue from a frame written after step ``step`` (forces
+            included): the next :meth:`run` takes its forces as that step's."""
         def set_integrator(self, integrator: "md.VelocityVerlet") -> None: ...
         def set_thermostat(self, thermostat: "md.FixLangevin") -> None: ...
+        def set_barostat(self, barostat: "md.BerendsenBarostat") -> None:
+            """Mount ``barostat``; every force provider must give a virial,
+            and ``meta["pressure"]`` is written each step."""
         def set_neighbor(self, list: NeighborList, *, skin: float = 0.0) -> None:
             """Mount ``list`` (moved in) as the run's neighbour list; pairs
             within ``list.cutoff - skin`` reach the pair kernels."""

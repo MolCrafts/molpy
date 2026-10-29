@@ -457,6 +457,19 @@ impl UnitPreset {
         UnitRegistry::global().factor(&from, self.energy())
     }
 
+    /// LAMMPS `force->nktv2p`: this system's energy/length³ → pressure.
+    ///
+    /// One in SI; 68568.415 in `real` (kcal/mol/Å³ → atm), 1.6021765e6 in
+    /// `metal` (eV/Å³ → bar).
+    ///
+    /// # Errors
+    ///
+    /// As [`ftm2v`](Self::ftm2v).
+    pub fn nktv2p(&self) -> Result<F, UnitsError> {
+        let from = format!("({})/({})**3", self.energy(), self.length());
+        UnitRegistry::global().factor(&from, self.pressure())
+    }
+
     /// The factor that reads `other`'s `dimension` unit in this preset's:
     /// eV → kcal/mol is `real.factor_from(&metal, PresetDim::Energy)`.
     ///
@@ -650,6 +663,16 @@ mod tests {
     fn undefined_reduced_units_have_no_step_constants() {
         let err = UnitPreset::lj().ftm2v().unwrap_err();
         assert!(err.to_string().contains("lj_"), "{err}");
+    }
+
+    /// LAMMPS `nktv2p`: 68568.415 in `real`, 1.6021765e6 in `metal`, 1 in SI.
+    #[test]
+    fn nktv2p_matches_lammps() {
+        let real = UnitPreset::real().nktv2p().unwrap();
+        assert!((real / 68_568.415 - 1.0).abs() < 1e-6, "{real}");
+        let metal = UnitPreset::metal().nktv2p().unwrap();
+        assert!((metal / 1.602_176_5e6 - 1.0).abs() < 1e-6, "{metal}");
+        assert!((UnitPreset::si().nktv2p().unwrap() - 1.0).abs() < 1e-12);
     }
 
     /// eV → kcal/mol is 96485.332 / 4184 = 23.060548.

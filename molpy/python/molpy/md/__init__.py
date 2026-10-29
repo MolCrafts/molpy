@@ -26,6 +26,8 @@ mounted with :meth:`MD.set_calculator`.
 from molpy import _core
 from molpy.md.calculator import Calculator
 
+BerendsenBarostat = _core.md.BerendsenBarostat
+
 FixLangevin = _core.md.FixLangevin
 
 MD = _core.md.MD
@@ -37,6 +39,7 @@ Phase = _core.md.Phase
 VelocityVerlet = _core.md.VelocityVerlet
 
 __all__ = [
+    "BerendsenBarostat",
     "Calculator",
     "FixLangevin",
     "MD",

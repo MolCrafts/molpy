@@ -226,6 +226,18 @@ pub(crate) fn write_force(frame: &mut Frame, force: &Fnx3) -> Result<(), MdError
     write_nx3(atoms_mut(frame)?, FORCE, force)
 }
 
+/// The frame carries `fx`/`fy`/`fz`: a checkpoint to resume from does.
+pub(crate) fn require_force(frame: &Frame) -> Result<(), MdError> {
+    let block = atoms(frame)?;
+    let n = n_atoms(block)?;
+    for key in FORCE {
+        read_f64(block, key, n).map_err(|e| {
+            MdError::Invalid(format!("resuming needs the checkpoint's forces: {e}"))
+        })?;
+    }
+    Ok(())
+}
+
 /// Zero `fx`/`fy`/`fz` in place, inserting them when absent.
 pub(crate) fn zero_force(frame: &mut Frame) -> Result<(), MdError> {
     let block = atoms_mut(frame)?;

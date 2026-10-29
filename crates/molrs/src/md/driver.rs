@@ -5,7 +5,8 @@ use molrs::core::{Frame, NeighborList, UnitPreset};
 use molrs::op::F;
 
 use super::calculator::{Calculator, Mounted};
-use super::component::{Component, Flags, Integrator, Kind, Thermostat};
+use super::columns;
+use super::component::{Barostat, Component, Flags, Integrator, Kind, Thermostat};
 use super::error::MdError;
 use super::evaluator::FfEvaluator;
 use super::infra::{KineticEnergy, ZeroForces};
@@ -31,6 +32,9 @@ pub struct MD {
     units: UnitPreset,
     /// The step index of the last force evaluation; it counts across runs.
     step: u64,
+    /// The next build continues a checkpoint: the frame's forces are the
+    /// step's, not evaluated again.
+    resuming: bool,
     built: bool,
 }
 
@@ -56,6 +60,7 @@ impl MD {
             scratch: Scratch::new(),
             units,
             step: 0,
+            resuming: false,
             built: false,
         };
         md.install(ZeroForces, ZeroForces.default_bindings(), Flags::default());
@@ -75,6 +80,22 @@ impl MD {
     /// [`run`](Self::run) calls, so two runs of 5 steps are one run of 10.
     pub fn step(&self) -> u64 {
         self.step
+    }
+
+    /// Continue a run from a checkpoint: a frame written after step `step`,
+    /// with its positions, velocities, box, image flags and forces.
+    ///
+    /// The next [`run`](Self::run) resumes the count at `step` (the step keys
+    /// the Langevin noise) and takes the frame's forces as step `step`'s
+    /// instead of evaluating them again — re-evaluated, a velocity-dependent
+    /// force such as the Langevin drag would see the full-step velocity where
+    /// the uninterrupted run saw the half-step one. The neighbour lists are
+    /// searched afresh at the restored positions, so a pair kernel may sum in
+    /// another order than the uninterrupted run did.
+    pub fn resume(&mut self, step: u64) {
+        self.step = step;
+        self.resuming = true;
+        self.built = false;
     }
 
     /// Replace any integrator already bound, then bind `integrator` at its
@@ -123,6 +144,25 @@ impl MD {
             bindings,
             Flags {
                 kind: Kind::Thermostat,
+                dt: Some(dt),
+                ..Flags::default()
+            },
+        );
+        Ok(())
+    }
+
+    /// Replace any barostat already bound with `barostat`. Its `dt` must equal
+    /// the integrator's `dt`, checked at [`build`](Self::build). Every force
+    /// provider must give the step a virial, or the barostat refuses the step.
+    pub fn set_barostat<T: Barostat + 'static>(&mut self, barostat: T) -> Result<(), MdError> {
+        let dt = require_positive_dt(barostat.dt())?;
+        self.remove_kind(Kind::Barostat);
+        let bindings = barostat.default_bindings();
+        self.install(
+            barostat,
+            bindings,
+            Flags {
+                kind: Kind::Barostat,
                 dt: Some(dt),
                 ..Flags::default()
             },
@@ -244,10 +284,15 @@ impl MD {
             .find(|c| c.flags.kind == Kind::Integrator)
             .and_then(|c| c.flags.dt);
         for installed in &self.installed {
-            if installed.flags.kind == Kind::Thermostat && installed.flags.dt != integ_dt {
-                return Err(MdError::Invalid(
-                    "thermostat dt differs from the integrator dt".into(),
-                ));
+            let coupling = match installed.flags.kind {
+                Kind::Thermostat => "thermostat",
+                Kind::Barostat => "barostat",
+                _ => continue,
+            };
+            if installed.flags.dt != integ_dt {
+                return Err(MdError::Invalid(format!(
+                    "{coupling} dt differs from the integrator dt"
+                )));
             }
         }
         for installed in &mut self.installed {
@@ -272,10 +317,15 @@ impl MD {
     pub fn run(&mut self, frame: &mut Frame, n_steps: usize) -> Result<(), MdError> {
         if !self.built {
             self.build(frame)?;
-            // `initial_integrate` reads the force already on the frame. LAMMPS
-            // computes that force during setup, before the first step; without
-            // it the opening half-kick treats every force as zero.
-            self.setup_forces(frame)?;
+            if std::mem::take(&mut self.resuming) {
+                columns::require_force(frame)?;
+            } else {
+                // `initial_integrate` reads the force already on the frame.
+                // LAMMPS computes that force during setup, before the first
+                // step; without it the opening half-kick treats every force
+                // as zero.
+                self.setup_forces(frame)?;
+            }
         }
         for _ in 0..n_steps {
             self.step += 1;
@@ -586,5 +636,79 @@ mod tests {
             assert_eq!(column(&chained, key), column(&single, key), "{key}");
         }
         assert_ne!(column(&single, "vx"), vec![0.0; 3]);
+    }
+
+    /// A barostat needs the step's virial; an external push has none.
+    #[test]
+    fn a_barostat_refuses_a_step_without_a_virial() {
+        let mut md = MD::new(UnitPreset::si()).unwrap();
+        md.set_integrator(VelocityVerlet::new(0.1).unwrap())
+            .unwrap();
+        md.set_evaluator(FfEvaluator::plain(Push { axis_force: 1.0 }))
+            .unwrap();
+        md.set_barostat(crate::md::BerendsenBarostat::new(0.0, 10.0, 1.0, 0.1).unwrap())
+            .unwrap();
+        let mut frame = frame_at_rest(1, 1.0);
+        frame.simbox = Some(
+            molrs::core::SimBox::new(molrs::core::Cell::Lengths([10.0; 3]), [0.0; 3], [true; 3])
+                .unwrap(),
+        );
+        let err = md.run(&mut frame, 1).unwrap_err();
+        assert!(err.to_string().contains("virial"), "{err}");
+    }
+
+    #[test]
+    fn a_barostat_at_another_dt_is_refused() {
+        let mut md = MD::new(UnitPreset::si()).unwrap();
+        md.set_integrator(VelocityVerlet::new(0.1).unwrap())
+            .unwrap();
+        md.set_evaluator(FfEvaluator::plain(Push { axis_force: 0.0 }))
+            .unwrap();
+        md.set_barostat(crate::md::BerendsenBarostat::new(0.0, 10.0, 1.0, 0.2).unwrap())
+            .unwrap();
+        let err = md.run(&mut frame_at_rest(1, 1.0), 1).unwrap_err();
+        assert!(err.to_string().contains("barostat dt"), "{err}");
+    }
+
+    /// A run resumed from the frame after step 5 continues the Langevin run of
+    /// 10 bit for bit: the noise is keyed by the step, and step 5's force —
+    /// whose drag saw the half-step velocity — comes from the frame.
+    #[test]
+    fn a_restart_at_the_restored_step_continues_the_run() {
+        let langevin = || {
+            let mut md = MD::new(UnitPreset::real()).unwrap();
+            md.set_integrator(VelocityVerlet::new(1.0).unwrap())
+                .unwrap();
+            md.set_evaluator(FfEvaluator::plain(Spring { k: 0.5 }))
+                .unwrap();
+            md.set_thermostat(FixLangevin::new(300.0, 100.0, 1.0, 11).unwrap())
+                .unwrap();
+            md
+        };
+        let mut whole = frame_at_rest(3, 12.0);
+        langevin().run(&mut whole, 10).unwrap();
+
+        let mut first = langevin();
+        let mut checkpoint = frame_at_rest(3, 12.0);
+        first.run(&mut checkpoint, 5).unwrap();
+        let mut resumed = langevin();
+        resumed.resume(first.step());
+        resumed.run(&mut checkpoint, 5).unwrap();
+        assert_eq!(resumed.step(), 10);
+        for key in ["x", "vx", "vy"] {
+            assert_eq!(column(&checkpoint, key), column(&whole, key), "{key}");
+        }
+    }
+
+    #[test]
+    fn resuming_without_the_checkpoint_forces_is_refused() {
+        let mut md = MD::new(UnitPreset::si()).unwrap();
+        md.set_integrator(VelocityVerlet::new(0.1).unwrap())
+            .unwrap();
+        md.set_evaluator(FfEvaluator::plain(Push { axis_force: 0.0 }))
+            .unwrap();
+        md.resume(5);
+        let err = md.run(&mut frame_at_rest(1, 1.0), 1).unwrap_err();
+        assert!(err.to_string().contains("checkpoint"), "{err}");
     }
 }
