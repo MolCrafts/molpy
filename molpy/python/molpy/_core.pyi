@@ -6823,7 +6823,7 @@ class md:
     """The ``_core.md`` submodule (``molpy.md``).
 
     :class:`MD` walks the LAMMPS phase list. Potentials stay in
-    ``molpy.ff.potential``. The engine is unit-agnostic.
+    ``molpy.ff.potential``. A run is in the unit preset ``MD`` is built with.
     """
 
     class Phase:
@@ -6841,53 +6841,65 @@ class md:
         end_of_step: Self
 
     class VelocityVerlet:
-        """NVE velocity Verlet. ``dt`` only; the frame carries mass and state."""
+        """NVE velocity Verlet. ``dt`` only, in the run's time unit; the frame
+        carries mass and state."""
 
         def __init__(self, dt: float) -> None: ...
         @property
         def dt(self) -> float: ...
 
     class FixLangevin:
-        """LAMMPS ``fix langevin`` at ``post_force``. ``kb`` is the caller's
-        Boltzmann constant; ``T`` is in that temperature unit."""
+        """LAMMPS ``fix langevin`` at one temperature, at ``post_force``.
+        ``temperature`` is in the run's temperature unit, ``damp`` and ``dt``
+        in its time unit; Boltzmann's constant comes from the run's units."""
 
         def __init__(
-            self,
-            t_start: float,
-            t_stop: float,
-            damp: float,
-            dt: float,
-            seed: int,
-            *,
-            kb: float,
+            self, temperature: float, damp: float, dt: float, *, seed: int
         ) -> None: ...
+        @property
+        def temperature(self) -> float: ...
         @property
         def dt(self) -> float: ...
 
     class MD:
-        """Phase driver. :meth:`run` writes the frame it is given."""
+        """Phase driver in one unit system. :meth:`run` writes the frame it
+        is given."""
 
-        def __init__(self) -> None: ...
+        def __init__(self, units: str | UnitPreset) -> None:
+            """``units`` is the run's preset (``"real"``, ``"metal"``, …):
+            ``dt`` in its time unit, masses, energies and forces in its units."""
+        @property
+        def step(self) -> int:
+            """The step index of the last force evaluation; it counts across
+            runs."""
         def set_integrator(self, integrator: "md.VelocityVerlet") -> None: ...
         def set_thermostat(self, thermostat: "md.FixLangevin") -> None: ...
         def set_neighbor(self, list: NeighborList, *, skin: float = 0.0) -> None:
             """Mount ``list`` (moved in) as the run's neighbour list; pairs
             within ``list.cutoff - skin`` reach the pair kernels."""
-        def set_evaluator(self, potential: Any) -> None: ...
+        def set_evaluator(
+            self, potential: PairLjCut | Potentials | WeightedTerms
+        ) -> None: ...
+        def set_calculator(self, calculator: Any, *, skin: float = 0.0) -> None:
+            """Mount a :class:`molpy.md.Calculator`: a force provider of its
+            own, called once per step through buffers it supplies at
+            ``bind``."""
         def run(self, frame: Frame, n_steps: int) -> None: ...
 
     class MaxwellBoltzmann:
-        """Velocity distribution at thermal energy ``kbt`` (optionally COM-free).
-
-        Takes ``kbt`` — the product of Boltzmann's constant and temperature in
-        the caller's unit system — not a temperature: the engine does no unit
-        conversion. See ``UnitPreset(...).boltzmann()``."""
+        """Velocity distribution at ``temperature`` in ``units`` (optionally
+        COM-free): velocities in the preset's velocity unit."""
 
         def __init__(
-            self, kbt: float, *, seed: int = 0, remove_com: bool = True
+            self,
+            temperature: float,
+            *,
+            units: str | UnitPreset,
+            seed: int = 0,
+            remove_com: bool = True,
         ) -> None: ...
         @property
-        def kbt(self) -> float: ...
+        def temperature(self) -> float: ...
         @property
         def seed(self) -> int: ...
         @property

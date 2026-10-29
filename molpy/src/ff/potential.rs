@@ -26,8 +26,10 @@
 //! [`ForceTerm`]; [`take_members`] does the same for a whole
 //! [`PyWeightedTerms`]. The `Potential` trait has no error channel, so a
 //! Python exception raised mid-evaluation is parked in an [`ErrSlot`] and
-//! re-raised by the caller that drove the evaluation ([`take_err`]). The MD
-//! integrators and `molpy.optimize.Lbfgs` consume potentials through here.
+//! re-raised by the caller that drove the evaluation ([`take_err`]).
+//! `Potentials.evaluate` and `molpy.optimize.Lbfgs` consume duck-typed
+//! potentials through here; MD refuses them and takes a force provider of its
+//! own as a `molpy.md.Calculator`.
 
 use super::ir;
 use crate::array::{ArrayArg1, ArrayArg2};
@@ -287,6 +289,12 @@ impl PyPotentials {
     /// Move the compiled Rust `Potentials` (and the error slots of its
     /// Python-callable members) out, leaving this object in the moved state —
     /// the MD integrators and `Potentials.push` consume through here.
+    /// Whether a duck-typed ``evaluate`` object sits among the members (each
+    /// one brought an error slot with it).
+    pub(crate) fn holds_python_members(&self) -> bool {
+        !self.err_slots.is_empty()
+    }
+
     pub(crate) fn take_compiled(&mut self) -> PyResult<(Potentials, Vec<ErrSlot>)> {
         let p = self.inner.take().ok_or_else(potentials_moved_err)?;
         Ok((p, std::mem::take(&mut self.err_slots)))
@@ -381,7 +389,8 @@ pub(crate) fn take_err(slots: &[ErrSlot]) -> PyResult<()> {
 }
 
 /// A Python object with `evaluate(pos)` (a `molpy.ff.potential.Potential`)
-/// as the one `Potential` concept — the seam for NN / external forces. Holds a reference to the instance and
+/// as the one `Potential` concept, for `Potentials.evaluate` and Lbfgs (MD
+/// takes a `molpy.md.Calculator` instead). Holds a reference to the instance and
 /// dispatches to its ``evaluate`` under the GIL.
 pub struct SubclassPotential {
     obj: Py<PyAny>,

@@ -8,7 +8,7 @@ use ndarray::{Array1, Array2};
 
 use molrs::core::keys::{self, COORDS};
 use molrs::core::schema::block_names::ATOMS;
-use molrs::core::{Block, Frame};
+use molrs::core::{Block, BlockDtype, Frame, MetaValue, Virial};
 use molrs::op::{F, Fnx3, I};
 
 use super::error::MdError;
@@ -59,6 +59,33 @@ fn read_nx3(block: &Block, keys: [&str; 3], n: usize) -> Result<Fnx3, MdError> {
     Ok(out)
 }
 
+/// `atoms.{key}` as `n` contiguous `T`s to write in place; a column that is
+/// absent, of another dtype, or not contiguous is replaced by zeros first.
+fn column_mut<'a, T: BlockDtype + Default>(
+    block: &'a mut Block,
+    key: &str,
+    n: usize,
+) -> Result<&'a mut [T], MdError> {
+    let fits = block
+        .get(key)
+        .and_then(|c| c.get::<T>())
+        .is_some_and(|a| a.ndim() == 1 && a.len() == n && a.is_standard_layout());
+    if !fits {
+        block
+            .insert(
+                key,
+                Array1::<T>::from_elem(n, T::default()).into_dyn(),
+                None,
+            )
+            .map_err(|e| MdError::Invalid(format!("atoms.{key}: {e}")))?;
+    }
+    block
+        .get_mut(key)
+        .and_then(|c| c.get_mut::<T>())
+        .and_then(|a| a.as_slice_mut())
+        .ok_or_else(|| MdError::Invalid(format!("atoms.{key} is not a contiguous column")))
+}
+
 fn write_nx3(block: &mut Block, keys: [&str; 3], data: &Array2<F>) -> Result<(), MdError> {
     if data.ncols() != 3 {
         return Err(MdError::Invalid(format!(
@@ -67,9 +94,10 @@ fn write_nx3(block: &mut Block, keys: [&str; 3], data: &Array2<F>) -> Result<(),
         )));
     }
     for (axis, key) in keys.into_iter().enumerate() {
-        block
-            .insert(key, data.column(axis).to_owned().into_dyn(), None)
-            .map_err(|e| MdError::Invalid(format!("atoms.{key}: {e}")))?;
+        let column = column_mut::<F>(block, key, data.nrows())?;
+        for (dst, &v) in column.iter_mut().zip(data.column(axis)) {
+            *dst = v;
+        }
     }
     Ok(())
 }
@@ -77,6 +105,30 @@ fn write_nx3(block: &mut Block, keys: [&str; 3], data: &Array2<F>) -> Result<(),
 pub(crate) fn read_pos(frame: &Frame) -> Result<Fnx3, MdError> {
     let block = atoms(frame)?;
     read_nx3(block, COORDS, n_atoms(block)?)
+}
+
+/// The positions as flat `[x0, y0, z0, x1, …]` into `out`, resized to `3N`.
+pub(crate) fn gather_pos(frame: &Frame, out: &mut Vec<F>) -> Result<(), MdError> {
+    let block = atoms(frame)?;
+    let n = n_atoms(block)?;
+    out.resize(3 * n, 0.0);
+    for (axis, key) in COORDS.into_iter().enumerate() {
+        let col = block
+            .get(key)
+            .ok_or_else(|| MdError::Invalid(format!("atoms.{key} is missing")))?
+            .get::<F>()
+            .ok_or_else(|| MdError::Invalid(format!("atoms.{key} is not float64")))?;
+        if col.len() != n {
+            return Err(MdError::Invalid(format!(
+                "atoms.{key} has {} rows, atoms has {n}",
+                col.len()
+            )));
+        }
+        for (i, &v) in col.iter().enumerate() {
+            out[3 * i + axis] = v;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn read_vel(frame: &Frame) -> Result<Fnx3, MdError> {
@@ -174,18 +226,69 @@ pub(crate) fn write_force(frame: &mut Frame, force: &Fnx3) -> Result<(), MdError
     write_nx3(atoms_mut(frame)?, FORCE, force)
 }
 
-pub(crate) fn write_images(frame: &mut Frame, images: &Array2<I>) -> Result<(), MdError> {
+/// Zero `fx`/`fy`/`fz` in place, inserting them when absent.
+pub(crate) fn zero_force(frame: &mut Frame) -> Result<(), MdError> {
     let block = atoms_mut(frame)?;
-    for (axis, key) in keys::IMAGES.iter().enumerate() {
-        let col: Array1<I> = images.column(axis).to_owned();
-        block
-            .insert(*key, col.into_dyn(), None)
-            .map_err(|e| MdError::Invalid(format!("atoms.{key}: {e}")))?;
+    let n = n_atoms(block)?;
+    for key in FORCE {
+        column_mut::<F>(block, key, n)?.fill(0.0);
     }
     Ok(())
 }
 
-/// `meta` key of the step's virial `Σ f ⊗ r`, `[xx, yy, zz, xy, xz, yz]`.
+pub(crate) fn write_images(frame: &mut Frame, images: &Array2<I>) -> Result<(), MdError> {
+    let block = atoms_mut(frame)?;
+    for (axis, key) in keys::IMAGES.iter().enumerate() {
+        let column = column_mut::<I>(block, key, images.nrows())?;
+        for (dst, &v) in column.iter_mut().zip(images.column(axis)) {
+            *dst = v;
+        }
+    }
+    Ok(())
+}
+
+/// Add one force provider's flat `forces`, `energy` and `virial` onto what
+/// the pre-force clear left.
+///
+/// The virial is `meta["virial"]` (`[xx, yy, zz, xy, xz, yz]`). A provider
+/// without one removes it, since a virial missing a term is a different
+/// quantity, not a smaller one.
+pub(crate) fn add_force_terms(
+    frame: &mut Frame,
+    forces: &[F],
+    energy: F,
+    virial: Option<Virial>,
+) -> Result<(), MdError> {
+    let block = atoms_mut(frame)?;
+    let n = n_atoms(block)?;
+    if forces.len() != 3 * n {
+        return Err(MdError::Invalid(format!(
+            "a force provider produced {} atoms, the frame has {n}",
+            forces.len() / 3
+        )));
+    }
+    for (axis, key) in FORCE.into_iter().enumerate() {
+        let column = column_mut::<F>(block, key, n)?;
+        for (i, dst) in column.iter_mut().enumerate() {
+            *dst += forces[3 * i + axis];
+        }
+    }
+    let total = meta_f64(frame, "energy") + energy;
+    set_meta_f64(frame, "energy", total);
+    match (virial, frame.meta.get(VIRIAL)) {
+        (Some(w), Some(MetaValue::F64x6(held))) => {
+            let sum: [F; 6] = std::array::from_fn(|k| held[k] + w.components[k]);
+            frame.meta.insert(VIRIAL, MetaValue::F64x6(sum));
+        }
+        _ => {
+            frame.meta.remove(VIRIAL);
+        }
+    }
+    Ok(())
+}
+
+/// `meta` key of the step's virial `Σ f ⊗ r`, `[xx, yy, zz, xy, xz, yz]`, in
+/// the run's energy unit.
 pub(crate) const VIRIAL: &str = "virial";
 
 pub(crate) fn meta_f64(frame: &Frame, key: &str) -> F {
@@ -193,5 +296,5 @@ pub(crate) fn meta_f64(frame: &Frame, key: &str) -> F {
 }
 
 pub(crate) fn set_meta_f64(frame: &mut Frame, key: &str, value: F) {
-    frame.meta.insert(key, molrs::core::MetaValue::F64(value));
+    frame.meta.insert(key, MetaValue::F64(value));
 }

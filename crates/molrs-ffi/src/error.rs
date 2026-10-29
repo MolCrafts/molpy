@@ -26,6 +26,11 @@ pub enum FfiError {
         expected: DType,
         actual: DType,
     },
+
+    /// The frame's store is held by an operation still running on it — an
+    /// MD run reaching back into the frame it steps, from a callback. The
+    /// access is refused instead of aliasing the borrow.
+    FrameBusy,
 }
 
 impl fmt::Display for FfiError {
@@ -37,6 +42,11 @@ impl fmt::Display for FfiError {
             FfiError::NonContiguous { key } => {
                 write!(f, "Column '{}' is not contiguous in memory", key)
             }
+            FfiError::FrameBusy => write!(
+                f,
+                "the frame is in use by an operation still running on it (an MD run \
+                 calling back into the frame it steps); read it after that call returns"
+            ),
             FfiError::DTypeMismatch {
                 key,
                 expected,

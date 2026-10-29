@@ -10,6 +10,7 @@ mod filter;
 mod grid;
 mod linkcell;
 mod query;
+mod verlet_cadence;
 mod verlet_skin;
 
 pub use aabb::AabbQuery;
@@ -18,6 +19,7 @@ pub use filter::{filter_rad, filter_sann};
 pub use grid::CellGrid;
 pub use linkcell::LinkCell;
 pub use query::NeighborQuery;
+pub use verlet_cadence::VerletCadence;
 pub use verlet_skin::{NeighborPolicy, SkinError, SkinPair, VerletSkin};
 
 // NeighborColumns and NeighborPair are defined below next to Neighbors.

@@ -1,11 +1,18 @@
 //! Python bindings for [`molrs::md`]: the phase driver and the components
-//! it mounts. Potentials stay in `molpy.ff.potential`.
+//! it mounts. Potentials stay in `molpy.ff.potential`; a force provider of
+//! its own is a [`calculator::PyCalculator`].
+
+mod calculator;
 
 use crate::array::ArrayArg2;
 use crate::core::frame::PyFrame;
 use crate::core::neighborlist::PyNeighborList;
+use crate::core::units::preset_arg;
 use crate::error::ffi_error_to_pyerr;
-use crate::ff::potential::{ErrSlot, take_err, take_members};
+use crate::ff::potential::{
+    ErrSlot, PyPairLjCut, PyPotentials, PyWeightedTerms, take_err, take_members,
+};
+use calculator::PyCalculator;
 use molrs::md::{
     FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, TimestepProvider, VelocityVerlet,
 };
@@ -15,8 +22,16 @@ use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
+/// A calculator's own exception comes back unchanged; every other refusal is
+/// a `ValueError`.
 fn md_err(e: MdError) -> PyErr {
-    PyValueError::new_err(e.to_string())
+    match e {
+        MdError::Calculator { source, .. } => match source.downcast::<PyErr>() {
+            Ok(err) => *err,
+            Err(other) => PyValueError::new_err(other.to_string()),
+        },
+        other => PyValueError::new_err(other.to_string()),
+    }
 }
 
 fn check_nx3(pos: &ArrayArg2<'_, f64>, what: &str) -> PyResult<()> {
@@ -111,10 +126,10 @@ impl PyVelocityVerlet {
     }
 }
 
-/// LAMMPS `fix langevin`, mounted at `post_force`.
+/// LAMMPS `fix langevin` at one temperature, mounted at `post_force`.
 ///
-/// `kb` is Boltzmann's constant in the frame's energy unit per kelvin.
-/// The driver does not choose a unit system.
+/// `temperature` is in the run's temperature unit, `damp` and `dt` in its
+/// time unit; Boltzmann's constant comes from the run's units.
 #[pyclass(
     name = "FixLangevin",
     module = "molpy.md",
@@ -128,11 +143,16 @@ pub struct PyFixLangevin {
 #[pymethods]
 impl PyFixLangevin {
     #[new]
-    #[pyo3(signature = (t_start, t_stop, damp, dt, seed, *, kb))]
-    fn new(t_start: F, t_stop: F, damp: F, dt: F, seed: u64, kb: F) -> PyResult<Self> {
+    #[pyo3(signature = (temperature, damp, dt, *, seed))]
+    fn new(temperature: F, damp: F, dt: F, seed: u64) -> PyResult<Self> {
         Ok(Self {
-            inner: FixLangevin::new(t_start, t_stop, damp, dt, seed, kb).map_err(md_err)?,
+            inner: FixLangevin::new(temperature, damp, dt, seed).map_err(md_err)?,
         })
+    }
+
+    #[getter]
+    fn temperature(&self) -> F {
+        self.inner.temperature()
     }
 
     #[getter]
@@ -145,17 +165,29 @@ impl PyFixLangevin {
 #[pyclass(name = "MD", module = "molpy.md", unsendable, subclass)]
 pub struct PyMD {
     inner: MD,
+    /// Where a Python pair style among the evaluator's kernels parks its
+    /// exception (the `Potential` trait has no error channel).
     err_slots: Vec<ErrSlot>,
 }
 
 #[pymethods]
 impl PyMD {
+    /// A driver in ``units`` (a preset name such as ``"real"`` or a
+    /// :class:`molpy.core.UnitPreset`): ``dt`` is in its time unit, masses,
+    /// energies and forces in its units.
     #[new]
-    fn new() -> Self {
-        Self {
-            inner: MD::new(),
+    fn new(units: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let preset = preset_arg(units)?;
+        Ok(Self {
+            inner: MD::new(preset).map_err(md_err)?,
             err_slots: Vec::new(),
-        }
+        })
+    }
+
+    /// The step index of the last force evaluation; it counts across runs.
+    #[getter]
+    fn step(&self) -> u64 {
+        self.inner.step()
     }
 
     fn set_integrator(&mut self, integrator: &PyVelocityVerlet) -> PyResult<()> {
@@ -176,13 +208,42 @@ impl PyMD {
         self.inner.set_neighbor(list, skin).map_err(md_err)
     }
 
-    /// Mount a `PairLjCut`, a compiled `Potentials` / `WeightedTerms`, or an
-    /// object with `evaluate(pos) -> (energy, forces)`.
+    /// Mount a `PairLjCut` or a compiled `Potentials` / `WeightedTerms`.
+    /// A force provider of its own is a calculator (:meth:`set_calculator`).
     fn set_evaluator(&mut self, potential: &Bound<'_, PyAny>) -> PyResult<()> {
+        let python_inside = potential
+            .cast::<PyPotentials>()
+            .is_ok_and(|p| p.borrow().holds_python_members());
+        if python_inside
+            || !(potential.is_instance_of::<PyPairLjCut>()
+                || potential.is_instance_of::<PyPotentials>()
+                || potential.is_instance_of::<PyWeightedTerms>())
+        {
+            return Err(PyTypeError::new_err(format!(
+                "set_evaluator takes a PairLjCut, Potentials or WeightedTerms of native \
+                 kernels, got {}{}; mount a force provider of your own with set_calculator",
+                potential.get_type().name()?,
+                if python_inside {
+                    " holding a Python evaluate()"
+                } else {
+                    ""
+                }
+            )));
+        }
         let (members, slots) = take_members(potential)?;
         self.err_slots = slots;
         self.inner
             .set_evaluator(FfEvaluator::from_members(members))
+            .map_err(md_err)
+    }
+
+    /// Mount ``calculator`` (a :class:`molpy.md.Calculator`) as the run's
+    /// force provider of its own. ``skin`` is the margin its neighbour search
+    /// builds at beyond its ``cutoff``; the driver says when to search again.
+    #[pyo3(signature = (calculator, *, skin=0.0))]
+    fn set_calculator(&mut self, calculator: &Bound<'_, PyAny>, skin: F) -> PyResult<()> {
+        self.inner
+            .set_calculator(PyCalculator::new(calculator)?, skin)
             .map_err(md_err)
     }
 
@@ -206,9 +267,17 @@ pub struct PyMaxwellBoltzmann {
 #[pymethods]
 impl PyMaxwellBoltzmann {
     #[new]
-    #[pyo3(signature = (kbt, *, seed=0, remove_com=true))]
-    fn new(kbt: F, seed: u64, remove_com: bool) -> PyResult<Self> {
-        let mut inner = MaxwellBoltzmann::new(kbt, seed).map_err(md_err)?;
+    /// Velocities at ``temperature`` in ``units`` (a preset name or a
+    /// :class:`molpy.core.UnitPreset`), in its velocity unit.
+    #[pyo3(signature = (temperature, *, units, seed=0, remove_com=true))]
+    fn new(
+        temperature: F,
+        units: &Bound<'_, PyAny>,
+        seed: u64,
+        remove_com: bool,
+    ) -> PyResult<Self> {
+        let mut inner =
+            MaxwellBoltzmann::new(temperature, &preset_arg(units)?, seed).map_err(md_err)?;
         if !remove_com {
             inner = inner.keep_com();
         }
@@ -216,8 +285,8 @@ impl PyMaxwellBoltzmann {
     }
 
     #[getter]
-    fn kbt(&self) -> F {
-        self.inner.kbt()
+    fn temperature(&self) -> F {
+        self.inner.temperature()
     }
     #[getter]
     fn seed(&self) -> u64 {

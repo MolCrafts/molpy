@@ -2,7 +2,7 @@
 //! equipartition temperature. (The centre-of-mass velocity is
 //! [`CenterOfMass`](crate::compute::CenterOfMass) on the velocities.)
 
-use molrs::core::{UnitPreset, UnitRegistry};
+use molrs::core::UnitPreset;
 use ndarray::{ArrayView1, ArrayView2, Zip};
 
 use crate::compute::{Compute, ComputeError};
@@ -33,8 +33,7 @@ fn check_rows(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result<(), Com
 /// equipartition temperature through [`KineticEnergyResult::temperature`].
 /// [`new`](Self::new) reads both from a [`UnitPreset`];
 /// [`with_mvv2e`](Self::with_mvv2e) and [`with_boltzmann`](Self::with_boltzmann)
-/// override them, for a caller that works in its own consistent units (an MD
-/// driver passes `mvv2e = 1` and its own `k_B`).
+/// override them, for a caller that works in its own consistent units.
 ///
 /// ```
 /// use molrs::compute::{Compute, KineticEnergy, KineticEnergyInput};
@@ -112,13 +111,14 @@ impl KineticEnergy {
     /// [`ComputeError::OutOfRange`] when the unit registry cannot convert the
     /// preset's `mass · velocity²` to its energy unit.
     pub fn new(units: UnitPreset) -> Result<Self, ComputeError> {
-        let from = format!("({})*({})**2", units.mass(), units.velocity());
-        let mvv2e = UnitRegistry::global()
-            .factor(&from, units.energy())
-            .map_err(|e| ComputeError::OutOfRange {
-                field: "units",
-                value: format!("{}: {from} -> {}: {e}", units.name(), units.energy()),
-            })?;
+        let mvv2e = units.mvv2e().map_err(|e| ComputeError::OutOfRange {
+            field: "units",
+            value: format!(
+                "{}: mass·velocity² -> {}: {e}",
+                units.name(),
+                units.energy()
+            ),
+        })?;
         Ok(Self {
             units_mvv2e: positive_finite("mvv2e", mvv2e)?,
             units_boltzmann: positive_finite("boltzmann", units.boltzmann())?,
