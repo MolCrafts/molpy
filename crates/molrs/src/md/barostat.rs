@@ -121,8 +121,8 @@ impl Component for BerendsenBarostat {
         let Some(MetaValue::F64x6(w)) = frame.meta.get(VIRIAL).cloned() else {
             return Err(MdError::Invalid(
                 "press_berendsen needs the step's virial and this step has none: every \
-                 force provider must give one (a calculator returns a virial buffer from \
-                 bind; an external field has none)"
+                 force provider must give one (a Python potential returns a virial buffer \
+                 from bind; an external field has none)"
                     .into(),
             ));
         };

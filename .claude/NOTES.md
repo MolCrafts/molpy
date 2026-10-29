@@ -21,9 +21,9 @@ example, `Calculator::compute` takes `&[F]` / `&mut [F]` and the binding does
 one memcpy per direction rather than lending buffers, and per-atom column
 gathers still allocate. Step cost is judged by spec gate 09, not by a unit
 test.
-**Why:** the operator's ruling while fixing the md-calculator-seam findings.
+**Why:** the operator's ruling while fixing the md-potential-seam findings.
 **Applies to:** `crates/molrs/src/md/`, `molpy/src/md/`,
-`.claude/specs/md-calculator-seam.md`.
+`.claude/specs/md-potential-seam.md`.
 
 ### md-run-units (2026-10-29)
 
@@ -40,14 +40,18 @@ preset. There is no unit-agnostic MD and no `kb` / `kbt` argument. Reduced
 
 ### md-force-providers (2026-10-29)
 
-MD takes a force provider of its own (an ML potential, an external program)
-only as a `molpy.md.Calculator` (`MD.set_calculator`). The calculator supplies
-its exchange buffers at `bind` and fills them in place. The driver owns the
-rebuild cadence (`VerletCadence`) and tells it `rebuild`. A failure stops the
-run at its step with the original exception. `MD.set_evaluator` refuses
-duck-typed `evaluate` objects, including ones inside `Potentials`. Those stay
-for `Potentials.evaluate` and `Lbfgs`.
-**Why:** one seam for torch models, with cell, cadence and error path, and no
-NaN-parking in MD.
-**Applies to:** `crates/molrs/src/md/calculator.rs`, `molpy/src/md/`,
-`molpy/src/ff/potential.rs`.
+A potential of your own (an ML model, an external program) is a
+`molpy.ff.potential.Potential`. That is the one Python protocol: `units`,
+`cutoff`, `bind(frame, skin)` returning the exchange buffers, and
+`compute(step, rebuild, box)` returning the energy. It is taken by
+`MD.set_evaluator` (one evaluator slot per run), by `Potentials.push` and by
+`Lbfgs`. Under MD the driver owns the rebuild cadence (`VerletCadence`), and a
+failure stops the run at its step with the original exception. There is no
+`molpy.md.Calculator` and no `evaluate(pos)` duck type. MD refuses a
+`Potentials` that holds a Python potential.
+**Why:** one seam for torch models, with cell, cadence, virial and error path.
+Two Python protocols for "gives energy and forces" was duplication (operator,
+2026-10-29).
+**Applies to:** `crates/molrs/src/md/bound_potential.rs`,
+`molpy/src/ff/python_potential.rs`, `molpy/src/md/`,
+`molpy/python/molpy/ff/potential/protocol.py`.

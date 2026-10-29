@@ -406,10 +406,25 @@ class TestEvaluate:
         with pytest.raises(ValueError, match="length 3N"):
             pots.evaluate(FLAT[:-1])
 
-    def test_a_duck_typed_member_is_evaluated_through_its_evaluate(self) -> None:
+    def test_a_python_member_is_bound_and_computed(self) -> None:
+        bound: list[int] = []
+
         class Spring:
-            def evaluate(self, pos):
-                return 0.5 * float((pos * pos).sum()), -pos
+            """``E = ½ |x|²`` on every coordinate."""
+
+            units = "real"
+            cutoff = None
+
+            def bind(self, frame, skin):
+                bound.append(frame["atoms"].n_rows)
+                self.pos = np.zeros((frame["atoms"].n_rows, 3))
+                self.force = np.zeros_like(self.pos)
+                return self.pos, self.force
+
+            def compute(self, step, rebuild, box):
+                assert rebuild
+                self.force[:] = -self.pos
+                return 0.5 * float((self.pos * self.pos).sum())
 
         assert isinstance(Spring(), mp.ff.potential.Potential)
         pots = Potentials()
@@ -425,10 +440,20 @@ class TestEvaluate:
         )
         assert math.isclose(e, bond_e + 0.5 * float((XYZ * XYZ).sum()), rel_tol=1e-12)
         np.testing.assert_allclose(f, bond_f - XYZ, rtol=1e-12, atol=1e-12)
+        # Bare coordinates bind it once, to a frame of those coordinates.
+        pots.evaluate(FLAT)
+        assert bound == [len(XYZ)]
 
     def test_a_python_member_exception_is_re_raised(self) -> None:
         class Broken:
-            def evaluate(self, pos):
+            units = "real"
+            cutoff = None
+
+            def bind(self, frame, skin):
+                n = frame["atoms"].n_rows
+                return np.zeros((n, 3)), np.zeros((n, 3))
+
+            def compute(self, step, rebuild, box):
                 raise RuntimeError("boom")
 
         pots = Potentials()
@@ -436,8 +461,8 @@ class TestEvaluate:
         with pytest.raises(RuntimeError, match="boom"):
             pots.evaluate(FLAT)
 
-    def test_push_refuses_an_object_without_evaluate(self) -> None:
-        with pytest.raises(TypeError, match="evaluate"):
+    def test_push_refuses_an_object_without_the_protocol(self) -> None:
+        with pytest.raises(TypeError, match="bind"):
             Potentials().push(object())
 
 

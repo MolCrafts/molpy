@@ -4,7 +4,7 @@
 use molrs::core::{Frame, NeighborList, UnitPreset};
 use molrs::op::F;
 
-use super::calculator::{Calculator, Mounted};
+use super::bound_potential::{BoundPotential, Mounted};
 use super::columns;
 use super::component::{Barostat, Component, Flags, Integrator, Kind, Thermostat};
 use super::error::MdError;
@@ -119,7 +119,8 @@ impl MD {
         Ok(())
     }
 
-    /// Replace any evaluator already bound through this setter.
+    /// Replace the run's evaluator — native kernels here, or a
+    /// [`BoundPotential`] through [`set_bound_potential`](Self::set_bound_potential).
     ///
     /// A second force term is `on(Phase::Force).add`, which does not go
     /// through this slot and is not removed here.
@@ -198,30 +199,31 @@ impl MD {
         Ok(())
     }
 
-    /// Mount `calculator` as the run's force provider of its own, replacing
-    /// any before it. It may sit beside an evaluator; their forces sum.
+    /// Mount `potential` as the run's evaluator, replacing any before it
+    /// (native kernels mounted with [`set_evaluator`](Self::set_evaluator)
+    /// included: a run has one evaluator).
     ///
-    /// `skin` is the margin the calculator's own neighbour search builds at
-    /// beyond its [`cutoff`](Calculator::cutoff). The driver decides when that
+    /// `skin` is the margin the potential's own neighbour search builds at
+    /// beyond its [`cutoff`](BoundPotential::cutoff). The driver decides when that
     /// search must run again and says so through
-    /// [`CalculatorStep::rebuild`](super::CalculatorStep).
+    /// [`PotentialStep::rebuild`](super::PotentialStep).
     ///
     /// # Errors
     ///
     /// [`MdError::Invalid`] for a negative or non-finite `skin`.
-    pub fn set_calculator<C: Calculator + 'static>(
+    pub fn set_bound_potential<C: BoundPotential + 'static>(
         &mut self,
-        calculator: C,
+        potential: C,
         skin: F,
     ) -> Result<(), MdError> {
-        let mounted = Mounted::new(Box::new(calculator), skin)?;
-        self.remove_kind(Kind::Calculator);
+        let mounted = Mounted::new(Box::new(potential), skin)?;
+        self.remove_kind(Kind::Evaluator);
         let bindings = mounted.default_bindings();
         self.install(
             mounted,
             bindings,
             Flags {
-                kind: Kind::Calculator,
+                kind: Kind::Evaluator,
                 ..Flags::default()
             },
         );

@@ -14,8 +14,8 @@ part of a simulation is mounted at the phase where it acts, so the driver
 itself holds no physics:
 
 - the integrator (`VelocityVerlet`);
-- the force provider (`set_evaluator` for a compiled force field,
-  `set_calculator` for a model of your own);
+- the evaluator (`set_evaluator`): a compiled force field, or a potential of
+  your own;
 - the neighbour list;
 - an optional thermostat (`FixLangevin`) and barostat (`BerendsenBarostat`).
 
@@ -173,25 +173,27 @@ result = drift.finish()
 print(result.drift, result.rms)  # kcal/mol per atom per fs, kcal/mol per atom
 ```
 
-## A force provider of your own
+## A potential of your own
 
-A neural potential, or any program that turns positions into forces by itself,
-is a **calculator**. It declares the units it returns and the cutoff of its
-own neighbour search, and implements two methods:
+A neural network, or any program that turns positions into forces by itself,
+is a Python **potential**: an object satisfying `mp.ff.potential.Potential`.
+It declares the units it returns and the cutoff of its own neighbour search,
+and implements two methods:
 
 - `bind(frame, skin)` is called once before the first evaluation, and again
   after any change to the run. It reads what it needs from the frame (species,
   charges, the box) and returns its **exchange buffers**: positions and forces,
   `(N, 3)` float64, and optionally a `(6,)` virial `W = Σ_pairs f ⊗ d`
-  (`−∂E/∂ε`): positive under compression, in the calculator's energy unit,
+  (`−∂E/∂ε`): positive under compression, in the potential's energy unit,
   ordered `[xx, yy, zz, xy, xz, yz]`. An ASE stress is `−W/V` in
   `[xx, yy, zz, yz, xz, xy]` order; negate and reorder it.
 - `compute(step, rebuild, box)` is called once per step. The driver has already
-  written the positions into the buffer. The calculator writes the forces (and
+  written the positions into the buffer. The potential writes the forces (and
   the virial) into theirs in place, and returns the energy.
 
+`set_evaluator` mounts it, with `skin` the margin of its own neighbour search.
 The driver owns the neighbour-list cadence. `rebuild` is true when the list the
-calculator built at `cutoff + skin` may be stale, and `box` is the cell when it
+potential built at `cutoff + skin` may be stale, and `box` is the cell when it
 changed since the last call. Raise from `compute` to stop the run: the
 exception comes back from `run` unchanged, at the step it was raised.
 
@@ -219,7 +221,7 @@ class Springs:
 
 tethered = mp.md.MD("real")
 tethered.set_integrator(mp.md.VelocityVerlet(1.0))
-tethered.set_calculator(Springs(k=2.0))
+tethered.set_evaluator(Springs(k=2.0))
 tethered.run(argon(), 50)
 ```
 
@@ -233,7 +235,7 @@ Python:
 import torch
 
 
-class TorchCalculator:
+class TorchPotential:
     units = "metal"
     cutoff = 5.0
 
@@ -261,6 +263,8 @@ class TorchCalculator:
         return float(energy)
 ```
 
-`set_evaluator` takes compiled force-field kernels only. An object with just
-an `evaluate(pos)` method is refused there, and is mounted as a calculator
-instead.
+The same object also joins a `Potentials` collection (`push`), whose
+`evaluate` and `mp.optimize.Lbfgs` call it with `rebuild=True` every time,
+since neither has a cadence. In MD, mount it directly: inside a collection it
+would get no cell, no cadence and no error that stops the run, so MD refuses
+a collection that holds one.

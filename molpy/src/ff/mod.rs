@@ -22,6 +22,7 @@ pub mod compile;
 pub mod forcefield;
 pub mod ir;
 pub mod potential;
+pub(crate) mod python_potential;
 pub mod style_registry;
 pub mod typifier;
 

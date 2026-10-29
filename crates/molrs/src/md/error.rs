@@ -13,15 +13,15 @@ pub enum MdError {
     Unbound(String),
     /// Neighbour-list completeness / unwrapped-position guard failed.
     Neighbor(String),
-    /// A [`Calculator`](super::Calculator) failed at `step`. The run stops
-    /// there; `source` is the calculator's own error, unchanged.
-    Calculator {
-        /// [`Calculator::name`](super::Calculator::name).
+    /// A [`BoundPotential`](super::BoundPotential) failed at `step`. The run stops
+    /// there; `source` is the potential's own error, unchanged.
+    Potential {
+        /// [`BoundPotential::name`](super::BoundPotential::name).
         name: String,
         /// The step index of the failing evaluation ([`MD::step`](super::MD::step)).
         step: u64,
-        /// What the calculator raised.
-        source: super::CalculatorError,
+        /// What the potential raised.
+        source: super::PotentialError,
     },
 }
 
@@ -29,8 +29,8 @@ impl fmt::Display for MdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(msg) | Self::Unbound(msg) | Self::Neighbor(msg) => f.write_str(msg),
-            Self::Calculator { name, step, source } => {
-                write!(f, "calculator {name} failed at step {step}: {source}")
+            Self::Potential { name, step, source } => {
+                write!(f, "potential {name} failed at step {step}: {source}")
             }
         }
     }
@@ -39,7 +39,7 @@ impl fmt::Display for MdError {
 impl std::error::Error for MdError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Calculator { source, .. } => Some(source.as_ref()),
+            Self::Potential { source, .. } => Some(source.as_ref()),
             _ => None,
         }
     }

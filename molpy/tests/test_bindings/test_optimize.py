@@ -110,3 +110,41 @@ def test_defaults_are_the_rust_defaults():
     assert repr(mp.optimize.Lbfgs(_lj_dimer())) == (
         "Lbfgs(fmax=0.05, max_steps=500, max_step=0.2, memory=8)"
     )
+
+
+class _Tether:
+    """``E = ½ k |x − x₀|²``, each atom tethered where it was bound."""
+
+    units = "real"
+    cutoff = None
+
+    def __init__(self, k: float) -> None:
+        self.k = k
+        self.binds = 0
+
+    def bind(self, frame, skin):
+        self.binds += 1
+        self.anchor = np.column_stack([np.asarray(frame["atoms"][c]) for c in "xyz"])
+        self.pos = np.zeros_like(self.anchor)
+        self.force = np.zeros_like(self.anchor)
+        return self.pos, self.force
+
+    def compute(self, step, rebuild, box):
+        d = self.pos - self.anchor
+        self.force[:] = -self.k * d
+        return 0.5 * self.k * float((d * d).sum())
+
+
+def test_minimize_binds_a_python_potential_to_the_frame():
+    # Tethered to the starting geometry, the LJ dimer relaxes to between its
+    # own minimum and the start; the tether saw the frame at bind.
+    frame = _dimer_frame()
+    start = _xyz(frame).copy()
+    tether = _Tether(k=0.5)
+    pots = _lj_dimer()
+    pots.push(tether)
+    report = mp.optimize.Lbfgs(pots, fmax=1e-6, max_steps=500).minimize(frame)
+    assert report.converged
+    assert tether.binds == 1
+    np.testing.assert_allclose(tether.anchor, start)
+    assert not np.allclose(_xyz(frame), start)

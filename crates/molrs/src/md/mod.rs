@@ -11,12 +11,12 @@
 //! forces are columns on the frame. `FixLangevin` adds its kick at
 //! `post_force`. A pair kernel reads the pairs the run's one
 //! [`NeighborList`](crate::core::NeighborList) publishes during `neighbor`
-//! ([`MD::set_neighbor`](crate::md::MD::set_neighbor)). A [`Calculator`](crate::md::Calculator) is a
+//! ([`MD::set_neighbor`](crate::md::MD::set_neighbor)). A [`BoundPotential`](crate::md::BoundPotential) is a
 //! force provider of its own, mounted with
-//! [`MD::set_calculator`](crate::md::MD::set_calculator).
+//! [`MD::set_bound_potential`](crate::md::MD::set_bound_potential).
 
 mod barostat;
-mod calculator;
+mod bound_potential;
 mod columns;
 mod component;
 mod driver;
@@ -32,7 +32,7 @@ mod scratch;
 mod verlet;
 
 pub use barostat::BerendsenBarostat;
-pub use calculator::{Calculator, CalculatorError, CalculatorResult, CalculatorStep};
+pub use bound_potential::{BoundPotential, PotentialError, PotentialResult, PotentialStep};
 pub use component::{Barostat, Component, Integrator, Thermostat, TimestepProvider};
 pub use driver::MD;
 pub use error::MdError;

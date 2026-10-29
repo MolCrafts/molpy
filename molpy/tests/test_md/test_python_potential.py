@@ -1,6 +1,6 @@
-"""The calculator seam: a force provider of its own, mounted on ``mp.md.MD``.
+"""A Python ``mp.ff.potential.Potential`` mounted as MD's evaluator.
 
-The calculator below is a harmonic bond written in numpy. It records what the
+The potential below is a harmonic bond written in numpy. It records what the
 driver hands it, so the tests check the contract and not a model.
 """
 
@@ -73,10 +73,10 @@ def _pair(x1: float = 0.8) -> mp.core.Frame:
     return frame
 
 
-def _md(calculator, units: str = "real") -> mp.md.MD:
+def _md(potential, units: str = "real") -> mp.md.MD:
     sim = mp.md.MD(units)
     sim.set_integrator(mp.md.VelocityVerlet(0.5))
-    sim.set_calculator(calculator, skin=0.5)
+    sim.set_evaluator(potential, skin=0.5)
     return sim
 
 
@@ -155,7 +155,7 @@ def test_rebuild_and_box_arrive_when_they_change():
     assert [c[2] for c in calc.calls] == [True, False, False, True]
 
 
-def test_a_metal_calculator_is_converted_into_a_real_run():
+def test_a_metal_potential_is_converted_into_a_real_run():
     class MetalBond(Bond):
         units = "metal"
 
@@ -194,7 +194,7 @@ def test_a_read_only_buffer_is_refused_at_bind():
         _md(ReadOnly()).run(_pair(1.2), 0)
 
 
-def test_a_calculator_without_units_is_refused():
+def test_a_potential_without_units_is_refused():
     class Undeclared:
         cutoff = None
 
@@ -203,16 +203,39 @@ def test_a_calculator_without_units_is_refused():
         def compute(self, step, rebuild, box): ...
 
     with pytest.raises(TypeError, match="units"):
-        mp.md.MD("real").set_calculator(Undeclared())
+        mp.md.MD("real").set_evaluator(Undeclared())
 
 
-def test_set_evaluator_points_a_duck_typed_force_at_set_calculator():
+def test_an_object_without_the_protocol_is_refused():
     class Evaluate:
         def evaluate(self, pos):
             return 0.0, np.zeros_like(pos)
 
-    with pytest.raises(TypeError, match="set_calculator"):
+    with pytest.raises(TypeError, match="bind"):
         mp.md.MD("real").set_evaluator(Evaluate())
+
+
+def test_a_skin_is_refused_for_native_kernels():
+    with pytest.raises(ValueError, match="set_neighbor"):
+        mp.md.MD("real").set_evaluator(
+            mp.ff.potential.PairLjCut(0.238, 3.405, 8.5), skin=1.0
+        )
+
+
+def test_a_compiled_potentials_of_native_kernels_is_accepted():
+    # A compiled collection carries the style registry's error slot; that is
+    # not a Python potential and MD takes it.
+    holder = mp.ff.potential.Potentials()
+    holder.push(
+        mp.ff.ExplicitTerms("bond", "harmonic", [[0, 1]], k=100.0, r0=1.0).compile()
+    )
+    sim = mp.md.MD("real")
+    sim.set_integrator(mp.md.VelocityVerlet(0.5))
+    sim.set_neighbor(mp.core.NeighborList(3.0), skin=0.5)
+    sim.set_evaluator(holder)
+    frame = _pair(0.8)
+    sim.run(frame, 0)
+    assert frame.meta["energy"] == pytest.approx(16.0, abs=1e-9)
 
 
 def test_reading_the_stepped_frame_from_compute_is_refused_by_name():
@@ -259,18 +282,23 @@ def test_a_non_finite_energy_stops_the_run():
     assert sim.step == 2
 
 
-def test_a_python_evaluate_inside_potentials_is_refused_by_md():
-    class Evaluate:
-        def evaluate(self, pos):
-            return 0.0, np.zeros_like(pos)
-
+def test_a_python_potential_inside_potentials_is_refused_by_md():
     holder = mp.ff.potential.Potentials()
-    holder.push(Evaluate())
-    with pytest.raises(TypeError, match="set_calculator"):
+    holder.push(Bond())
+    with pytest.raises(TypeError, match="itself"):
         mp.md.MD("real").set_evaluator(holder)
 
 
-def test_a_barostat_rescales_the_cell_and_hands_it_to_the_calculator():
+def test_set_evaluator_replaces_the_python_potential():
+    bond = Bond()
+    sim = _md(bond)
+    sim.set_evaluator(mp.ff.potential.PairLjCut(0.238, 3.405, 4.0))
+    sim.set_neighbor(mp.core.NeighborList(4.5), skin=0.5)
+    sim.run(_pair(1.2), 1)
+    assert bond.calls == []
+
+
+def test_a_barostat_rescales_the_cell_and_hands_it_to_the_potential():
     calc = Bond()
     sim = _md(calc)
     sim.set_barostat(mp.md.BerendsenBarostat(1.0, 500.0, 2.2e4, 0.5))
@@ -278,7 +306,7 @@ def test_a_barostat_rescales_the_cell_and_hands_it_to_the_calculator():
     before = frame.box.volume()
     sim.run(frame, 3)
     # A compressed bond pushes the cell out, and the new cell reaches the
-    # calculator from the step after the first rescale.
+    # potential from the step after the first rescale.
     assert frame.box.volume() > before
     assert frame.meta["pressure"] > 1.0
     assert [c[2] for c in calc.calls] == [True, False, True, True]

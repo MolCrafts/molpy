@@ -6927,12 +6927,14 @@ class md:
             """Mount ``list`` (moved in) as the run's neighbour list; pairs
             within ``list.cutoff - skin`` reach the pair kernels."""
         def set_evaluator(
-            self, potential: PairLjCut | Potentials | WeightedTerms
-        ) -> None: ...
-        def set_calculator(self, calculator: Any, *, skin: float = 0.0) -> None:
-            """Mount a :class:`molpy.md.Calculator`: a force provider of its
-            own, called once per step through buffers it supplies at
-            ``bind``."""
+            self,
+            potential: PairLjCut | Potentials | WeightedTerms | Any,
+            *,
+            skin: float = 0.0,
+        ) -> None:
+            """Mount the run's evaluator: native kernels, or a Python
+            :class:`molpy.ff.potential.Potential` (``skin`` is its own
+            neighbour search's margin)."""
         def run(self, frame: Frame, n_steps: int) -> None: ...
 
     class MaxwellBoltzmann:

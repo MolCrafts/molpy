@@ -1,9 +1,9 @@
 ---
-title: molpy.md calculator seam — CPU integrator, GPU force model, one cheap exchange per step
-slug: md-calculator-seam
+title: molpy.md Python-potential seam — CPU integrator, GPU force model, one cheap exchange per step
+slug: md-potential-seam
 status: approved — 01–05 committed (ee4be918); 06–08 implemented 2026-10-29 (uncommitted); 09 open
 created: 2026-10-29
-chain: md-calculator-seam (01-step-hygiene → 02-units → 03-cadence → 04-calculator-core → 05-calculator-binding → 06-barostat → 07-dump-checkpoint → 08-energy-drift → 09-gate) → molnex (adapter, delete molix.md)
+chain: md-potential-seam (01-step-hygiene → 02-units → 03-cadence → 04-calculator-core → 05-calculator-binding → 06-barostat → 07-dump-checkpoint → 08-energy-drift → 09-gate) → molnex (adapter, delete molix.md)
 repos: molpy (01–08), out-of-source script (09), molnex (downstream)
 ---
 
@@ -92,6 +92,11 @@ them today. `MD.run` already runs under `no_grad`, and the system is one
     (`molpot/forcefield/potentials.py:1843-1960`).
 
 ## Decisions
+
+> The names below are the ones decided before the one-protocol ruling of
+> 2026-10-29: `Calculator`, `set_calculator` and `molpy.md.Calculator` are
+> now `md::BoundPotential`, `MD.set_evaluator` and
+> `molpy.ff.potential.Potential`. See "As built".
 
 **D1 — The seam is a new md trait, `molrs::md::Calculator`.** It does not
 extend `Potential`, and it is not a new `ForceTerm` variant.
@@ -328,6 +333,29 @@ As built, 06–08 (2026-10-29):
   barostat, trajectories and checkpoints, energy drift, and the calculator,
   including a torch sketch marked `docs: skip`.
 
+One Python protocol (operator ruling, 2026-10-29). `molpy.md.Calculator` and
+`MD.set_calculator` are gone. The one Python contract is
+`molpy.ff.potential.Potential`, which now has the former Calculator's shape:
+`units`, `cutoff`, `bind(frame, skin)` returning the exchange buffers, and
+`compute(step, rebuild, box)` returning the energy. The old
+`evaluate(pos) -> (E, F)` shape is gone.
+- `MD.set_evaluator(potential, *, skin=0.0)` takes native kernels or a Python
+  potential. A run has one evaluator slot. `skin` is refused for native
+  kernels, whose skin is `set_neighbor`'s.
+- `Potentials.push` and `Lbfgs` take the same protocol, sharing one
+  implementation (`molpy/src/ff/python_potential.rs`). Outside MD every call
+  says `rebuild=True`. A caller with a frame binds there first
+  (`Potentials.evaluate(frame)`, `Lbfgs.minimize`); from bare coordinates the
+  potential is bound to a frame of those coordinates alone. That path still
+  parks an exception until the call returns (F2).
+- MD refuses a `Potentials` holding a Python potential: mount the potential
+  itself. The Rust trait is `md::BoundPotential` (`PotentialStep`,
+  `PotentialResult`, `MdError::Potential`, `MD::set_bound_potential`).
+- Fixed on the way: MD refused every compiled `Potentials`. The "holds Python
+  members" test read non-empty error slots, and a compiled collection always
+  carries the style registry's. Python members are now tracked explicitly,
+  and a regression test covers it.
+
 Deferred:
 - `molpy/stubtest-allowlist.txt` exempts `molpy._core.md` as a whole, so
   stubtest does not check the md signatures. They were checked by hand on
@@ -492,6 +520,12 @@ Deferred:
   spec before it is deleted.
 
 ### Downstream (molnex, own spec)
+
+Spec: `molnex/.claude/specs/host-md-01-potential.md` (opened 2026-10-29).
+There is no adapter class. Each zoo's Potential satisfies
+`molpy.ff.potential.Potential` structurally: the members are implemented once
+on `molix.autograd.Potential` over the deploy contract, and molnex never
+names molpy. The seam ships in molpy 0.20.0 (operator, 2026-10-29).
 
 - The adapter implements `molpy.md.Calculator` with pinned buffers, the GPU
   `molix.neighbor.NeighborList`, the CUDA-graph replay contract and one sync.

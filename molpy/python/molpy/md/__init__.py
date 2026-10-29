@@ -18,13 +18,12 @@ energies and forces are in its units too. The neighbour list is the one
 :class:`molpy.core.NeighborList`: it knows only its cutoff, and the frame box
 supplies the periodicity. ``run`` writes the same frame: coordinates,
 velocities, forces, image flags, ``meta["energy"]`` and ``meta["kinetic"]``.
-``dt`` lives on the integrator; mass and velocities live on the frame. A force
-provider of its own, such as a neural potential, is a :class:`Calculator`
-mounted with :meth:`MD.set_calculator`.
+``dt`` lives on the integrator; mass and velocities live on the frame. A
+potential of your own, such as a neural network, is a
+:class:`molpy.ff.potential.Potential` mounted with :meth:`MD.set_evaluator`.
 """
 
 from molpy import _core
-from molpy.md.calculator import Calculator
 
 BerendsenBarostat = _core.md.BerendsenBarostat
 
@@ -40,7 +39,6 @@ VelocityVerlet = _core.md.VelocityVerlet
 
 __all__ = [
     "BerendsenBarostat",
-    "Calculator",
     "FixLangevin",
     "MD",
     "MaxwellBoltzmann",

@@ -1,8 +1,6 @@
 //! Python bindings for [`molrs::md`]: the phase driver and the components
-//! it mounts. Potentials stay in `molpy.ff.potential`; a force provider of
-//! its own is a [`calculator::PyCalculator`].
-
-mod calculator;
+//! it mounts. Potentials stay in `molpy.ff.potential`; a Python one is mounted
+//! as a [`BoundPotential`] through [`PythonPotential`].
 
 use crate::array::ArrayArg2;
 use crate::core::frame::PyFrame;
@@ -12,10 +10,11 @@ use crate::error::ffi_error_to_pyerr;
 use crate::ff::potential::{
     ErrSlot, PyPairLjCut, PyPotentials, PyWeightedTerms, take_err, take_members,
 };
-use calculator::PyCalculator;
+use crate::ff::python_potential::PythonPotential;
+use molrs::core::{Frame, UnitPreset};
 use molrs::md::{
-    BerendsenBarostat, FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, TimestepProvider,
-    VelocityVerlet,
+    BerendsenBarostat, BoundPotential, FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError,
+    PotentialError, PotentialResult, PotentialStep, TimestepProvider, VelocityVerlet,
 };
 use molrs::op::F;
 use ndarray::Array1;
@@ -23,11 +22,11 @@ use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
-/// A calculator's own exception comes back unchanged; every other refusal is
-/// a `ValueError`.
+/// A Python potential's own exception comes back unchanged; every other
+/// refusal is a `ValueError`.
 fn md_err(e: MdError) -> PyErr {
     match e {
-        MdError::Calculator { source, .. } => match source.downcast::<PyErr>() {
+        MdError::Potential { source, .. } => match source.downcast::<PyErr>() {
             Ok(err) => *err,
             Err(other) => PyValueError::new_err(other.to_string()),
         },
@@ -258,42 +257,47 @@ impl PyMD {
         self.inner.set_neighbor(list, skin).map_err(md_err)
     }
 
-    /// Mount a `PairLjCut` or a compiled `Potentials` / `WeightedTerms`.
-    /// A force provider of its own is a calculator (:meth:`set_calculator`).
-    fn set_evaluator(&mut self, potential: &Bound<'_, PyAny>) -> PyResult<()> {
-        let python_inside = potential
+    /// Mount the run's evaluator, replacing any before it: native kernels (a
+    /// `PairLjCut`, a compiled `Potentials` / `WeightedTerms`) or a Python
+    /// :class:`molpy.ff.potential.Potential`.
+    ///
+    /// ``skin`` is for a Python potential: the margin its own neighbour search
+    /// builds at beyond its ``cutoff``, the driver saying when to search again.
+    /// Native pair kernels read the run's neighbour list (:meth:`set_neighbor`),
+    /// whose skin is that list's.
+    #[pyo3(signature = (potential, *, skin=0.0))]
+    fn set_evaluator(&mut self, potential: &Bound<'_, PyAny>, skin: F) -> PyResult<()> {
+        let native = potential.is_instance_of::<PyPairLjCut>()
+            || potential.is_instance_of::<PyPotentials>()
+            || potential.is_instance_of::<PyWeightedTerms>();
+        if !native {
+            let python = PythonPotential::new(potential)?;
+            self.err_slots.clear();
+            return self
+                .inner
+                .set_bound_potential(MountedPython(python), skin)
+                .map_err(md_err);
+        }
+        if potential
             .cast::<PyPotentials>()
-            .is_ok_and(|p| p.borrow().holds_python_members());
-        if python_inside
-            || !(potential.is_instance_of::<PyPairLjCut>()
-                || potential.is_instance_of::<PyPotentials>()
-                || potential.is_instance_of::<PyWeightedTerms>())
+            .is_ok_and(|p| p.borrow().holds_python_members())
         {
-            return Err(PyTypeError::new_err(format!(
-                "set_evaluator takes a PairLjCut, Potentials or WeightedTerms of native \
-                 kernels, got {}{}; mount a force provider of your own with set_calculator",
-                potential.get_type().name()?,
-                if python_inside {
-                    " holding a Python evaluate()"
-                } else {
-                    ""
-                }
-            )));
+            return Err(PyTypeError::new_err(
+                "this Potentials holds a Python potential; MD mounts a Python potential \
+                 itself, set_evaluator(potential), so it gets the cell, the rebuild cadence \
+                 and an error that stops the run",
+            ));
+        }
+        if skin != 0.0 {
+            return Err(PyValueError::new_err(
+                "skin is a Python potential's; native pair kernels read the neighbour \
+                 list of set_neighbor, whose skin is that list's",
+            ));
         }
         let (members, slots) = take_members(potential)?;
         self.err_slots = slots;
         self.inner
             .set_evaluator(FfEvaluator::from_members(members))
-            .map_err(md_err)
-    }
-
-    /// Mount ``calculator`` (a :class:`molpy.md.Calculator`) as the run's
-    /// force provider of its own. ``skin`` is the margin its neighbour search
-    /// builds at beyond its ``cutoff``; the driver says when to search again.
-    #[pyo3(signature = (calculator, *, skin=0.0))]
-    fn set_calculator(&mut self, calculator: &Bound<'_, PyAny>, skin: F) -> PyResult<()> {
-        self.inner
-            .set_calculator(PyCalculator::new(calculator)?, skin)
             .map_err(md_err)
     }
 
@@ -359,6 +363,39 @@ impl PyMaxwellBoltzmann {
             .velocities(pos.as_array(), mass_from(&mass)?.view())
             .map_err(md_err)?;
         Ok(vel.into_pyarray(py))
+    }
+}
+
+/// A Python potential as the run's [`BoundPotential`].
+struct MountedPython(PythonPotential);
+
+impl BoundPotential for MountedPython {
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    fn units(&self) -> &UnitPreset {
+        self.0.units()
+    }
+
+    fn cutoff(&self) -> Option<F> {
+        self.0.cutoff()
+    }
+
+    fn bind(&mut self, frame: &Frame, skin: F) -> Result<(), PotentialError> {
+        Ok(self.0.bind(frame, skin)?)
+    }
+
+    fn compute(
+        &mut self,
+        step: &PotentialStep<'_>,
+        positions: &[F],
+        forces: &mut [F],
+    ) -> Result<PotentialResult, PotentialError> {
+        let (energy, virial) =
+            self.0
+                .compute(step.step, step.rebuild, step.cell, positions, forces)?;
+        Ok(PotentialResult { energy, virial })
     }
 }
 

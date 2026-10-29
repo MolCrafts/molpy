@@ -1424,7 +1424,7 @@ link 11.
     `mvv2e` / `boltzmann` `RequiredIn("with_constants")`. Python
     `KineticEnergy(*, units= | mvv2e=, boltzmann=)`, WASM
     `KineticEnergy.withConstants`. `molrs::md`'s kinetic-energy component
-    uses `new(units)` with the run's preset (md-calculator-seam D6).
+    uses `new(units)` with the run's preset (md-potential-seam D6).
 - **For link 11.** `computeSpecs()` serialises `ComputeSpec::all()` through
   serde, and molvis joins its labels and ranges on `(spec.name, param.name)`.
 

@@ -1,13 +1,14 @@
-//! A force provider of its own, bound to the `force` phase: [`Calculator`].
+//! A potential evaluated outside molrs, bound to the run: [`BoundPotential`].
 //!
-//! A calculator is what ASE calls one: something that turns positions into
-//! energy and forces by itself — a neural potential on a GPU, an external
-//! program. The driver hands it the positions, the cell when it changed, and
-//! whether its neighbour search must run again; it hands back energy, forces,
-//! and a virial when it has one. It reads no pair table the driver built and
-//! is bound to no force-field term.
+//! A neural potential on a GPU, an external program — something that turns
+//! positions into energy and forces by itself. It is bound to the frame once,
+//! and at each force evaluation the driver hands it the positions, the cell
+//! when it changed, and whether its neighbour search must run again. It hands
+//! back the energy, the forces, and a virial when it has one. It reads no
+//! pair table the driver built and belongs to no force-field term. The
+//! binding's face of it is the `molpy.ff.potential.Potential` protocol.
 //!
-//! The driver owns the rebuild decision. A calculator that searches on its
+//! The driver owns the rebuild decision. A potential that searches on its
 //! own device builds at `cutoff + skin`, and the driver's [`VerletCadence`]
 //! says when that list is stale, so the policy exists once.
 
@@ -21,17 +22,17 @@ use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
 
-/// The error a calculator raises; the driver carries it unchanged in
-/// [`MdError::Calculator`].
-pub type CalculatorError = Box<dyn std::error::Error + Send + Sync>;
+/// The error a potential raises; the driver carries it unchanged in
+/// [`MdError::Potential`].
+pub type PotentialError = Box<dyn std::error::Error + Send + Sync>;
 
-/// What the driver tells a calculator at one force evaluation.
+/// What the driver tells a potential at one force evaluation.
 #[derive(Clone, Copy, Debug)]
-pub struct CalculatorStep<'a> {
+pub struct PotentialStep<'a> {
     /// The run's step index ([`MD::step`](super::MD::step)); the evaluation
     /// before the first step is step 0.
     pub step: u64,
-    /// The neighbour list the calculator built at `cutoff + skin` is stale:
+    /// The neighbour list the potential built at `cutoff + skin` is stale:
     /// search again before evaluating. Always `true` at the first evaluation
     /// after a bind.
     pub rebuild: bool,
@@ -40,22 +41,22 @@ pub struct CalculatorStep<'a> {
     pub cell: Option<&'a SimBox>,
 }
 
-/// What a calculator returns from one evaluation, in its own
-/// [`units`](Calculator::units).
+/// What a potential returns from one evaluation, in its own
+/// [`units`](BoundPotential::units).
 #[derive(Clone, Copy, Debug)]
-pub struct CalculatorResult {
+pub struct PotentialResult {
     /// Potential energy.
     pub energy: F,
     /// `W = Σ_pairs f ⊗ d` (symmetric), equivalently `−∂E/∂ε` at zero strain:
-    /// positive under compression, in the calculator's energy unit and in
-    /// `[xx, yy, zz, xy, xz, yz]` order; `None` when the calculator has none.
+    /// positive under compression, in the potential's energy unit and in
+    /// `[xx, yy, zz, xy, xz, yz]` order; `None` when the potential has none.
     /// ASE's stress is `−W/V` in `[xx, yy, zz, yz, xz, xy]` order, so
     /// `stress · V` is `−W` and must be negated and reordered.
     pub virial: Option<Virial>,
 }
 
 /// A force provider that turns positions into energy and forces by itself.
-pub trait Calculator: Send {
+pub trait BoundPotential: Send {
     /// Timing and error name.
     fn name(&self) -> &str;
 
@@ -64,34 +65,34 @@ pub trait Calculator: Send {
     fn units(&self) -> &UnitPreset;
 
     /// The interaction cutoff of its own neighbour search, in the run's
-    /// length unit; `None` for a calculator that searches for no neighbours
+    /// length unit; `None` for a potential that searches for no neighbours
     /// (and is then never told to rebuild after the first evaluation).
     fn cutoff(&self) -> Option<F>;
 
     /// Bind to the frame the run will step, before the first evaluation and
     /// again after any change to the run. `skin` is the margin to build the
     /// neighbour list at beyond [`cutoff`](Self::cutoff).
-    fn bind(&mut self, frame: &Frame, skin: F) -> Result<(), CalculatorError>;
+    fn bind(&mut self, frame: &Frame, skin: F) -> Result<(), PotentialError>;
 
     /// Evaluate at `positions` (flat `[x0, y0, z0, …]`, the run's length
     /// unit), writing every component of `forces` (same layout).
     fn compute(
         &mut self,
-        step: &CalculatorStep<'_>,
+        step: &PotentialStep<'_>,
         positions: &[F],
         forces: &mut [F],
-    ) -> Result<CalculatorResult, CalculatorError>;
+    ) -> Result<PotentialResult, PotentialError>;
 }
 
-/// A [`Calculator`] mounted on the `force` phase, with the rebuild cadence
+/// A [`BoundPotential`] mounted on the `force` phase, with the rebuild cadence
 /// and the unit conversion the driver owns.
 pub(crate) struct Mounted {
-    calculator: Box<dyn Calculator>,
+    potential: Box<dyn BoundPotential>,
     skin: F,
     name: String,
-    /// Built at `build`; `None` for a calculator with no cutoff.
+    /// Built at `build`; `None` for a potential with no cutoff.
     cadence: Option<VerletCadence>,
-    /// The cell last passed to the calculator.
+    /// The cell last passed to the potential.
     sent_cell: Option<SimBox>,
     /// No evaluation since the bind.
     fresh: bool,
@@ -102,15 +103,15 @@ pub(crate) struct Mounted {
 }
 
 impl Mounted {
-    pub(crate) fn new(calculator: Box<dyn Calculator>, skin: F) -> Result<Self, MdError> {
+    pub(crate) fn new(potential: Box<dyn BoundPotential>, skin: F) -> Result<Self, MdError> {
         if !(skin >= 0.0 && skin.is_finite()) {
             return Err(MdError::Invalid(format!(
                 "skin must be a finite length >= 0, got {skin}"
             )));
         }
-        let name = calculator.name().to_owned();
+        let name = potential.name().to_owned();
         Ok(Self {
-            calculator,
+            potential,
             skin,
             name,
             cadence: None,
@@ -123,15 +124,15 @@ impl Mounted {
         })
     }
 
-    fn failed(&self, step: u64, source: CalculatorError) -> MdError {
-        MdError::Calculator {
+    fn failed(&self, step: u64, source: PotentialError) -> MdError {
+        MdError::Potential {
             name: self.name.clone(),
             step,
             source,
         }
     }
 
-    /// Whether the calculator's list is stale at the gathered positions.
+    /// Whether the potential's list is stale at the gathered positions.
     fn rebuild_due(&mut self, simbox: Option<&SimBox>) -> Result<bool, MdError> {
         if self.fresh {
             return Ok(true);
@@ -160,10 +161,10 @@ impl Component for Mounted {
     }
 
     fn build(&mut self, frame: &mut Frame, units: &UnitPreset) -> Result<(), MdError> {
-        let declared = self.calculator.units().clone();
+        let declared = self.potential.units().clone();
         if declared.length() != units.length() {
             return Err(MdError::Invalid(format!(
-                "calculator {} returns lengths in {} and the run is in {}; positions \
+                "potential {} returns lengths in {} and the run is in {}; positions \
                  are not converted, so the two must agree",
                 self.name,
                 declared.length(),
@@ -172,7 +173,7 @@ impl Component for Mounted {
         }
         self.energy_scale = units.factor_from(&declared, PresetDim::Energy)?;
         self.force_scale = units.factor_from(&declared, PresetDim::Force)?;
-        self.calculator
+        self.potential
             .bind(frame, self.skin)
             .map_err(|e| self.failed(0, e))?;
         gather_pos(frame, &mut self.positions)?;
@@ -181,7 +182,7 @@ impl Component for Mounted {
         let positions = ArrayView2::from_shape((n, 3), &self.positions)
             .expect("gathered positions are 3N long");
         self.cadence = self
-            .calculator
+            .potential
             .cutoff()
             .map(|cutoff| {
                 let policy = NeighborPolicy {
@@ -208,7 +209,7 @@ impl Component for Mounted {
         gather_pos(frame, &mut self.positions)?;
         if self.positions.len() != self.forces.len() {
             return Err(MdError::Invalid(format!(
-                "calculator {} was bound to {} atoms and the frame has {}",
+                "potential {} was bound to {} atoms and the frame has {}",
                 self.name,
                 self.forces.len() / 3,
                 self.positions.len() / 3
@@ -225,13 +226,13 @@ impl Component for Mounted {
         if cell_changed {
             self.sent_cell = simbox.cloned();
         }
-        let step = CalculatorStep {
+        let step = PotentialStep {
             step: scratch.step(),
             rebuild,
             cell: if cell_changed { simbox } else { None },
         };
         let result = self
-            .calculator
+            .potential
             .compute(&step, &self.positions, &mut self.forces)
             .map_err(|e| self.failed(scratch.step(), e))?;
         if !result.energy.is_finite() || self.forces.iter().any(|f| !f.is_finite()) {
@@ -264,7 +265,7 @@ mod tests {
     use ndarray::Array1;
     use std::sync::{Arc, Mutex};
 
-    /// What the harmonic test calculator saw, per evaluation.
+    /// What the harmonic test potential saw, per evaluation.
     #[derive(Default)]
     struct Seen {
         steps: Vec<u64>,
@@ -274,7 +275,7 @@ mod tests {
     }
 
     /// `E = k (r − r0)²` between atoms 0 and 1, a virial, and a failure on
-    /// request — a hand-written calculator in `preset` units.
+    /// request — a hand-written bound potential in `preset` units.
     struct Bond {
         k: F,
         r0: F,
@@ -297,7 +298,7 @@ mod tests {
         }
     }
 
-    impl Calculator for Bond {
+    impl BoundPotential for Bond {
         fn name(&self) -> &str {
             "bond"
         }
@@ -307,16 +308,16 @@ mod tests {
         fn cutoff(&self) -> Option<F> {
             self.cutoff
         }
-        fn bind(&mut self, _frame: &Frame, _skin: F) -> Result<(), CalculatorError> {
+        fn bind(&mut self, _frame: &Frame, _skin: F) -> Result<(), PotentialError> {
             self.seen.lock().unwrap().binds += 1;
             Ok(())
         }
         fn compute(
             &mut self,
-            step: &CalculatorStep<'_>,
+            step: &PotentialStep<'_>,
             x: &[F],
             forces: &mut [F],
-        ) -> Result<CalculatorResult, CalculatorError> {
+        ) -> Result<PotentialResult, PotentialError> {
             {
                 let mut seen = self.seen.lock().unwrap();
                 seen.steps.push(step.step);
@@ -336,7 +337,7 @@ mod tests {
             }
             let mut w = Virial::ZERO;
             w.add_outer([-g * d[0], -g * d[1], -g * d[2]], d);
-            Ok(CalculatorResult {
+            Ok(PotentialResult {
                 energy: self.k * (r - self.r0) * (r - self.r0),
                 virial: Some(w),
             })
@@ -364,11 +365,11 @@ mod tests {
         frame
     }
 
-    fn md(calculator: Bond) -> MD {
+    fn md(potential: Bond) -> MD {
         let mut md = MD::new(UnitPreset::real()).unwrap();
         md.set_integrator(VelocityVerlet::new(0.5).unwrap())
             .unwrap();
-        md.set_calculator(calculator, 0.5).unwrap();
+        md.set_bound_potential(potential, 0.5).unwrap();
         md
     }
 
@@ -380,7 +381,7 @@ mod tests {
     /// 0.4: E = 100·0.16 = 16, atom 0 is pushed away along −x with
     /// f₀ = 2k(r − r0)·d/r = −80, and W_xx = f₁·d = 80·0.6 = 48.
     #[test]
-    fn the_calculator_prices_the_bond_by_hand() {
+    fn the_potential_prices_the_bond_by_hand() {
         let mut frame = two_atoms(0.8);
         let mut md = md(Bond::new(UnitPreset::real()));
         md.run(&mut frame, 0).unwrap();
@@ -392,10 +393,10 @@ mod tests {
         assert!((w[0] - 48.0).abs() < 1e-9, "{w:?}");
     }
 
-    /// A calculator in `metal` driving a `real` run is read through the exact
+    /// A potential in `metal` driving a `real` run is read through the exact
     /// eV → kcal/mol factor.
     #[test]
-    fn a_metal_calculator_is_converted_into_a_real_run() {
+    fn a_metal_potential_is_converted_into_a_real_run() {
         let mut frame = two_atoms(0.8);
         let mut md = md(Bond::new(UnitPreset::metal()));
         md.run(&mut frame, 0).unwrap();
@@ -412,7 +413,7 @@ mod tests {
     }
 
     /// A failure at step 3 stops the run there, with the step and the
-    /// calculator's own error.
+    /// potential's own error.
     #[test]
     fn a_failure_stops_the_run_at_its_step() {
         let mut calc = Bond::new(UnitPreset::real());
@@ -420,7 +421,7 @@ mod tests {
         let seen = Arc::clone(&calc.seen);
         let mut md = md(calc);
         let err = md.run(&mut two_atoms(1.1), 10).unwrap_err();
-        let MdError::Calculator { step, source, .. } = &err else {
+        let MdError::Potential { step, source, .. } = &err else {
             panic!("{err}");
         };
         assert_eq!(*step, 3);
@@ -458,17 +459,17 @@ mod tests {
     }
 
     #[test]
-    fn a_calculator_in_another_length_unit_is_refused() {
+    fn a_potential_in_another_length_unit_is_refused() {
         let mut md = md(Bond::new(UnitPreset::si()));
         let err = md.run(&mut two_atoms(1.2), 1).unwrap_err();
         assert!(err.to_string().contains("lengths"), "{err}");
     }
 
-    /// Under a barostat the rescaled cell reaches the calculator at the next
+    /// Under a barostat the rescaled cell reaches the potential at the next
     /// evaluation. Step 1's force precedes its own rescale (at `end_of_step`),
     /// so the cell is new at the setup evaluation and from step 2 on.
     #[test]
-    fn a_barostat_cell_reaches_the_calculator_each_step() {
+    fn a_barostat_cell_reaches_the_potential_each_step() {
         let calc = Bond::new(UnitPreset::real());
         let seen = Arc::clone(&calc.seen);
         let mut md = md(calc);
@@ -480,5 +481,22 @@ mod tests {
         assert!(frame.simbox.as_ref().unwrap().volume() > before);
         assert_eq!(seen.lock().unwrap().cells, [true, false, true, true]);
         assert!(columns::meta_f64(&frame, "pressure") > 0.0);
+    }
+
+    /// A run has one evaluator: native kernels mounted afterwards replace the
+    /// bound potential, which is then never called.
+    #[test]
+    fn set_evaluator_replaces_a_bound_potential() {
+        struct Nothing;
+        impl molrs::ff::potential::Potential for Nothing {
+            fn evaluate(&self, _coords: &[F], _acc: &mut molrs::ff::potential::Accumulator<'_>) {}
+        }
+        let potential = Bond::new(UnitPreset::real());
+        let seen = Arc::clone(&potential.seen);
+        let mut md = md(potential);
+        md.set_evaluator(crate::md::FfEvaluator::plain(Nothing))
+            .unwrap();
+        md.run(&mut two_atoms(1.2), 2).unwrap();
+        assert!(seen.lock().unwrap().steps.is_empty());
     }
 }

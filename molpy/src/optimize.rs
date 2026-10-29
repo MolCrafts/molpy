@@ -175,6 +175,7 @@ impl PyLbfgs {
     fn minimize(&self, py: Python<'_>, frame: &PyFrame) -> PyResult<PyOptimizationReport> {
         let pots = self.potentials.borrow(py);
         let report = frame.with_frame_mut(|core| -> PyResult<OptimizationReport> {
+            pots.bind_python(core)?;
             let pot = pots.compiled()?;
             pot.require_pair_lists().map_err(ir::compile_err)?;
             Lbfgs::new(pot, self.settings)

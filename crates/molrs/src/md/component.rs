@@ -89,7 +89,6 @@ pub(crate) enum Kind {
     Thermostat,
     Barostat,
     Neighbor,
-    Calculator,
     /// Infrastructure and user `on(phase).add` components.
     Other,
 }
