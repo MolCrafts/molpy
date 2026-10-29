@@ -2374,6 +2374,20 @@ def assign_equivalence_classes(mol: Atomistic) -> None:
     """Write ``equiv_class`` onto every atom of ``mol`` (antechamber
     ``-eq 1``), in place."""
 
+def assign_symmetry_classes(mol: Atomistic) -> None:
+    """Write ``symmetry_class`` onto every atom of ``mol``, in place: the
+    index of the first atom of its topological class (bond orders and formal
+    charges erased)."""
+
+def assign_small_rings(mol: Atomistic, max_ring_size: int) -> None:
+    """Write ``small_ring_size`` onto every atom and bond of ``mol``, in
+    place: atoms in the smallest ring of at most ``max_ring_size`` atoms
+    through it (every simple cycle, not only the SSSR's), ``0`` for none."""
+
+def perceive_linear_dihedrals(mol: Atomistic) -> list[list[Atom]]:
+    """The dihedrals of ``mol`` whose second or third atom is a linear centre,
+    as lists of four atom views; ``mol`` is untouched."""
+
 def perceive_rings(mol: Atomistic) -> RingSet:
     """The SSSR rings of ``mol`` as a :class:`RingSet`; ``mol`` is untouched."""
 

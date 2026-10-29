@@ -239,7 +239,8 @@ pub fn small_ring_closure(
                 let cyclic = match on_small_ring.get(&key) {
                     Some(&known) => known,
                     None => {
-                        let known = bond_on_small_ring(mol, atom, other, max_ring_size);
+                        let known =
+                            smallest_ring_through_bond(mol, atom, other, max_ring_size).is_some();
                         on_small_ring.insert(key, known);
                         known
                     }
@@ -260,14 +261,20 @@ pub fn small_ring_closure(
     groups
 }
 
-/// Whether the bond between `a` and `b` lies on a ring of at most
-/// `max_ring_size` atoms.
+/// The number of atoms in the smallest ring through the bond `a`-`b`, if one
+/// has at most `max_ring_size` atoms.
 ///
-/// Bounded BFS for an alternative `a`→`b` route: a route of `L` bonds closes a
-/// ring of `L + 1` atoms, so the search stops at `max_ring_size - 1` hops. Cost
-/// is the neighbourhood within that many bonds, never the whole molecule.
-fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usize) -> bool {
-    let max_hops = max_ring_size - 1;
+/// Bounded BFS for the shortest alternative `a`→`b` route: a route of `L`
+/// bonds closes a ring of `L + 1` atoms, so the search stops at
+/// `max_ring_size - 1` hops. Cost is the neighbourhood within that many bonds,
+/// never the whole molecule.
+fn smallest_ring_through_bond(
+    mol: &Atomistic,
+    a: NodeId,
+    b: NodeId,
+    max_ring_size: usize,
+) -> Option<usize> {
+    let max_hops = max_ring_size.checked_sub(1)?;
     let mut visited: HashSet<NodeId> = HashSet::from([a]);
     let mut queue: VecDeque<(NodeId, usize)> = VecDeque::from([(a, 0usize)]);
     while let Some((atom, hops)) = queue.pop_front() {
@@ -280,14 +287,56 @@ fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usiz
                 continue;
             }
             if other == b {
-                return true;
+                // `hops + 1` bonds from `a` to `b`, plus the bond itself.
+                return Some(hops + 2);
             }
             if visited.insert(other) {
                 queue.push_back((other, hops + 1));
             }
         }
     }
-    false
+    None
+}
+
+/// Write the smallest ring of at most `max_ring_size` atoms onto `mol`, in
+/// place: every bond and every atom receives [`SMALL_RING_SIZE`], the number of
+/// atoms in the smallest ring through it, `0` when no ring that small passes.
+///
+/// Unlike [`assign_rings`], which reads the SSSR, this counts every simple
+/// cycle up to the bound, so it does not depend on which of a set of equal
+/// rings the SSSR keeps, and a macrocycle bond on no small ring reads `0`. A
+/// bond's value is the shortest other route between its ends plus one; an
+/// atom's is the least over its bonds, since every ring through an atom runs
+/// through one of its bonds. This is the ring perception of ByteFF's
+/// featurizer (``bytemol`` ``Topology``, ``MAX_RING_SIZE = 8``).
+///
+/// # Errors
+///
+/// [`MolRsError`] when a value cannot be written (a column of `mol` holding
+/// the key under a foreign dtype); `mol` may then be partly annotated.
+pub fn assign_small_rings(mol: &mut Atomistic, max_ring_size: usize) -> Result<(), MolRsError> {
+    let mut by_bond: Vec<(RelationId, usize)> = Vec::new();
+    let mut by_atom: HashMap<NodeId, usize> = HashMap::new();
+    for (bid, bond) in mol.bonds() {
+        let [a, b] = [bond.nodes[0], bond.nodes[1]];
+        let size = smallest_ring_through_bond(mol, a, b, max_ring_size).unwrap_or(0);
+        by_bond.push((bid, size));
+        if size > 0 {
+            for atom in [a, b] {
+                let least = by_atom.entry(atom).or_insert(size);
+                *least = (*least).min(size);
+            }
+        }
+    }
+    for (bid, size) in by_bond {
+        mol.set_bond(bid, SMALL_RING_SIZE, saturating_i32(size))?;
+    }
+    let atom_ids: Vec<NodeId> = mol.atom_ids().collect();
+    for id in atom_ids {
+        let size = by_atom.get(&id).copied().unwrap_or(0);
+        mol.set_atom(id, SMALL_RING_SIZE, saturating_i32(size))?;
+    }
+    Ok(())
 }
 
 /// Compute the ring information (SSSR / minimum cycle basis) for `mol`.
@@ -363,6 +412,9 @@ const IS_IN_RING: &str = "is_in_ring";
 /// Atom / bond prop written by [`assign_rings`]: the number of SSSR rings the
 /// atom / bond belongs to.
 const N_RINGS: &str = "n_rings";
+/// Atom / bond prop written by [`assign_small_rings`]: the number of atoms in
+/// the smallest ring through it within the bound, `0` for none.
+pub const SMALL_RING_SIZE: &str = "small_ring_size";
 
 /// Perceive rings (SSSR) and write them onto `mol`, in place.
 ///
@@ -720,6 +772,63 @@ fn symmetric_difference(a: &[usize], b: &[usize]) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn small_rings_count_every_cycle_up_to_the_bound_and_skip_a_macrocycle() {
+        use crate::core::{Element, keys};
+        use crate::props;
+        // Bicyclo[2.2.2]octane (C0..C7: bridgeheads 0, 1; bridges 2-3, 4-5, 6-7)
+        // whose bridgehead C0 carries a ten-ring C8..C16 back to C0 itself.
+        let mut mol = Atomistic::new();
+        let ids: Vec<NodeId> = (0..17)
+            .map(|_| {
+                mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+                    .unwrap()
+            })
+            .collect();
+        let mut bond = |i: usize, j: usize| mol.add_bond(ids[i], ids[j], props! {}).unwrap();
+        for (i, j) in [
+            (0, 2),
+            (2, 3),
+            (3, 1),
+            (0, 4),
+            (4, 5),
+            (5, 1),
+            (0, 6),
+            (6, 7),
+            (7, 1),
+        ] {
+            bond(i, j);
+        }
+        let macro_bond = bond(0, 8);
+        for k in 8..16 {
+            bond(k, k + 1);
+        }
+        bond(16, 0);
+        assign_small_rings(&mut mol, 8).unwrap();
+        let atom = |k: usize| {
+            mol.get_atom(ids[k])
+                .unwrap()
+                .get_int(SMALL_RING_SIZE)
+                .unwrap()
+        };
+        // The SSSR keeps two of the three six-rings; every bridge atom still sits on one.
+        assert!((0..8).all(|k| atom(k) == 6));
+        // The ten-ring is beyond the bound: its own atoms and bonds read zero.
+        assert!((8..17).all(|k| atom(k) == 0));
+        assert_eq!(
+            mol.get_bond(macro_bond)
+                .unwrap()
+                .props
+                .get_int(SMALL_RING_SIZE),
+            Some(0)
+        );
+        assign_small_rings(&mut mol, 10).unwrap();
+        assert_eq!(
+            mol.get_atom(ids[12]).unwrap().get_int(SMALL_RING_SIZE),
+            Some(10)
+        );
+    }
 
     /// `n` atoms joined by `edges`.
     fn bonded(n: usize, edges: &[[usize; 2]]) -> Topology {

@@ -67,6 +67,9 @@ mod equivalence;
 mod hybridization;
 mod hydrogens;
 mod kekule;
+// Runs ByteFF's two SMARTS on the matcher below, so it needs `smiles` too.
+#[cfg(feature = "smiles")]
+mod linear_dihedrals;
 #[cfg(feature = "ff")]
 pub(crate) mod mmff_aromaticity;
 mod ring_class;
@@ -77,6 +80,7 @@ mod rotatable;
 pub mod smarts;
 mod stereo;
 mod subgraph;
+mod symmetry_classes;
 mod valence;
 
 pub use aromaticity::assign_aromaticity;
@@ -89,10 +93,14 @@ pub use equivalence::{
 pub use hybridization::{Hybridization, perceive_conjugated_atoms, perceive_hybridizations};
 pub use hydrogens::{add_hydrogens, remove_hydrogens};
 pub use kekule::assign_kekule_bond_orders;
+#[cfg(feature = "smiles")]
+pub use linear_dihedrals::perceive_linear_dihedrals;
 pub use ring_class::{
     AntechamberRingMembership, AntechamberRingSummary, RingClasses, perceive_ring_classes,
 };
-pub use rings::{RingSet, assign_rings, perceive_rings, small_ring_closure};
+pub use rings::{
+    RingSet, SMALL_RING_SIZE, assign_rings, assign_small_rings, perceive_rings, small_ring_closure,
+};
 pub use rotatable::{
     RotatableBond, UnknownBondPolicy, assign_rotatable_bonds, downstream_atoms,
     perceive_rotatable_bonds,
@@ -105,4 +113,5 @@ pub(crate) use stereo::{
     TetrahedralSite, priority_substituent, stated_hydrogen_count, tetrahedral_reference,
 };
 pub use subgraph::SubgraphMatcher;
+pub use symmetry_classes::{assign_symmetry_classes, perceive_symmetry_classes};
 pub use valence::{n_hydrogens, n_implicit_hydrogens};

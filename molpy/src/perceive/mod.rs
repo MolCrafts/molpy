@@ -31,8 +31,8 @@ use pyo3::prelude::*;
 use molrs::perceive::{
     BondOrderSource, EquivalenceOptions, SubgraphMatcher, UnknownBondPolicy, add_hydrogens,
     assign_aromaticity, assign_bcc_bond_types, assign_bond_orders, assign_equivalence_classes,
-    assign_kekule_bond_orders, assign_rings, assign_rotatable_bonds, assign_stereo,
-    perceive_rotatable_bonds,
+    assign_kekule_bond_orders, assign_rings, assign_rotatable_bonds, assign_small_rings,
+    assign_stereo, assign_symmetry_classes, perceive_linear_dihedrals, perceive_rotatable_bonds,
 };
 
 use crate::core::graph_views::Leaf;
@@ -348,6 +348,41 @@ fn assign_equivalence_classes_py(mol: &Bound<'_, PyAtomistic>) -> PyResult<()> {
     })
 }
 
+/// Perceive topological symmetry classes and write them onto ``mol``, in place:
+/// every atom receives a ``symmetry_class``, the index of the first atom of its
+/// class. Colour refinement on the element-labelled graph with bond orders and
+/// formal charges erased, so the two oxygens of a carboxylate share a class;
+/// the number of ring bonds at an atom separates ring and chain atoms.
+#[pyfunction(name = "assign_symmetry_classes")]
+fn assign_symmetry_classes_py(mol: &Bound<'_, PyAtomistic>) -> PyResult<()> {
+    assign_in_place(mol, assign_symmetry_classes)
+}
+
+/// Write the smallest ring of at most ``max_ring_size`` atoms onto ``mol``, in
+/// place: every atom and bond receives ``small_ring_size``, the number of atoms
+/// in the smallest ring through it, ``0`` when none that small passes. Every
+/// simple cycle up to the bound counts — not only the SSSR's — and a macrocycle
+/// on no small ring reads ``0``.
+#[pyfunction(name = "assign_small_rings")]
+fn assign_small_rings_py(mol: &Bound<'_, PyAtomistic>, max_ring_size: usize) -> PyResult<()> {
+    assign_in_place(mol, |m| assign_small_rings(m, max_ring_size))
+}
+
+/// The dihedrals ``(i, j, k, l)`` of ``mol``'s bond graph whose ``j`` or ``k``
+/// is a linear centre — an sp carbon outside 5- and 6-membered rings, or a
+/// two-connected cation nitrogen between atoms that are not N-H — as tuples of
+/// the molecule's atom views. Each dihedral appears once, in the orientation
+/// whose first atom comes first; a query, ``mol`` is not touched.
+#[pyfunction(name = "perceive_linear_dihedrals")]
+fn perceive_linear_dihedrals_py<'py>(
+    mol: &Bound<'py, PyAtomistic>,
+) -> PyResult<Vec<Vec<Bound<'py, PyAny>>>> {
+    let found =
+        perceive_linear_dihedrals(mol.try_borrow()?.core()).map_err(molrs_error_to_pyerr)?;
+    let leaf = Leaf::of(mol.as_any())?;
+    found.iter().map(|quad| atom_views(&leaf, quad)).collect()
+}
+
 /// Bead-group pattern matching over coarse-grained graphs —
 /// `molpy.perceive.SubgraphMatcher`.
 ///
@@ -448,6 +483,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         wrap_pyfunction!(assign_bond_orders_py, m)?,
         wrap_pyfunction!(assign_kekule_bond_orders_py, m)?,
         wrap_pyfunction!(assign_equivalence_classes_py, m)?,
+        wrap_pyfunction!(assign_symmetry_classes_py, m)?,
+        wrap_pyfunction!(assign_small_rings_py, m)?,
+        wrap_pyfunction!(perceive_linear_dihedrals_py, m)?,
         wrap_pyfunction!(rings::perceive_rings_py, m)?,
     ] {
         crate::add_function(m, "molpy.perceive", f)?;

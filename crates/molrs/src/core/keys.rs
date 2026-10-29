@@ -115,6 +115,11 @@ named_keys! {
     /// atom antechamber picks as a class's representative (its lowest-indexed
     /// member) names it.
     pub const EQUIV_CLASS: &str = "equiv_class";
+    /// Atom prop: the topological symmetry class of the atom, written by
+    /// `perceive::assign_symmetry_classes`: the atom-table row of the class's
+    /// first member, so an atom of the class names it. Bond orders and formal
+    /// charges do not enter (the two oxygens of a carboxylate share a class).
+    pub const SYMMETRY_CLASS: &str = "symmetry_class";
     /// Bond prop: the antechamber bond type (`perceive::assign_bcc_bond_types`), read by
     /// the `ATOMTYPE_*.DEF` rule engine and the `BCCPARM.DAT` corrections.
     /// Deliberately not [`TYPE`]: that key is the caller's, the force-field
