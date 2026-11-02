@@ -113,11 +113,10 @@ NVE_REMOVED_DOF = 3
 class LennardJonesMd:
     """Velocity-Verlet MD of a cubic Lennard-Jones fluid on ``mp.md``.
 
-    MD is unit-agnostic: it integrates ``a = F / m``. With forces in
-    kcal/(mol A) and positions in A, an acceleration in A/fs^2 needs the mass
-    in kcal fs^2/(mol A^2), which is the molar mass divided by :data:`ACCEL`.
-    The kinetic energy is read with ``KineticEnergy(units="real")`` on the
-    molar mass, so the two unit conventions never mix.
+    The run is in LAMMPS ``real`` units: molar masses in g/mol, forces in
+    kcal/(mol A), the timestep in fs. The driver applies ``ftm2v`` itself, and
+    the kinetic energy is read with ``KineticEnergy(units="real")`` on the same
+    masses.
     """
 
     def __init__(
@@ -142,7 +141,6 @@ class LennardJonesMd:
         xyz = self._fcc_lattice(n_atoms, self.box_length)
         zeros = np.zeros(n_atoms)
         self.frame = mp.Frame()
-        # The frame's mass is the integrator's: molar mass over ACCEL.
         self.frame["atoms"] = {
             "x": xyz[:, 0].copy(),
             "y": xyz[:, 1].copy(),
@@ -150,10 +148,10 @@ class LennardJonesMd:
             "vx": zeros.copy(),
             "vy": zeros.copy(),
             "vz": zeros.copy(),
-            "mass": self._masses / ACCEL,
+            "mass": self._masses,
         }
         self.frame.box = self.box
-        self._md = mp.md.MD()
+        self._md = mp.md.MD("real")
         self._md.set_integrator(mp.md.VelocityVerlet(timestep))
         self._md.set_neighbor(mp.core.NeighborList(lj.cutoff + SKIN), skin=SKIN)
         self._md.set_evaluator(PairLjCut(lj.epsilon, lj.sigma, lj.cutoff))

@@ -106,10 +106,12 @@ fn object_array_is_none_bearing(array: &Bound<'_, PyAny>) -> bool {
 /// | `KeyNotFound`         | `KeyError`         |
 /// | `NonContiguous`       | `ValueError`       |
 /// | `DTypeMismatch`       | `TypeError`        |
+/// | `FrameBusy`           | `RuntimeError`     |
 pub(crate) fn ffi_error_to_pyerr(err: FfiError) -> PyErr {
     match err {
         FfiError::InvalidFrameId => PyRuntimeError::new_err("invalid frame handle"),
         FfiError::InvalidBlockHandle => PyRuntimeError::new_err("invalid block handle"),
+        FfiError::FrameBusy => PyRuntimeError::new_err(FfiError::FrameBusy.to_string()),
         FfiError::KeyNotFound { key } => PyKeyError::new_err(key),
         FfiError::NonContiguous { key } => {
             PyValueError::new_err(format!("column '{key}' is not contiguous in memory"))

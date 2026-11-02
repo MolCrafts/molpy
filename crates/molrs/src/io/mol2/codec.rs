@@ -1,6 +1,6 @@
 //! The Tripos MOL2 codec.
 
-use crate::io::frame_columns::insert_column;
+use crate::io::frame_columns::{insert_column, insert_column_masked};
 use crate::io::frame_index::FrameOffset;
 use crate::io::{Sink, SinkWriter, Source, invalid_data};
 use std::io::{BufRead, Result, Seek, Write};
@@ -327,14 +327,11 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
         let mut bblock = Block::new();
         insert_column(&mut bblock, "atomi", atomi)?;
         insert_column(&mut bblock, "atomj", atomj)?;
-        // SYBYL's own alphabet ("1", "2", "ar", "am") is the bond's type label,
-        // so it is the string `type` column; `bond_type` is the chemical class,
-        // a uint code, and two quantities never share one key.
-        insert_column(&mut bblock, keys::TYPE, btype)?;
-
-        // …and the canonical pair it maps onto. `ar` declares delocalization
-        // and no Kekulé phase, so its number is left unknown for
-        // standardization; `am` is the amide C–N, a plain single bond.
+        // `ar` declares delocalization and no Kekulé phase, so its number is
+        // left unknown; `am` is the amide C–N, a plain single bond. The
+        // SYBYL token is stored as `type` only when those two codes do not
+        // spell it back (`am`, `du`, `un`, `nc`): `1` / `2` / `3` / `ar`
+        // would be a second name for the same bond.
         let canonical_type: Vec<Idx> = btype_src
             .iter()
             .map(|t| match t.as_str() {
@@ -355,6 +352,17 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
             .collect();
         insert_column(&mut bblock, "bond_type", canonical_type)?;
         insert_column(&mut bblock, "bond_number", canonical_number)?;
+        let extra: Vec<bool> = btype_src
+            .iter()
+            .map(|t| !sybyl_token_is_canonical(t))
+            .collect();
+        if extra.iter().any(|&kept| kept) {
+            if extra.iter().all(|&kept| kept) {
+                insert_column(&mut bblock, keys::TYPE, btype)?;
+            } else {
+                insert_column_masked(&mut bblock, keys::TYPE, btype, extra)?;
+            }
+        }
         frame.insert("bonds", bblock);
     }
 
@@ -392,8 +400,9 @@ pub fn read_mol2<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
 ///   `res_id` (uint; `subst_id`) and `res_name` (str; `subst_name`) when
 ///   present, `charge` (F) when present.
 /// - `"bonds"` block (when present): `atomi`/`atomj` (uint, 0-based indices),
-///   `type` (str; the SYBYL `bond_type` token `1`, `2`, `ar`, `am`, …), plus
-///   the chemical `bond_type` / `bond_number` codes it maps onto.
+///   `bond_type` / `bond_number` (the chemical class and Kekulé number).
+///   `type` is the SYBYL token only when the codes do not spell it (`am`,
+///   `du`, `un`, `nc`); `1` / `2` / `3` / `ar` are the codes alone.
 /// - `frame.meta["title"]` = molecule name.
 ///
 /// [`Mol2Writer`] reads the same names back.
@@ -489,7 +498,13 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             keys::RES_NAME,
         ],
     )?;
-    crate::io::null_cells::refuse_null_cells_in_block(frame, "bonds")?;
+    // A null bond `type` is a token the codes already spell (`1`, `ar`, …).
+    // The writer rebuilds it. Endpoints and the codes themselves are stated.
+    crate::io::null_cells::refuse_null_cells(
+        frame,
+        "bonds",
+        &["atomi", "atomj", keys::BOND_TYPE, keys::BOND_NUMBER],
+    )?;
     // Every door writes through here, so every door checks here.
     crate::io::writer::check_write_frame(frame)?;
     let atoms = frame
@@ -589,12 +604,25 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             .and_then(|c| c.get::<u64>())
             .ok_or_else(|| invalid_data("bonds.atomj missing"))?;
         let btype_col = b.get(keys::TYPE).and_then(|c| c.get::<String>());
+        let type_valid = b.validity(keys::TYPE);
         let class_col = b.get(keys::BOND_TYPE).and_then(|c| c.get::<u64>());
         let number_col = b.get(keys::BOND_NUMBER).and_then(|c| c.get::<u64>());
         for i in 0..n_bonds {
-            let bt = match btype_col {
-                Some(c) => c[[i]].as_str(),
-                None => sybyl_bond_token(class_col.map(|c| c[[i]]), number_col.map(|c| c[[i]]))?,
+            let stated = btype_col.as_ref().and_then(|column| {
+                let live = type_valid.map(|mask| mask[i]).unwrap_or(true);
+                if live && !column[[i]].is_empty() {
+                    Some(column[[i]].clone())
+                } else {
+                    None
+                }
+            });
+            let bt = match stated {
+                Some(token) => token,
+                None => sybyl_bond_token(
+                    class_col.as_ref().map(|column| column[[i]]),
+                    number_col.as_ref().map(|column| column[[i]]),
+                )?
+                .to_string(),
             };
             writeln!(
                 writer,
@@ -607,6 +635,12 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `true` when `token` is not the spelling of [`sybyl_bond_token`] on the
+/// codes the reader stores for it (`1`, `2`, `3`, `ar`).
+fn sybyl_token_is_canonical(token: &str) -> bool {
+    matches!(token, "1" | "2" | "3" | "ar")
 }
 
 /// The SYBYL bond token for a bond with no `type` column: the inverse of
@@ -739,11 +773,22 @@ mod tests {
             assert!(!atoms.contains_key(key), "atoms.{key} is format-native");
         }
         let bonds = frame.get("bonds").unwrap();
-        assert_eq!(
-            bonds.get("type").and_then(|c| c.get::<String>()).unwrap()[[0]],
-            "1"
-        );
+        assert!(!bonds.contains_key(keys::TYPE));
         assert!(!bonds.contains_key("sybyl_bond_type"));
+        assert_eq!(
+            bonds
+                .get(keys::BOND_TYPE)
+                .and_then(|c| c.get::<u64>())
+                .unwrap()[[0]],
+            1
+        );
+        assert_eq!(
+            bonds
+                .get(keys::BOND_NUMBER)
+                .and_then(|c| c.get::<u64>())
+                .unwrap()[[0]],
+            1
+        );
     }
 
     #[test]
@@ -784,28 +829,49 @@ mod tests {
     #[test]
     fn bond_orders_round_trip_without_the_type_column() {
         const BENZALDEHYDE_ISH: &str = "@<TRIPOS>MOLECULE\nX\n4 3 1 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n1 C1 0.0 0.0 0.0 C.ar 1 X\n2 C2 1.4 0.0 0.0 C.ar 1 X\n3 C3 2.8 0.0 0.0 C.2 1 X\n4 O1 4.0 0.0 0.0 O.2 1 X\n@<TRIPOS>BOND\n1 1 2 ar\n2 2 3 1\n3 3 4 2\n";
-        let mut frame = Mol2Reader::new(Cursor::new(BENZALDEHYDE_ISH.as_bytes()))
+        let frame = Mol2Reader::new(Cursor::new(BENZALDEHYDE_ISH.as_bytes()))
             .read()
             .unwrap()
             .unwrap();
-        // What a caller does when its `type` column is a force-field label:
-        // drop it, leaving the canonical columns the reader wrote.
-        frame.get_mut("bonds").unwrap().remove(keys::TYPE);
+        // `ar` / `1` / `2` are the codes themselves, so the reader stores no
+        // second `type` column. The writer spells the tokens back from them.
+        assert!(!frame.get("bonds").unwrap().contains_key(keys::TYPE));
         let text = crate::io::writer::capture(|sink| crate::io::write_mol2(sink, &frame)).unwrap();
+        let bond_rows: Vec<&str> = text
+            .lines()
+            .skip_while(|line| *line != "@<TRIPOS>BOND")
+            .skip(1)
+            .take(3)
+            .collect();
+        assert_eq!(
+            bond_rows
+                .iter()
+                .map(|line| line.split_whitespace().last().unwrap())
+                .collect::<Vec<_>>(),
+            ["ar", "1", "2"]
+        );
         let back = Mol2Reader::new(Cursor::new(text.as_bytes()))
             .read()
             .unwrap()
             .unwrap();
-        let types: Vec<String> = back
-            .get("bonds")
-            .unwrap()
-            .get(keys::TYPE)
-            .and_then(|c| c.get::<String>())
+        let bonds = back.get("bonds").unwrap();
+        assert!(!bonds.contains_key(keys::TYPE));
+        let class: Vec<u64> = bonds
+            .get(keys::BOND_TYPE)
+            .and_then(|c| c.get::<u64>())
             .unwrap()
             .iter()
-            .cloned()
+            .copied()
             .collect();
-        assert_eq!(types, ["ar", "1", "2"]);
+        let number: Vec<u64> = bonds
+            .get(keys::BOND_NUMBER)
+            .and_then(|c| c.get::<u64>())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(class, [4, 1, 2]);
+        assert_eq!(number, [0, 1, 2]);
     }
 
     #[test]

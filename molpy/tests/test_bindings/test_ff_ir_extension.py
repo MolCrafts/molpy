@@ -440,7 +440,7 @@ def typed_energy_forces(
         origin=np.full(3, -50.0),
         pbc=np.ones(3, dtype=bool),
     )
-    sim = MD()
+    sim = MD("real")
     sim.set_integrator(VelocityVerlet(1.0))
     sim.set_neighbor(mp.core.NeighborList(30.0), skin=1.0)
     sim.set_evaluator(mp.ff.PotentialCompiler(ff).compile_typed(f))

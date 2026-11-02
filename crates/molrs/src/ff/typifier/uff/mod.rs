@@ -633,7 +633,10 @@ fn add_charge_flags(key: &mut String, z: u8, valence: f64, hyb: Hybridization) {
     }
 }
 
-fn inversion_coeffs(at2_z: u8, is_c_bound_to_o: bool) -> (f64, f64, f64, f64) {
+/// UFF inversion `(K, c0, c1, c2)` of a centre of atomic number `at2_z`
+/// (RDKit `calcInversionCoefficientsAndForceConstant`); `K` is already split
+/// over the three permutations of the outer atoms.
+pub(crate) fn inversion_coeffs(at2_z: u8, is_c_bound_to_o: bool) -> (f64, f64, f64, f64) {
     // RDKit Utils::calcInversionCoefficientsAndForceConstant
     if matches!(at2_z, 6..=8) {
         let res = if is_c_bound_to_o { 50.0 } else { 6.0 } / 3.0;

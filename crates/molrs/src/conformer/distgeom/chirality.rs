@@ -55,6 +55,10 @@ pub struct ChiralConstraint {
 pub struct ImproperConstraint {
     /// `[n0, center, n2, n3]` atom indices.
     pub atoms: [usize; 4],
+    /// Atomic number of the centre.
+    pub center_z: u8,
+    /// A carbon centre bonded to an sp2 oxygen: UFF's stiffer inversion.
+    pub c_bound_to_o: bool,
 }
 
 fn coord(mol: &Atomistic, id: NodeId) -> Option<[f64; 3]> {
@@ -84,7 +88,7 @@ impl DgFeatures {
 fn chiral_constraints(mol: &Atomistic, p: &DgFeatures) -> Vec<ChiralConstraint> {
     let mut out = Vec::new();
     for (i, atom) in p.atoms.iter().enumerate() {
-        let z = atom.element.z();
+        let z = atom.z;
         if z == 1 {
             continue;
         }
@@ -145,7 +149,7 @@ fn chiral_constraints(mol: &Atomistic, p: &DgFeatures) -> Vec<ChiralConstraint> 
 fn improper_constraints(p: &DgFeatures) -> Vec<ImproperConstraint> {
     let mut out = Vec::new();
     for (i, atom) in p.atoms.iter().enumerate() {
-        let z = atom.element.z();
+        let z = atom.z;
         if !(z == 6 || z == 7 || z == 8) {
             continue;
         }
@@ -157,8 +161,14 @@ fn improper_constraints(p: &DgFeatures) -> Vec<ImproperConstraint> {
             continue;
         }
         // RDKit packs as [n0, center, n2, n3]: position 1 is the centre.
+        let c_bound_to_o = z == 6
+            && nbrs
+                .iter()
+                .any(|&o| p.atoms[o].z == 8 && p.atoms[o].hybridization == Hybridization::Sp2);
         out.push(ImproperConstraint {
             atoms: [nbrs[0], i, nbrs[1], nbrs[2]],
+            center_z: z,
+            c_bound_to_o,
         });
     }
     out

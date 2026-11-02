@@ -16,7 +16,7 @@
 
 use crate::array::{ArrayArg1, ArrayArg2};
 use molrs::compute::{ComputeError, FeatureMatrix, Partition};
-use molrs::core::{PairSource, SimBox, UnitPreset, lookup_unit_preset};
+use molrs::core::{PairSource, SimBox};
 use ndarray::Array2;
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -31,7 +31,6 @@ use super::order::PySteinhardtResult;
 use super::voronoi::PyVoronoiDomainResult;
 use crate::core::neighborlist::{PyNeighborList, PyNeighbors};
 use crate::core::simbox::PyBox;
-use crate::core::units::PyUnitPreset;
 
 fn type_name(obj: &Bound<'_, PyAny>) -> String {
     obj.get_type()
@@ -185,21 +184,6 @@ impl<'py> FeatureArg<'py> {
 /// The core boxes of a list of `Box`es.
 pub(crate) fn boxes(boxes: &[PyRef<'_, PyBox>]) -> Vec<SimBox> {
     boxes.iter().map(|simbox| simbox.inner.clone()).collect()
-}
-
-/// A unit preset given by name (``"real"``) or as a `molpy.core.UnitPreset`.
-pub(crate) fn units(obj: &Bound<'_, PyAny>) -> PyResult<UnitPreset> {
-    if let Ok(preset) = obj.extract::<PyRef<'_, PyUnitPreset>>() {
-        return Ok(preset.inner.clone());
-    }
-    let name: &str = obj.extract().map_err(|_| {
-        PyTypeError::new_err(format!(
-            "units is a preset name or a UnitPreset, got {}",
-            type_name(obj)
-        ))
-    })?;
-    lookup_unit_preset(name)
-        .ok_or_else(|| PyValueError::new_err(format!("unknown unit preset {name:?}")))
 }
 
 /// An `M × k` table of item tuples from a sequence of equal-length rows.

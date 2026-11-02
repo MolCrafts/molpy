@@ -42,7 +42,8 @@ impl SmilesIr {
     /// the notation declares delocalization, not a Kekulé phase, and kekulization
     /// is what picks one. A bond written *without* a
     /// symbol between two aromatic atoms is aromatic (the Daylight rule); an
-    /// explicit `-` between two aromatic atoms (biphenyl) is not.
+    /// explicit `-` between two aromatic atoms (biphenyl) is not, and a `/` or
+    /// `\` between two aromatic atoms is aromatic and keeps its direction.
     ///
     /// # Hydrogen counts
     ///
@@ -69,7 +70,8 @@ impl SmilesIr {
     /// bond are one direction. Opposite characters agree (`C/1…\1` is `/` from
     /// the opener toward the closer), and the same character on both digits
     /// conflicts. Two directional substituents of one double-bond atom that
-    /// lie on the same side also conflict. A simple alkene — one double bond,
+    /// lie on the same side also conflict, when that double bond can carry a
+    /// geometry (its partner has a substituent; a carbonyl cannot). A simple alkene — one double bond,
     /// neither end between two double bonds, both priority substituents marked
     /// — stores `"E"` or `"Z"` on the double bond and drops the slashes.
     /// Cumulene ends keep `"up"` / `"down"`.
@@ -569,16 +571,22 @@ impl<'a> Builder<'a> {
     ) -> Result<(), SmilesError> {
         // A bond with no symbol between two aromatic atoms is aromatic — that
         // is what makes `c1ccccc1` a ring of aromatic bonds rather than six
-        // single bonds. An explicit symbol always wins (biphenyl's `-`).
-        let kind = bond.or_else(|| {
-            (self.aromatic_atoms.contains(&a) && self.aromatic_atoms.contains(&b))
-                .then_some(BondKind::Aromatic)
-        });
+        // single bonds. An explicit symbol always wins (biphenyl's `-`), except
+        // `/` and `\`: between two aromatic atoms they only orient the ring bond
+        // next to an exocyclic double bond (`s/c1=N\C`), and the bond is still
+        // aromatic, as RDKit and Daylight read it.
+        let aromatic_pair = self.aromatic_atoms.contains(&a) && self.aromatic_atoms.contains(&b);
+        let kind = bond.or_else(|| aromatic_pair.then_some(BondKind::Aromatic));
 
         let mut props = Props::new();
         if let Some(kind) = kind {
-            props.set(keys::BOND_TYPE, kind.bond_type());
-            props.set(keys::BOND_NUMBER, kind.bond_number());
+            let class = if aromatic_pair && bond_stereo::is_directional(kind) {
+                BondKind::Aromatic
+            } else {
+                kind
+            };
+            props.set(keys::BOND_TYPE, class.bond_type());
+            props.set(keys::BOND_NUMBER, class.bond_number());
             // `kind` is the character in the direction `a` → `b`, which is the
             // direction `add_bond` stores as endpoint order.
             if let Some(label) = bond_stereo::label_along(kind, a, b, [a, b]) {
@@ -733,11 +741,23 @@ impl<'a> Builder<'a> {
     fn refuse_same_side_marks(&self) -> Result<(), SmilesError> {
         let atoms: Vec<NodeId> = self.mol.atoms().map(|(id, _)| id).collect();
         for id in atoms {
-            let has_double = self
-                .mol
-                .neighbors(id, NeighborKinds::BONDS)
-                .any(|(_, bid)| self.mol.bond_type(bid).ok() == Some(BondOrder::Double));
-            if !has_double {
+            // Only a double bond whose geometry the string specifies — its
+            // partner marks a substituent too (OpenSMILES; RDKit's rule) — puts
+            // this atom's marks in conflict. At a carbonyl carbon between two
+            // alkenes (`C(\C(=O)/N=C)`), or at the inner carbon of a terminal
+            // `=CH2`, the marks on its single bonds belong to the alkenes on
+            // either side; the unspecified double bond has no geometry for them
+            // to contradict.
+            let stereo_double =
+                self.mol
+                    .neighbors(id, NeighborKinds::BONDS)
+                    .any(|(partner, bid)| {
+                        self.mol.bond_type(bid).ok() == Some(BondOrder::Double)
+                            && other_neighbors(&self.mol, partner, id)
+                                .into_iter()
+                                .any(|n| up_from_carbon(&self.mol, partner, n).is_some())
+                    });
+            if !stereo_double {
                 continue;
             }
             let mut seen_up = false;
@@ -987,6 +1007,18 @@ mod tests {
     }
 
     #[test]
+    fn test_a_directional_bond_between_aromatic_atoms_stays_aromatic() {
+        // The `/` orients the ring bond s-c next to the exocyclic C=N; it does not
+        // make that ring bond single.
+        let mol = smiles_to_mol("Cn1ccs/c1=N\\C");
+        let aromatic = mol
+            .bonds()
+            .filter(|(_, bond)| bond.props.get(keys::BOND_TYPE) == Some(&PropValue::Int(4)))
+            .count();
+        assert_eq!(aromatic, 5);
+    }
+
+    #[test]
     fn test_aromatic_smarts_discriminates_ring_from_chain() {
         // The markers exist so SMARTS can tell an aromatic ring from a
         // saturated one: `c` must match benzene and `C` must not, and the
@@ -1224,6 +1256,27 @@ mod tests {
             .to_atomistic()
             .unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::BondStereoConflict));
+    }
+
+    #[test]
+    fn marks_beside_a_carbonyl_belong_to_the_alkenes_around_it() {
+        // RDKit's own output (THEMol hessian@1): C4 is the carbonyl carbon of an
+        // enone; its `\` and `/` set the C2=C3 and N6=c7 geometries, not C4=O5.
+        let smiles = "[C:1](/[C:2](=[C:3](\\[C:4](=[O:5])/[N:6]=[c:7]1/[c:8]([H:19])[c:9]([C:10]([H:20])\
+                      ([H:21])[H:22])[c:11]([H:23])[c:12]([H:24])[n:13]1[H:25])[H:18])[H:17])([H:14])\
+                      ([H:15])[H:16]";
+        let compact: String = smiles.split_whitespace().collect();
+        assert!(SmilesIr::parse(&compact).unwrap().to_atomistic().is_ok());
+    }
+
+    #[test]
+    fn marks_beside_an_unspecified_terminal_alkene_belong_to_its_neighbours() {
+        // THEMol mbis@1: C1=C2 is a terminal =CH2 with no mark on either H; the
+        // two `/` on C2 set the C3=C4 and C6=C8 geometries.
+        let smiles = "[C:1](=[C:2](/[C:3](=[C:4](/[C:5]([H:17])([H:18])[H:19])[H:16])[H:15])\
+                      /[C:6]([C:7]([H:20])([H:21])[H:22])=[C:8]([C:9](/[C:10]([H:24])([H:25])[H:26])\
+                      =[C:11](/[C:12]([H:28])([H:29])[H:30])[H:27])\\[H:23])([H:13])[H:14]";
+        assert!(SmilesIr::parse(smiles).unwrap().to_atomistic().is_ok());
     }
 
     #[test]

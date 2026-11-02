@@ -31,7 +31,7 @@
 //! consumers hold a [`FrameArena`] directly or wrap it themselves in
 //! `Arc<Mutex<_>>` (molc does).
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
 use molrs::core::Frame;
@@ -49,6 +49,16 @@ pub type FrameArenaCell = Rc<RefCell<FrameArena>>;
 
 /// An owned column as `(values, shape)`, or `None` when absent.
 pub type OwnedColumn<T> = Option<(Vec<T>, Vec<usize>)>;
+
+/// The store, for reading; [`FfiError::FrameBusy`] while a writer holds it.
+fn read(arena: &FrameArenaCell) -> Result<Ref<'_, FrameArena>, FfiError> {
+    arena.try_borrow().map_err(|_| FfiError::FrameBusy)
+}
+
+/// The store, for writing; [`FfiError::FrameBusy`] while anything holds it.
+fn write(arena: &FrameArenaCell) -> Result<RefMut<'_, FrameArena>, FfiError> {
+    arena.try_borrow_mut().map_err(|_| FfiError::FrameBusy)
+}
 
 // =====================================================================
 // FrameRef
@@ -72,7 +82,7 @@ impl FrameRef {
 
     /// Run a closure with immutable access to the underlying [`Frame`].
     pub fn with<R>(&self, f: impl FnOnce(&Frame) -> R) -> Result<R, FfiError> {
-        self.arena.borrow().with_frame(self.id, f)
+        read(&self.arena)?.with_frame(self.id, f)
     }
 
     /// Run a closure with mutable access to the underlying [`Frame`].
@@ -81,7 +91,7 @@ impl FrameRef {
     /// closure returns, since `&mut Frame` permits arbitrary block
     /// modifications.
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut Frame) -> R) -> Result<R, FfiError> {
-        self.arena.borrow_mut().with_frame_mut(self.id, f)
+        write(&self.arena)?.with_frame_mut(self.id, f)
     }
 
     /// Run a closure with mutable access to the frame's metadata only.
@@ -89,13 +99,13 @@ impl FrameRef {
     /// Unlike [`with_mut`](Self::with_mut), block handles on this frame stay
     /// valid: the closure cannot reach a block.
     pub fn with_meta_mut<R>(&self, f: impl FnOnce(&mut MetaMap) -> R) -> Result<R, FfiError> {
-        self.arena.borrow_mut().with_frame_meta_mut(self.id, f)
+        write(&self.arena)?.with_frame_meta_mut(self.id, f)
     }
 
     /// Resolve a child block key into a [`BlockRef`]. Returns
     /// `Err(KeyNotFound)` if the key is absent from this frame.
     pub fn block(&self, key: &str) -> Result<BlockRef, FfiError> {
-        let handle = self.arena.borrow().get_block(self.id, key)?;
+        let handle = read(&self.arena)?.get_block(self.id, key)?;
         Ok(BlockRef::new(Rc::clone(&self.arena), handle))
     }
 
@@ -114,17 +124,17 @@ impl FrameRef {
 
     /// Replace / clear the simbox.
     pub fn set_box(&self, simbox: Option<SimBox>) -> Result<(), FfiError> {
-        self.arena.borrow_mut().set_frame_box(self.id, simbox)
+        write(&self.arena)?.set_frame_box(self.id, simbox)
     }
 
     /// Deep-clone the frame's data out of the arena.
     pub fn clone_frame(&self) -> Result<Frame, FfiError> {
-        self.arena.borrow().clone_frame(self.id)
+        read(&self.arena)?.clone_frame(self.id)
     }
 
     /// Drop the frame from the arena, invalidating every handle to it.
     pub fn drop_frame(self) -> Result<(), FfiError> {
-        self.arena.borrow_mut().drop_frame(self.id)
+        write(&self.arena)?.drop_frame(self.id)
     }
 }
 
@@ -158,12 +168,12 @@ impl BlockRef {
 
     /// Run a closure with immutable access to the underlying [`Block`].
     pub fn with<R>(&self, f: impl FnOnce(&Block) -> R) -> Result<R, FfiError> {
-        self.arena.borrow().with_block(&self.handle, f)
+        read(&self.arena)?.with_block(&self.handle, f)
     }
 
     /// Run a closure with mutable access; bumps the handle version.
     pub fn with_mut<R>(&mut self, f: impl FnOnce(&mut Block) -> R) -> Result<R, FfiError> {
-        self.arena.borrow_mut().with_block_mut(&mut self.handle, f)
+        write(&self.arena)?.with_block_mut(&mut self.handle, f)
     }
 
     // ---- Metadata ----
@@ -200,7 +210,7 @@ impl BlockRef {
 
     /// Deep-clone the block data out of the arena.
     pub fn clone_block(&self) -> Result<Block, FfiError> {
-        self.arena.borrow().clone_block(&self.handle)
+        read(&self.arena)?.clone_block(&self.handle)
     }
 
     // ---- Typed column access ----
@@ -324,5 +334,19 @@ mod tests {
             stale.has_block("atoms"),
             Err(FfiError::InvalidFrameId)
         ));
+    }
+
+    /// A callback that reaches back into the frame a writer is running on —
+    /// an MD calculator reading the frame it steps — is refused by name, not
+    /// a borrow panic.
+    #[test]
+    fn a_read_inside_a_write_of_the_same_frame_is_refused() {
+        let frame = frame_with_atoms();
+        let inner = frame.with_mut(|_| frame.with(|_| ())).unwrap();
+        assert!(matches!(inner, Err(FfiError::FrameBusy)), "{inner:?}");
+        let block = frame
+            .with_mut(|_| frame.block("atoms").map(|_| ()))
+            .unwrap();
+        assert!(matches!(block, Err(FfiError::FrameBusy)), "{block:?}");
     }
 }

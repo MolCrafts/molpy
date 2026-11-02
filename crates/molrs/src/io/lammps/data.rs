@@ -987,25 +987,27 @@ fn insert_topology_block(
     Ok(())
 }
 
-/// Add the string `type` column of `block` from its numeric `type_id`: the
-/// label `labels` (id → label, as the `* Type Labels` section declared it)
-/// gives that id, else the id itself.
+/// Add the string `type` column when `labels` (id → label, as a `* Type
+/// Labels` section declared it) names every `type_id`.
+///
+/// An unlabelled file keeps the ordinal in `type_id` alone. Spelling that
+/// same id as `"1"` would be a second name for one column. An id the section
+/// does not declare is not given the id's decimal spelling either.
 fn insert_type_labels(block: &mut Block, labels: &HashMap<String, String>) -> std::io::Result<()> {
     let Some(ids) = block.get(keys::TYPE_ID).and_then(|c| c.get::<u64>()) else {
         return Ok(());
     };
+    if labels.is_empty() {
+        return Ok(());
+    }
     let by_id: HashMap<Idx, &str> = labels
         .iter()
         .filter_map(|(id, label)| Some((id.trim().parse::<Idx>().ok()?, label.as_str())))
         .collect();
-    let names: Vec<String> = ids
-        .iter()
-        .map(|id| {
-            by_id
-                .get(id)
-                .map_or_else(|| id.to_string(), |l| (*l).to_owned())
-        })
-        .collect();
+    if ids.iter().any(|id| !by_id.contains_key(id)) {
+        return Ok(());
+    }
+    let names: Vec<String> = ids.iter().map(|id| by_id[id].to_owned()).collect();
     let n = names.len();
     insert_column_of_length(block, keys::TYPE, names, n)
 }
@@ -1125,10 +1127,8 @@ fn build_frame(mut parsed: ParsedDataFile) -> std::io::Result<Frame> {
             frame.insert("pairs", pairs);
         }
 
-        // Every typed block also carries its string `type`: the file's type
-        // label, or the numeric id spelled as a label when the file declares
-        // none (the name a force field read from the same file's `* Coeffs`
-        // gives that type).
+        // A block whose ids a `* Type Labels` section names also carries
+        // those labels as `type`. An unlabelled file keeps `type_id` only.
         for (block_name, labels) in [
             ("atoms", &parsed.atom_type_labels),
             ("bonds", &parsed.bond_type_labels),
@@ -3593,13 +3593,24 @@ Bonds
     }
 
     #[test]
-    fn an_unlabelled_file_spells_ids_as_labels() {
+    fn an_unlabelled_file_keeps_the_ordinal_as_type_id() {
         let text = LABELLED
             .replace("Atom Type Labels\n\n1 OW\n2 HW\n\n", "")
             .replace("Bond Type Labels\n\n1 OW-HW\n\n", "");
         let frame = read_lammps_data(text.as_bytes()).unwrap();
-        assert_eq!(strings(&frame, "atoms"), ["1", "2", "2"]);
-        assert_eq!(strings(&frame, "bonds"), ["1"]);
+        let ids = |block: &str| {
+            frame[block]
+                .get(keys::TYPE_ID)
+                .and_then(|c| c.get::<u64>())
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        assert!(frame["atoms"].get(keys::TYPE).is_none());
+        assert!(frame["bonds"].get(keys::TYPE).is_none());
+        assert_eq!(ids("atoms"), [1, 2, 2]);
+        assert_eq!(ids("bonds"), [1]);
     }
 
     #[test]

@@ -6,8 +6,8 @@ trait: an instance is configured by its constructor and answers one call,
 ``compute``, whose keyword arguments are the fields of the core input (the
 data). :class:`Stream` mirrors the core ``molrs::compute::Stream`` trait: an
 instance hands out a fresh accumulator (``push`` one frame at a time,
-``finish`` reads the result) — ``Msd``, ``Vacf`` and ``Rdf`` are streams
-only. ``isinstance`` / ``issubclass`` only check that the method is present
+``finish`` reads the result) — ``Msd``, ``Vacf``, ``Rdf`` and
+``EnergyDrift`` are streams only. ``isinstance`` / ``issubclass`` only check that the method is present
 (PEP 544); they are not a hot-path dispatch tool.
 
 ``__call__`` and ``dump()`` are not part of either contract.

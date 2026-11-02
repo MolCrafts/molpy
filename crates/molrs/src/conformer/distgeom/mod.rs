@@ -48,8 +48,9 @@ use molrs::core::MolRsError;
 
 pub use bounds_matrix::BoundsMatrix;
 pub use chirality::{ChiralConstraint, ChiralSign, ImproperConstraint};
+pub use mol_features::BondAngle;
 pub use torsion_prefs::TorsionConstraint;
-pub(crate) use violation_energy::{DistanceViolations, ViolationEnergy, chiral_volume};
+pub(crate) use violation_energy::{ViolationEnergy, chiral_volume};
 
 /// The full ETKDGv3 constraint set consumed by the embedding stage (spec 04).
 pub struct DgConstraints {
@@ -64,6 +65,10 @@ pub struct DgConstraints {
     pub chiral: Vec<ChiralConstraint>,
     /// Improper / out-of-plane constraints.
     pub improper: Vec<ImproperConstraint>,
+    /// Every bond `[i, j]`: the 1-2 pairs the second stage holds fixed.
+    pub bonds: Vec<[usize; 2]>,
+    /// Every bond angle: the 1-3 pairs the second stage holds fixed.
+    pub angles: Vec<BondAngle>,
 }
 
 impl DgConstraints {
@@ -85,6 +90,8 @@ impl DgConstraints {
             flat_ring_torsions: p.flat_ring_torsions(),
             chiral: p.chiral_constraints(mol),
             improper: p.improper_constraints(),
+            bonds: p.bonds(),
+            angles: p.angles(),
         })
     }
 }

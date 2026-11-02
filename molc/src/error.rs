@@ -63,6 +63,9 @@ pub enum MolcStatus {
     ParseError = 13,
     /// The supplied `MolcRegionHandle` does not refer to a live region.
     InvalidRegionHandle = 14,
+    /// The frame is held by an operation still running on it; retry after
+    /// that call returns.
+    FrameBusy = 15,
 }
 
 /// Data type discriminants for Block columns.
@@ -174,6 +177,7 @@ pub(crate) fn ffi_err_to_status(err: &FfiError) -> MolcStatus {
         FfiError::KeyNotFound { .. } => MolcStatus::KeyNotFound,
         FfiError::NonContiguous { .. } => MolcStatus::NonContiguous,
         FfiError::DTypeMismatch { .. } => MolcStatus::TypeMismatch,
+        FfiError::FrameBusy => MolcStatus::FrameBusy,
     }
 }
 

@@ -115,6 +115,11 @@ named_keys! {
     /// atom antechamber picks as a class's representative (its lowest-indexed
     /// member) names it.
     pub const EQUIV_CLASS: &str = "equiv_class";
+    /// Atom prop: the topological symmetry class of the atom, written by
+    /// `perceive::assign_symmetry_classes`: the atom-table row of the class's
+    /// first member, so an atom of the class names it. Bond orders and formal
+    /// charges do not enter (the two oxygens of a carboxylate share a class).
+    pub const SYMMETRY_CLASS: &str = "symmetry_class";
     /// Bond prop: the antechamber bond type (`perceive::assign_bcc_bond_types`), read by
     /// the `ATOMTYPE_*.DEF` rule engine and the `BCCPARM.DAT` corrections.
     /// Deliberately not [`TYPE`]: that key is the caller's, the force-field
@@ -160,8 +165,25 @@ pub fn units_preset(value: &crate::core::MetaValue) -> Option<&str> {
     }
 }
 
+fn named_values(specs: &[schema::NamedConst]) -> Vec<NamedValue> {
+    specs
+        .iter()
+        .map(|spec| NamedValue {
+            const_name: spec.const_name.to_string(),
+            value: spec.value.to_string(),
+        })
+        .collect()
+}
+
 /// Column keys, groups, block names, and frame-meta keys, from the tables.
+///
+/// `meta` is the frame-meta slice, then the graph-prop keys and the LAMMPS
+/// meta keys. Python exports all three (`molpy.core.keys`); the document is
+/// the same list so the TypeScript mirror does not drop them.
 pub fn keys_document() -> KeysDocument {
+    let mut meta = named_values(META_KEYS);
+    meta.extend(named_values(GRAPH_KEYS));
+    meta.extend(named_values(LAMMPS_META_KEYS));
     KeysDocument {
         columns: schema::SCHEMA_COLUMNS
             .iter()
@@ -191,13 +213,7 @@ pub fn keys_document() -> KeysDocument {
                 values: g.keys.iter().map(|k| (*k).to_string()).collect(),
             })
             .collect(),
-        meta: META_KEYS
-            .iter()
-            .map(|spec| NamedValue {
-                const_name: spec.const_name.to_string(),
-                value: spec.value.to_string(),
-            })
-            .collect(),
+        meta,
     }
 }
 
@@ -234,7 +250,10 @@ mod tests {
                 group.keys
             );
         }
-        assert_eq!(doc.meta.len(), META_KEYS.len());
+        assert_eq!(
+            doc.meta.len(),
+            META_KEYS.len() + GRAPH_KEYS.len() + LAMMPS_META_KEYS.len()
+        );
         for (got, spec) in doc.meta.iter().zip(META_KEYS) {
             assert_eq!(got.const_name, spec.const_name);
             assert_eq!(got.value, spec.value);
@@ -242,11 +261,20 @@ mod tests {
         }
         let columns: std::collections::HashSet<_> =
             doc.columns.iter().map(|c| c.value.as_str()).collect();
-        for spec in &doc.meta {
+        for spec in doc.meta.iter().take(META_KEYS.len()) {
             assert!(
                 !columns.contains(spec.value.as_str()),
                 "{} is a column, not frame meta",
                 spec.value
+            );
+        }
+        for spec in GRAPH_KEYS.iter().chain(LAMMPS_META_KEYS) {
+            assert!(
+                doc.meta
+                    .iter()
+                    .any(|got| got.const_name == spec.const_name && got.value == spec.value),
+                "missing {}",
+                spec.const_name
             );
         }
     }

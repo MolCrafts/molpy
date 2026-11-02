@@ -16,9 +16,10 @@ Every compute class has the same two steps:
   ``CombinedDistribution``, ``SpatialDistribution``) takes one list per field,
   an entry per frame. Nothing here reads a ``Frame``.
 
-Three are **streams only**, as in the core (``molrs::compute::Stream``):
-``Msd``, ``Vacf`` and ``Rdf`` have no ``compute``. ``x.accumulator()`` hands
-out an accumulator (:class:`CorrelatorAccumulator` / :class:`RdfAccumulator`);
+Four are **streams only**, as in the core (``molrs::compute::Stream``):
+``Msd``, ``Vacf``, ``Rdf`` and ``EnergyDrift`` have no ``compute``.
+``x.accumulator()`` hands out an accumulator (:class:`CorrelatorAccumulator` /
+:class:`RdfAccumulator` / :class:`EnergyDriftAccumulator`);
 ``push`` one frame at a time and ``finish()`` reads the result, which does not
 consume the accumulator — memory stays bounded whatever the trajectory
 length.
@@ -77,6 +78,9 @@ from molpy._core import (
     DistributionFunction,
     DistributionResult,
     EinsteinHelfandSpectrum,
+    EnergyDrift,
+    EnergyDriftAccumulator,
+    EnergyDriftResult,
     EnvironmentMatch,
     EnvironmentMatchResult,
     FiniteFieldPolarizability,
@@ -219,6 +223,9 @@ __all__ = [
     "DistributionFunction",
     "DistributionResult",
     "EinsteinHelfandSpectrum",
+    "EnergyDrift",
+    "EnergyDriftAccumulator",
+    "EnergyDriftResult",
     "EnvironmentMatch",
     "EnvironmentMatchResult",
     "FiniteFieldPolarizability",

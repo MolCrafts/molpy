@@ -508,9 +508,10 @@ frame_writer!(
 /// Read a LAMMPS data file.
 ///
 /// Every typed block (``atoms``, ``bonds``, ``angles``, ``dihedrals``,
-/// ``impropers``) carries the numeric ``type_id`` and the string ``type``:
-/// the file's type label, or the id spelled as a label when the file has no
-/// ``* Type Labels`` section. The ``* Coeffs`` sections are kept verbatim in
+/// ``impropers``) carries the numeric ``type_id``. When a ``* Type Labels``
+/// section names every id in the block, the block also carries those labels
+/// as the string ``type``. An unlabelled file does not spell the id again
+/// as ``type``. The ``* Coeffs`` sections are kept verbatim in
 /// ``frame.meta["lammps_coeffs_text"]``
 /// (:meth:`molpy.io.lammps.LammpsForcefieldReader.read_data_coeffs` reads
 /// them into a force field); the type-label inventories, header counts,

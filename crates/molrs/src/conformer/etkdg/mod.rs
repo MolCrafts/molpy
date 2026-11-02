@@ -4,17 +4,16 @@
 //! (`$RDBASE/Code/GraphMol/DistGeomHelpers/Embedder.cpp`, BSD-3, Copyright (C)
 //! 2004-2025 Greg Landrum / Sereina Riniker and other RDKit contributors)
 //! wired onto MolCrafts' own constraint generator (`crate::conformer::distgeom`,
-//! ETKDGv3 bounds + experimental torsions + chiral sets) and the MMFF94
-//! force field (`molrs::ff::typifier::mmff`) for the second-stage cleanup.
+//! ETKDGv3 bounds + experimental torsions + chiral sets). It runs no force
+//! field: RDKit's `EmbedMolecule` does not either.
 //!
 //! ## Stages (mapped onto the public `StageKind` variants)
 //! 1. `Preprocess`    — optional hydrogen addition.
 //! 2. `BuildInitial`  — `build_constraints` → metrization sample → 4D
-//!    eigenvalue embedding (`embed4d`).
+//!    eigenvalue embedding (`embed4d`), or random coordinates.
 //! 3. `CoarseOptimize`— first-stage 4D distance/chiral/fourth-dim minimization
-//!    then 3D experimental-torsion refinement (`torsion_refinement`).
-//! 4. `FinalOptimize` — second-stage MMFF94 energy minimization (`molrs::ff`).
-//! 5. `StereoCheck`   — chiral-volume sign verification (no inversion).
+//!    then, with ET or K on, the 3D torsion refinement (`torsion_refinement`).
+//! 4. `StereoCheck`   — chiral-volume sign verification (no inversion).
 //!
 //! The maxIterations retry loop + `useRandomCoords` fallback live in `retry`.
 
@@ -24,15 +23,12 @@ mod torsion_refinement;
 
 use rand::{SeedableRng, random, rngs::StdRng};
 
-use crate::conformer::ConformerOptions;
+use crate::conformer::Conformer;
 use crate::conformer::distgeom::{self, ChiralSign, DgConstraints};
 use crate::conformer::{ConformerReport, ConformerStageReport, StageKind};
 use molrs::core::Atomistic;
 use molrs::core::MolRsError;
-use molrs::ff::compile::PotentialCompiler;
-use molrs::ff::potential::{Accumulator, Potential};
-use molrs::ff::typifier::mmff::Mmff94Typifier;
-use molrs::ff::typifier::{Typing, TypingError};
+use molrs::op::vec3::angle;
 use molrs::perceive::add_hydrogens;
 
 /// Embedding dimension for the first stage (RDKit ETKDG uses 4D).
@@ -45,6 +41,22 @@ const CHIRAL_RATIO_TOL: f64 = 0.8;
 /// (RDKit `MAX_MINIMIZED_E_PER_ATOM`).
 const MAX_MEAN_ATOM_ENERGY: f64 = 0.05;
 
+/// First-stage pairs whose bounds range is wider than this are left out
+/// (RDKit `basinThresh`).
+const BASIN_THRESH: f64 = 5.0;
+
+/// Largest bond angle, in degrees, an attempt may leave at a centre the
+/// constraints do not hold linear. The 3D refinement can relieve torsion
+/// strain by straightening an angle (a long chain's C–O–C at 180°, where the
+/// torsions through it are undefined and their gradient diverges); RDKit's
+/// ETKDGv3 does the same on such chains. An attempt that does is rejected and
+/// the next one is tried, as RDKit rejects a bad first minimization.
+const MAX_BENT_ANGLE: f64 = 170.0;
+
+/// Cap on the minimization rounds of one first-stage pass. RDKit has none
+/// (only its embedding timeout); a run that needs more is not converging.
+const MAX_ROUNDS: usize = 10;
+
 /// Run the ETKDGv3 embedding pipeline and return the molecule with 3D
 /// coordinates plus a stage report.
 ///
@@ -53,7 +65,7 @@ const MAX_MEAN_ATOM_ENERGY: f64 = 0.05;
 /// input keeps its handedness) and are otherwise overwritten.
 pub(crate) fn generate_3d_impl(
     mol: &Atomistic,
-    opts: &ConformerOptions,
+    conf: &Conformer,
 ) -> Result<(Atomistic, ConformerReport), MolRsError> {
     if mol.n_atoms() == 0 {
         return Err(MolRsError::validation(
@@ -63,14 +75,14 @@ pub(crate) fn generate_3d_impl(
 
     let mut report = ConformerReport::new();
 
-    let seed = opts.rng_seed.unwrap_or_else(random::<u64>);
-    if opts.rng_seed.is_none() {
+    let seed = conf.seed.unwrap_or_else(random::<u64>);
+    if conf.seed.is_none() {
         report.warnings.push(format!(
             "rng_seed not provided; auto-generated seed={seed} for this run"
         ));
     }
 
-    let work = run_preprocess(mol, opts, &mut report)?;
+    let work = run_preprocess(mol, conf.add_hydrogens, &mut report)?;
     let n = work.n_atoms();
 
     // Single atom: place at origin (no geometry to solve). RDKit also returns
@@ -86,8 +98,8 @@ pub(crate) fn generate_3d_impl(
     // `getExperimentalTorsions`. See `distgeom::torsion_prefs`.
     let constraints = distgeom::DgConstraints::from_graph(&work)?;
 
-    let mut embedding = run_embedding(&constraints, n, seed, opts, &mut report);
-    let mut coords3d = match embedding.best.take() {
+    let mut embedding = run_embedding(&constraints, n, seed, conf, &mut report);
+    let coords3d = match embedding.best.take() {
         Some(c) => c,
         None => {
             return Err(MolRsError::validation(
@@ -97,15 +109,11 @@ pub(crate) fn generate_3d_impl(
     };
     push_embedding_stages(&mut report, &embedding);
 
-    let final_energy = run_mmff_cleanup_stage(&work, &mut coords3d, &mut report)?;
     run_stereo_check(&constraints, &coords3d, &mut report);
 
     // --- Write coordinates back ------------------------------------------
     let mut out = work;
     apply_coords(&mut out, &coords3d)?;
-    // The MMFF94 energy, when the cleanup ran; the distance-geometry
-    // objective is no force-field energy, so it never stands in for one.
-    report.final_energy = final_energy;
     Ok((out, report))
 }
 
@@ -113,10 +121,10 @@ pub(crate) fn generate_3d_impl(
 /// count the molecule gained.
 fn run_preprocess(
     mol: &Atomistic,
-    opts: &ConformerOptions,
+    hydrogens: bool,
     report: &mut ConformerReport,
 ) -> Result<Atomistic, MolRsError> {
-    let work = if opts.add_hydrogens {
+    let work = if hydrogens {
         add_hydrogens(mol)?
     } else {
         mol.clone()
@@ -147,7 +155,6 @@ fn embed_single_atom(
         steps: 1,
         converged: true,
     });
-    report.final_energy = Some(0.0);
     Ok((out, report))
 }
 
@@ -174,10 +181,14 @@ fn run_embedding(
     constraints: &DgConstraints,
     n: usize,
     seed: u64,
-    opts: &ConformerOptions,
+    conf: &Conformer,
     report: &mut ConformerReport,
 ) -> EmbedOutcome {
-    let max_iters = retry::effective_max_iterations(opts.max_steps, n);
+    let max_iters = retry::effective_max_iterations(conf.max_iterations, n);
+    let terms = RefinementTerms {
+        exp_torsions: conf.use_exp_torsion_angle_prefs,
+        basic_knowledge: conf.use_basic_knowledge,
+    };
     let mut outcome = EmbedOutcome {
         best: None,
         embed4d_steps: 0,
@@ -191,7 +202,7 @@ fn run_embedding(
         let aseed = retry::attempt_seed(seed, attempt);
         let mut rng = StdRng::seed_from_u64(aseed);
         let (coords3d, e4d_steps, coarse_e, coarse_steps, coarse_conv, chiral_pass) =
-            try_embed(constraints, n, &mut rng, false);
+            try_embed(constraints, n, &mut rng, conf.use_random_coords, terms);
         outcome.embed4d_steps = e4d_steps;
         outcome.coarse_energy = coarse_e;
         outcome.coarse_steps = coarse_steps;
@@ -209,23 +220,31 @@ fn run_embedding(
         }
     }
 
-    // useRandomCoords fallback.
-    if outcome.best.is_none() || !outcome.chiral_ok {
-        let aseed = retry::attempt_seed(seed, max_iters + 1);
-        let mut rng = StdRng::seed_from_u64(aseed);
-        let (coords3d, e4d_steps, coarse_e, coarse_steps, coarse_conv, chiral_pass) =
-            try_embed(constraints, n, &mut rng, true);
-        outcome.embed4d_steps = e4d_steps;
-        outcome.coarse_energy = coarse_e;
-        outcome.coarse_steps = coarse_steps;
-        outcome.coarse_converged = coarse_conv;
-        if let Some(c) = coords3d {
+    // useRandomCoords fallback, for an eigenvector start that never succeeded:
+    // RDKit's own answer for a large molecule, with its own maxIterations
+    // attempts (a long chain's eigenvector starts all fail the first-stage
+    // gate, as in RDKit, and one random start may still straighten an angle).
+    if !conf.use_random_coords && (outcome.best.is_none() || !outcome.chiral_ok) {
+        for attempt in 0..max_iters {
+            let aseed = retry::attempt_seed(seed, max_iters + 1 + attempt);
+            let mut rng = StdRng::seed_from_u64(aseed);
+            let (coords3d, e4d_steps, coarse_e, coarse_steps, coarse_conv, chiral_pass) =
+                try_embed(constraints, n, &mut rng, true, terms);
+            outcome.embed4d_steps = e4d_steps;
+            outcome.coarse_energy = coarse_e;
+            outcome.coarse_steps = coarse_steps;
+            outcome.coarse_converged = coarse_conv;
+            let Some(c) = coords3d else { continue };
             if chiral_pass || outcome.best.is_none() {
                 outcome.best = Some(c);
             }
             report
                 .warnings
                 .push("used random-coordinate fallback embedding".to_string());
+            if chiral_pass {
+                outcome.chiral_ok = true;
+                break;
+            }
         }
     }
 
@@ -249,41 +268,6 @@ fn push_embedding_stages(report: &mut ConformerReport, outcome: &EmbedOutcome) {
         steps: outcome.coarse_steps,
         converged: outcome.coarse_converged,
     });
-}
-
-/// `FinalOptimize` stage: second-stage MMFF94 cleanup minimization, skipped
-/// (with a warning) when MMFF94 has no types or terms for the molecule.
-///
-/// # Errors
-///
-/// Every other failure of the cleanup (a malformed graph, a force field that
-/// does not compile): a defect, never a skipped stage.
-fn run_mmff_cleanup_stage(
-    work: &Atomistic,
-    coords3d: &mut [f64],
-    report: &mut ConformerReport,
-) -> Result<Option<f64>, MolRsError> {
-    let (energy, steps, converged) = match mmff_cleanup(work, coords3d)? {
-        Cleanup::Minimized {
-            energy,
-            steps,
-            converged,
-        } => (Some(energy), steps, converged),
-        Cleanup::NotCovered(reason) => {
-            report
-                .warnings
-                .push(format!("MMFF94 cleanup skipped: {reason}"));
-            (None, 0, false)
-        }
-    };
-    report.stages.push(ConformerStageReport {
-        stage: StageKind::FinalOptimize,
-        energy_before: None,
-        energy_after: energy,
-        steps,
-        converged,
-    });
-    Ok(energy)
 }
 
 /// `StereoCheck` stage: warn for every chiral center whose signed volume
@@ -318,6 +302,14 @@ fn run_stereo_check(constraints: &DgConstraints, coords3d: &[f64], report: &mut 
     });
 }
 
+/// Which second-stage terms an embedding runs: RDKit's
+/// `useExpTorsionAnglePrefs` (ET) and `useBasicKnowledge` (K).
+#[derive(Clone, Copy)]
+struct RefinementTerms {
+    exp_torsions: bool,
+    basic_knowledge: bool,
+}
+
 /// One embedding attempt: 4D embed → first-stage minimization → 3D
 /// experimental-torsion refinement → chiral check.
 ///
@@ -330,6 +322,7 @@ fn try_embed<R: rand::Rng + ?Sized>(
     n: usize,
     rng: &mut R,
     use_random_coords: bool,
+    terms: RefinementTerms,
 ) -> (Option<Vec<f64>>, usize, f64, usize, bool, bool) {
     let bounds = &constraints.bounds;
 
@@ -343,10 +336,16 @@ fn try_embed<R: rand::Rng + ?Sized>(
         }
     };
 
+    // RDKit's `basinThresh`: a random start keeps every pair, an
+    // eigenvector start drops the pairs whose range is wider than 5 Å.
+    let basin = if use_random_coords { 1e8 } else { BASIN_THRESH };
+
     // First minimization: distance + chiral + 4th-dimension (RDKit
-    // firstMinimization, weightChiral=1.0, weightFourthDim=0.1).
-    let field1 = distgeom::ViolationEnergy::new(bounds, &constraints.chiral, EMBED_DIM, 1.0, 0.1);
-    let stage1 = minimize(&mut coords4d, 400, |p, g| field1.energy_grad(p, g));
+    // firstMinimization, weightChiral=1.0, weightFourthDim=0.1), repeated
+    // until it converges.
+    let field1 =
+        distgeom::ViolationEnergy::new(bounds, &constraints.chiral, EMBED_DIM, basin, 1.0, 0.1);
+    let stage1 = minimize_to_convergence(&mut coords4d, 400, |p, g| field1.energy_grad(p, g));
     let (e1, s1) = (stage1.final_energy, stage1.n_steps);
     // Reject obviously-bad first minimizations (RDKit github #971,
     // `MAX_MINIMIZED_E_PER_ATOM`). Random-coords fallback skips this gate.
@@ -356,8 +355,9 @@ fn try_embed<R: rand::Rng + ?Sized>(
 
     // Fourth-dimension squeeze (RDKit minimizeFourthDimension, weightChiral=0.2,
     // weightFourthDim=1.0) to collapse 4D → 3D.
-    let field1b = distgeom::ViolationEnergy::new(bounds, &constraints.chiral, EMBED_DIM, 0.2, 1.0);
-    let _ = minimize(&mut coords4d, 200, |p, g| field1b.energy_grad(p, g));
+    let field1b =
+        distgeom::ViolationEnergy::new(bounds, &constraints.chiral, EMBED_DIM, basin, 0.2, 1.0);
+    let _ = minimize_to_convergence(&mut coords4d, 200, |p, g| field1b.energy_grad(p, g));
 
     // Project to 3D (drop the 4th component).
     let mut coords3d = vec![0.0; n * 3];
@@ -367,18 +367,38 @@ fn try_embed<R: rand::Rng + ?Sized>(
         }
     }
 
-    // Second stage: 3D experimental-torsion refinement (RDKit
-    // minimizeWithExpTorsions / construct3DForceField).
-    let field2 = torsion_refinement::TorsionRefinement::build(
-        bounds,
-        constraints
-            .experimental_torsions
-            .iter()
-            .chain(&constraints.flat_ring_torsions),
-        &constraints.improper,
-    );
-    let stage2 = minimize(&mut coords3d, 300, |p, g| field2.energy_grad(p, g));
-    let (e2, s2, c2) = (stage2.final_energy, stage2.n_steps, stage2.converged);
+    // Second stage: 3D torsion refinement (RDKit minimizeWithExpTorsions /
+    // construct3DForceField) — the ET terms, the K terms (flat rings and
+    // planar sp2 centres), or both. With neither it is plain distance
+    // geometry and RDKit runs no second stage either.
+    let (e2, s2, c2) = if terms.exp_torsions || terms.basic_knowledge {
+        let exp = if terms.exp_torsions {
+            &constraints.experimental_torsions[..]
+        } else {
+            &[]
+        };
+        let flat = if terms.basic_knowledge {
+            &constraints.flat_ring_torsions[..]
+        } else {
+            &[]
+        };
+        let field2 = torsion_refinement::TorsionRefinement::build(
+            constraints,
+            &coords3d,
+            exp.iter().chain(flat),
+            terms.basic_knowledge,
+        );
+        // RDKit `while (needMore) needMore = field->minimize(300, tol)`: a
+        // long chain needs more than one round to converge.
+        let stage2 = minimize_to_convergence(&mut coords3d, 300, |p, g| field2.energy_grad(p, g));
+        (stage2.final_energy, stage2.n_steps, stage2.converged)
+    } else {
+        (e1, s1, true)
+    };
+
+    if straightened_angle(constraints, &coords3d) {
+        return (None, s1, e2, s2, c2, false);
+    }
 
     // Chiral check.
     let mut chiral_pass = true;
@@ -416,73 +436,41 @@ fn minimize(
     })
 }
 
+/// [`minimize`] in rounds of `round` steps until it converges (RDKit's
+/// `while (needMore) needMore = field->minimize(round, tol)`), at most
+/// [`MAX_ROUNDS`] rounds; a round that stops short of its budget without
+/// converging (a stuck line search) ends it too.
+fn minimize_to_convergence(
+    coords: &mut [f64],
+    round: usize,
+    objective: impl Fn(&[f64], &mut [f64]) -> f64,
+) -> crate::optimize::OptimizationReport {
+    let mut report = minimize(coords, round, &objective);
+    let mut steps = report.n_steps;
+    for _ in 1..MAX_ROUNDS {
+        if report.converged || report.n_steps < round {
+            break;
+        }
+        report = minimize(coords, round, &objective);
+        steps += report.n_steps;
+    }
+    report.n_steps = steps;
+    report
+}
+
+/// Whether `coords` (flat `n*3`) bend an angle at a centre the constraints do
+/// not hold linear past [`MAX_BENT_ANGLE`].
+fn straightened_angle(constraints: &DgConstraints, coords: &[f64]) -> bool {
+    let at = |i: usize| [coords[i * 3], coords[i * 3 + 1], coords[i * 3 + 2]];
+    constraints.angles.iter().any(|a| {
+        let [i, j, k] = a.atoms;
+        !a.linear && angle(at(i), at(j), at(k)).to_degrees() > MAX_BENT_ANGLE
+    })
+}
+
 /// RDKit `haveOppositeSign`.
 fn have_opposite_sign(a: f64, b: f64) -> bool {
     a.is_sign_negative() ^ b.is_sign_negative()
-}
-
-/// What the MMFF94 cleanup did.
-enum Cleanup {
-    /// Minimized to `energy` (kcal/mol) in `steps` steps.
-    Minimized {
-        energy: f64,
-        steps: usize,
-        converged: bool,
-    },
-    /// MMFF94 has no atom types or terms for the molecule.
-    NotCovered(TypingError),
-}
-
-/// MMFF94 second-stage cleanup minimization.
-///
-/// Runs the standard route — typify → `Frame` → `PotentialCompiler::compile` — the
-/// same one every other force field in molrs goes through, so the seven MMFF
-/// terms come from `ff::potential::*::mmff` and nowhere else.
-///
-/// # Errors
-///
-/// A typing failure other than MMFF94 not covering the molecule, or a frame /
-/// compile failure: these are defects to report, not a stage to skip.
-fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<Cleanup, MolRsError> {
-    // Write current coords so MMFF setup that consults geometry sees them.
-    let mut staged = mol.clone();
-    apply_coords(&mut staged, coords3d)?;
-
-    // A fresh typing per call: its output holds exactly this molecule's types.
-    // `Mmff94Typifier::new` shares the process-wide memoised MMFF94 library, so
-    // this costs no parameter assembly.
-    let mut typing = Typing::new(Mmff94Typifier::new());
-    let typed = match typing.typify(&staged) {
-        Ok(typed) => typed,
-        Err(e @ (TypingError::MissingAtomType { .. } | TypingError::MissingTerms { .. })) => {
-            return Ok(Cleanup::NotCovered(e));
-        }
-        Err(e) => return Err(MolRsError::validation(format!("MMFF94 cleanup: {e}"))),
-    };
-    let frame = typed.to_frame()?;
-    // The typed molecule carries its special pairs (MMFF's typing generated
-    // them with the angles); they are topological, so they hold across the
-    // relaxation.
-    let ff = typing.forcefield();
-    let potentials = PotentialCompiler::new(ff)
-        .compile(&frame)
-        .map_err(|e| MolRsError::validation(format!("MMFF94 cleanup: {e}")))?;
-
-    // RDKit's MMFFOptimizeMolecule runs a full BFGS minimization to a
-    // gradient-norm tolerance. Mirror that with L-BFGS to an RMS-gradient
-    // convergence of 1e-3 kcal/mol/Å (matching RDKit's default
-    // `MMFFOptimizeMolecule` grad tol) under a generous iteration cap, so the
-    // freshly-embedded geometry is relaxed all the way to the MMFF minimum.
-    let report = crate::optimize::minimize_lbfgs_rms(coords3d, 1000, 1e-3, |p| {
-        let mut acc = Accumulator::new(p.len());
-        potentials.evaluate(p, &mut acc);
-        (acc.energy(), acc.into_forces())
-    });
-    Ok(Cleanup::Minimized {
-        energy: report.final_energy,
-        steps: report.n_steps,
-        converged: report.converged,
-    })
 }
 
 /// Place a single-atom molecule at the origin.
@@ -497,7 +485,7 @@ fn place_single_atom(mol: &mut Atomistic) -> Result<(), MolRsError> {
 }
 
 /// Write a flat `n*3` coordinate buffer back into the molecule (atom-iteration
-/// order matches `distgeom`/`MMFF` indexing).
+/// order matches `distgeom` indexing).
 fn apply_coords(mol: &mut Atomistic, coords: &[f64]) -> Result<(), MolRsError> {
     let ids: Vec<_> = mol.atoms().map(|(id, _)| id).collect();
     for (i, id) in ids.into_iter().enumerate() {

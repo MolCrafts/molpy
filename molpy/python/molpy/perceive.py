@@ -58,7 +58,10 @@ from molpy._core import (
     assign_kekule_bond_orders,
     assign_rings,
     assign_rotatable_bonds,
+    assign_small_rings,
     assign_stereo,
+    assign_symmetry_classes,
+    perceive_linear_dihedrals,
     perceive_rings,
     perceive_rotatable_bonds,
 )
@@ -81,7 +84,10 @@ __all__ = [
     "assign_kekule_bond_orders",
     "assign_rings",
     "assign_rotatable_bonds",
+    "assign_small_rings",
     "assign_stereo",
+    "assign_symmetry_classes",
+    "perceive_linear_dihedrals",
     "perceive_rings",
     "perceive_rotatable_bonds",
 ]

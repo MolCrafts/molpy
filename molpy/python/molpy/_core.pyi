@@ -2374,6 +2374,20 @@ def assign_equivalence_classes(mol: Atomistic) -> None:
     """Write ``equiv_class`` onto every atom of ``mol`` (antechamber
     ``-eq 1``), in place."""
 
+def assign_symmetry_classes(mol: Atomistic) -> None:
+    """Write ``symmetry_class`` onto every atom of ``mol``, in place: the
+    index of the first atom of its topological class (bond orders and formal
+    charges erased)."""
+
+def assign_small_rings(mol: Atomistic, max_ring_size: int) -> None:
+    """Write ``small_ring_size`` onto every atom and bond of ``mol``, in
+    place: atoms in the smallest ring of at most ``max_ring_size`` atoms
+    through it (every simple cycle, not only the SSSR's), ``0`` for none."""
+
+def perceive_linear_dihedrals(mol: Atomistic) -> list[list[Atom]]:
+    """The dihedrals of ``mol`` whose second or third atom is a linear centre,
+    as lists of four atom views; ``mol`` is untouched."""
+
 def perceive_rings(mol: Atomistic) -> RingSet:
     """The SSSR rings of ``mol`` as a :class:`RingSet`; ``mol`` is untouched."""
 
@@ -3931,23 +3945,25 @@ class ConformerReport:
     """Aggregate report from a conformer generation run."""
 
     @property
-    def final_energy(self) -> float | None: ...
-    @property
     def warnings(self) -> list[str]: ...
     @property
     def stages(self) -> list[ConformerStageReport]: ...
 
 class Conformer:
-    """3D conformer generator.
+    """ETKDGv3 3D embedding — RDKit's ``EmbedMolecule``; no force field.
 
-    Construct with the desired generation parameters, then call
-    :meth:`generate` to produce coordinates. Subclassable.
+    Construct with the embedding parameters (RDKit ``EmbedParameters`` names),
+    then call :meth:`generate`. Subclassable.
     """
 
     def __new__(
         cls,
         add_hydrogens: bool = True,
+        max_iterations: int = 0,
         seed: int | None = None,
+        use_random_coords: bool = False,
+        use_exp_torsion_angle_prefs: bool = True,
+        use_basic_knowledge: bool = True,
     ) -> Self: ...
     def generate(self, mol: Atomistic) -> tuple[Atomistic, ConformerReport]: ...
 
@@ -5455,6 +5471,35 @@ class EinsteinHelfandSpectrum:
     def tunables(self) -> list[tuple[str, Any]]: ...
 
 @final
+class EnergyDrift:
+    """Energy drift per atom (``molrs::compute::EnergyDrift``) — a stream
+    only: push ``(time, energy)`` per sample into :meth:`accumulator`."""
+    def __new__(cls, n_atoms: int) -> Self: ...
+    def accumulator(self) -> EnergyDriftAccumulator: ...
+    @staticmethod
+    def spec() -> ComputeSpec: ...
+    def tunables(self) -> list[tuple[str, Any]]: ...
+
+@final
+class EnergyDriftAccumulator:
+    """The running fit of an :class:`EnergyDrift`."""
+    def push(self, *, time: float, energy: float) -> None: ...
+    def finish(self) -> EnergyDriftResult: ...
+
+@final
+class EnergyDriftResult:
+    """The drift (per atom per time unit) and rms (per atom) of a conserved
+    energy (``molrs::compute::EnergyDriftResult``)."""
+    @property
+    def drift(self) -> float: ...
+    @property
+    def duration(self) -> float: ...
+    @property
+    def n_samples(self) -> int: ...
+    @property
+    def rms(self) -> float: ...
+
+@final
 class EnvironmentMatch:
     """Cluster particles whose neighbour environments match within
     ``rmsd_threshold`` (``molrs::compute::EnvironmentMatch``)."""
@@ -6823,7 +6868,7 @@ class md:
     """The ``_core.md`` submodule (``molpy.md``).
 
     :class:`MD` walks the LAMMPS phase list. Potentials stay in
-    ``molpy.ff.potential``. The engine is unit-agnostic.
+    ``molpy.ff.potential``. A run is in the unit preset ``MD`` is built with.
     """
 
     class Phase:
@@ -6841,53 +6886,87 @@ class md:
         end_of_step: Self
 
     class VelocityVerlet:
-        """NVE velocity Verlet. ``dt`` only; the frame carries mass and state."""
+        """NVE velocity Verlet. ``dt`` only, in the run's time unit; the frame
+        carries mass and state."""
 
         def __init__(self, dt: float) -> None: ...
         @property
         def dt(self) -> float: ...
 
     class FixLangevin:
-        """LAMMPS ``fix langevin`` at ``post_force``. ``kb`` is the caller's
-        Boltzmann constant; ``T`` is in that temperature unit."""
+        """LAMMPS ``fix langevin`` at one temperature, at ``post_force``.
+        ``temperature`` is in the run's temperature unit, ``damp`` and ``dt``
+        in its time unit; Boltzmann's constant comes from the run's units."""
 
         def __init__(
-            self,
-            t_start: float,
-            t_stop: float,
-            damp: float,
-            dt: float,
-            seed: int,
-            *,
-            kb: float,
+            self, temperature: float, damp: float, dt: float, *, seed: int
         ) -> None: ...
+        @property
+        def temperature(self) -> float: ...
+        @property
+        def dt(self) -> float: ...
+
+    class BerendsenBarostat:
+        """Isotropic Berendsen pressure coupling at ``end_of_step``:
+        ``μ³ = 1 − (dt/tau)(pressure − P)/bulk_modulus``. ``pressure`` and
+        ``bulk_modulus`` in the run's pressure unit, ``tau`` and ``dt`` in its
+        time unit."""
+
+        def __init__(
+            self, pressure: float, tau: float, bulk_modulus: float, dt: float
+        ) -> None: ...
+        @property
+        def pressure(self) -> float: ...
         @property
         def dt(self) -> float: ...
 
     class MD:
-        """Phase driver. :meth:`run` writes the frame it is given."""
+        """Phase driver in one unit system. :meth:`run` writes the frame it
+        is given."""
 
-        def __init__(self) -> None: ...
+        def __init__(self, units: str | UnitPreset) -> None:
+            """``units`` is the run's preset (``"real"``, ``"metal"``, …):
+            ``dt`` in its time unit, masses, energies and forces in its units."""
+        @property
+        def step(self) -> int:
+            """The step index of the last force evaluation; it counts across
+            runs."""
+        def resume(self, step: int) -> None:
+            """Continue from a frame written after step ``step`` (forces
+            included): the next :meth:`run` takes its forces as that step's."""
         def set_integrator(self, integrator: "md.VelocityVerlet") -> None: ...
         def set_thermostat(self, thermostat: "md.FixLangevin") -> None: ...
+        def set_barostat(self, barostat: "md.BerendsenBarostat") -> None:
+            """Mount ``barostat``; every force provider must give a virial,
+            and ``meta["pressure"]`` is written each step."""
         def set_neighbor(self, list: NeighborList, *, skin: float = 0.0) -> None:
             """Mount ``list`` (moved in) as the run's neighbour list; pairs
             within ``list.cutoff - skin`` reach the pair kernels."""
-        def set_evaluator(self, potential: Any) -> None: ...
+        def set_evaluator(
+            self,
+            potential: PairLjCut | Potentials | WeightedTerms | Any,
+            *,
+            skin: float = 0.0,
+        ) -> None:
+            """Mount the run's evaluator: native kernels, or a Python
+            :class:`molpy.ff.potential.Potential` (``skin`` is its own
+            neighbour search's margin)."""
         def run(self, frame: Frame, n_steps: int) -> None: ...
 
     class MaxwellBoltzmann:
-        """Velocity distribution at thermal energy ``kbt`` (optionally COM-free).
-
-        Takes ``kbt`` — the product of Boltzmann's constant and temperature in
-        the caller's unit system — not a temperature: the engine does no unit
-        conversion. See ``UnitPreset(...).boltzmann()``."""
+        """Velocity distribution at ``temperature`` in ``units`` (optionally
+        COM-free): velocities in the preset's velocity unit."""
 
         def __init__(
-            self, kbt: float, *, seed: int = 0, remove_com: bool = True
+            self,
+            temperature: float,
+            *,
+            units: str | UnitPreset,
+            seed: int = 0,
+            remove_com: bool = True,
         ) -> None: ...
         @property
-        def kbt(self) -> float: ...
+        def temperature(self) -> float: ...
         @property
         def seed(self) -> int: ...
         @property

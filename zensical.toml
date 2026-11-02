@@ -71,6 +71,7 @@ nav = [
       { "3D Conformer Generation" = "user-guide/07_conformers.md" },
       { "Nanostructures" = "user-guide/04_nanostructures.md" },
       { "Geometry Optimization" = "user-guide/08_geometry_optimization.md" },
+      { "Molecular Dynamics" = "user-guide/16_molecular_dynamics.md" },
       { "Packing Systems" = "user-guide/09_packing.md" },
       { "Polarizable & Virtual-Site Models" = "user-guide/10_polarizable.md" },
     ] },

@@ -191,8 +191,9 @@ const dcd   = writeDcd(frame);                                    // Uint8Array
 
 ### 3D generation (`molrs::conformer`)
 
-- `new Conformer(addHydrogens?, seed?).generate(frame)` — distance
-  geometry + MMFF94 coordinate generation (`"fast"` | `"medium"` | `"better"`)
+- `new Conformer(addHydrogens?, maxIterations?, seed?, useRandomCoords?,
+  useExpTorsionAnglePrefs?, useBasicKnowledge?).generate(frame)` — ETKDGv3
+  distance-geometry embedding (RDKit `EmbedMolecule`; no force field)
 
 ### Force fields + geometry optimization (`molrs::ff`, `molrs::optimize`)
 

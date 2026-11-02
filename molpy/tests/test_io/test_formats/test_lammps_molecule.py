@@ -83,13 +83,14 @@ class TestReadLammpsMolecule:
 
         # Check atom properties
         assert "id" in atoms
-        assert "type" in atoms
+        assert "type_id" in atoms
+        assert "type" not in atoms
         assert "x" in atoms and "y" in atoms and "z" in atoms
         assert "charge" in atoms
 
         # Check specific values
         np.testing.assert_array_equal(atoms["id"], [1, 2, 3])
-        np.testing.assert_array_equal(atoms["type"], ["1", "2", "2"])
+        np.testing.assert_array_equal(atoms["type_id"], [1, 2, 2])
         np.testing.assert_array_almost_equal(atoms["charge"], [-0.834, 0.417, 0.417])
 
         # Check coordinates
@@ -107,8 +108,8 @@ class TestReadLammpsMolecule:
         assert "bonds" in frame
         bonds = frame["bonds"]
         assert len(bonds["id"]) == 2
-        assert len(bonds["type"]) == 2
-        np.testing.assert_array_equal(bonds["type"], ["1", "1"])
+        assert "type" not in bonds
+        np.testing.assert_array_equal(bonds["type_id"], [1, 1])
         # atom_i/atom_j are 0-based indices, not 1-based IDs
         np.testing.assert_array_equal(bonds["atomi"], [0, 0])
         np.testing.assert_array_equal(bonds["atomj"], [1, 2])
@@ -117,7 +118,8 @@ class TestReadLammpsMolecule:
         assert "angles" in frame
         angles = frame["angles"]
         assert angles.n_rows == 1
-        np.testing.assert_array_equal(angles["type"], ["1"])
+        assert "type" not in angles
+        np.testing.assert_array_equal(angles["type_id"], [1])
         # atom_i/atom_j/atom_k are 0-based indices
         np.testing.assert_array_equal(angles["atomi"], [1])
         np.testing.assert_array_equal(angles["atomj"], [0])
@@ -200,7 +202,8 @@ class TestReadLammpsMolecule:
 
         # Check all atom properties are present
         assert "id" in atoms
-        assert "type" in atoms
+        assert "type_id" in atoms
+        assert "type" not in atoms
         assert "x" in atoms and "y" in atoms and "z" in atoms
         assert "charge" in atoms
         assert "mass" in atoms
@@ -296,7 +299,9 @@ class TestWriteLammpsMolecule:
         assert frame2["angles"].n_rows == frame["angles"].n_rows
 
         # Check atom types and charges
-        np.testing.assert_array_equal(frame2["atoms"]["type"], frame["atoms"]["type"])
+        np.testing.assert_array_equal(
+            frame2["atoms"]["type_id"], frame["atoms"]["type_id"]
+        )
         np.testing.assert_array_almost_equal(
             frame2["atoms"]["charge"], frame["atoms"]["charge"]
         )

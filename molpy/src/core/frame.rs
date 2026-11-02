@@ -728,10 +728,8 @@ impl PyFrame {
     /// --------
     /// >>> atoms = frame["atoms"]
     fn __getitem__<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<PyAny>> {
-        if let Ok(inner) = self.inner.block(key) {
-            return Ok(Py::new(py, PyBlock { inner })?.into_any());
-        }
-        Err(PyKeyError::new_err(key.to_string()))
+        let inner = self.inner.block(key).map_err(ffi_error_to_pyerr)?;
+        Ok(Py::new(py, PyBlock { inner })?.into_any())
     }
 
     /// Assign a block under the given name.
