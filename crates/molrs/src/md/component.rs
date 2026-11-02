@@ -11,9 +11,13 @@ use molrs::op::F;
 use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
+use molrs::core::UnitPreset;
 
-/// One scheduled body. `launch` runs once per bound phase per step and does
-/// not allocate its buffers; those are sized in `build`.
+/// One scheduled body. `launch` runs once per bound phase per step.
+///
+/// Storage that grows with the pair count is sized in `build` or kept across
+/// steps; `launch` reuses it. Per-atom column gathers are the price of the
+/// frame being the state, and `launch` may pay it.
 pub trait Component: Send {
     /// Timing and error name.
     fn name(&self) -> &str;
@@ -22,14 +26,15 @@ pub trait Component: Send {
     /// `on(phase).add` ignores this and uses the caller's phase and order.
     fn default_bindings(&self) -> Vec<(Phase, i32)>;
 
-    /// One-time setup against the frame the run will step. Default: nothing.
-    fn build(&mut self, frame: &mut Frame) -> Result<(), MdError> {
-        let _ = frame;
+    /// One-time setup against the frame the run will step, in the run's
+    /// `units`. Default: nothing.
+    fn build(&mut self, frame: &mut Frame, units: &UnitPreset) -> Result<(), MdError> {
+        let _ = (frame, units);
         Ok(())
     }
 
-    /// The work of `phase`. `scratch.pairs` is whatever the neighbour phase
-    /// published earlier in this step.
+    /// The work of `phase`. [`Scratch::pairs`] is whatever the neighbour
+    /// phase published earlier in this step.
     fn launch(
         &mut self,
         phase: Phase,
@@ -40,7 +45,7 @@ pub trait Component: Send {
 
 /// Provides the timestep other components must agree with.
 pub trait TimestepProvider {
-    /// Δt in the caller's time unit (fs when the rest of the frame is).
+    /// Δt in the run's time unit: fs in `real`, ps in `metal`.
     fn dt(&self) -> F;
 }
 
@@ -50,6 +55,9 @@ pub trait Integrator: Component + TimestepProvider {}
 
 /// Modifies the force or the velocities to control temperature.
 pub trait Thermostat: Component + TimestepProvider {}
+
+/// Rescales the cell and the positions to control pressure.
+pub trait Barostat: Component + TimestepProvider {}
 
 /// What the driver recorded at registration, so a later scan does not need
 /// the concrete type.
@@ -79,6 +87,7 @@ pub(crate) enum Kind {
     Integrator,
     Evaluator,
     Thermostat,
+    Barostat,
     Neighbor,
     /// Infrastructure and user `on(phase).add` components.
     Other,

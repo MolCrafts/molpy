@@ -42,17 +42,20 @@ class TestReadMol2:
         assert bonds["atomi"].tolist() == [0, 0, 0, 0, 1, 1, 1]
         assert bonds["atomj"].tolist() == [1, 2, 3, 4, 5, 6, 7]
 
-    def test_bond_order_tokens_are_kept_and_decoded(self, mol2_dir):
+    def test_bond_order_tokens_decode_and_only_the_extra_is_type(self, mol2_dir):
         bonds = _read(mol2_dir / "bond_orders.mol2")["bonds"]
-        assert list(bonds["type"]) == ["2", "am", "1"]
+        assert bonds["bond_type"].tolist() == [2, 1, 1]
         assert bonds["bond_number"].tolist() == [2, 1, 1]
+        assert list(bonds.validity("type")) == [False, True, False]
+        assert bonds["type"][1] == "am"
 
     def test_ring_closures_reference_earlier_atoms(self, mol2_dir):
         bonds = _read(mol2_dir / "naphthalene.mol2")["bonds"]
         assert bonds.n_rows == 11
         pairs = set(zip(bonds["atomi"].tolist(), bonds["atomj"].tolist()))
         assert {(5, 0), (9, 2), (1, 6)} <= pairs
-        assert set(bonds["type"]) == {"ar"}
+        assert "type" not in bonds
+        assert bonds["bond_type"].tolist() == [4] * 11
         assert bonds["bond_number"].tolist() == [0] * 11
 
     def test_no_charges_and_empty_bond_section(self, mol2_dir):

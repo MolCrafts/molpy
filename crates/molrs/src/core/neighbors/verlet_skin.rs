@@ -2,12 +2,12 @@
 
 use std::fmt;
 
-use ndarray::{Array2, ArrayView2};
+use ndarray::ArrayView2;
 
 use crate::core::SimBox;
-use crate::op::{F, Fnx3};
+use crate::op::F;
 
-use super::{NeighborColumns, NeighborList, Neighbors, QueryMode};
+use super::{NeighborColumns, NeighborList, Neighbors, QueryMode, VerletCadence};
 
 /// Failures from Verlet-skin construction or the unwrapped-position guard.
 #[derive(Debug)]
@@ -112,24 +112,14 @@ pub struct SkinPair {
 /// Allen & Tildesley for cell lists.
 pub struct VerletSkin {
     cutoff: F,
-    skin: F,
-    every: usize,
-    delay: usize,
-    check: bool,
     r_build: F,
     simbox: SimBox,
     search: NeighborList,
     edges: Vec<SkinPair>,
     n_edges: usize,
-    n_rebuilds: usize,
-    ago: usize,
-    ndanger: usize,
-    half_skin_sq: F,
-    /// Half the minimum perpendicular cell width, squared: beyond it the
-    /// minimum image is ambiguous and a displacement cannot be read.
-    ambiguity_guard_sq: F,
-    danger_ago: usize,
-    x_hold: Fnx3,
+    n_atoms: usize,
+    /// When to search again; the gate lives there, not here.
+    cadence: VerletCadence,
     pairs_buf: Neighbors,
     /// Per-edge squared distance and displacement, reused across steps.
     ///
@@ -158,38 +148,6 @@ impl VerletSkin {
                 "cutoff must be a positive finite length, got {cutoff} Å"
             )));
         }
-        if policy.skin < 0.0 {
-            return Err(SkinError::Invalid(format!(
-                "skin must be >= 0 Å, got {} Å",
-                policy.skin
-            )));
-        }
-        if policy.every < 1 {
-            return Err(SkinError::Invalid(format!(
-                "every must be an integer >= 1 step, got {}",
-                policy.every
-            )));
-        }
-        if !policy.delay.is_multiple_of(policy.every) {
-            return Err(SkinError::Invalid(format!(
-                "delay {} steps must be a multiple of every {} steps; LAMMPS Neighbor::init \
-                 rejects the same pair, because the danger threshold max(every, delay) would \
-                 be an ago the gate never permits, leaving ndanger silently dead.",
-                policy.delay, policy.every
-            )));
-        }
-        if positions.ncols() != 3 {
-            return Err(SkinError::Invalid(format!(
-                "positions must have shape (N, 3), got {:?}",
-                positions.shape()
-            )));
-        }
-        if !simbox.is_cell_defined() {
-            return Err(SkinError::Invalid(
-                "VerletSkin requires a geometrically defined cell".into(),
-            ));
-        }
-
         let r_build = cutoff + policy.skin;
         let want = search.cutoff();
         if (want - r_build).abs() > 1e-12 {
@@ -199,40 +157,21 @@ impl VerletSkin {
                 policy.skin
             )));
         }
-
-        let widths = simbox.nearest_plane_distance();
-        let min_width = widths.iter().copied().fold(F::INFINITY, F::min);
-        let half_width = 0.5 * min_width;
-        if !simbox.is_free() && r_build > half_width {
-            return Err(SkinError::Invalid(format!(
-                "r_build {r_build} Å (cutoff {cutoff} Å + skin {} Å) exceeds half the \
-                 minimum perpendicular cell width ({half_width:.3} Å); the minimum-image \
-                 reduction would silently drop pairs inside the cutoff.",
-                policy.skin
-            )));
-        }
+        require_room(&simbox, r_build)?;
+        let cadence = VerletCadence::new(policy, r_build, positions, Some(&simbox))?;
 
         let n_atoms = positions.nrows();
         search.build(positions, &simbox);
 
         let mut skin = Self {
             cutoff,
-            skin: policy.skin,
-            every: policy.every,
-            delay: policy.delay,
-            check: policy.check,
             r_build,
             simbox,
             search,
             edges: Vec::new(),
             n_edges: 0,
-            n_rebuilds: 0,
-            ago: 0,
-            ndanger: 0,
-            half_skin_sq: (0.5 * policy.skin) * (0.5 * policy.skin),
-            ambiguity_guard_sq: half_width * half_width,
-            danger_ago: policy.every.max(policy.delay),
-            x_hold: Array2::zeros((n_atoms, 3)),
+            n_atoms,
+            cadence,
             pairs_buf: Neighbors::empty(
                 QueryMode::SelfQuery { n_points: n_atoms },
                 NeighborColumns::FULL,
@@ -240,10 +179,24 @@ impl VerletSkin {
             scratch_r2: Vec::new(),
             scratch_disp: Vec::new(),
         };
-        skin.pairs_buf.simbox = Some(skin.simbox.clone());
         skin.rebuild_edges();
-        skin.hold(positions);
         Ok(skin)
+    }
+
+    /// Follow the cell to `simbox` — a barostat's rescale, a deformation.
+    ///
+    /// The held edges stay; [`VerletCadence`] decides at the next
+    /// [`update`](Self::update) whether the strain since the build forces a
+    /// search.
+    ///
+    /// # Errors
+    ///
+    /// [`SkinError::Invalid`] for a cell that is not geometrically defined or
+    /// too small for the build radius.
+    pub fn set_simbox(&mut self, simbox: SimBox) -> Result<(), SkinError> {
+        require_room(&simbox, self.r_build)?;
+        self.simbox = simbox;
+        Ok(())
     }
 
     /// Interaction cutoff `r_cut` in Å (fixed at construction).
@@ -253,22 +206,22 @@ impl VerletSkin {
 
     /// Verlet skin in Å (from [`NeighborPolicy`], fixed at construction).
     pub fn skin(&self) -> F {
-        self.skin
+        self.cadence.policy().skin
     }
 
     /// `every` gate in steps (fixed at construction).
     pub fn every(&self) -> usize {
-        self.every
+        self.cadence.policy().every
     }
 
     /// `delay` gate in steps (fixed at construction).
     pub fn delay(&self) -> usize {
-        self.delay
+        self.cadence.policy().delay
     }
 
     /// Displacement check switch (fixed at construction).
     pub fn check(&self) -> bool {
-        self.check
+        self.cadence.policy().check
     }
 
     /// Live edge count (`== edges().len()`).
@@ -278,17 +231,17 @@ impl VerletSkin {
 
     /// Rebuilds since construction; the initial build is not one of them.
     pub fn n_rebuilds(&self) -> usize {
-        self.n_rebuilds
+        self.cadence.n_rebuilds()
     }
 
     /// Steps since the last build (LAMMPS `ago`).
     pub fn ago(&self) -> usize {
-        self.ago
+        self.cadence.ago()
     }
 
     /// Rebuilds that fired at the first permitted opportunity.
     pub fn ndanger(&self) -> usize {
-        self.ndanger
+        self.cadence.ndanger()
     }
 
     /// Restore cadence counters from a trusted persistence snapshot.
@@ -297,9 +250,7 @@ impl VerletSkin {
     /// [`new`](Self::new). This only restores progress through the rebuild
     /// policy so a resumed run makes the same next cadence decision.
     pub fn restore_progress(&mut self, ago: usize, n_rebuilds: usize, ndanger: usize) {
-        self.ago = ago;
-        self.n_rebuilds = n_rebuilds;
-        self.ndanger = ndanger;
+        self.cadence.restore_progress(ago, n_rebuilds, ndanger);
     }
 
     /// Build radius `cutoff + skin` in Å (derived, never settable).
@@ -312,7 +263,7 @@ impl VerletSkin {
         &self.edges
     }
 
-    /// The cell this list was built against.
+    /// The cell the list follows ([`set_simbox`](Self::set_simbox)).
     pub fn simbox(&self) -> &SimBox {
         &self.simbox
     }
@@ -343,21 +294,8 @@ impl VerletSkin {
         self.n_edges = self.edges.len();
     }
 
-    fn hold(&mut self, positions: ArrayView2<'_, F>) {
-        self.ago = 0;
-        self.x_hold.assign(&positions);
-    }
-
-    fn build_at(&mut self, positions: ArrayView2<'_, F>) -> Result<(), SkinError> {
-        self.require_shape(positions)?;
-        self.search.build(positions, &self.simbox);
-        self.rebuild_edges();
-        self.hold(positions);
-        Ok(())
-    }
-
     fn require_shape(&self, positions: ArrayView2<'_, F>) -> Result<(), SkinError> {
-        let n = self.x_hold.nrows();
+        let n = self.n_atoms;
         if positions.shape() != [n, 3] {
             return Err(SkinError::Invalid(format!(
                 "positions must have shape ({n}, 3) — this list was constructed for {n} atoms \
@@ -370,8 +308,10 @@ impl VerletSkin {
 
     /// Recompute the neighbour list at `positions` (unconditional).
     pub fn rebuild(&mut self, positions: ArrayView2<'_, F>) -> Result<(), SkinError> {
-        self.build_at(positions)?;
-        self.n_rebuilds += 1;
+        self.require_shape(positions)?;
+        self.search.build(positions, &self.simbox);
+        self.rebuild_edges();
+        self.cadence.rebuilt(positions, Some(&self.simbox));
         Ok(())
     }
 
@@ -381,50 +321,11 @@ impl VerletSkin {
     /// Returns whether a rebuild happened.
     pub fn update(&mut self, positions: ArrayView2<'_, F>) -> Result<bool, SkinError> {
         self.require_shape(positions)?;
-        self.ago += 1;
-        let permitted = self.ago >= self.delay && self.ago.is_multiple_of(self.every);
-        if !permitted {
-            return Ok(false);
-        }
-        if !self.check {
+        let due = self.cadence.due(positions, Some(&self.simbox))?;
+        if due {
             self.rebuild(positions)?;
-            return Ok(true);
         }
-        // Minimum-image displacement, so a wrapped crossing reads as the step
-        // the atom took rather than as a jump of one cell. Exact in every
-        // configuration this type accepts — see the module documentation.
-        let mic = self.simbox.mic();
-        let mut max_d2 = 0.0;
-        for i in 0..positions.nrows() {
-            let d = mic.apply([
-                positions[[i, 0]] - self.x_hold[[i, 0]],
-                positions[[i, 1]] - self.x_hold[[i, 1]],
-                positions[[i, 2]] - self.x_hold[[i, 2]],
-            ]);
-            let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-            if d2 > max_d2 {
-                max_d2 = d2;
-            }
-        }
-        if max_d2 >= self.ambiguity_guard_sq && !self.simbox.is_free() {
-            return Err(SkinError::Guard(format!(
-                "displacement {:.3} Å >= half the minimum perpendicular cell \
-                 width ({:.3} Å): the minimum image can no longer identify which \
-                 copy this atom came from, so the number is not a displacement. \
-                 A cell change or a blow-up, not a wrap — wrapped coordinates are \
-                 expected and handled.",
-                max_d2.sqrt(),
-                self.ambiguity_guard_sq.sqrt()
-            )));
-        }
-        if max_d2 > self.half_skin_sq {
-            if self.ago == self.danger_ago {
-                self.ndanger += 1;
-            }
-            self.rebuild(positions)?;
-            return Ok(true);
-        }
-        Ok(false)
+        Ok(due)
     }
 
     /// Stream stored edges with **current** minimum-image geometry.
@@ -469,7 +370,25 @@ impl VerletSkin {
     /// current geometry into a reusable FULL buffer. This is the only place
     /// in the MD loop that computes a minimum image.
     pub fn pairs_at(&mut self, positions: ArrayView2<'_, F>) -> Result<&Neighbors, SkinError> {
-        self.update(positions)?;
+        let mut out = std::mem::replace(
+            &mut self.pairs_buf,
+            Neighbors::empty(QueryMode::SelfQuery { n_points: 0 }, NeighborColumns::FULL),
+        );
+        let result = self.pairs_into(positions, &mut out);
+        self.pairs_buf = out;
+        result?;
+        Ok(&self.pairs_buf)
+    }
+
+    /// [`pairs_at`](Self::pairs_at), writing the table into `out` — a buffer
+    /// the caller keeps across steps — instead of this list's own. Returns
+    /// whether the list was searched again.
+    pub fn pairs_into(
+        &mut self,
+        positions: ArrayView2<'_, F>,
+        out: &mut Neighbors,
+    ) -> Result<bool, SkinError> {
+        let rebuilt = self.update(positions)?;
         let n_edges = self.edges.len();
         self.scratch_r2.resize(n_edges, 0.0);
         self.scratch_disp.resize(n_edges * 3, 0.0);
@@ -530,20 +449,51 @@ impl VerletSkin {
         //
         // Serial, and deliberately: the rows come out in the order of the
         // edges, and a parallel append would let scheduling decide it.
-        self.pairs_buf.set_mode(QueryMode::SelfQuery {
+        out.columns = NeighborColumns::FULL;
+        out.set_mode(QueryMode::SelfQuery {
             n_points: positions.nrows(),
         });
-        self.pairs_buf.clear();
+        if out
+            .simbox
+            .as_ref()
+            .is_none_or(|b| !b.approx_eq(&self.simbox, 0.0))
+        {
+            out.simbox = Some(self.simbox.clone());
+        }
+        out.clear();
         let cutoff2 = self.cutoff * self.cutoff;
         for (k, edge) in self.edges.iter().enumerate() {
             let r2 = self.scratch_r2[k];
             if r2 <= cutoff2 {
                 let d = &self.scratch_disp[k * 3..k * 3 + 3];
-                self.pairs_buf.push(edge.i, edge.j, r2, [d[0], d[1], d[2]]);
+                out.push(edge.i, edge.j, r2, [d[0], d[1], d[2]]);
             }
         }
-        Ok(&self.pairs_buf)
+        Ok(rebuilt)
     }
+}
+
+/// `simbox` is a defined cell with room for `r_build` under the minimum image.
+fn require_room(simbox: &SimBox, r_build: F) -> Result<(), SkinError> {
+    if !simbox.is_cell_defined() {
+        return Err(SkinError::Invalid(
+            "VerletSkin requires a geometrically defined cell".into(),
+        ));
+    }
+    let half_width = 0.5
+        * simbox
+            .nearest_plane_distance()
+            .iter()
+            .copied()
+            .fold(F::INFINITY, F::min);
+    if !simbox.is_free() && r_build > half_width {
+        return Err(SkinError::Invalid(format!(
+            "r_build {r_build} Å exceeds half the minimum perpendicular cell width \
+             ({half_width:.3} Å); the minimum-image reduction would silently drop pairs \
+             inside the cutoff."
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

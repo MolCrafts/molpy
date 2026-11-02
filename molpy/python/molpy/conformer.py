@@ -1,7 +1,8 @@
 """3D conformer generation — ``molrs::conformer``.
 
 ETKDGv3 constraints, 4D distance-geometry embedding, experimental-torsion
-refinement, MMFF94 cleanup and stereo guards, behind one entry point::
+refinement and stereo guards, behind one entry point. It runs no force
+field; relaxing the coordinates is a separate optimization::
 
     mol, report = molpy.conformer.Conformer(...).generate(mol)
 

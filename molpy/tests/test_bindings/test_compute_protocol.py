@@ -1,6 +1,6 @@
 """molpy.compute.Compute is a runtime_checkable Protocol every batch compute
-class satisfies; mp.compute.Stream the one every stream (Msd, Vacf, Rdf)
-satisfies."""
+class satisfies; mp.compute.Stream the one every stream (Msd, Vacf, Rdf,
+EnergyDrift) satisfies."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class TestComputeProtocol:
 
     def test_every_compute_class_satisfies_its_protocol(self) -> None:
         computes, streams = _compute_classes(), _stream_classes()
-        assert set(streams) == {"Msd", "Vacf", "Rdf"}
+        assert set(streams) == {"Msd", "Vacf", "Rdf", "EnergyDrift"}
         assert set(computes) == {spec.name for spec in ComputeSpec.all()} - set(streams)
         assert not [
             name for name, cls in computes.items() if not issubclass(cls, Compute)

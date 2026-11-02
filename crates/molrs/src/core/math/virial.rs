@@ -2,14 +2,15 @@
 
 use crate::op::F;
 
-/// The virial tensor `W = Σ f ⊗ r`, symmetric, in kcal/mol.
+/// The virial tensor `W = Σ f ⊗ r`, symmetric, in the energy unit of the
+/// forces and positions it was summed from.
 ///
 /// Stored as the six independent components in LAMMPS's order — `xx`, `yy`,
 /// `zz`, `xy`, `xz`, `yz` — because the tensor is symmetric and carrying nine
 /// numbers invites two of them to drift apart.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Virial {
-    /// `[xx, yy, zz, xy, xz, yz]` in kcal/mol.
+    /// `[xx, yy, zz, xy, xz, yz]`.
     pub components: [F; 6],
 }
 
@@ -37,9 +38,10 @@ impl Virial {
 
     /// The scalar pressure `P = (2·K + tr W) / (3V)`.
     ///
-    /// `kinetic` is the kinetic energy (kcal/mol) and `volume` is the cell
-    /// volume (Å³), so the result is kcal·mol⁻¹·Å⁻³. Multiply by
-    /// `69476.95` to read it in bar.
+    /// `kinetic` and the virial are in one energy unit and `volume` in the
+    /// cube of the length unit, so the result is energy per volume: in LAMMPS
+    /// `real` (kcal/mol, Å) multiply by `69476.95` to read it in bar, in
+    /// `metal` (eV, Å) by `1.602177e6`.
     pub fn pressure(&self, kinetic: F, volume: F) -> F {
         (2.0 * kinetic + self.trace()) / (3.0 * volume)
     }

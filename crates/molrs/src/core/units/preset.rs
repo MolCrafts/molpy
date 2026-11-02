@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+use super::{UnitRegistry, UnitsError};
 use crate::op::F;
 
 use crate::core::constants::{
@@ -431,6 +432,60 @@ impl UnitPreset {
         self.units.get(dimension).map(String::as_str)
     }
 
+    /// LAMMPS `force->ftm2v`: this system's force·time/mass → velocity.
+    ///
+    /// One in a coherent system (SI); `1/48.88821291²` in `real`.
+    ///
+    /// # Errors
+    ///
+    /// [`UnitsError`] when the registry does not know a unit of the preset
+    /// (reduced `lj` units before σ, ε and m are defined).
+    pub fn ftm2v(&self) -> Result<F, UnitsError> {
+        let from = format!("({})*({})/({})", self.force(), self.time(), self.mass());
+        UnitRegistry::global().factor(&from, self.velocity())
+    }
+
+    /// LAMMPS `force->mvv2e`: this system's mass·velocity² → energy.
+    ///
+    /// One in a coherent system (SI); `48.88821291²` in `real`.
+    ///
+    /// # Errors
+    ///
+    /// As [`ftm2v`](Self::ftm2v).
+    pub fn mvv2e(&self) -> Result<F, UnitsError> {
+        let from = format!("({})*({})**2", self.mass(), self.velocity());
+        UnitRegistry::global().factor(&from, self.energy())
+    }
+
+    /// LAMMPS `force->nktv2p`: this system's energy/length³ → pressure.
+    ///
+    /// One in SI; 68568.415 in `real` (kcal/mol/Å³ → atm), 1.6021765e6 in
+    /// `metal` (eV/Å³ → bar).
+    ///
+    /// # Errors
+    ///
+    /// As [`ftm2v`](Self::ftm2v).
+    pub fn nktv2p(&self) -> Result<F, UnitsError> {
+        let from = format!("({})/({})**3", self.energy(), self.length());
+        UnitRegistry::global().factor(&from, self.pressure())
+    }
+
+    /// The factor that reads `other`'s `dimension` unit in this preset's:
+    /// eV → kcal/mol is `real.factor_from(&metal, PresetDim::Energy)`.
+    ///
+    /// # Errors
+    ///
+    /// [`UnitsError`] when the two units do not convert.
+    pub fn factor_from(&self, other: &UnitPreset, dimension: PresetDim) -> Result<F, UnitsError> {
+        let key = dimension.name();
+        let unit = |p: &UnitPreset| {
+            p.unit(key)
+                .expect("a preset defines every dimension")
+                .to_owned()
+        };
+        UnitRegistry::global().factor(&unit(other), &unit(self))
+    }
+
     pub fn mass(&self) -> &str {
         self.unit("mass").expect("preset defines mass")
     }
@@ -576,6 +631,58 @@ pub fn unit_preset_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LAMMPS `real`: `ftm2v = 1/48.88821291²`, `mvv2e = 48.88821291²`.
+    #[test]
+    fn real_has_the_lammps_step_constants() {
+        let real = UnitPreset::real();
+        let lammps = 48.888_212_91_f64 * 48.888_212_91;
+        assert!((real.ftm2v().unwrap() * lammps - 1.0).abs() < 1e-6);
+        assert!((real.mvv2e().unwrap() / lammps - 1.0).abs() < 1e-6);
+    }
+
+    /// LAMMPS `metal`: `ftm2v = 1/1.0364269e-4`, `mvv2e = 1.0364269e-4`.
+    #[test]
+    fn metal_has_the_lammps_step_constants() {
+        let metal = UnitPreset::metal();
+        assert!((metal.ftm2v().unwrap() * 1.036_426_9e-4 - 1.0).abs() < 1e-6);
+        assert!((metal.mvv2e().unwrap() / 1.036_426_9e-4 - 1.0).abs() < 1e-6);
+    }
+
+    /// SI is coherent: both factors are one.
+    #[test]
+    fn si_is_coherent() {
+        let si = UnitPreset::si();
+        assert!((si.ftm2v().unwrap() - 1.0).abs() < 1e-12);
+        assert!((si.mvv2e().unwrap() - 1.0).abs() < 1e-12);
+    }
+
+    /// Reduced LJ units mean nothing until σ, ε and m are defined in the
+    /// registry, and the step constants say so.
+    #[test]
+    fn undefined_reduced_units_have_no_step_constants() {
+        let err = UnitPreset::lj().ftm2v().unwrap_err();
+        assert!(err.to_string().contains("lj_"), "{err}");
+    }
+
+    /// LAMMPS `nktv2p`: 68568.415 in `real`, 1.6021765e6 in `metal`, 1 in SI.
+    #[test]
+    fn nktv2p_matches_lammps() {
+        let real = UnitPreset::real().nktv2p().unwrap();
+        assert!((real / 68_568.415 - 1.0).abs() < 1e-6, "{real}");
+        let metal = UnitPreset::metal().nktv2p().unwrap();
+        assert!((metal / 1.602_176_5e6 - 1.0).abs() < 1e-6, "{metal}");
+        assert!((UnitPreset::si().nktv2p().unwrap() - 1.0).abs() < 1e-12);
+    }
+
+    /// eV → kcal/mol is 96485.332 / 4184 = 23.060548.
+    #[test]
+    fn a_metal_energy_reads_in_real() {
+        let f = UnitPreset::real()
+            .factor_from(&UnitPreset::metal(), PresetDim::Energy)
+            .unwrap();
+        assert!((f - 23.060_548).abs() < 1e-5, "{f}");
+    }
 
     /// The listed names are exactly the ones `builtin` builds.
     #[test]

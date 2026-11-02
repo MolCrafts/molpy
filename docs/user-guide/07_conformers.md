@@ -10,9 +10,10 @@ A parsed molecule is a *graph*: elements and bonds, but no geometry. Almost
 everything downstream — typification's SMARTS matching that needs 3D, packing,
 force-field evaluation, export to a simulation engine — needs real coordinates.
 
-**`Conformer` embeds a graph into 3D using the native generator and returns a
-fresh `Atomistic` plus a per-stage report.** Hydrogens are added as needed and
-the input graph is never mutated.
+**`Conformer` embeds a graph into 3D with ETKDGv3 — RDKit's `EmbedMolecule` —
+and returns a fresh `Atomistic` plus a per-stage report.** Hydrogens are added
+as needed and the input graph is never mutated. Like `EmbedMolecule` it runs no
+force field: relaxing the result is a separate step (below).
 
 ## Generating a conformer
 
@@ -23,7 +24,6 @@ mol = mp.io.smiles.read_smiles("CCO").to_atomistic() # ethanol graph (heavy atom
 mol_3d, report = mp.conformer.Conformer(seed=42).generate(mol)
 
 print(mol_3d.n_atoms) # 9 — heavy atoms + added hydrogens
-print(report.final_energy) # energy of the returned structure
 ```
 
 `generate` returns a **tuple**: the new `Atomistic` (with coordinates and any
@@ -32,15 +32,47 @@ you can generate several independent conformers from the same graph.
 
 ## Constructor parameters
 
-`mp.conformer.Conformer` is the native conformer generator (`molpy.conformer.Conformer`),
-`Conformer(add_hydrogens=True, seed=None)`; an empty molecule is refused with
-`ValueError`. The pipeline itself is fixed — ETKDG embedding, then an MMFF94
-cleanup minimization — so the constructor only says what to feed it:
+`mp.conformer.Conformer` takes RDKit's `EmbedParameters` names; an empty
+molecule is refused with `ValueError`.
 
-| Parameter | Meaning |
-|---|---|
-| `add_hydrogens` | Whether to fill valences with explicit hydrogens before embedding (the same edit as `mp.perceive.add_hydrogens`). Leave on unless your graph already carries all H. |
-| `seed` | RNG seed for the stochastic embedding. **Set it for reproducible geometries** — omitting it gives a different conformer each run. |
+| Parameter | Default | Meaning |
+|---|---|---|
+| `add_hydrogens` | `True` | Fill valences with explicit hydrogens before embedding (the same edit as `mp.perceive.add_hydrogens`). Leave on unless your graph already carries all H. |
+| `max_iterations` | `0` | Embedding attempts before giving up; `0` is RDKit's `10 × n_atoms`. |
+| `seed` | `None` | RNG seed. **Set it for reproducible geometries** — omitting it gives a different conformer each run. |
+| `use_random_coords` | `False` | Start each attempt from random coordinates instead of the eigenvector embedding of a random distance matrix. |
+| `use_exp_torsion_angle_prefs` | `True` | The ETKDG experimental-torsion terms ("ET"). |
+| `use_basic_knowledge` | `True` | Flat aromatic rings and planar sp2 centres ("K"). With ET and K both off the embedding is plain distance geometry. |
+
+A dummy atom (`*`, atomic number 0 — a polymer repeat unit's attachment point)
+is embedded as RDKit embeds one: its radii are 0 and it has no UFF type, so its
+bond takes the covalent-radius estimate (C–`*` 0.76 Å).
+
+## Long chains
+
+Each attempt is judged before it is kept. The first distance-geometry
+minimization must end below RDKit's energy gate, and the 3D refinement must
+not leave a bond angle above 170° at a centre that is not sp: on a long
+flexible chain the refinement can relieve its torsion strain by straightening
+an angle — a C–O–C of a PEO 25-mer at 180°, where the torsions through it are
+undefined — and such an attempt is discarded for the next one. The
+eigenvector starts of a chain that long fail the first gate on every attempt,
+as they do in RDKit, whose advice for large molecules is
+`use_random_coords=True`; the embedding then runs the same number of attempts
+from random coordinates and records `"used random-coordinate fallback
+embedding"` in `report.warnings`.
+
+## Relaxing with MMFF94
+
+The embedding is the distance-geometry structure. For a force-field minimum,
+compose the relaxation as RDKit's `MMFFOptimizeMolecule` follows `EmbedMolecule`:
+
+```python
+typifier = mp.ff.typifier.Mmff94Typifier()
+frame = typifier.typify(mol_3d).to_frame()
+potentials = mp.ff.PotentialCompiler(typifier.forcefield()).compile(frame)
+mp.optimize.Lbfgs(potentials, fmax=0.05, max_steps=1000).minimize(frame)  # in place
+```
 
 Charged atoms must already carry the canonical integer `"formal_charge"` key
 (the parsers emit it) so the generator fills the right hydrogen count for `[N+]` / `[N-]`.
@@ -49,9 +81,6 @@ Charged atoms must already carry the canonical integer `"formal_charge"` key
 
 `ConformerReport` aggregates the run:
 
-- `final_energy` — the MMFF94 energy of the returned structure, or `None` when
-  MMFF94 does not cover the molecule and the cleanup was skipped (a warning
-  says so).
 - `stages` — a list of `ConformerStageReport`, one per pipeline stage.
 - `warnings` — any non-fatal issues raised during generation.
 

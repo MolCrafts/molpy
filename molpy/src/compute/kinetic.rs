@@ -6,10 +6,10 @@ use molrs::compute::{Compute, KineticEnergy, KineticEnergyInput, KineticEnergyRe
 
 use pyo3::prelude::*;
 
-use super::args;
 use super::error::Result;
 use super::output::py_result;
 use super::spec::described;
+use crate::core::units::preset_arg;
 
 py_result! {
     /// A kinetic energy (``molrs::compute::KineticEnergyResult``) with the
@@ -52,7 +52,7 @@ impl PyKineticEnergy {
     #[new]
     #[pyo3(signature = (units, *, mvv2e = None, boltzmann = None))]
     fn new(units: &Bound<'_, PyAny>, mvv2e: Option<f64>, boltzmann: Option<f64>) -> Result<Self> {
-        let mut inner = KineticEnergy::new(args::units(units)?)?;
+        let mut inner = KineticEnergy::new(preset_arg(units)?)?;
         if let Some(mvv2e) = mvv2e {
             inner = inner.with_mvv2e(mvv2e)?;
         }

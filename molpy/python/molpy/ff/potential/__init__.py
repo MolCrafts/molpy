@@ -9,8 +9,10 @@
 * :class:`PairLjCut` — the one-type ``lj/cut`` kernel a neighbour loop feeds
   (the MD integrators' nonbond kernel): ``pair_energy_force`` for one pair,
   ``evaluate_pairs`` over a ``Neighbors`` table.
-* :class:`Potential` — the protocol every Python-defined force provider
-  satisfies (one method, ``evaluate(pos) -> (energy, forces)``).
+* :class:`Potential` — the protocol every Python-defined potential
+  satisfies (``units``, ``cutoff``, ``bind(frame, skin)``,
+  ``compute(step, rebuild, box)``), taken by ``MD.set_evaluator``,
+  ``Potentials.push`` and ``Lbfgs``.
 """
 
 from molpy._core import (

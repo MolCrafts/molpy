@@ -149,6 +149,7 @@ fn cases() -> Result<Vec<Case>, ComputeError> {
         case(ReorientationAcf::new(2, 8)),
         case(RotationalAutocorrelation::new(2, 8)),
         case(Survival::new(SurvivalKind::Continuous, 8)),
+        case(EnergyDrift::new(4)?),
         case(Derivative::new(Stencil::Central)),
         case(Unwrap::new()),
         case(Spectrum::new(Window::Hann, 2)?),

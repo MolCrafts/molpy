@@ -9,6 +9,7 @@ use super::component::Component;
 use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
+use molrs::core::UnitPreset;
 
 /// Zeros `fx`/`fy`/`fz`, `meta["energy"]` and `meta["virial"]` so evaluators
 /// add into a known baseline.
@@ -33,9 +34,7 @@ impl Component for ZeroForces {
         if phase != Phase::PreForce {
             return Ok(());
         }
-        let pos = columns::read_pos(frame)?;
-        let zeros = molrs::op::Fnx3::zeros(pos.dim());
-        columns::write_force(frame, &zeros)?;
+        columns::zero_force(frame)?;
         columns::set_meta_f64(frame, "energy", 0.0);
         frame
             .meta
@@ -44,10 +43,9 @@ impl Component for ZeroForces {
     }
 }
 
-/// `½ Σ m v²` into `meta["kinetic"]`, after the second half-step — the
-/// [`compute::KineticEnergy`](molrs::compute::KineticEnergy) sum, with
-/// `mvv2e = 1`: the integrator applies `a = f / m` with no conversion factor,
-/// so a run's quantities are in one consistent unit system and so is this.
+/// `½ Σ m v² · mvv2e` into `meta["kinetic"]`, after the second half-step —
+/// the [`compute::KineticEnergy`](molrs::compute::KineticEnergy) sum in the
+/// run's units.
 #[derive(Debug, Default)]
 pub struct KineticEnergy {
     /// The sum, built once in `build`.
@@ -63,9 +61,8 @@ impl Component for KineticEnergy {
         vec![(Phase::EndOfStep, -100)]
     }
 
-    fn build(&mut self, _frame: &mut Frame) -> Result<(), MdError> {
-        let sum = molrs::compute::KineticEnergy::new(molrs::core::UnitPreset::real())
-            .and_then(|k| k.with_mvv2e(1.0))
+    fn build(&mut self, _frame: &mut Frame, units: &UnitPreset) -> Result<(), MdError> {
+        let sum = molrs::compute::KineticEnergy::new(units.clone())
             .map_err(|e| MdError::Invalid(e.to_string()))?;
         self.sum = Some(sum);
         Ok(())

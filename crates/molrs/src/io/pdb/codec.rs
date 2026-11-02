@@ -377,7 +377,7 @@ fn to_array_string(vec: Vec<String>, len: usize) -> std::io::Result<ndarray::Arr
         .into_dyn())
 }
 
-fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, HashMap<i32, Idx>)> {
+fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, HashMap<i32, Idx>)> {
     let n = atoms.len();
     let mut x_vec = Vec::with_capacity(n);
     let mut y_vec = Vec::with_capacity(n);
@@ -415,7 +415,6 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
         serial_map.insert(atom.serial, i as Idx);
     }
 
-    let unique_elements = collect_unique_elements(&elements);
     // A blank element field is an absent species, not a placeholder one: the
     // row is null in the validity mask (its value reads ""), so the explicit
     // `Element::fill_atomic_numbers` step reports it by row. A file that
@@ -506,7 +505,7 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
             .map_err(invalid_data)?;
     }
 
-    Ok((block, unique_elements, serial_map))
+    Ok((block, serial_map))
 }
 
 /// A one-character PDB field as a string, `""` for the blank that means
@@ -517,16 +516,6 @@ fn blank_as_empty(c: char) -> String {
     } else {
         c.to_string()
     }
-}
-
-fn collect_unique_elements(elements: &[String]) -> String {
-    let mut unique = Vec::new();
-    for elem in elements.iter().filter(|e| !e.is_empty()) {
-        if !unique.contains(elem) {
-            unique.push(elem.clone());
-        }
-    }
-    unique.join("|")
 }
 
 fn build_bonds_block(
@@ -638,9 +627,8 @@ fn build_frame(
 
     let mut frame = Frame::new();
 
-    let (atoms_block, elements_metadata, serial_map) = build_atoms_block(atoms)?;
+    let (atoms_block, serial_map) = build_atoms_block(atoms)?;
     frame.insert("atoms", atoms_block);
-    frame.meta.insert("elements".to_string(), elements_metadata);
 
     if let Some(bonds_block) = build_bonds_block(conects, &serial_map)? {
         frame.insert("bonds", bonds_block);

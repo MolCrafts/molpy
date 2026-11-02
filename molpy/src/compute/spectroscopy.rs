@@ -16,11 +16,11 @@ use molrs::compute::{
 
 use pyo3::prelude::*;
 
-use super::args;
 use super::error::Result;
 use super::output::py_result;
 use super::spec::described;
 use super::time_series::PyTimeCorrelation;
+use crate::core::units::preset_arg;
 
 py_result! {
     /// A complex permittivity ε(ω) = ``eps_real`` − i ``eps_imag`` at
@@ -93,7 +93,7 @@ macro_rules! dielectric_route {
                 pad: Option<usize>,
                 epsilon_inf: Option<f64>,
             ) -> Result<$core> {
-                let mut inner = $core::new(args::units(units)?);
+                let mut inner = $core::new(preset_arg(units)?);
                 if let Some(window) = window {
                     inner = inner.with_window(window.parse()?);
                 }
@@ -328,7 +328,7 @@ impl PyConductivitySumRule {
     #[new]
     #[pyo3(signature = (units, *, tolerance = None))]
     fn new(units: &Bound<'_, PyAny>, tolerance: Option<f64>) -> Result<Self> {
-        let mut inner = ConductivitySumRule::new(args::units(units)?);
+        let mut inner = ConductivitySumRule::new(preset_arg(units)?);
         if let Some(tolerance) = tolerance {
             inner = inner.with_tolerance(tolerance)?;
         }

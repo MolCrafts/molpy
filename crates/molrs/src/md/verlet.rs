@@ -12,28 +12,32 @@ use super::component::{Component, Integrator, TimestepProvider};
 use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
+use molrs::core::UnitPreset;
 
 /// NVE velocity Verlet.
 ///
-/// `initial_integrate`: `v += ½ Δt f/m`, `x += Δt v`, then wrap into the cell
-/// when the frame has a box.
-/// `final_integrate`: `v += ½ Δt f/m`.
+/// `initial_integrate`: `v += ½ Δt f/m · ftm2v`, `x += Δt v`, then wrap into
+/// the cell when the frame has a box.
+/// `final_integrate`: `v += ½ Δt f/m · ftm2v`.
 #[derive(Clone, Copy, Debug)]
 pub struct VelocityVerlet {
     dt: F,
+    /// The run's force·time/mass → velocity factor, set at `build`.
+    ftm2v: Option<F>,
 }
 
 impl VelocityVerlet {
-    /// `dt` in the caller's time unit. Mass, positions, and velocities are
-    /// read from the frame at launch, not stored here.
+    /// `dt` in the run's time unit. Mass, positions, and
+    /// velocities are read from the frame at launch, not stored here.
     pub fn new(dt: F) -> Result<Self, MdError> {
         if !dt.is_finite() || dt <= 0.0 {
             return Err(MdError::Invalid(format!("dt must be > 0, got {dt}")));
         }
-        Ok(Self { dt })
+        Ok(Self { dt, ftm2v: None })
     }
 
-    fn kick(frame: &mut Frame, half_dt: F) -> Result<(), MdError> {
+    /// `v += scale · f/m`, `scale = ½ Δt · ftm2v`.
+    fn kick(frame: &mut Frame, scale: F) -> Result<(), MdError> {
         let force = read_force(frame)?;
         let mass = read_mass(frame)?;
         let mut vel = read_vel(frame)?;
@@ -48,7 +52,7 @@ impl VelocityVerlet {
         for i in 0..vel.nrows() {
             let inv_m = 1.0 / mass[i];
             for axis in 0..3 {
-                vel[[i, axis]] += half_dt * force[[i, axis]] * inv_m;
+                vel[[i, axis]] += scale * force[[i, axis]] * inv_m;
             }
         }
         columns::write_vel(frame, &vel)
@@ -97,13 +101,21 @@ impl Component for VelocityVerlet {
         vec![(Phase::InitialIntegrate, 0), (Phase::FinalIntegrate, 0)]
     }
 
+    fn build(&mut self, _frame: &mut Frame, units: &UnitPreset) -> Result<(), MdError> {
+        self.ftm2v = Some(units.ftm2v()?);
+        Ok(())
+    }
+
     fn launch(
         &mut self,
         phase: Phase,
         frame: &mut Frame,
         _scratch: &mut Scratch,
     ) -> Result<(), MdError> {
-        let half = 0.5 * self.dt;
+        let ftm2v = self
+            .ftm2v
+            .ok_or_else(|| MdError::Invalid("velocity_verlet was launched before build".into()))?;
+        let half = 0.5 * self.dt * ftm2v;
         match phase {
             Phase::InitialIntegrate => {
                 Self::kick(frame, half)?;

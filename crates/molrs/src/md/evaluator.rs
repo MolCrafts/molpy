@@ -5,13 +5,13 @@
 //! placed around one atom across any periodic face ([`BondedImages`]). Plain
 //! kernels read the coordinates alone.
 
-use molrs::core::{Frame, MetaValue, Virial};
+use molrs::core::{Frame, Virial};
 use molrs::ff::potential::{
     Accumulator, ForceTerm, IndexedTerms, PairDriven, Potential, SpecialWeights,
 };
 use molrs::op::F;
 
-use super::columns::{self, VIRIAL, read_pos};
+use super::columns::{self, gather_pos};
 use super::component::{Component, Flags, Kind};
 use super::error::MdError;
 use super::images::BondedImages;
@@ -25,7 +25,13 @@ use super::scratch::Scratch;
 pub struct FfEvaluator {
     members: Vec<(ForceTerm, SpecialWeights)>,
     factors: Vec<F>,
+    /// Pair and plain forces on the atoms.
     buf: Vec<F>,
+    /// Flat coordinates the bonded members read: the atoms, then their copies
+    /// across periodic faces.
+    rows: Vec<F>,
+    /// Bonded forces on every row of `rows`.
+    explicit: Vec<F>,
     /// The bonded tables placed across periodic faces, this step.
     images: BondedImages,
 }
@@ -56,6 +62,8 @@ impl FfEvaluator {
             members,
             factors: Vec::new(),
             buf: Vec::new(),
+            rows: Vec::new(),
+            explicit: Vec::new(),
             images: BondedImages::default(),
         }
     }
@@ -75,44 +83,6 @@ impl FfEvaluator {
             frozen_pairs,
             dt: None,
         }
-    }
-
-    /// Add this step's forces, energy and virial onto what the pre-force
-    /// clear left. The virial is `meta["virial"]` (`[xx, yy, zz, xy, xz, yz]`);
-    /// a term without one removes it, since a virial missing a term is a
-    /// different quantity, not a smaller one.
-    fn add_onto_frame(
-        &self,
-        frame: &mut Frame,
-        energy: F,
-        virial: Option<Virial>,
-    ) -> Result<(), MdError> {
-        let n = self.buf.len() / 3;
-        let mut force = columns::read_force(frame)?;
-        if force.nrows() != n {
-            return Err(MdError::Invalid(format!(
-                "evaluator produced {n} atoms, the frame has {}",
-                force.nrows()
-            )));
-        }
-        for i in 0..n {
-            for axis in 0..3 {
-                force[[i, axis]] += self.buf[i * 3 + axis];
-            }
-        }
-        columns::write_force(frame, &force)?;
-        let total = columns::meta_f64(frame, "energy") + energy;
-        columns::set_meta_f64(frame, "energy", total);
-        match (virial, frame.meta.get(VIRIAL)) {
-            (Some(w), Some(MetaValue::F64x6(held))) => {
-                let sum: [F; 6] = std::array::from_fn(|k| held[k] + w.components[k]);
-                frame.meta.insert(VIRIAL, MetaValue::F64x6(sum));
-            }
-            _ => {
-                frame.meta.remove(VIRIAL);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -134,23 +104,24 @@ impl Component for FfEvaluator {
         if phase != Phase::Force {
             return Ok(());
         }
-        let pos = read_pos(frame)?;
-        let n_owned = pos.nrows();
-        let owned: Vec<F> = pos.iter().copied().collect();
+        gather_pos(frame, &mut self.rows)?;
+        let n_owned = self.rows.len() / 3;
 
         // The rows the bonded members read: the atoms, then the copies their
         // terms were placed onto across periodic faces.
         let sources: Vec<_> = self.members.iter().map(|(term, _)| term.terms()).collect();
         self.images
-            .resolve(&sources, &owned, frame.simbox.as_ref())?;
-        let mut rows = owned.clone();
-        rows.extend_from_slice(self.images.copies());
-        let n_rows = rows.len() / 3;
+            .resolve(&sources, &self.rows, frame.simbox.as_ref())?;
+        self.rows.extend_from_slice(self.images.copies());
+        let n_rows = self.rows.len() / 3;
+        let (owned, rows) = (&self.rows[..n_owned * 3], &self.rows[..]);
 
         // `explicit`: bonded forces on every row, whose virial is `Σ f ⊗ x`
         // before the copies fold. `buf`: pair forces (their kernels tally the
         // virial) and plain terms (which have none) on the atoms.
-        let mut explicit = vec![0.0; n_rows * 3];
+        let explicit = &mut self.explicit;
+        explicit.clear();
+        explicit.resize(n_rows * 3, 0.0);
         self.buf.clear();
         self.buf.resize(n_owned * 3, 0.0);
         let mut energy = 0.0;
@@ -159,7 +130,7 @@ impl Component for FfEvaluator {
         for (m, (term, special)) in self.members.iter_mut().enumerate() {
             match term {
                 ForceTerm::Pair(pot) => {
-                    let Some(pairs) = scratch.pairs.as_ref() else {
+                    let Some(pairs) = scratch.pairs() else {
                         return Err(MdError::Invalid(
                             "pair evaluator ran with no neighbour list published this \
                              step; mount one with set_neighbor"
@@ -168,7 +139,7 @@ impl Component for FfEvaluator {
                     };
                     let factors = special.factors_for(pairs, &mut self.factors);
                     let mut acc = Accumulator::adding_into(&mut self.buf).with_virial();
-                    pot.evaluate_pairs(&owned, pairs, factors, &mut acc);
+                    pot.evaluate_pairs(owned, pairs, factors, &mut acc);
                     energy += acc.energy();
                     virial = match (virial, acc.virial()) {
                         (Some(mut total), Some(w)) => {
@@ -182,8 +153,8 @@ impl Component for FfEvaluator {
                     let terms = self.images.current(m).ok_or_else(|| {
                         MdError::Invalid(format!("member {m} holds indices but has no table"))
                     })?;
-                    let mut acc = Accumulator::adding_into(&mut explicit);
-                    pot.evaluate_terms(&rows, terms.view(), &mut acc);
+                    let mut acc = Accumulator::adding_into(explicit);
+                    pot.evaluate_terms(rows, terms.view(), &mut acc);
                     energy += acc.energy();
                     explicit_used = true;
                 }
@@ -192,7 +163,7 @@ impl Component for FfEvaluator {
                 // virial. The step then has none — the honest answer.
                 ForceTerm::Plain(pot) => {
                     let mut acc = Accumulator::adding_into(&mut self.buf);
-                    pot.evaluate(&owned, &mut acc);
+                    pot.evaluate(owned, &mut acc);
                     energy += acc.energy();
                     virial = None;
                 }
@@ -208,12 +179,12 @@ impl Component for FfEvaluator {
                     );
                 }
             }
-            self.images.fold(&mut explicit, n_owned);
+            self.images.fold(explicit, n_owned);
             for (dst, f) in self.buf.iter_mut().zip(&explicit[..n_owned * 3]) {
                 *dst += f;
             }
         }
-        self.add_onto_frame(frame, energy, virial)
+        columns::add_force_terms(frame, &self.buf, energy, virial)
     }
 }
 
@@ -223,7 +194,7 @@ mod tests {
     use super::super::neighbor_list::Neighbor;
     use super::*;
     use molrs::core::NeighborList;
-    use molrs::core::{Block, Cell, SimBox};
+    use molrs::core::{Block, Cell, MetaValue, SimBox, UnitPreset};
     use molrs::ff::compile::ExplicitTerms;
     use molrs::ff::ir::Params;
     use molrs::ff::potential::pair::PairLjCut;
@@ -264,7 +235,7 @@ mod tests {
     ) -> (F, ndarray::Array2<F>, Option<[F; 6]>) {
         let mut scratch = Scratch::new();
         if let Some(neighbor) = neighbor {
-            neighbor.build(frame).unwrap();
+            neighbor.build(frame, &UnitPreset::real()).unwrap();
             neighbor
                 .launch(Phase::Neighbor, frame, &mut scratch)
                 .unwrap();
@@ -366,5 +337,46 @@ mod tests {
         let (_, forces, w) = force(&mut f, None, &mut FfEvaluator::plain(Push));
         assert_eq!(forces[[0, 0]], 1.0);
         assert!(w.is_none());
+    }
+
+    /// A cell that changes between steps is followed: after a rescale the
+    /// same mounted list prices the pair through the face as a list built
+    /// in the new cell does.
+    #[test]
+    fn a_rescaled_cell_is_followed() {
+        let lj = || FfEvaluator::pair(PairLjCut::new(0.3, 3.4, 3.0, 12, 6, false, false).unwrap());
+        let units = UnitPreset::real();
+        let pos = array![[1.0, 5.0, 5.0], [8.5, 5.0, 5.0]];
+        let mut state = frame(&pos, cubic(10.0, true));
+        let mut mounted = neighbor(3.5, 0.5);
+        mounted.build(&mut state, &units).unwrap();
+        let mut scratch = Scratch::new();
+        mounted
+            .launch(Phase::Neighbor, &mut state, &mut scratch)
+            .unwrap();
+
+        // Scale the cell and the positions by 1.02 about the origin.
+        let scaled = pos.mapv(|v| v * 1.02);
+        let mut moved = super::super::columns::read_pos(&state).unwrap();
+        moved.assign(&scaled);
+        columns::write_pos(&mut state, &moved).unwrap();
+        state.simbox = Some(cubic(10.2, true));
+        ZeroForces
+            .launch(Phase::PreForce, &mut state, &mut scratch)
+            .unwrap();
+        scratch.begin(1);
+        mounted
+            .launch(Phase::Neighbor, &mut state, &mut scratch)
+            .unwrap();
+        lj().launch(Phase::Force, &mut state, &mut scratch).unwrap();
+        let followed = columns::meta_f64(&state, "energy");
+
+        let mut fresh = frame(&scaled, cubic(10.2, true));
+        let (expected, _, _) = force(&mut fresh, Some(&mut neighbor(3.5, 0.5)), &mut lj());
+        assert!(expected.abs() > 1e-6, "a non-trivial reference: {expected}");
+        assert!(
+            (followed - expected).abs() <= 1e-12 * expected.abs(),
+            "{followed} vs {expected}"
+        );
     }
 }

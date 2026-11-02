@@ -142,7 +142,7 @@ pub use mesh::{DEGENERATE_AREA2, TriMesh};
 pub use neighbors::{
     AabbQuery, BruteForce, CellGrid, CutoffError, LinkCell, NeighborColumns, NeighborList,
     NeighborPair, NeighborPolicy, NeighborQuery, Neighbors, PairSource, QueryMode, SkinError,
-    SkinPair, VerletSkin, filter_rad, filter_sann,
+    SkinPair, VerletCadence, VerletSkin, filter_rad, filter_sann,
 };
 pub use periodic::{GhostError, GhostSet, ImageRange};
 pub use region::{
