@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path, PurePath
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from molpy.core.keys import FORMAL_CHARGE
 from molpy.io import write_mol2
@@ -155,9 +155,9 @@ def prepgen_control_text(
         if head_name is None or tail_name is None:
             raise ValueError("chain variant requires both head_name and tail_name")
         lines += [f"HEAD_NAME {head_name}", f"TAIL_NAME {tail_name}"]
-        if head_type:
+        if head_type is not None and head_type:
             lines.append(f"PRE_HEAD_TYPE {head_type}")
-        if tail_type:
+        if tail_type is not None and tail_type:
             lines.append(f"POST_TAIL_TYPE {tail_type}")
     elif variant == "head":
         # Only the TAIL connects. When the tail atom is a graph terminus,
@@ -166,20 +166,22 @@ def prepgen_control_text(
         # pins the main chain. The head connection is unused at a chain start.
         if tail_name is None:
             raise ValueError("head variant requires tail_name")
-        if head_name:
+        if head_name is not None and head_name:
             lines.append(f"HEAD_NAME {head_name}")
         lines.append(f"TAIL_NAME {tail_name}")
-        if tail_type:
+        if tail_type is not None and tail_type:
             lines.append(f"POST_TAIL_TYPE {tail_type}")
     elif variant == "tail":
         # Only the HEAD connects; a TAIL_NAME pins the main chain, as above.
         if head_name is None:
             raise ValueError("tail variant requires head_name")
         lines.append(f"HEAD_NAME {head_name}")
-        if tail_name:
+        if tail_name is not None and tail_name:
             lines.append(f"TAIL_NAME {tail_name}")
-        if head_type:
+        if head_type is not None and head_type:
             lines.append(f"PRE_HEAD_TYPE {head_type}")
+    else:
+        assert_never(variant)
     lines += [f"OMIT_NAME {name}" for name in omit_names]
     lines.append(f"CHARGE {charge}")
     return "\n".join(lines) + "\n"

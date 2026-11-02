@@ -87,7 +87,7 @@ def apply_request(
     if request is None:
         yield from records
         return
-    progress: ReadProgress | None = getattr(request, "progress", None)
+    progress = getattr(request, "progress", None)
     since = max(0, request.since)
     if progress is not None:
         progress.position = since

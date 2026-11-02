@@ -79,7 +79,7 @@ def tail_of(*sources: str | Path | None, lines: int = TAIL_LINES) -> str:
             if not source.is_file():
                 continue
             source = source.read_text(encoding="utf-8", errors="replace")
-        if source and source.strip():
+        if source is not None and source.strip():
             return "\n".join(source.rstrip().splitlines()[-lines:])
     return ""
 

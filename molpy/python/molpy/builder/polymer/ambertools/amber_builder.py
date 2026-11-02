@@ -344,11 +344,17 @@ def _checked_cuts(
             raise TypeError(
                 f"{label!r} {variant} cut must be AmberCut, got {type(cut).__name__}"
             )
-        if variant == "head" and (cut.pre_head or cut.pre_head_type):
+        if variant == "head" and (
+            (cut.pre_head is not None and cut.pre_head)
+            or (cut.pre_head_type is not None and cut.pre_head_type)
+        ):
             raise ValueError(
                 f"{label!r} head residue connects forward only; it has no PRE_HEAD_TYPE"
             )
-        if variant == "tail" and (cut.post_tail or cut.post_tail_type):
+        if variant == "tail" and (
+            (cut.post_tail is not None and cut.post_tail)
+            or (cut.post_tail_type is not None and cut.post_tail_type)
+        ):
             raise ValueError(
                 f"{label!r} tail residue connects backward only; "
                 "it has no POST_TAIL_TYPE"
@@ -384,7 +390,7 @@ def _named(template: Atomistic) -> Atomistic:
         name = atom.get("name")
         if name is None:
             atomic_number = atom.get("atomic_number")
-            if not atomic_number:
+            if not bool(atomic_number):
                 raise ValueError(f"atom {index} has no element and no name")
             name = f"{Element.by_number(int(atomic_number)).symbol}{index}"
         name = str(name)
@@ -397,7 +403,7 @@ def _named(template: Atomistic) -> Atomistic:
 
 def _label(bead: Bead) -> str:
     name = bead.get("bead_type")
-    if not name:
+    if not bool(name):
         raise ValueError("a site has no bead type")
     return str(name)
 
@@ -493,7 +499,7 @@ def _connection_type(
     label: str,
 ) -> str | None:
     """The type the user wrote, or the GAFF type of the atom they named."""
-    if literal:
+    if literal is not None and literal:
         return literal
     if atom is None:
         return None
