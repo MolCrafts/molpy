@@ -103,6 +103,7 @@ class MrecMetricReader:
         is the frame's simulation step, or its index when the record has no
         ``step`` column (see :mod:`molpy.io.metric_reader`).
         """
+        columns: dict[str, Any] = {}
         with MrecReader(path) as reader:
             columns = {name: getattr(reader, name) for name in ("step", "time")}
         yield from metric_reader.apply_request(

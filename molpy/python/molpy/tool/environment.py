@@ -222,7 +222,7 @@ class EnvironmentSpec:
             merged["PATH"] = str(bin_dir) + (os.pathsep + existing if existing else "")
             merged["VIRTUAL_ENV"] = str(prefix)
 
-        if extra:
+        if extra is not None and extra:
             merged.update(extra)
         return merged
 
@@ -254,7 +254,7 @@ class EnvironmentSpec:
 
     def _lookup(self, exe: str | Path, logger: mollog.Logger | None) -> str | None:
         # Explicit path (Path object or path-like string) — no PATH search.
-        if isinstance(exe, Path) or (isinstance(exe, str) and _looks_like_path(exe)):
+        if isinstance(exe, Path) or _looks_like_path(exe):
             exe_path = _as_path(exe)
             return str(exe_path.resolve()) if exe_path.is_file() else None
 
