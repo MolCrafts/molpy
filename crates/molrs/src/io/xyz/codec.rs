@@ -393,8 +393,7 @@ fn grouped_real_axes(
     wide_name: &str,
     mut real: impl FnMut(&str) -> bool,
 ) -> bool {
-    !columns.iter().any(|key| *key == wide_name)
-        && axes.iter().all(|axis| columns.contains(axis) && real(axis))
+    !columns.contains(&wide_name) && axes.iter().all(|axis| columns.contains(axis) && real(axis))
 }
 
 /// One frame column an extxyz `Properties` entry becomes: its name, the
