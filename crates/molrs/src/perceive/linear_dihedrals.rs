@@ -11,7 +11,7 @@
 //! Reference:
 //!     Zheng, T. et al. "Data-driven parametrization of molecular mechanics
 //!     force fields for expansive chemical space coverage." Chem. Sci. 2025.
-//!     https://arxiv.org/abs/2408.12817 (``byteff2`` ``match_linear_proper``).
+//!     <https://arxiv.org/abs/2408.12817> (``byteff2`` ``match_linear_proper``).
 
 use crate::core::{Atomistic, MolRsError, NodeId};
 
