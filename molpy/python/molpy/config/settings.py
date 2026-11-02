@@ -236,7 +236,7 @@ def load_config(
     ) / PROJECT_CONFIG_NAME
     if project.is_file():
         sources.append(TomlFileSource(project, name="project"))
-    if overrides:
+    if overrides is not None and overrides:
         sources.append(DictSource(dict(overrides), name="run"))
 
     config = ConfigLoader(sources).load()
