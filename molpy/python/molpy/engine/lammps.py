@@ -98,6 +98,7 @@ class LammpsEngine(Engine):
                 c
                 for c in _LAMMPS_CANDIDATES
                 if self.environment.resolve_executable(c, logger=self.logger)
+                is not None
             ),
             _LAMMPS_CANDIDATES[0],
         )

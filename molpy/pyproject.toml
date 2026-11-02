@@ -51,8 +51,8 @@ dev = [
     "pytest>=6.0.0",
     "pytest-xdist>=3.0",
     "pytest-cov",
-    "ruff==0.16.1",
-    "ty==0.0.65",
+    "ruff==0.17.2",
+    "ty==0.0.91",
 ]
 doc = [
     "zensical>=0.0.53",
