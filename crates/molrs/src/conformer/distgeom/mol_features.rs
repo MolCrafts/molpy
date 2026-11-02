@@ -16,7 +16,6 @@ use std::collections::HashMap;
 
 use crate::core::NeighborKinds;
 use molrs::core::Atomistic;
-use molrs::core::Element;
 use molrs::core::MolRsError;
 use molrs::core::NodeId;
 use molrs::core::PropValue;
@@ -27,7 +26,8 @@ use molrs::perceive::{RingSet, perceive_rings};
 /// Per-atom perceived properties consumed by the bounds builder.
 #[derive(Clone, Debug)]
 pub struct PerceivedAtom {
-    pub element: Element,
+    /// Atomic number; `0` is a dummy atom (`*`), embedded as RDKit embeds it.
+    pub z: u8,
     pub hybridization: Hybridization,
     pub aromatic: bool,
     pub conjugated: bool,
@@ -52,7 +52,40 @@ pub struct DgFeatures {
     pub ring_idx: Vec<Vec<usize>>,
 }
 
+/// A bond angle `i-j-k` (centre `j`), as RDKit's bounds builder lists one.
+#[derive(Clone, Copy, Debug)]
+pub struct BondAngle {
+    /// `[i, centre, k]` atom indices.
+    pub atoms: [usize; 3],
+    /// The centre is sp: the angle is held linear (RDKit `angle[3]`).
+    pub linear: bool,
+}
+
 impl DgFeatures {
+    /// Every bond as `[i, j]`, `i < j`, in index order.
+    pub fn bonds(&self) -> Vec<[usize; 2]> {
+        let mut out: Vec<[usize; 2]> = self.order.keys().map(|&(i, j)| [i, j]).collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Every bond angle: each pair of neighbours of each atom.
+    pub fn angles(&self) -> Vec<BondAngle> {
+        let mut out = Vec::new();
+        for (j, nbrs) in self.adj.iter().enumerate() {
+            let linear = self.atoms[j].hybridization == Hybridization::Sp;
+            for (a, &i) in nbrs.iter().enumerate() {
+                for &k in &nbrs[a + 1..] {
+                    out.push(BondAngle {
+                        atoms: [i, j, k],
+                        linear,
+                    });
+                }
+            }
+        }
+        out
+    }
+
     /// Bond order between atom indices `i` and `j`, or `0.0` if not bonded.
     pub fn bond_order(&self, i: usize, j: usize) -> f64 {
         let key = if i < j { (i, j) } else { (j, i) };
@@ -66,20 +99,13 @@ impl DgFeatures {
     }
 }
 
-/// The element of atom `id`, read from its [`keys::ATOMIC_NUMBER`]. Distance
-/// geometry needs a real element (its radii and UFF rest lengths are per
-/// element), so a wildcard atom (`Z = 0`) is refused.
-fn element_of(mol: &Atomistic, id: NodeId) -> Result<Element, MolRsError> {
-    let z = mol.get_atom(id)?.atomic_number().ok_or_else(|| {
+/// The atomic number of atom `id`, read from its [`keys::ATOMIC_NUMBER`]. A
+/// dummy atom (`Z = 0`, SMILES `*`) is embedded as RDKit embeds one: radii 0,
+/// no UFF type, so its bonds take the 1-2 fallback.
+fn atomic_number_of(mol: &Atomistic, id: NodeId) -> Result<u8, MolRsError> {
+    mol.get_atom(id)?.atomic_number().ok_or_else(|| {
         MolRsError::validation(format!(
             "conformer: atom {id:?} has no valid `{}`",
-            keys::ATOMIC_NUMBER
-        ))
-    })?;
-    Element::by_number(z).ok_or_else(|| {
-        MolRsError::validation(format!(
-            "conformer: atom {id:?} is a wildcard (`{}` = 0); distance geometry \
-             embeds real elements only",
             keys::ATOMIC_NUMBER
         ))
     })
@@ -89,8 +115,7 @@ fn element_of(mol: &Atomistic, id: NodeId) -> Result<Element, MolRsError> {
 ///
 /// # Errors
 ///
-/// [`MolRsError::Validation`] when an atom has no valid atomic number or is a
-/// wildcard (`Z = 0`); the error of
+/// [`MolRsError::Validation`] when an atom has no valid atomic number; the error of
 /// [`assign_aromaticity`](molrs::perceive::assign_aromaticity) when a flag
 /// cannot be written.
 pub fn perceive_dg_features(mol: &Atomistic) -> Result<DgFeatures, MolRsError> {
@@ -153,7 +178,7 @@ pub fn perceive_dg_features(mol: &Atomistic) -> Result<DgFeatures, MolRsError> {
         .enumerate()
         .map(|(i, &aid)| {
             Ok(PerceivedAtom {
-                element: element_of(mol, aid)?,
+                z: atomic_number_of(mol, aid)?,
                 hybridization: hybridization[i],
                 aromatic: aromatic_atom[i],
                 conjugated: conjugated[i],

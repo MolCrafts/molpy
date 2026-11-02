@@ -2,7 +2,8 @@
 ``mp.io.read_lammps_data`` / ``mp.io.write_lammps_data`` — molrs's, by identity.
 
 The reader returns the structure as a ``Frame`` (typed blocks carry
-``type_id`` and the string ``type``) and keeps any ``* Coeffs`` sections as
+``type_id``; ``type`` when a ``* Type Labels`` section names every id) and
+keeps any ``* Coeffs`` sections as
 text in ``frame.meta["lammps_coeffs_text"]``; the force field is
 ``_read_lammps_data_coeffs(path)``, which names the rows by
 the file's Type Labels.
@@ -69,7 +70,8 @@ class TestReadLammpsData:
         # Should have 12 atoms based on file content
         assert atoms.n_rows == 12
         assert "mol_id" in atoms  # molecule ID (canonical name)
-        assert "type" in atoms
+        assert "type_id" in atoms
+        assert "type" not in atoms
         assert "charge" in atoms  # charge (canonical name)
         assert "x" in atoms and "y" in atoms and "z" in atoms  # Separate coordinates
 
@@ -217,7 +219,8 @@ class TestReadLammpsData:
         atoms = frame["atoms"]
         assert "mol_id" not in atoms
         assert "charge" not in atoms
-        assert "type" in atoms
+        assert "type_id" in atoms
+        assert "type" not in atoms
         assert "x" in atoms and "y" in atoms and "z" in atoms
 
     def test_charge_style(self, tmp_path):
@@ -304,11 +307,7 @@ class TestWriteLammpsData:
         new_atoms = new_frame["atoms"]
 
         assert orig_atoms.n_rows == new_atoms.n_rows
-        # Convert types to strings for comparison since they may be different types
-        np.testing.assert_array_equal(
-            np.array([str(t) for t in orig_atoms["type"]]),
-            np.array([str(t) for t in new_atoms["type"]]),
-        )
+        np.testing.assert_array_equal(orig_atoms["type_id"], new_atoms["type_id"])
         np.testing.assert_array_almost_equal(orig_atoms["x"], new_atoms["x"])
         np.testing.assert_array_almost_equal(orig_atoms["y"], new_atoms["y"])
         np.testing.assert_array_almost_equal(orig_atoms["z"], new_atoms["z"])

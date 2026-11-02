@@ -17,6 +17,10 @@ def _ntf2_polarized(test_data_dir: Path) -> mp.Atomistic:
     frame = mp.io.read_mol2(test_data_dir / "mol2" / "ntf2_clp_typed.mol2")
     frame["atoms"]["element"] = frame["atoms"]["name"]
     mp.Element.fill_atomic_numbers(frame)
+    # MOL2 keeps the chemical class in bond_type. A LAMMPS data file numbers
+    # force-field types, and Drude springs share that id space by string label.
+    bonds = frame["bonds"]
+    bonds["type"] = ["1"] * bonds.n_rows
     pol = mp.builder.DrudeBuilder().apply(mp.Atomistic.from_frame(frame))
     for i, atom in enumerate(pol.atoms, start=1):
         atom["id"] = i

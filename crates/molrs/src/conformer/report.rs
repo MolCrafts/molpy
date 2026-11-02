@@ -7,10 +7,8 @@ pub enum StageKind {
     Preprocess,
     /// Initial coordinate construction.
     BuildInitial,
-    /// First minimization pass.
+    /// Distance-geometry minimization and torsion refinement.
     CoarseOptimize,
-    /// Final minimization pass.
-    FinalOptimize,
     /// Stereo sanity checks.
     StereoCheck,
 }
@@ -37,9 +35,6 @@ pub struct ConformerReport {
     pub stages: Vec<ConformerStageReport>,
     /// Non-fatal issues and behavior notes.
     pub warnings: Vec<String>,
-    /// The MMFF94 energy after the cleanup minimization; `None` when the
-    /// cleanup did not run.
-    pub final_energy: Option<f64>,
 }
 
 impl ConformerReport {
@@ -47,7 +42,6 @@ impl ConformerReport {
         Self {
             stages: Vec::new(),
             warnings: Vec::new(),
-            final_energy: None,
         }
     }
 }

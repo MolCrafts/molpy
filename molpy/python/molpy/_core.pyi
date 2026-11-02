@@ -3945,23 +3945,25 @@ class ConformerReport:
     """Aggregate report from a conformer generation run."""
 
     @property
-    def final_energy(self) -> float | None: ...
-    @property
     def warnings(self) -> list[str]: ...
     @property
     def stages(self) -> list[ConformerStageReport]: ...
 
 class Conformer:
-    """3D conformer generator.
+    """ETKDGv3 3D embedding — RDKit's ``EmbedMolecule``; no force field.
 
-    Construct with the desired generation parameters, then call
-    :meth:`generate` to produce coordinates. Subclassable.
+    Construct with the embedding parameters (RDKit ``EmbedParameters`` names),
+    then call :meth:`generate`. Subclassable.
     """
 
     def __new__(
         cls,
         add_hydrogens: bool = True,
+        max_iterations: int = 0,
         seed: int | None = None,
+        use_random_coords: bool = False,
+        use_exp_torsion_angle_prefs: bool = True,
+        use_basic_knowledge: bool = True,
     ) -> Self: ...
     def generate(self, mol: Atomistic) -> tuple[Atomistic, ConformerReport]: ...
 

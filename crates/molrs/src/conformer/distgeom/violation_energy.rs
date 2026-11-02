@@ -34,21 +34,26 @@ struct BoundPair {
 /// The distance-bound violations of every atom pair of a bounds matrix:
 /// `(d²/u² − 1)²` above the upper bound `u`, `(2l²/(l² + d²) − 1)²` below the
 /// lower bound `l`, zero between.
-pub(crate) struct DistanceViolations {
+struct DistanceViolations {
     dim: usize,
     pairs: Vec<BoundPair>,
 }
 
 impl DistanceViolations {
-    /// Every pair `j < i` of `bounds`, unit weight, on coordinates of stride
-    /// `dim`.
-    pub(crate) fn new(bounds: &BoundsMatrix, dim: usize) -> Self {
+    /// Every pair `j < i` of `bounds` whose range `u - l` is at most
+    /// `basin`, unit weight, on coordinates of stride `dim` (RDKit
+    /// `constructForceField`'s `basinSizeTol`: a wide range constrains
+    /// nothing worth a term).
+    fn new(bounds: &BoundsMatrix, dim: usize, basin: f64) -> Self {
         let n = bounds.len();
         let mut pairs = Vec::new();
         for i in 1..n {
             for j in 0..i {
                 let u = bounds.upper(i, j);
                 let l = bounds.lower(i, j);
+                if u - l > basin {
+                    continue;
+                }
                 pairs.push(BoundPair {
                     i,
                     j,
@@ -62,7 +67,7 @@ impl DistanceViolations {
     }
 
     /// The violation energy at `p`; its gradient is added into `grad`.
-    pub(crate) fn energy_grad(&self, p: &[f64], grad: &mut [f64]) -> f64 {
+    fn energy_grad(&self, p: &[f64], grad: &mut [f64]) -> f64 {
         let dim = self.dim;
         let mut energy = 0.0;
         for c in &self.pairs {
@@ -132,13 +137,15 @@ pub(crate) struct ViolationEnergy {
 
 impl ViolationEnergy {
     /// The error function of `bounds` and the `chiral` constraints on
-    /// coordinates of stride `dim`; the chiral terms weigh `weight_chiral`
+    /// coordinates of stride `dim`; the distance terms cover the pairs whose
+    /// range is at most `basin`, the chiral terms weigh `weight_chiral`
     /// (none at or below `1e-8`), the fourth dimension `weight_fourth` (only
     /// when `dim == 4`).
     pub(crate) fn new(
         bounds: &BoundsMatrix,
         chiral: &[ChiralConstraint],
         dim: usize,
+        basin: f64,
         weight_chiral: f64,
         weight_fourth: f64,
     ) -> Self {
@@ -156,7 +163,7 @@ impl ViolationEnergy {
         Self {
             n: bounds.len(),
             dim,
-            distances: DistanceViolations::new(bounds, dim),
+            distances: DistanceViolations::new(bounds, dim, basin),
             chiral: volumes,
             fourth_weight: if dim == 4 { weight_fourth } else { 0.0 },
         }

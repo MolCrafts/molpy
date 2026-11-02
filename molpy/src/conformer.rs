@@ -4,14 +4,18 @@
 //! constructor declares the generation parameters and [`PyConformer::generate`]
 //! runs the pipeline, returning `(mol_3d, report)`.
 //!
-//! The pipeline takes a [`PyAtomistic`] molecular graph (ports included) and
-//! produces realistic 3D coordinates through a multi-stage ETKDGv3 process:
+//! The pipeline takes a [`PyAtomistic`] molecular graph (ports and dummy
+//! atoms included) and embeds it in 3D with ETKDGv3 — RDKit's `EmbedMolecule`,
+//! and like it no force field:
 //!
 //! 1. **Preprocess** -- add hydrogens and perceive molecular features.
-//! 2. **Build initial** -- ETKDGv3 distance-geometry embedding.
-//! 3. **Coarse optimize** -- distance, chirality, and torsion refinement.
-//! 4. **Final optimize** -- MMFF94 cleanup.
-//! 5. **Stereo check** -- verify stereochemistry is preserved.
+//! 2. **Build initial** -- distance-geometry embedding (or random coordinates).
+//! 3. **Coarse optimize** -- distance and chirality minimization, then the
+//!    experimental-torsion / basic-knowledge refinement.
+//! 4. **Stereo check** -- verify stereochemistry is preserved.
+//!
+//! An MMFF94 relaxation is a separate step the caller composes
+//! (`ff.typifier.Mmff94Typifier` → `ff.PotentialCompiler` → `optimize.Lbfgs`).
 //!
 //! # References
 //!
@@ -20,7 +24,7 @@
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 
-use molrs::conformer::{Conformer, ConformerOptions, ConformerReport, StageKind};
+use molrs::conformer::{Conformer, ConformerReport, StageKind};
 
 use crate::core::molgraph::PyAtomistic;
 use crate::error::molrs_error_to_pyerr;
@@ -31,7 +35,6 @@ fn stage_kind_name(kind: StageKind) -> &'static str {
         StageKind::Preprocess => "preprocess",
         StageKind::BuildInitial => "build_initial",
         StageKind::CoarseOptimize => "coarse_optimize",
-        StageKind::FinalOptimize => "final_optimize",
         StageKind::StereoCheck => "stereo_check",
     }
 }
@@ -53,7 +56,6 @@ fn report_to_py(report: ConformerReport) -> PyConformerReport {
         })
         .collect();
     PyConformerReport {
-        final_energy: report.final_energy,
         warnings: report.warnings,
         stages_inner: stages,
     }
@@ -66,7 +68,7 @@ fn report_to_py(report: ConformerReport) -> PyConformerReport {
 /// Attributes
 /// ----------
 /// stage : str
-///     Stage name (e.g. ``"build_initial"``, ``"final_optimize"``).
+///     Stage name (e.g. ``"build_initial"``, ``"coarse_optimize"``).
 /// energy_before : float | None
 ///     Energy in kcal/mol before this stage, or ``None`` if not applicable.
 /// energy_after : float | None
@@ -105,10 +107,6 @@ impl PyConformerStageReport {
 ///
 /// Attributes
 /// ----------
-/// final_energy : float | None
-///     The MMFF94 energy in kcal/mol after the cleanup minimization, or
-///     ``None`` when MMFF94 does not cover the molecule and the cleanup was
-///     skipped (a warning says why).
 /// warnings : list[str]
 ///     Diagnostic warnings generated during the run.
 /// stages : list[ConformerStageReport]
@@ -116,15 +114,11 @@ impl PyConformerStageReport {
 ///
 /// Examples
 /// --------
-/// >>> mol_3d, report = Conformer().generate(mol)
-/// >>> report.final_energy
-/// -12.34
+/// >>> mol_3d, report = Conformer(seed=42).generate(mol)
 /// >>> for s in report.stages:
 /// ...     print(s.stage, s.converged)
 #[pyclass(module = "molpy.conformer", name = "ConformerReport")]
 pub struct PyConformerReport {
-    #[pyo3(get)]
-    pub final_energy: Option<f64>,
     #[pyo3(get)]
     pub warnings: Vec<String>,
     pub(crate) stages_inner: Vec<PyConformerStageReport>,
@@ -153,34 +147,42 @@ impl PyConformerReport {
 
     fn __repr__(&self) -> String {
         format!(
-            "ConformerReport(final_energy={:?}, stages={}, warnings={})",
-            self.final_energy,
+            "ConformerReport(stages={}, warnings={})",
             self.stages_inner.len(),
             self.warnings.len()
         )
     }
 }
 
-/// 3D conformer generator for molecular graphs.
+/// ETKDGv3 3D embedding of a molecular graph — RDKit's ``EmbedMolecule``.
 ///
-/// Exposed to Python as `molpy.conformer.Conformer`. Construct it with the desired
-/// generation parameters, then call :meth:`generate` to produce coordinates.
-/// The class is subclassable so downstream wrappers (e.g. ``molpy.conformer``)
-/// can inherit it and refine the marshalling.
-///
-/// The pipeline is fixed: ETKDG embedding, then an MMFF94 cleanup
-/// minimization.
+/// Exposed to Python as `molpy.conformer.Conformer`. Construct it with the
+/// embedding parameters (RDKit ``EmbedParameters`` names), then call
+/// :meth:`generate`. It runs no force field: relax the result with MMFF94 as a
+/// separate step when that is wanted.
 ///
 /// Parameters
 /// ----------
 /// add_hydrogens : bool, optional
-///     If ``True`` (default), add implicit hydrogens before generation.
+///     Add implicit hydrogens as explicit atoms first (default ``True``).
+/// max_iterations : int, optional
+///     Embedding attempts before giving up; ``0`` (default) is RDKit's
+///     ``10 × n_atoms``.
 /// seed : int | None, optional
-///     Random seed for reproducibility. ``None`` uses an arbitrary seed.
+///     Random seed; with one the result is reproducible. ``None`` draws one.
+/// use_random_coords : bool, optional
+///     Start from random coordinates instead of the eigenvector embedding of a
+///     random distance matrix (default ``False``).
+/// use_exp_torsion_angle_prefs : bool, optional
+///     The ETKDG experimental-torsion terms, "ET" (default ``True``).
+/// use_basic_knowledge : bool, optional
+///     Flat aromatic rings and planar sp2 centres, "K" (default ``True``).
+///     With both torsion switches off the embedding is plain distance
+///     geometry.
 ///
 /// Examples
 /// --------
-/// >>> gen = Conformer(add_hydrogens=True, seed=42)
+/// >>> gen = Conformer(seed=42)
 /// >>> mol_3d, report = gen.generate(mol)
 #[pyclass(
     module = "molpy.conformer",
@@ -195,31 +197,39 @@ pub struct PyConformer {
 
 #[pymethods]
 impl PyConformer {
-    /// Create a conformer generator.
-    ///
-    /// Parameters
-    /// ----------
-    /// add_hydrogens : bool
-    ///     Add implicit hydrogens before generation. Default ``True``.
-    /// seed : int | None
-    ///     RNG seed for reproducibility.
+    /// Create an embedder; the parameters are the class's.
     #[new]
-    #[pyo3(signature = (add_hydrogens=true, seed=None))]
-    fn new(add_hydrogens: bool, seed: Option<u64>) -> Self {
-        let opts = ConformerOptions {
-            add_hydrogens,
-            rng_seed: seed,
-            ..ConformerOptions::default()
-        };
+    #[pyo3(signature = (
+        add_hydrogens=true,
+        max_iterations=0,
+        seed=None,
+        use_random_coords=false,
+        use_exp_torsion_angle_prefs=true,
+        use_basic_knowledge=true,
+    ))]
+    fn new(
+        add_hydrogens: bool,
+        max_iterations: usize,
+        seed: Option<u64>,
+        use_random_coords: bool,
+        use_exp_torsion_angle_prefs: bool,
+        use_basic_knowledge: bool,
+    ) -> Self {
         Self {
-            inner: Conformer::new(opts),
+            inner: Conformer::new(
+                add_hydrogens,
+                max_iterations,
+                seed,
+                use_random_coords,
+                use_exp_torsion_angle_prefs,
+                use_basic_knowledge,
+            ),
         }
     }
 
     /// Generate 3D coordinates for a molecular graph.
     ///
-    /// Runs the full distance-geometry + optimization pipeline. The input
-    /// molecule is not modified; the result is an :class:`~molpy.core.Atomistic`
+    /// Runs the ETKDGv3 embedding. The input molecule is not modified; the result is an :class:`~molpy.core.Atomistic`
     /// that keeps the input's ports and its ``frag_id`` labels.
     ///
     /// Parameters
@@ -279,11 +289,7 @@ impl PyConformer {
     }
 
     fn __repr__(&self) -> String {
-        let opts = self.inner.options();
-        format!(
-            "Conformer(add_hydrogens={}, seed={:?})",
-            opts.add_hydrogens, opts.rng_seed
-        )
+        format!("{:?}", self.inner)
     }
 }
 

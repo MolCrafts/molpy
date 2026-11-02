@@ -32,3 +32,23 @@ pub(crate) fn insert_column_of_length<T: BlockDtype>(
     let column = ArrayD::from_shape_vec(IxDyn(&[n_rows]), values).map_err(invalid_data)?;
     block.insert(key, column, None).map_err(invalid_data)
 }
+
+/// Insert `values` as column `key`, with `valid` marking the rows that hold
+/// a value. A false entry is null: the stored filler is not a second name
+/// for some other column.
+pub(crate) fn insert_column_masked<T: BlockDtype>(
+    block: &mut Block,
+    key: &str,
+    values: Vec<T>,
+    valid: Vec<bool>,
+) -> std::io::Result<()> {
+    let n = values.len();
+    if valid.len() != n {
+        return Err(invalid_data(format!(
+            "column '{key}' validity has {} entries for {n} rows",
+            valid.len()
+        )));
+    }
+    let column = ArrayD::from_shape_vec(IxDyn(&[n]), values).map_err(invalid_data)?;
+    block.insert(key, column, Some(valid)).map_err(invalid_data)
+}

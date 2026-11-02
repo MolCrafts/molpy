@@ -258,6 +258,8 @@ class TestCanonicalNativeColumns:
         atoms = mp.io.read_lammps_molecule(path)["atoms"]
         np.testing.assert_allclose(atoms["charge"], [0.1, -0.1])
         assert "q" not in atoms
+        assert "type" not in atoms
+        assert list(atoms["type_id"]) == [1, 1]
 
     def test_mol2_columns_are_canonical_and_round_trip(self, tmp_path):
         path = tmp_path / "x.mol2"
@@ -286,10 +288,14 @@ class TestCanonicalNativeColumns:
             encoding="utf-8",
         )
         frame = mp.io.read_mol2(path)
-        del frame["bonds"]["type"]
-        back = mp.io.read_mol2(mp.io.Text(capture(mp.io.write_mol2, frame)))
-        assert list(back["bonds"]["type"]) == ["ar", "2"]
+        assert "type" not in frame["bonds"]
+        text = capture(mp.io.write_mol2, frame)
+        assert any(line.endswith(" ar") for line in text.splitlines())
+        assert any(line.endswith(" 2") for line in text.splitlines())
+        back = mp.io.read_mol2(mp.io.Text(text))
+        assert "type" not in back["bonds"]
         assert list(back["bonds"]["bond_type"]) == [4, 2]
+        assert list(back["bonds"]["bond_number"]) == [0, 2]
 
     def test_extxyz_species_is_element_and_wide_properties_stay_whole(self, tmp_path):
         path = tmp_path / "f.xyz"
@@ -300,8 +306,9 @@ class TestCanonicalNativeColumns:
         )
         atoms = mp.io.read_xyz(path)["atoms"]
         assert list(atoms["element"]) == ["O", "H"]
-        assert atoms["forces"].shape == (2, 3)
-        assert "forces_1" not in atoms
+        assert "forces" not in atoms
+        assert atoms["fx"].shape == (2,)
+        assert atoms["fz"][1] == pytest.approx(-0.3)
 
 
 class TestLammpsDataLabels:

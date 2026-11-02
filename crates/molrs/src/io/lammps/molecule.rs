@@ -19,6 +19,22 @@ use molrs::op::{F, I, Idx};
 /// vocabulary, not the frame's: the frame meta key is [`keys::UNITS`].
 const JSON_UNITS: &str = "units";
 
+/// One type column from the file's tokens.
+///
+/// Every token an integer id (≥ 1) is the ordinal [`keys::TYPE_ID`]. Anything
+/// else is the label [`keys::TYPE`]. A section never carries both: the decimal
+/// spelling of an id is not a second name for that id.
+fn insert_type_tokens(block: &mut Block, tokens: Vec<String>) -> Result<()> {
+    let ids: Option<Vec<Idx>> = tokens
+        .iter()
+        .map(|token| token.parse::<Idx>().ok().filter(|&id| id >= 1))
+        .collect();
+    match ids {
+        Some(ids) => insert_column(block, keys::TYPE_ID, ids),
+        None => insert_column(block, keys::TYPE, tokens),
+    }
+}
+
 // ── public path API ─────────────────────────────────────────────────────────
 
 /// Read a LAMMPS molecule template file (the native text format).
@@ -28,10 +44,11 @@ const JSON_UNITS: &str = "units";
 /// ([`read_lammps_molecule_json`]) follows the LAMMPS molecule JSON schema
 /// (`format: "molecule"`). Both read into the same canonical columns:
 ///
-/// - `"atoms"`: `id`, `type` (string), optional `x`/`y`/`z`, `charge`, `mass`,
-///   `mol_id`, `diameter`
-/// - `"bonds"` / `"angles"` / `"dihedrals"` / `"impropers"`: `id`, `type`,
-///   `atomi`… (0-based indices into atoms)
+/// - `"atoms"`: `id`, `type_id` when every Types token is an integer id and
+///   `type` when any token is a label, optional `x`/`y`/`z`, `charge`,
+///   `mass`, `mol_id`, `diameter`
+/// - `"bonds"` / `"angles"` / `"dihedrals"` / `"impropers"`: `id`, the same
+///   `type_id` or `type`, `atomi`… (0-based indices into atoms)
 /// - meta: `format=lammps_molecule`, `source_format`, counts, optional
 ///   `title` / `units` / `center_of_mass` / `total_mass` / `inertia`
 ///
@@ -300,7 +317,7 @@ fn parse_native_atoms(
     let n = ids.len();
     let mut block = Block::new();
     insert_column(&mut block, "id", ids)?;
-    insert_column(&mut block, "type", types)?;
+    insert_type_tokens(&mut block, types)?;
 
     if let Some(lines) = sections.get("Coords") {
         let mut x = vec![0.0_f64; n];
@@ -414,7 +431,7 @@ fn parse_native_connectivity(
     }
     let mut block = Block::new();
     insert_column(&mut block, "id", ids)?;
-    insert_column(&mut block, "type", types)?;
+    insert_type_tokens(&mut block, types)?;
     let keys = ["atomi", "atomj", "atomk", "atoml"];
     for (k, col) in members.into_iter().enumerate() {
         insert_column(&mut block, keys[k], col)?;
@@ -791,7 +808,7 @@ fn read_json(src: Source<'_>) -> Result<Frame> {
     let n = ids.len();
     let mut atoms = Block::new();
     insert_column(&mut atoms, "id", ids.clone())?;
-    insert_column(&mut atoms, "type", types)?;
+    insert_type_tokens(&mut atoms, types)?;
 
     if let Some(coords) = data.pointer("/coords/data").and_then(|v| v.as_array()) {
         let mut x = vec![0.0; n];
@@ -879,7 +896,7 @@ fn read_json(src: Source<'_>) -> Result<Frame> {
             }
             let mut block = Block::new();
             insert_column(&mut block, "id", cids)?;
-            insert_column(&mut block, "type", ctypes)?;
+            insert_type_tokens(&mut block, ctypes)?;
             let keys = ["atomi", "atomj", "atomk", "atoml"];
             for (k, col) in members.into_iter().enumerate() {
                 insert_column(&mut block, keys[k], col)?;
