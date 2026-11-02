@@ -167,7 +167,11 @@ class TestConvert:
         assert destination.read_bytes()[:2] == b"\x1f\x8b"
         back = tmp_path / "back.xyz"
         convert(destination, back)
-        xs = [float(value) for frame in mp.io.xyz.XyzReader(back) for value in frame["atoms"]["x"]]
+        xs = [
+            float(value)
+            for frame in mp.io.xyz.XyzReader(back)
+            for value in frame["atoms"]["x"]
+        ]
         np.testing.assert_allclose(xs, [1.0, 1.96, 3.0, 3.96])
 
     def test_a_mixed_case_archive_is_the_requested_path(self, tmp_path: Path) -> None:

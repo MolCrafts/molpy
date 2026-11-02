@@ -39,7 +39,10 @@ def test_assign_small_rings_writes_the_size_on_atoms_and_bonds_within_the_bound(
     """Methylcyclopropane: the ring atoms and bonds read 3, the methyl 0."""
     mol = mp.core.Atomistic()
     atoms = [mol.add_atom(atomic_number=6, h_count=0) for _ in range(4)]
-    ring = [mol.add_bond(atoms[i], atoms[j], bond_number=1) for i, j in ((0, 1), (1, 2), (2, 0))]
+    ring = [
+        mol.add_bond(atoms[i], atoms[j], bond_number=1)
+        for i, j in ((0, 1), (1, 2), (2, 0))
+    ]
     methyl = mol.add_bond(atoms[0], atoms[3], bond_number=1)
     mp.perceive.assign_small_rings(mol, 8)
     assert [atom["small_ring_size"] for atom in atoms] == [3, 3, 3, 0]
