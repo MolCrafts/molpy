@@ -310,7 +310,7 @@ class Prmtop:
             atoms = tuple(row[atom.handle] for atom in relation.endpoints)
             key = min(atoms, atoms[::-1]) if reversible else atoms
             queue = pending.get(key)
-            if not queue:
+            if queue is None or not queue:
                 raise ValueError(f"{label} {key} is not in the prmtop")
             name, flag = queue.popleft()
             annotation = types.get(name)
