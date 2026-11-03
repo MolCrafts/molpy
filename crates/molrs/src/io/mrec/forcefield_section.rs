@@ -577,6 +577,43 @@ fn check_style_table(
     if style.category == "pair" && present == ENDPOINT_COLUMNS[..2] {
         check_pair_restatements(table).map_err(fail)?;
     }
+    if style.category == "pair"
+        && let Some(values) = table.get(PAIR_CUTOFF)
+    {
+        check_pair_cutoffs(table, values).map_err(fail)?;
+    }
+    Ok(())
+}
+
+/// A pair table's per-pair cutoff column (molrec `forcefield.md`, per-pair
+/// cutoffs): a non-null row's value overrides `params.cutoff` for that pair.
+const PAIR_CUTOFF: &str = "cutoff";
+
+/// The per-pair cutoff is `f64[T]`, and every non-null row is finite and
+/// positive.
+fn check_pair_cutoffs(table: &Block, values: &crate::core::Column) -> Result<(), String> {
+    let shape = values.shape();
+    let cutoffs = values
+        .get::<f64>()
+        .filter(|_| shape.len() == 1)
+        .ok_or_else(|| {
+            format!(
+                "the per-pair cutoff is f64[T], found {}{:?}",
+                values.dtype().name(),
+                &shape[1..]
+            )
+        })?;
+    let validity = table.validity(PAIR_CUTOFF);
+    for (row, &cut) in cutoffs.iter().enumerate() {
+        if validity.is_some_and(|mask| !mask[row]) {
+            continue;
+        }
+        if !(cut.is_finite() && cut > 0.0) {
+            return Err(format!(
+                "row {row} has cutoff {cut}; a pair cutoff is positive"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1234,6 +1271,22 @@ mod tests {
         assert!(with_pairs("pair", &rows).validate().is_err());
         let rows = [("A", "A", "A", 0.1), ("A-again", "A", "A", 0.2)];
         assert!(with_pairs("pair", &rows).validate().is_err(), "self pair");
+    }
+
+    #[test]
+    fn a_per_pair_cutoff_is_positive() {
+        let rows = [("A", "A", "A", 0.1), ("A-B", "A", "B", 0.9)];
+        let mut ff = with_pairs("pair", &rows);
+        pair_table(&mut ff, "pair")
+            .insert("cutoff", floats(&[2.5, 2.25]), None)
+            .unwrap();
+        ff.validate().unwrap();
+        let mut ff = with_pairs("pair", &rows);
+        pair_table(&mut ff, "pair")
+            .insert("cutoff", floats(&[2.5, 0.0]), None)
+            .unwrap();
+        let err = ff.validate().unwrap_err().to_string();
+        assert!(err.contains("row 1 has cutoff 0"), "{err}");
     }
 
     #[test]
