@@ -8,10 +8,11 @@
 use crate::array::{ArrayArg1, ArrayArg2, ArrayArg3};
 use molrs::compute::{
     Accumulate, Compute, Correlator, CorrelatorAccumulator, CorrelatorFrame, CorrelatorInput,
-    CurrentAcf, CurrentAcfInput, Derivative, DerivativeInput, DipoleAcf, DipoleAcfInput, LagKernel,
-    Msd, OneSidedSpectrum, OnsagerCorrelation, OnsagerInput, ReorientationAcf,
-    ReorientationAcfInput, RotationalAutocorrelation, RotationalAutocorrelationInput, Spectrum,
-    SpectrumInput, Stream, Survival, SurvivalInput, TimeCorrelation, Unwrap, UnwrapInput, Vacf,
+    CurrentAcf, CurrentAcfInput, Derivative, DerivativeInput, DipoleAcf, DipoleAcfInput,
+    EnergyDrift, EnergyDriftAccumulator, EnergyDriftResult, EnergyDriftSample, LagKernel, Msd,
+    OneSidedSpectrum, OnsagerCorrelation, OnsagerInput, ReorientationAcf, ReorientationAcfInput,
+    RotationalAutocorrelation, RotationalAutocorrelationInput, Spectrum, SpectrumInput, Stream,
+    Survival, SurvivalInput, TimeCorrelation, Unwrap, UnwrapInput, Vacf,
 };
 use numpy::{IntoPyArray, PyArray2, PyArray3};
 use pyo3::IntoPyObjectExt;
@@ -745,8 +746,83 @@ impl PySpectrum {
 
 described!(PySpectrum, Spectrum);
 
+py_result! {
+    /// The drift of a conserved energy (``molrs::compute::EnergyDriftResult``):
+    /// ``drift`` the least-squares slope per atom (energy per atom per time
+    /// unit), ``rms`` the fluctuation per atom about that line.
+    PyEnergyDriftResult(EnergyDriftResult) as "EnergyDriftResult" { drift, rms, n_samples, duration }
+}
+
+/// Energy drift per atom (``molrs::compute::EnergyDrift``): the
+/// least-squares slope of a conserved energy over time, divided by the atom
+/// count — the number an NVE gate bounds, rather than a drift relative to
+/// ``|E₀|``.
+///
+/// Parameters
+/// ----------
+/// n_atoms : int
+///
+/// A stream only: :meth:`accumulator` hands out an
+/// :class:`EnergyDriftAccumulator`; push ``(time, energy)`` once per sample
+/// and :meth:`EnergyDriftAccumulator.finish` reads the drift.
+#[pyclass(module = "molpy.compute", name = "EnergyDrift", frozen)]
+pub(crate) struct PyEnergyDrift {
+    inner: EnergyDrift,
+}
+
+#[pymethods]
+impl PyEnergyDrift {
+    #[new]
+    fn new(n_atoms: usize) -> Result<Self> {
+        Ok(Self {
+            inner: EnergyDrift::new(n_atoms)?,
+        })
+    }
+
+    /// A fresh accumulator configured like this ``EnergyDrift``
+    /// (``Stream::accumulator``).
+    fn accumulator(&self) -> PyEnergyDriftAccumulator {
+        PyEnergyDriftAccumulator {
+            inner: self.inner.accumulator(),
+        }
+    }
+}
+
+/// The running fit of an :class:`EnergyDrift`
+/// (``molrs::compute::EnergyDriftAccumulator``): ``O(1)`` memory.
+#[pyclass(module = "molpy.compute", name = "EnergyDriftAccumulator")]
+pub(crate) struct PyEnergyDriftAccumulator {
+    inner: EnergyDriftAccumulator,
+}
+
+#[pymethods]
+impl PyEnergyDriftAccumulator {
+    /// Fold one sample: the conserved ``energy`` (the total, not per atom)
+    /// at ``time``, which must come after the previous sample's.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A non-finite value, or a time not after the previous one.
+    #[pyo3(signature = (*, time, energy))]
+    fn push(&mut self, time: f64, energy: f64) -> Result<()> {
+        self.inner.push(EnergyDriftSample { time, energy })?;
+        Ok(())
+    }
+
+    /// The drift over every sample pushed so far (at least two).
+    fn finish(&self) -> Result<PyEnergyDriftResult> {
+        Ok(self.inner.finish()?.into())
+    }
+}
+
+described!(PyEnergyDrift, EnergyDrift);
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimeCorrelation>()?;
+    m.add_class::<PyEnergyDriftResult>()?;
+    m.add_class::<PyEnergyDrift>()?;
+    m.add_class::<PyEnergyDriftAccumulator>()?;
     m.add_class::<PyOneSidedSpectrum>()?;
     m.add_class::<PyCorrelator>()?;
     m.add_class::<PyMsd>()?;

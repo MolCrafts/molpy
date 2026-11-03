@@ -12,6 +12,7 @@ use super::component::Component;
 use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
+use molrs::core::UnitPreset;
 
 /// Where the list lives between builds: handed in, or wrapped for the cell
 /// of the last build.
@@ -22,8 +23,10 @@ enum Held {
 
 /// The neighbour component [`MD::set_neighbor`](crate::md::MD::set_neighbor)
 /// mounts. The list searches at its own cutoff; pairs within `cutoff − skin`
-/// reach the kernels, and the list is searched again once an atom has moved
-/// half the skin. Periodicity is the frame box's, not the list's.
+/// reach the kernels, and the list is searched again once the
+/// [`VerletCadence`](molrs::core::VerletCadence) bound — motion plus cell
+/// strain — passes the skin. Periodicity is the frame box's, read every step,
+/// so a cell that changes is followed.
 pub(crate) struct Neighbor {
     held: Option<Held>,
     policy: NeighborPolicy,
@@ -59,7 +62,7 @@ impl Component for Neighbor {
         vec![(Phase::Neighbor, -10)]
     }
 
-    fn build(&mut self, frame: &mut Frame) -> Result<(), MdError> {
+    fn build(&mut self, frame: &mut Frame, _units: &UnitPreset) -> Result<(), MdError> {
         let pos = read_pos(frame)?;
         let simbox = frame
             .simbox
@@ -95,8 +98,15 @@ impl Component for Neighbor {
                 "neighbor list was launched before build".into(),
             ));
         };
+        let simbox = frame
+            .simbox
+            .as_ref()
+            .ok_or_else(|| MdError::Invalid("the neighbor list needs a frame box".into()))?;
+        if !simbox.approx_eq(skin.simbox(), 0.0) {
+            skin.set_simbox(simbox.clone())?;
+        }
         let pos = read_pos(frame)?;
-        scratch.pairs = Some(skin.pairs_at(pos.view()).map_err(MdError::from)?.clone());
+        skin.pairs_into(pos.view(), scratch.publish_pairs())?;
         Ok(())
     }
 }

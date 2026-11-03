@@ -66,7 +66,7 @@ use molrs::op::{F, Idx};
 ///
 /// | Block        | Key(s)            | Content                        |
 /// |--------------|-------------------|--------------------------------|
-/// | `"atoms"`    | x, y, z, atomic_number, charge | Atom data (Å); species is the raw Z (no `element` column — call `Element::fill_symbols` for one) |
+/// | `"atoms"`    | x, y, z, atomic_number | Atom data (Å); species is the raw Z (no `element` column — call `Element::fill_symbols` for one). `charge` is added only where the file's nuclear-charge field differs from Z |
 /// | `"grid"`     | `"density"` or `"mo_<idx>"`             | Volumetric scalar fields, shape `[nx, ny, nz]` |
 /// | `simbox`     | (h-matrix, origin)                      | Voxel cell × dims, in Å |
 ///
@@ -347,13 +347,27 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
             None,
         )
         .map_err(MolRsError::Block)?;
-    atoms
-        .insert(
-            "charge",
-            Array1::from_vec(charges.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
-            None,
-        )
-        .map_err(MolRsError::Block)?;
+    // The second field is the nuclear charge. It duplicates `atomic_number`
+    // when it equals Z (half of the 1e-6 the writer prints, so a value that
+    // prints as integer Z collapses). Only a field that differs is the
+    // partial `charge`. A mixed file keeps one column and marks the
+    // nuclear-charge rows null, and the writer falls back to Z there.
+    let distinct: Vec<bool> = charges
+        .iter()
+        .zip(&atomic_numbers)
+        .map(|(&q, &z)| (q - f64::from(z)).abs() > 5e-7)
+        .collect();
+    if distinct.iter().any(|&kept| kept) {
+        let values: Vec<F> = charges.iter().map(|&v| v as F).collect();
+        let mask = if distinct.iter().all(|&kept| kept) {
+            None
+        } else {
+            Some(distinct)
+        };
+        atoms
+            .insert(keys::CHARGE, Array1::from_vec(values).into_dyn(), mask)
+            .map_err(MolRsError::Block)?;
+    }
 
     // -----------------------------------------------------------------------
     // Build SimBox: column i of h = i-th voxel-axis × dim, origin in Å.
@@ -491,11 +505,7 @@ impl<R: BufRead + Seek> TrajectoryReader for CubeReader<R> {
 fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsError> {
     // Every door writes through here, so every door checks here.
     crate::io::writer::check_write_frame(frame)?;
-    crate::io::null_cells::refuse_null_cells(
-        frame,
-        "atoms",
-        &["x", "y", "z", "atomic_number", "charge"],
-    )?;
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &["x", "y", "z", "atomic_number"])?;
     crate::io::null_cells::refuse_null_cells_in_block(frame, "grid")?;
     let grid_block = frame
         .get("grid")
@@ -629,7 +639,8 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
                 keys::ATOMIC_NUMBER
             ))
         })?;
-    let atom_charge = atoms.get("charge").and_then(|c| c.get::<f64>());
+    let atom_charge = atoms.get(keys::CHARGE).and_then(|c| c.get::<f64>());
+    let charge_live = atoms.validity(keys::CHARGE);
 
     for i in 0..n_atoms {
         let z_num = atom_z_num[[i]];
@@ -638,9 +649,12 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
                 "cube writer: atoms row {i}: {z_num} is not an atomic number (0..=118)"
             )));
         }
-        // The cube "charge" field is the nuclear charge; without a charge
-        // column the format's own convention (charge = Z) applies.
-        let charge = atom_charge.map(|a| a[[i]]).unwrap_or(z_num as F);
+        // The cube field is the nuclear charge. An absent column, or a null
+        // cell in a mixed column, is that convention: charge = Z.
+        let charge = match atom_charge {
+            Some(values) if charge_live.is_none_or(|mask| mask[i]) => values[[i]],
+            _ => z_num as F,
+        };
         let x = atom_x[[i]] * unit_scale as F;
         let y = atom_y[[i]] * unit_scale as F;
         let z = atom_z[[i]] * unit_scale as F;
@@ -818,5 +832,74 @@ mod tests {
         missing.meta.insert("cube_mo_indices", "1");
         let err = super::write_cube(&mut Vec::new(), &missing).unwrap_err();
         assert!(err.to_string().contains("mo_1"), "{err}");
+    }
+
+    fn atom_tokens(text: &str, row: usize) -> Vec<&str> {
+        text.lines()
+            .nth(6 + row)
+            .unwrap()
+            .split_whitespace()
+            .collect()
+    }
+
+    /// A nuclear charge equal to Z is `atomic_number` alone. A field that
+    /// differs stays `charge`, including a zero on the density fixture. A
+    /// mixed file marks the equal rows null so the writer still emits Z.
+    #[test]
+    fn nuclear_charge_equal_to_z_is_not_a_second_name() {
+        let equal = "title\ncomment\n\
+            1    0.000000    0.000000    0.000000\n\
+            1    1.000000    0.000000    0.000000\n\
+            1    0.000000    1.000000    0.000000\n\
+            1    0.000000    0.000000    1.000000\n\
+            6    6.0    0.0    0.0    0.0\n\
+            0.0\n";
+        let frame = super::read_cube(equal.as_bytes()).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert_eq!(
+            atoms
+                .get("atomic_number")
+                .and_then(|c| c.get::<u64>())
+                .unwrap()[[0]],
+            6
+        );
+        assert!(!atoms.contains_key("charge"));
+        let mut buffer = Vec::new();
+        super::write_cube(&mut buffer, &frame).unwrap();
+        let text = String::from_utf8(buffer).unwrap();
+        assert_eq!(
+            atom_tokens(&text, 0),
+            ["6", "6.000000", "0.000000", "0.000000", "0.000000"]
+        );
+        let back = super::read_cube(text.as_bytes()).unwrap();
+        assert!(!back.get("atoms").unwrap().contains_key("charge"));
+
+        let density = super::read_cube(DENSITY.as_bytes()).unwrap();
+        let charge = density
+            .get("atoms")
+            .unwrap()
+            .get("charge")
+            .and_then(|c| c.get::<f64>())
+            .unwrap();
+        assert!(charge[[0]].abs() < 1e-12);
+        assert!(density.get("atoms").unwrap().validity("charge").is_none());
+
+        let mixed = "title\ncomment\n\
+            2    0.000000    0.000000    0.000000\n\
+            1    1.000000    0.000000    0.000000\n\
+            1    0.000000    1.000000    0.000000\n\
+            1    0.000000    0.000000    1.000000\n\
+            6    6.0    0.0    0.0    0.0\n\
+            1    0.0    1.0    0.0    0.0\n\
+            0.0\n";
+        let frame = super::read_cube(mixed.as_bytes()).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert_eq!(atoms.validity("charge"), Some(&[false, true][..]));
+        assert!(atoms.get("charge").and_then(|c| c.get::<f64>()).unwrap()[[1]].abs() < 1e-12);
+        let mut buffer = Vec::new();
+        super::write_cube(&mut buffer, &frame).unwrap();
+        let text = String::from_utf8(buffer).unwrap();
+        assert_eq!(atom_tokens(&text, 0)[1], "6.000000");
+        assert_eq!(atom_tokens(&text, 1)[1], "0.000000");
     }
 }

@@ -1,7 +1,8 @@
 """``mp.io.read_xyz`` and ``mp.io.write_xyz``.
 
-molrs's reader, by identity: an n-wide extended-XYZ property is one ``(N, n)``
-column and ``species`` is ``element``. Fixtures live in ``tests-data/xyz``.
+molrs's reader, by identity: ``species`` is ``element``, a real force or
+velocity vector is ``fx, fy, fz`` or ``vx, vy, vz``, and every other n-wide
+property is one ``(N, n)`` column. Fixtures live in ``tests-data/xyz``.
 """
 
 from pathlib import Path
@@ -68,11 +69,11 @@ class TestReadXyz:
         assert "CS_1" not in atoms
         assert "CS_2" not in atoms
 
-    def test_three_wide_property_is_rejoined_whole(self, xyz_dir):
+    def test_velocities_are_component_columns(self, xyz_dir):
         atoms = mp.io.read_xyz(xyz_dir / "velocities.xyz")["atoms"]
-        assert atoms["velo"].shape == (3, 3)
-        np.testing.assert_allclose(atoms["velo"], np.eye(3))
-        assert not any(key.startswith("velo_") for key in atoms.keys())
+        stacked = np.column_stack([atoms["vx"], atoms["vy"], atoms["vz"]])
+        np.testing.assert_allclose(stacked, np.eye(3))
+        assert "velo" not in atoms
 
     def test_comment_line_scalars_keep_their_types(self, xyz_dir):
         meta = mp.io.read_xyz(xyz_dir / "lattice.xyz").meta

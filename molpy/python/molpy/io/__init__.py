@@ -22,12 +22,17 @@ Every format has one door per direction:
   :mod:`~molpy.io.trr`, :mod:`~molpy.io.xtc`, and :mod:`~molpy.io.cube`
   (reader only, cubes back to back).
 
-No door picks a format for the caller: every door names its format. A
+No named door picks a format for the caller: every door names its format. A
 format's extra inputs are parameters of its one door
 (``read_lammps_data(source, atom_style=None)``,
 ``read_inpcrd(source, frame=None)``, ``write_lammps_dump(sink, frame,
 columns=None)``, ``read_lammps_log(source, style="default")``, the CSV
 delimiter and header, …).
+
+:func:`convert` is the door that does pick. It copies frames from one file
+to another, using ``in_format`` / ``out_format`` when they are passed and the
+suffix table in :mod:`molpy.io.formats` otherwise. :func:`register` adds a row
+to that table.
 
 Every structure reader emits the project-wide canonical column names
 (:mod:`molpy.core.keys`: ``element``, ``res_id``, ``charge``, ``mol_id``,
@@ -225,3 +230,7 @@ if sys.platform != "emscripten":
     from molpy.io import mrec
 
     __all__ += ["mrec", "write_mrec"]
+
+from molpy.io.formats import Format, convert, register
+
+__all__ += ["Format", "convert", "register"]

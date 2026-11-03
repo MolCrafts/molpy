@@ -134,6 +134,7 @@ fn bound_specs() -> Vec<(&'static str, molrs::compute::ComputeSpec)> {
         ReorientationAcf,
         RotationalAutocorrelation,
         Survival,
+        EnergyDrift,
         Derivative,
         Unwrap,
         Spectrum,
@@ -515,6 +516,42 @@ fn vacf_folds_one_velocity_record_per_frame() {
         object(vec![("a", reals(&[1.0])), ("dt", JsValue::from(2.0))]),
     ]);
     assert!(message(vacf.compute(&ragged)).contains("dt"));
+}
+
+/// `EnergyDrift` folds one `{ time, energy }` record per sample: E = −100 +
+/// 0.002 t over four samples of four atoms drifts 5e-4 per atom per unit time.
+#[wasm_bindgen_test]
+fn energy_drift_folds_one_record_per_sample() {
+    let samples = list(
+        (0..4)
+            .map(|t| {
+                let time = f64::from(t);
+                object(vec![
+                    ("time", JsValue::from(time)),
+                    ("energy", JsValue::from(-100.0 + 0.002 * time)),
+                ])
+            })
+            .collect(),
+    );
+    let out = ok(ok(EnergyDrift::new(4)).compute(&samples));
+    assert!(
+        (out.inner.drift / 5e-4 - 1.0).abs() < 1e-10,
+        "{}",
+        out.inner.drift
+    );
+    assert_eq!(out.inner.n_samples, 4);
+    // Time that does not advance is the accumulator's refusal.
+    let stuck = list(vec![
+        object(vec![
+            ("time", JsValue::from(1.0)),
+            ("energy", JsValue::from(0.0)),
+        ]),
+        object(vec![
+            ("time", JsValue::from(1.0)),
+            ("energy", JsValue::from(0.0)),
+        ]),
+    ]);
+    assert!(message(ok(EnergyDrift::new(1)).compute(&stuck)).contains("time"));
 }
 
 #[wasm_bindgen_test]

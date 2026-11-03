@@ -7,7 +7,7 @@ tests pin what the binding itself owns:
   ``{spec.name for spec in ComputeSpec.all()}``;
 * **signature parity** — ``__init__`` takes exactly the spec's parameters and
   ``compute`` exactly the spec's input fields, every optional one ``None``; a
-  stream only (``Msd``, ``Vacf``, ``Rdf``) has no ``compute`` and its
+  stream only (``Msd``, ``Vacf``, ``Rdf``, ``EnergyDrift``) has no ``compute`` and its
   accumulator's ``push`` takes every spec input;
 * **defaults parity** — a class built from its required arguments alone holds
   the spec's defaults (``tunables()``), so no default is typed in a binding;
@@ -40,6 +40,7 @@ REQUIRED: dict[str, dict[str, object]] = {
     "ReorientationAcf": {"l": 2, "max_lag": 4},
     "RotationalAutocorrelation": {"l": 2, "max_lag": 4},
     "Survival": {"kind": "continuous", "max_lag": 4},
+    "EnergyDrift": {"n_atoms": 4},
     "Derivative": {"stencil": "central"},
     "Unwrap": {},
     "Spectrum": {"window": "hann", "pad": 2},
@@ -137,7 +138,7 @@ def _compute_classes() -> set[str]:
     }
 
 
-STREAMS = {"Msd", "Vacf", "Rdf"}
+STREAMS = {"Msd", "Vacf", "Rdf", "EnergyDrift"}
 
 
 def _is_stream(name: str) -> bool:

@@ -342,6 +342,60 @@ fn extxyz_property_name(column: &str) -> &str {
     }
 }
 
+/// A real 3-vector the schema stores as three columns. `force` / `forces`
+/// are `fx`, `fy`, `fz`; `vel` / `velo` / `velocity` / `velocities` are
+/// `vx`, `vy`, `vz`. `momenta` and every other wide property stay one column
+/// under the file's name.
+fn shared_real_vector(name: &str) -> Option<[&'static str; 3]> {
+    use molrs::core::schema::consts;
+    if name.eq_ignore_ascii_case("force") || name.eq_ignore_ascii_case("forces") {
+        Some([consts::FX, consts::FY, consts::FZ])
+    } else if name.eq_ignore_ascii_case("vel")
+        || name.eq_ignore_ascii_case("velo")
+        || name.eq_ignore_ascii_case("velocity")
+        || name.eq_ignore_ascii_case("velocities")
+    {
+        Some([consts::VX, consts::VY, consts::VZ])
+    } else {
+        None
+    }
+}
+
+/// `true` when some property, or a column already chosen, owns `axis`.
+fn axis_is_claimed(props: &[PropertySpec], taken: &[String], axis: &str) -> bool {
+    taken.iter().any(|name| name.eq_ignore_ascii_case(axis))
+        || props
+            .iter()
+            .any(|property| property.name.eq_ignore_ascii_case(axis))
+}
+
+/// Move `axes` into contiguous axis order at the position of whichever
+/// component appears first. A triple that is not complete is left alone:
+/// inserting the missing axis would write a value the frame does not have.
+fn cluster_axes<'a>(columns: &mut Vec<&'a str>, axes: [&'a str; 3]) {
+    if !axes.iter().all(|axis| columns.contains(axis)) {
+        return;
+    }
+    let Some(first) = columns.iter().position(|key| axes.contains(key)) else {
+        return;
+    };
+    columns.retain(|key| !axes.contains(key));
+    for (offset, axis) in axes.iter().enumerate() {
+        columns.insert(first + offset, *axis);
+    }
+}
+
+/// `true` when `columns` holds every axis as a real column and does not
+/// already hold a column under the wide name the writer would emit.
+fn grouped_real_axes(
+    columns: &[&str],
+    axes: [&str; 3],
+    wide_name: &str,
+    mut real: impl FnMut(&str) -> bool,
+) -> bool {
+    !columns.contains(&wide_name) && axes.iter().all(|axis| columns.contains(axis) && real(axis))
+}
+
 /// One frame column an extxyz `Properties` entry becomes: its name, the
 /// property type, and how many values per row it holds.
 struct XyzColumn {
@@ -355,6 +409,11 @@ struct XyzColumn {
 /// Canonical names cross the boundary here, in one place:
 ///
 /// - `pos:R:3` becomes the three columns `x`, `y`, `z`;
+/// - a real `forces` (or `force`) becomes `fx`, `fy`, `fz`, and a real
+///   `velo` (`vel`, `velocity`, `velocities`) becomes `vx`, `vy`, `vz`,
+///   unless one of those axes is already a property of its own — that wide
+///   property then keeps the file's name, and the first of two aliases wins
+///   the axes;
 /// - `species:S:1` becomes `element` (unless the file also declares an
 ///   `element` property, which then keeps its own name);
 /// - `type:I:1` becomes `type_id` (an ExtXYZ integer type is an ordinal);
@@ -365,6 +424,7 @@ fn property_columns(props: &[PropertySpec]) -> Vec<XyzColumn> {
     use molrs::core::schema::consts;
     let declares_element = props.iter().any(|p| p.name == consts::ELEMENT);
     let mut cols = Vec::new();
+    let mut taken: Vec<String> = Vec::new();
     for p in props {
         if p.m == 3 && p.ty == ExtxyzPropertyKind::Real && p.name.eq_ignore_ascii_case("pos") {
             for axis in [consts::X, consts::Y, consts::Z] {
@@ -373,6 +433,24 @@ fn property_columns(props: &[PropertySpec]) -> Vec<XyzColumn> {
                     ty: ExtxyzPropertyKind::Real,
                     width: 1,
                 });
+                taken.push(axis.to_string());
+            }
+            continue;
+        }
+        if p.m == 3
+            && p.ty == ExtxyzPropertyKind::Real
+            && let Some(axes) = shared_real_vector(&p.name)
+            && axes
+                .iter()
+                .all(|axis| !axis_is_claimed(props, &taken, axis))
+        {
+            for axis in axes {
+                cols.push(XyzColumn {
+                    name: axis.to_string(),
+                    ty: ExtxyzPropertyKind::Real,
+                    width: 1,
+                });
+                taken.push(axis.to_string());
             }
             continue;
         }
@@ -390,6 +468,7 @@ fn property_columns(props: &[PropertySpec]) -> Vec<XyzColumn> {
         } else {
             p.name.clone()
         };
+        taken.push(name.clone());
         cols.push(XyzColumn {
             name,
             ty: p.ty,
@@ -1944,6 +2023,22 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
         );
         columns.retain(|k| atoms.column_dtype(k).is_some() && atoms.column_shape(k).is_some());
 
+        // `fx,fy,fz` are one `forces:R:3` and `vx,vy,vz` one `velo:R:3`,
+        // clustered at the first component so the header and the row tokens
+        // name the same values. A partial triple stays separate columns.
+        let group_forces = grouped_real_axes(&columns, ["fx", "fy", "fz"], "forces", |key| {
+            atoms.column_dtype(key) == Some(DType::Float)
+        });
+        let group_velo = grouped_real_axes(&columns, ["vx", "vy", "vz"], "velo", |key| {
+            atoms.column_dtype(key) == Some(DType::Float)
+        });
+        if group_forces {
+            cluster_axes(&mut columns, ["fx", "fy", "fz"]);
+        }
+        if group_velo {
+            cluster_axes(&mut columns, ["vx", "vy", "vz"]);
+        }
+
         let dtype_to_char = |dt: DType| -> &'static str {
             match dt {
                 DType::Float | DType::C64 | DType::C128 => "R",
@@ -1961,7 +2056,9 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
         };
 
         // Build the Properties string from that list. The x/y/z triple is
-        // declared once as `pos:R:3`; every other column declares itself.
+        // declared once as `pos:R:3`, and a complete force or velocity
+        // triple once as `forces:R:3` / `velo:R:3`. Every other column
+        // declares itself. Row tokens still walk each component.
         let mut props_parts = vec!["species:S:1".to_string()];
         if has_xyz {
             props_parts.push("pos:R:3".to_string());
@@ -1970,18 +2067,25 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
             if is_pos(k) {
                 continue;
             }
+            if group_forces && matches!(*k, "fy" | "fz") {
+                continue;
+            }
+            if group_velo && matches!(*k, "vy" | "vz") {
+                continue;
+            }
             let (dt, shape) = (
                 atoms.column_dtype(k).expect("retained above"),
                 atoms.column_shape(k).expect("retained above"),
             );
-            let m: usize = shape.iter().skip(1).product();
-            let m = if m == 0 { 1 } else { m };
-            props_parts.push(format!(
-                "{}:{}:{}",
-                extxyz_property_name(k),
-                dtype_to_char(dt),
-                m
-            ));
+            let (prop_name, m) = if group_forces && *k == "fx" {
+                ("forces", 3usize)
+            } else if group_velo && *k == "vx" {
+                ("velo", 3usize)
+            } else {
+                let m: usize = shape.iter().skip(1).product();
+                (extxyz_property_name(k), if m == 0 { 1 } else { m })
+            };
+            props_parts.push(format!("{}:{}:{}", prop_name, dtype_to_char(dt), m));
         }
         let properties_str = props_parts.join(":");
 
@@ -2108,16 +2212,19 @@ mod canonical_column_tests {
     }
 
     #[test]
-    fn a_wide_property_is_one_column_of_that_width() {
+    fn forces_split_into_components_and_a_non_vector_stays_wide() {
         let frame = parse_frame_str(WIDE).unwrap();
         let atoms = frame.get("atoms").unwrap();
-        let forces = atoms.get("forces").and_then(|c| c.get::<f64>()).unwrap();
-        assert_eq!(forces.shape(), &[2, 3]);
-        assert_eq!(forces[[1, 2]], -0.3);
+        assert!(!atoms.contains_key("forces"));
+        assert!(!atoms.contains_key("forces_1"));
+        let fx = atoms.get("fx").and_then(|c| c.get::<f64>()).unwrap();
+        let fz = atoms.get("fz").and_then(|c| c.get::<f64>()).unwrap();
+        assert_eq!(fx.shape(), &[2]);
+        assert_eq!(fx[[0]], 0.1);
+        assert_eq!(fz[[1]], -0.3);
         let tags = atoms.get("tags").and_then(|c| c.get::<i32>()).unwrap();
         assert_eq!(tags.shape(), &[2, 2]);
         assert_eq!(tags[[1, 0]], 3);
-        assert!(!atoms.contains_key("forces_1"));
     }
 
     #[test]
@@ -2129,15 +2236,55 @@ mod canonical_column_tests {
         assert!(text.contains("forces:R:3"), "{text}");
         let back = parse_frame_str(&text).unwrap();
         let atoms = back.get("atoms").unwrap();
+        assert!(!atoms.contains_key("forces"));
         assert_eq!(
-            atoms
-                .get("forces")
-                .and_then(|c| c.get::<f64>())
-                .unwrap()
-                .shape(),
-            &[2, 3]
+            atoms.get("fz").and_then(|c| c.get::<f64>()).unwrap()[[1]],
+            -0.3
         );
         assert!(atoms.contains_key("element"));
+        assert_eq!(
+            atoms
+                .get("tags")
+                .and_then(|c| c.get::<i32>())
+                .unwrap()
+                .shape(),
+            &[2, 2]
+        );
+    }
+
+    #[test]
+    fn velocities_read_and_write_as_components() {
+        let text = "1\nProperties=species:S:1:pos:R:3:velo:R:3\nH 0 0 0 1 2 3\n";
+        let frame = parse_frame_str(text).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert!(!atoms.contains_key("velo"));
+        assert_eq!(
+            atoms.get("vx").and_then(|c| c.get::<f64>()).unwrap()[[0]],
+            1.0
+        );
+        assert_eq!(
+            atoms.get("vz").and_then(|c| c.get::<f64>()).unwrap()[[0]],
+            3.0
+        );
+        let mut out = Vec::new();
+        write_frame_to(&mut out, &frame).unwrap();
+        let written = String::from_utf8(out).unwrap();
+        assert!(written.contains("velo:R:3"), "{written}");
+        assert!(!written.contains("velocity"), "{written}");
+    }
+
+    #[test]
+    fn a_declared_component_keeps_the_wide_force_column() {
+        let text = "1\nProperties=species:S:1:pos:R:3:fx:R:1:forces:R:3\nH 0 0 0 9 1 2 3\n";
+        let frame = parse_frame_str(text).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert_eq!(
+            atoms.get("fx").and_then(|c| c.get::<f64>()).unwrap()[[0]],
+            9.0
+        );
+        let forces = atoms.get("forces").and_then(|c| c.get::<f64>()).unwrap();
+        assert_eq!(forces.shape(), &[1, 3]);
+        assert_eq!(forces[[0, 2]], 3.0);
     }
 
     #[test]

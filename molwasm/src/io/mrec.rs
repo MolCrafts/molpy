@@ -23,7 +23,7 @@ use crate::core::frame::Frame;
 use crate::core::simbox::Box as JsBox;
 use molrs::io::mrec::{MrecFile as RsMrecFile, MrecReader as RsMrecReader};
 use molrs::io::reader::TrajectoryReader;
-use std::io::Read;
+use std::io::{Read, Write as _};
 use std::sync::Arc;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -31,8 +31,8 @@ use zarrs::storage::byte_range::{ByteRange, ByteRangeIterator};
 use zarrs::storage::store::MemoryStore;
 use zarrs::storage::{
     Bytes, ListableStorageTraits, MaybeBytes, MaybeBytesIterator, ReadableListableStorage,
-    ReadableStorageTraits, StorageError, StoreKey, StoreKeys, StoreKeysPrefixes, StorePrefix,
-    WritableStorageTraits,
+    ReadableStorageTraits, ReadableWritableListableStorage, StorageError, StoreKey, StoreKeys,
+    StoreKeysPrefixes, StorePrefix, WritableStorageTraits,
 };
 
 fn js_string_err(e: impl std::fmt::Display) -> JsValue {
@@ -493,6 +493,51 @@ fn memory_storage_from_zip(bytes: &[u8]) -> Result<ReadableListableStorage, JsVa
         store.set(&skey, content.into()).map_err(js_string_err)?;
     }
     Ok(store as ReadableListableStorage)
+}
+
+/// Pack `store` as a stored-entry `*.mrec.zip`, the same archive
+/// `molrs::io::write_mrec` writes into a buffer.
+fn pack_memory_zip(store: &ReadableWritableListableStorage) -> Result<Vec<u8>, JsValue> {
+    let mut keys = store.list().map_err(js_string_err)?;
+    keys.sort();
+    let mut out = Vec::new();
+    {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut out));
+        for key in keys {
+            let Some(bytes) = store.get(&key).map_err(js_string_err)? else {
+                continue;
+            };
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .large_file(bytes.len() as u64 >= u64::from(u32::MAX));
+            writer
+                .start_file(key.as_str(), options)
+                .map_err(js_string_err)?;
+            writer.write_all(&bytes).map_err(js_string_err)?;
+        }
+        writer.finish().map_err(js_string_err)?;
+    }
+    Ok(out)
+}
+
+/// One frame as a packed `*.mrec.zip` whose only state section is `frame`.
+///
+/// The bytes are what `molpy.io.write_mrec(buffer, frame=…)` writes and what
+/// `new MrecFile(bytes).frame()` reads back. This is the stored form of a
+/// frame that crosses a file or a project document; the live socket stays
+/// `writeWireFrame`.
+///
+/// # Errors
+///
+/// Throws when the frame cannot be stored or the archive cannot be packed.
+#[wasm_bindgen(js_name = writeMrecFrame)]
+pub fn write_mrec_frame(frame: &crate::core::frame::Frame) -> Result<Vec<u8>, JsValue> {
+    let owned = frame.with_frame(|inner| Ok(inner.clone()))?;
+    let mut record = molrs::io::mrec::MolRec::new();
+    record.frame = Some(owned);
+    let store: ReadableWritableListableStorage = Arc::new(MemoryStore::new());
+    molrs::io::write_mrec_storage(store.clone(), &record).map_err(js_string_err)?;
+    pack_memory_zip(&store)
 }
 
 /// A record read one section at a time — the WASM face of

@@ -80,6 +80,7 @@ __all__ = [
     "SPACE_GROUP",
     "STEREO",
     "STYLE",
+    "SYMMETRY_CLASS",
     "SYMOPS",
     "TYPE",
     "TYPE_ID",
@@ -164,6 +165,7 @@ RES_ID: Key
 RES_NAME: Key
 SPACE_GROUP: Key
 STYLE: Key
+SYMMETRY_CLASS: Key
 SYMOPS: Key
 TYPE: Key
 TYPE_ID: Key

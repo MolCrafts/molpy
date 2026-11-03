@@ -19,28 +19,33 @@
 //!
 //! # The Python seam
 //!
-//! A Python object with ``evaluate(pos) -> (energy, forces)`` (a
-//! `molpy.ff.potential.Potential`) is a potential like any other:
-//! [`take_potential`] turns any exposed potential — `PairLjCut`, `Potentials`, or
-//! a duck-typed object wrapped as [`SubclassPotential`] — into one
+//! A Python object satisfying the `molpy.ff.potential.Potential` protocol
+//! (``units``, ``cutoff``, ``bind``, ``compute``) is a potential like any
+//! other: [`take_potential`] turns any exposed potential — `PairLjCut`,
+//! `Potentials`, or a Python object wrapped as a
+//! [`PythonMember`](super::python_potential::PythonMember) — into one
 //! [`ForceTerm`]; [`take_members`] does the same for a whole
 //! [`PyWeightedTerms`]. The `Potential` trait has no error channel, so a
 //! Python exception raised mid-evaluation is parked in an [`ErrSlot`] and
-//! re-raised by the caller that drove the evaluation ([`take_err`]). The MD
-//! integrators and `molpy.optimize.Lbfgs` consume potentials through here.
+//! re-raised by the caller that drove the evaluation ([`take_err`]). MD mounts
+//! a Python potential itself (``MD.set_evaluator``), as a bound potential that
+//! stops the run at a failing step.
 
 use super::ir;
 use crate::array::{ArrayArg1, ArrayArg2};
 use crate::core::frame::PyFrame;
 use crate::core::neighborlist::PyNeighbors;
+use molrs::core::Frame;
 use molrs::ff::potential::pair::{PairLjCut, PairPotential};
 use molrs::ff::potential::{Accumulator, ForceTerm, PairDriven, Potential, Potentials};
 use molrs::op::F;
 use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2};
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
+
+use super::python_potential::{PythonMember, SharedMember};
 
 /// Register `molpy.ff.potential`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -227,6 +232,8 @@ pub struct PyPotentials {
     /// Error slots of every Python-callable member (see `ErrSlot`);
     /// checked after each evaluation so a callable's exception re-raises.
     pub(crate) err_slots: Vec<ErrSlot>,
+    /// The Python potentials among the members, to bind to a caller's frame.
+    pub(crate) python: Vec<SharedMember>,
 }
 
 pub(crate) fn potentials_moved_err() -> PyErr {
@@ -242,6 +249,7 @@ impl PyPotentials {
         Self {
             inner: Some(potentials),
             err_slots: vec![crate::ff::style_registry::kernel_err_slot()],
+            python: Vec::new(),
         }
     }
 
@@ -261,8 +269,9 @@ impl PyPotentials {
         // nothing here: refuse it instead of returning its zero.
         p.require_pair_lists().map_err(ir::compile_err)?;
         let coords: Vec<f64> = if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
+            let frame = frame.clone_core_frame()?;
+            self.bind_python(&frame)?;
             frame
-                .clone_core_frame()?
                 .coords()
                 .map_err(|e| PyValueError::new_err(e.to_string()))?
                 .into_iter()
@@ -287,9 +296,30 @@ impl PyPotentials {
     /// Move the compiled Rust `Potentials` (and the error slots of its
     /// Python-callable members) out, leaving this object in the moved state —
     /// the MD integrators and `Potentials.push` consume through here.
-    pub(crate) fn take_compiled(&mut self) -> PyResult<(Potentials, Vec<ErrSlot>)> {
+    /// Whether a Python potential sits among the members.
+    pub(crate) fn holds_python_members(&self) -> bool {
+        !self.python.is_empty()
+    }
+
+    /// Bind every Python member to `frame`, so it reads that frame's species
+    /// and box rather than bare coordinates.
+    pub(crate) fn bind_python(&self, frame: &Frame) -> PyResult<()> {
+        for member in &self.python {
+            member
+                .lock()
+                .expect("python potential state poisoned")
+                .bind(frame)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn take_compiled(&mut self) -> PyResult<Taken> {
         let p = self.inner.take().ok_or_else(potentials_moved_err)?;
-        Ok((p, std::mem::take(&mut self.err_slots)))
+        Ok(Taken {
+            term: ForceTerm::pair(p),
+            err_slots: std::mem::take(&mut self.err_slots),
+            python: std::mem::take(&mut self.python),
+        })
     }
 }
 
@@ -301,6 +331,7 @@ impl PyPotentials {
         Self {
             inner: Some(Potentials::new()),
             err_slots: Vec::new(),
+            python: Vec::new(),
         }
     }
 
@@ -310,8 +341,8 @@ impl PyPotentials {
         self.inner.as_ref().map_or(0, Potentials::len)
     }
 
-    /// Move one more member into the collection: a ``PairLjCut`` nonbond term, a
-    /// callable ``Potential``, or another ``Potentials``.
+    /// Move one more member into the collection: a ``PairLjCut`` nonbond term,
+    /// a Python ``Potential``, or another ``Potentials``.
     ///
     /// A ``PairLjCut`` reads a neighbour table, so a collection holding one is
     /// priced by an MD evaluator (``set_evaluator``), never by
@@ -319,12 +350,13 @@ impl PyPotentials {
     fn push(&mut self, potential: &Bound<'_, PyAny>) -> PyResult<()> {
         // Gate first so a failed push does not consume the pushed potential.
         self.compiled()?;
-        let (member, mut slots) = take_potential(potential)?;
+        let mut taken = take_potential(potential)?;
         self.inner
             .as_mut()
             .ok_or_else(potentials_moved_err)?
-            .push(member);
-        self.err_slots.append(&mut slots);
+            .push(taken.term);
+        self.err_slots.append(&mut taken.err_slots);
+        self.python.append(&mut taken.python);
         Ok(())
     }
 
@@ -380,56 +412,6 @@ pub(crate) fn take_err(slots: &[ErrSlot]) -> PyResult<()> {
     Ok(())
 }
 
-/// A Python object with `evaluate(pos)` (a `molpy.ff.potential.Potential`)
-/// as the one `Potential` concept — the seam for NN / external forces. Holds a reference to the instance and
-/// dispatches to its ``evaluate`` under the GIL.
-pub struct SubclassPotential {
-    obj: Py<PyAny>,
-    error: ErrSlot,
-}
-
-impl SubclassPotential {
-    fn call(&self, py: Python<'_>, coords: &[F]) -> PyResult<(F, Vec<F>)> {
-        let n = coords.len() / 3;
-        let pos = Array2::from_shape_vec((n, 3), coords.to_vec())
-            .expect("flat coords have 3N elements")
-            .into_pyarray(py);
-        let result = self.obj.bind(py).call_method1("evaluate", (pos,))?;
-        let (energy, forces): (F, ArrayArg2<'_, f64>) = result.extract().map_err(|_| {
-            PyValueError::new_err(
-                "Potential.evaluate must return \
-                 (energy: float, forces: float64 (N, 3) ndarray)",
-            )
-        })?;
-        let forces = forces.as_array();
-        if forces.shape() != [n, 3] {
-            return Err(PyValueError::new_err(format!(
-                "Potential.evaluate returned forces shape {:?} for {n} atoms",
-                forces.shape()
-            )));
-        }
-        Ok((energy, forces.iter().copied().collect()))
-    }
-}
-
-impl Potential for SubclassPotential {
-    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
-        let (energy, forces) = Python::attach(|py| match self.call(py, coords) {
-            Ok(out) => out,
-            Err(err) => {
-                *self.error.lock().expect("error slot poisoned") = Some(err);
-                (F::NAN, vec![F::NAN; coords.len()])
-            }
-        });
-        acc.add_energy(energy);
-        // A duck-typed object tallies no virial: adding through this door
-        // marks a requested one lost.
-        for (out, f) in acc.forces_without_virial().iter_mut().zip(forces) {
-            *out += f;
-        }
-    }
-}
-
 /// The members a provider will evaluate, with the weights each one takes.
 ///
 /// A [`WeightedTerms`](PyWeightedTerms) already knows both —
@@ -454,38 +436,41 @@ pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<Err
         // A Python kernel among them parks its exception here.
         return Ok((members, vec![crate::ff::style_registry::kernel_err_slot()]));
     }
-    let (pot, slots) = take_potential(obj)?;
+    let taken = take_potential(obj)?;
     Ok((
-        vec![(pot, molrs::ff::potential::SpecialWeights::default())],
-        slots,
+        vec![(taken.term, molrs::ff::potential::SpecialWeights::default())],
+        taken.err_slots,
     ))
 }
 
-pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(ForceTerm, Vec<ErrSlot>)> {
+/// One exposed potential, moved out: its term, the error slots of its Python
+/// members, and those members.
+pub(crate) struct Taken {
+    pub(crate) term: ForceTerm,
+    pub(crate) err_slots: Vec<ErrSlot>,
+    pub(crate) python: Vec<SharedMember>,
+}
+
+pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<Taken> {
     // Each arm also settles which part the member plays. A pair kernel and an
-    // aggregate of them read a neighbour table; a duck-typed Python object has
-    // only `evaluate`, so it reads coordinates and nothing else —
-    // and, being unable to tally a virial over pairs, makes the step's virial
-    // `None` rather than a number that moves with the box origin.
+    // aggregate of them read a neighbour table; a Python potential reads
+    // coordinates and nothing else here — and, reporting no virial through
+    // this door, makes the step's virial `None` rather than a number that
+    // moves with the box origin.
     if let Ok(lj) = obj.cast::<PyPairLjCut>() {
-        return Ok((ForceTerm::pair(lj.borrow().inner.clone()), Vec::new()));
+        return Ok(Taken {
+            term: ForceTerm::pair(lj.borrow().inner.clone()),
+            err_slots: Vec::new(),
+            python: Vec::new(),
+        });
     }
     if let Ok(pots) = obj.cast::<PyPotentials>() {
-        let (inner, slots) = pots.borrow_mut().take_compiled()?;
-        return Ok((ForceTerm::pair(inner), slots));
+        return pots.borrow_mut().take_compiled();
     }
-    if obj.hasattr("evaluate")? && obj.getattr("evaluate")?.is_callable() {
-        let error: ErrSlot = Arc::default();
-        return Ok((
-            ForceTerm::plain(SubclassPotential {
-                obj: obj.clone().unbind(),
-                error: Arc::clone(&error),
-            }),
-            vec![error],
-        ));
-    }
-    Err(PyTypeError::new_err(
-        "expected a potential: PairLjCut, Potentials, or an object with a callable \
-         evaluate(pos) -> (energy, forces)",
-    ))
+    let (member, state, error) = PythonMember::new(obj)?;
+    Ok(Taken {
+        term: ForceTerm::plain(member),
+        err_slots: vec![error],
+        python: vec![state],
+    })
 }

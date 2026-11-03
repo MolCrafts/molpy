@@ -246,9 +246,7 @@ fn check_and_set_bounds(mmat: &mut BoundsMatrix, i: usize, j: usize, lb: f64, ub
 
 fn is_larger_sp2(p: &DgFeatures, i: usize) -> bool {
     let a = &p.atoms[i];
-    a.element.z() > 13
-        && a.hybridization == Hybridization::Sp2
-        && p.rings.is_atom_in_ring(p.atom_ids[i])
+    a.z > 13 && a.hybridization == Hybridization::Sp2 && p.rings.is_atom_in_ring(p.atom_ids[i])
 }
 
 /// The bond order RDKit's rest-length formula uses: 1.5 for an aromatic
@@ -259,54 +257,91 @@ fn effective_bond_order(order: f64, aromatic: bool) -> f64 {
     if aromatic { 1.5 } else { order }
 }
 
-/// The 1-2 bound: the UFF rest length when both atoms have a UFF type
-/// ([`uff_rest_length`]), else RDKit's untyped fallback `(vw1 + vw2) / 2`.
-fn bond_rest_length(a: &PerceivedAtom, b: &PerceivedAtom, order: f64) -> f64 {
-    let label = |x: &PerceivedAtom| {
-        atom_label(
-            x.element,
-            x.hybridization,
-            x.aromatic || x.conjugated,
-            x.total_valence,
-        )
-    };
-    (order > 0.0)
-        .then(|| uff_rest_length(&label(a), &label(b), order))
-        .flatten()
-        .unwrap_or_else(|| 0.5 * (rvdw(a.element.z()) + rvdw(b.element.z())))
-}
-
-/// Van der Waals radius (Å) as RDKit's `PeriodicTable::getRvdw` gives it.
+/// The 1-2 bound as RDKit's `set12Bounds` builds it: `(length, lower, upper)`.
 ///
-/// These differ from [`molrs::core::Element::vdw_radius`] (Bondi-style): RDKit ships
-/// its own table in `atomic_data`, and `setLowerBoundVDW` / `set15Bounds`
-/// depend on the exact values, so they are transcribed here.
-fn rvdw(z: u8) -> f64 {
-    match z {
-        1 => 1.2,
-        5 => 1.8,
-        6 => 1.7,
-        7 => 1.6,
-        8 => 1.55,
-        9 => 1.5,
-        14 => 2.1,
-        15 => 1.95,
-        16 => 1.8,
-        17 => 1.8,
-        35 => 1.9,
-        53 => 2.1,
-        // RDKit default for unlisted elements is 2.0.
-        _ => 2.0,
+/// Both atoms UFF-typed: the UFF rest length ± `DIST12_DELTA`
+/// ([`uff_rest_length`]). Otherwise RDKit's fallback pass: for a single,
+/// aromatic, double or triple bond Pauling's estimate from the covalent radii,
+/// `(rc_a + rc_b) · (1 − λ ln n)`, bounded at ×0.9 / ×1.1; for any other bond
+/// the mean van der Waals radius bounded at ×0.75 / ×1.5. A dummy atom (`Z = 0`,
+/// radii 0) has no UFF type and takes the fallback: C–`*` single is 0.76 Å.
+fn bond_rest_length(a: &PerceivedAtom, b: &PerceivedAtom, order: f64) -> (f64, f64, f64) {
+    let label = |x: &PerceivedAtom| {
+        Element::by_number(x.z).map(|element| {
+            atom_label(
+                element,
+                x.hybridization,
+                x.aromatic || x.conjugated,
+                x.total_valence,
+            )
+        })
+    };
+    let uff = (order > 0.0)
+        .then(|| match (label(a), label(b)) {
+            (Some(la), Some(lb)) => uff_rest_length(&la, &lb, order),
+            _ => None,
+        })
+        .flatten();
+    if let Some(bl) = uff {
+        return (bl, bl - DIST12_DELTA, bl + DIST12_DELTA);
+    }
+    if [1.0, 1.5, 2.0, 3.0].contains(&order) {
+        let bl = (rcovalent(a.z) + rcovalent(b.z)) * (1.0 - PAULING_LAMBDA * order.ln());
+        (bl, 0.9 * bl, 1.1 * bl)
+    } else {
+        let bl = 0.5 * (rvdw(a.z) + rvdw(b.z));
+        (bl, 0.75 * bl, 1.5 * bl)
     }
 }
+
+/// RDKit's `PeriodicTable::getRvdw`, indexed by atomic number (`0` is the
+/// dummy atom `*`). Transcribed from RDKit 2026.09 `atomic_data`: these differ
+/// from [`molrs::core::Element::vdw_radius`] (Bondi-style), and
+/// `setLowerBoundVDW` / `set15Bounds` depend on the exact values.
+const RDKIT_RVDW: [f64; 119] = [
+    0.0, 1.2, 1.4, 2.2, 1.9, 1.8, 1.7, 1.6, 1.55, 1.5, 1.54, 2.4, 2.2, 2.1, 2.1, 1.95, 1.8, 1.8,
+    1.88, 2.8, 2.4, 2.3, 2.15, 2.05, 2.05, 2.05, 2.05, 2.0, 2.0, 2.0, 2.1, 2.1, 2.1, 2.05, 1.9,
+    1.9, 2.02, 2.9, 2.55, 2.4, 2.3, 2.15, 2.1, 2.05, 2.05, 2.0, 2.05, 2.1, 2.2, 2.2, 2.25, 2.2,
+    2.1, 2.1, 2.16, 3.0, 2.7, 2.5, 2.48, 2.47, 2.45, 2.43, 2.42, 2.4, 2.38, 2.37, 2.35, 2.33, 2.32,
+    2.3, 2.28, 2.27, 2.25, 2.2, 2.1, 2.05, 2.0, 2.0, 2.05, 2.1, 2.05, 2.2, 2.3, 2.3, 2.0, 2.0, 2.0,
+    2.0, 2.0, 2.0, 2.4, 2.0, 2.3, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0,
+    2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0,
+];
+
+/// RDKit's `PeriodicTable::getRcovalent`, indexed by atomic number (`0` is the
+/// dummy atom `*`), transcribed from RDKit 2026.09 `atomic_data`. The 1-2
+/// fallback for a bond UFF cannot type builds its length from these.
+const RDKIT_RCOVALENT: [f64; 119] = [
+    0.0, 0.31, 0.28, 1.28, 0.96, 0.84, 0.76, 0.71, 0.66, 0.57, 0.58, 1.66, 1.41, 1.21, 1.11, 1.07,
+    1.05, 1.02, 1.06, 2.03, 1.76, 1.7, 1.6, 1.52, 1.39, 1.39, 1.32, 1.26, 1.24, 1.32, 1.22, 1.22,
+    1.2, 1.19, 1.2, 1.2, 1.16, 2.2, 1.95, 1.9, 1.75, 1.64, 1.54, 1.47, 1.46, 1.42, 1.39, 1.45,
+    1.44, 1.42, 1.39, 1.39, 1.38, 1.39, 1.4, 2.44, 2.15, 2.07, 2.04, 2.03, 2.01, 1.99, 1.98, 1.98,
+    1.96, 1.94, 1.92, 1.92, 1.89, 1.9, 1.87, 1.87, 1.75, 1.7, 1.62, 1.51, 1.44, 1.41, 1.36, 1.36,
+    1.32, 1.45, 1.46, 1.48, 1.4, 1.5, 1.5, 2.6, 2.2, 2.15, 2.06, 2.0, 1.96, 1.9, 1.87, 1.8, 1.69,
+    1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.36, 1.43,
+    1.62, 1.75, 1.65, 1.57,
+];
+
+/// Van der Waals radius (Å) as RDKit's `PeriodicTable::getRvdw` gives it.
+fn rvdw(z: u8) -> f64 {
+    RDKIT_RVDW[usize::from(z)]
+}
+
+/// Covalent radius (Å) as RDKit's `PeriodicTable::getRcovalent` gives it.
+fn rcovalent(z: u8) -> f64 {
+    RDKIT_RCOVALENT[usize::from(z)]
+}
+
+/// Pauling's bond-order correction (RDKit `paulingLambda`).
+const PAULING_LAMBDA: f64 = 0.1332;
 
 fn set_12_bounds(p: &DgFeatures, bi: &BondIndex, comp: &mut Computed, mmat: &mut BoundsMatrix) {
     for (bid, b) in bi.bonds.iter().enumerate() {
         let eff = effective_bond_order(b.order, b.aromatic);
-        let bl = bond_rest_length(&p.atoms[b.a], &p.atoms[b.b], eff);
+        let (bl, lower, upper) = bond_rest_length(&p.atoms[b.a], &p.atoms[b.b], eff);
         comp.bond_lengths[bid] = bl;
-        mmat.set_upper(b.a, b.b, bl + DIST12_DELTA);
-        mmat.set_lower(b.a, b.b, bl - DIST12_DELTA);
+        mmat.set_upper(b.a, b.b, upper);
+        mmat.set_lower(b.a, b.b, lower);
     }
 }
 
@@ -480,22 +515,19 @@ fn atom_in_ring_of_size(p: &DgFeatures, idx: usize, size: usize) -> bool {
 
 /// RDKit `_isCarbonyl`: a C with degree > 2 double-bonded to an O or N.
 fn is_carbonyl(p: &DgFeatures, at: usize) -> bool {
-    if p.atoms[at].element != Element::C || p.atoms[at].degree <= 2 {
+    if p.atoms[at].z != 6 || p.atoms[at].degree <= 2 {
         return false;
     }
     p.adj[at].iter().any(|&nb| {
         let o = p.bond_order(at, nb);
-        o >= 1.75 && matches!(p.atoms[nb].element, Element::O | Element::N)
+        o >= 1.75 && matches!(p.atoms[nb].z, 7 | 8)
     })
 }
 
 /// Implicit-H count proxy for an atom (degree minus heavy-neighbour count is
 /// not available; with explicit Hs we count bonded H atoms).
 fn n_hs(p: &DgFeatures, at: usize) -> usize {
-    p.adj[at]
-        .iter()
-        .filter(|&&nb| p.atoms[nb].element.z() == 1)
-        .count()
+    p.adj[at].iter().filter(|&&nb| p.atoms[nb].z == 1).count()
 }
 
 /// RDKit `_checkAmideEster14`: pattern 1-2-3=4 where 3 is a carbonyl C
@@ -510,9 +542,9 @@ fn check_amide_ester_14(
     atm3: usize,
     atm4: usize,
 ) -> bool {
-    let a2 = p.atoms[atm2].element.z();
-    let a3 = p.atoms[atm3].element.z();
-    let a4 = p.atoms[atm4].element.z();
+    let a2 = p.atoms[atm2].z;
+    let a3 = p.atoms[atm3].z;
+    let a4 = p.atoms[atm4].z;
     a3 == 6
         && bond3_order >= 1.75
         && (a4 == 8 || a4 == 7)
@@ -529,11 +561,11 @@ fn check_amide_ester_15(
     atm2: usize,
     atm3: usize,
 ) -> bool {
-    let a2 = p.atoms[atm2].element.z();
+    let a2 = p.atoms[atm2].z;
     let o_or_nh1 = a2 == 8 || (a2 == 7 && n_hs(p, atm2) == 1);
     o_or_nh1
         && (bond1_order - 1.0).abs() < 0.01
-        && p.atoms[atm3].element.z() == 6
+        && p.atoms[atm3].z == 6
         && (bond3_order - 1.0).abs() < 0.01
         && is_carbonyl(p, atm3)
 }
@@ -641,7 +673,7 @@ fn set_one_14(
                     du += GEN_DIST_TOL;
                 }
             }
-        } else if p.atoms[atm2].element == Element::S && p.atoms[atm3].element == Element::S {
+        } else if p.atoms[atm2].z == 16 && p.atoms[atm3].z == 16 {
             // *S-S* torsion ≈ 90°
             let d3d = compute14_dist_3d(bl1, bl2, bl3, ba12, ba23, std::f64::consts::FRAC_PI_2);
             dl = d3d - GEN_DIST_TOL;
@@ -658,12 +690,12 @@ fn set_one_14(
                 || check_amide_ester_15(p, ao3, ao1, atm3, atm2);
             if amide14 {
                 // forceTransAmides: secondary-amide H → trans, else cis.
-                let sec_amide_h = (p.atoms[aid1].element.z() == 1
-                    && p.atoms[atm2].element.z() == 7
+                let sec_amide_h = (p.atoms[aid1].z == 1
+                    && p.atoms[atm2].z == 7
                     && p.atoms[atm2].degree == 3
                     && n_hs(p, atm2) == 1)
-                    || (p.atoms[aid4].element.z() == 1
-                        && p.atoms[atm3].element.z() == 7
+                    || (p.atoms[aid4].z == 1
+                        && p.atoms[atm3].z == 7
                         && p.atoms[atm3].degree == 3
                         && n_hs(p, atm3) == 1);
                 if sec_amide_h {
@@ -682,12 +714,12 @@ fn set_one_14(
                 du += GEN_DIST_TOL;
             } else if amide15 {
                 // forceTransAmides: secondary-amide H → cis, else trans.
-                let sec_amide_h = (p.atoms[aid1].element.z() == 1
-                    && p.atoms[atm2].element.z() == 7
+                let sec_amide_h = (p.atoms[aid1].z == 1
+                    && p.atoms[atm2].z == 7
                     && p.atoms[atm2].degree == 3
                     && n_hs(p, atm2) == 1)
-                    || (p.atoms[aid4].element.z() == 1
-                        && p.atoms[atm3].element.z() == 7
+                    || (p.atoms[aid4].z == 1
+                        && p.atoms[atm3].z == 7
                         && p.atoms[atm3].degree == 3
                         && n_hs(p, atm3) == 1);
                 if sec_amide_h {
@@ -1040,8 +1072,8 @@ fn extend_14_path_to_15(
                     dl = c15_trans_cis(d4, d3, d2, d1, ang34, ang23, ang12) - DIST15_TOL;
                     du = c15_trans_trans(d4, d3, d2, d1, ang34, ang23, ang12) + DIST15_TOL;
                 } else {
-                    let vw1 = rvdw(p.atoms[aid1].element.z());
-                    let vw5 = rvdw(p.atoms[aid5].element.z());
+                    let vw1 = rvdw(p.atoms[aid1].z);
+                    let vw5 = rvdw(p.atoms[aid5].z);
                     dl = VDW_SCALE_15 * (vw1 + vw5);
                     du = -1.0;
                 }
@@ -1078,9 +1110,9 @@ fn set_15_bounds(
 fn set_lower_bound_vdw(p: &DgFeatures, mmat: &mut BoundsMatrix, topo: &[Vec<f64>]) {
     let n = p.atoms.len();
     for i in 1..n {
-        let vw1 = rvdw(p.atoms[i].element.z());
+        let vw1 = rvdw(p.atoms[i].z);
         for j in 0..i {
-            let vw2 = rvdw(p.atoms[j].element.z());
+            let vw2 = rvdw(p.atoms[j].z);
             if mmat.lower(i, j) < DIST12_DELTA {
                 let d = topo[i][j];
                 let lb = if d == 4.0 {
@@ -1123,11 +1155,10 @@ pub fn set_topol_bounds(p: &DgFeatures) -> BoundsMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::Element;
 
-    fn atom(element: Element, hybridization: Hybridization) -> PerceivedAtom {
+    fn atom(z: u8, hybridization: Hybridization) -> PerceivedAtom {
         PerceivedAtom {
-            element,
+            z,
             hybridization,
             aromatic: false,
             conjugated: false,
@@ -1142,24 +1173,45 @@ mod tests {
         assert_eq!(effective_bond_order(2.0, false), 2.0);
     }
 
-    /// A typed bond gets the UFF rest length; one with no usable order gets
-    /// RDKit's van der Waals guess.
+    /// A typed bond gets the UFF rest length ± `DIST12_DELTA`; one with no
+    /// usable order gets RDKit's van der Waals guess at ×0.75 / ×1.5.
     #[test]
     fn a_typed_bond_gets_the_uff_rest_length_and_an_unordered_one_the_vdw_guess() {
-        let c = atom(Element::C, Hybridization::Sp3);
-        let r_cc = bond_rest_length(&c, &c, 1.0);
+        let c = atom(6, Hybridization::Sp3);
+        let (r_cc, lower, upper) = bond_rest_length(&c, &c, 1.0);
         assert_eq!(Some(r_cc), uff_rest_length("C_3", "C_3", 1.0));
+        assert_eq!((lower, upper), (r_cc - DIST12_DELTA, r_cc + DIST12_DELTA));
         assert!(
-            bond_rest_length(&c, &c, 2.0) < r_cc,
+            bond_rest_length(&c, &c, 2.0).0 < r_cc,
             "a double bond is shorter"
         );
-        assert_eq!(bond_rest_length(&c, &c, 0.0), 0.5 * (rvdw(6) + rvdw(6)));
+        let vdw = 0.5 * (rvdw(6) + rvdw(6));
+        assert_eq!(bond_rest_length(&c, &c, 0.0), (vdw, 0.75 * vdw, 1.5 * vdw));
+    }
+
+    /// RDKit 2026.09 `GetMoleculeBoundsMatrix`: `[*]CC` puts C–`*` at
+    /// 0.684..0.836 Å and `[*]=CC` at 0.6208..0.7588 Å — the covalent-radius
+    /// fallback (`*` has radius 0) at ×0.9 / ×1.1.
+    #[test]
+    fn a_dummy_atom_bond_takes_the_covalent_radius_fallback() {
+        let dummy = atom(0, Hybridization::Other);
+        let (single, lower, upper) = bond_rest_length(&atom(6, Hybridization::Sp3), &dummy, 1.0);
+        assert!((single - 0.76).abs() < 1e-12);
+        assert!((lower - 0.684).abs() < 1e-12 && (upper - 0.836).abs() < 1e-12);
+        let (double, lower, upper) = bond_rest_length(&atom(6, Hybridization::Sp2), &dummy, 2.0);
+        assert!((double - 0.689_832).abs() < 1e-6);
+        assert!((lower - 0.6208).abs() < 1e-4 && (upper - 0.7588).abs() < 1e-4);
     }
 
     #[test]
-    fn rvdw_is_rdkits_table_with_a_two_angstrom_default() {
-        assert_eq!(rvdw(6), 1.7);
-        assert_eq!(rvdw(1), 1.2);
-        assert_eq!(rvdw(26), 2.0);
+    fn the_radius_tables_are_rdkits() {
+        assert_eq!(
+            (rvdw(0), rvdw(3), rvdw(11), rvdw(19), rvdw(20)),
+            (0.0, 2.2, 2.4, 2.8, 2.4)
+        );
+        assert_eq!(
+            (rcovalent(0), rcovalent(6), rcovalent(8)),
+            (0.0, 0.76, 0.66)
+        );
     }
 }

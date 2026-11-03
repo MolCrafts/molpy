@@ -517,6 +517,23 @@ impl PyUnitPreset {
     }
 }
 
+/// A unit preset given by name (``"real"``) or as a `molpy.core.UnitPreset`.
+pub(crate) fn preset_arg(obj: &Bound<'_, PyAny>) -> PyResult<UnitPreset> {
+    if let Ok(preset) = obj.extract::<PyRef<'_, PyUnitPreset>>() {
+        return Ok(preset.inner.clone());
+    }
+    let name: &str = obj.extract().map_err(|_| {
+        PyTypeError::new_err(format!(
+            "units is a preset name or a UnitPreset, got {}",
+            obj.get_type()
+                .name()
+                .map_or_else(|_| "<unknown>".to_string(), |n| n.to_string())
+        ))
+    })?;
+    lookup_unit_preset(name)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown unit preset {name:?}")))
+}
+
 /// Register `molpy.core.constants`: every constant of
 /// `molrs::core::constants` ([`molrs::core::constants::ALL`]), by its Rust
 /// name.

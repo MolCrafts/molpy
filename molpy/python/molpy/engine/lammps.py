@@ -244,9 +244,9 @@ class LammpsEngine(Engine):
                 if "mass" in t.params
             }
             frame = frame.copy()
-            frame["atoms"]["mass"] = [
-                masses[str(name)] for name in frame["atoms"]["type"]
-            ]
+            atoms = frame["atoms"]
+            labels = atoms["type"] if "type" in atoms else atoms["type_id"]
+            frame["atoms"]["mass"] = [masses[str(name)] for name in labels]
         style = atom_style or infer_lammps_atom_style(frame)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)

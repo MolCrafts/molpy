@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use molrs::core::{GhostError, SkinError};
+use molrs::core::{GhostError, SkinError, UnitsError};
 
 /// Failures on the MD surface: construction, binding, and policy guards.
 #[derive(Debug)]
@@ -13,17 +13,37 @@ pub enum MdError {
     Unbound(String),
     /// Neighbour-list completeness / unwrapped-position guard failed.
     Neighbor(String),
+    /// A [`BoundPotential`](super::BoundPotential) failed at `step`. The run stops
+    /// there; `source` is the potential's own error, unchanged.
+    Potential {
+        /// [`BoundPotential::name`](super::BoundPotential::name).
+        name: String,
+        /// The step index of the failing evaluation ([`MD::step`](super::MD::step)).
+        step: u64,
+        /// What the potential raised.
+        source: super::PotentialError,
+    },
 }
 
 impl fmt::Display for MdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(msg) | Self::Unbound(msg) | Self::Neighbor(msg) => f.write_str(msg),
+            Self::Potential { name, step, source } => {
+                write!(f, "potential {name} failed at step {step}: {source}")
+            }
         }
     }
 }
 
-impl std::error::Error for MdError {}
+impl std::error::Error for MdError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Potential { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 impl From<SkinError> for MdError {
     fn from(err: SkinError) -> Self {
@@ -31,6 +51,12 @@ impl From<SkinError> for MdError {
             SkinError::Invalid(msg) => Self::Invalid(msg),
             SkinError::Guard(msg) => Self::Neighbor(msg),
         }
+    }
+}
+
+impl From<UnitsError> for MdError {
+    fn from(err: UnitsError) -> Self {
+        Self::Invalid(format!("units: {err}"))
     }
 }
 

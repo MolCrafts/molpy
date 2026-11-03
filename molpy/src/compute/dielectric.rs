@@ -15,6 +15,7 @@ use super::args;
 use super::error::Result;
 use super::output::{ToPy, py_result};
 use super::spec::described;
+use crate::core::units::preset_arg;
 
 py_result! {
     /// Dipole series per group (``molrs::compute::DipoleMomentResult``):
@@ -109,7 +110,7 @@ impl PyStaticDielectric {
     #[new]
     #[pyo3(signature = (units, *, epsilon_inf = None))]
     fn new(units: &Bound<'_, PyAny>, epsilon_inf: Option<f64>) -> Result<Self> {
-        let mut inner = StaticDielectric::new(args::units(units)?);
+        let mut inner = StaticDielectric::new(preset_arg(units)?);
         if let Some(epsilon_inf) = epsilon_inf {
             inner = inner.with_epsilon_inf(epsilon_inf);
         }
