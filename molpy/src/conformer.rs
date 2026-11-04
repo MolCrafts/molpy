@@ -273,10 +273,15 @@ impl PyConformer {
         // Leaf-first, exactly as the geometry systems dispatch: a leaf must
         // resolve to its own core value, never to the empty base it carries.
         if let Ok(leaf) = mol.cast::<PyAtomistic>() {
-            let (out, report) = self
-                .inner
-                .generate(leaf.borrow().core())
+            // Embedding and refinement are native work: run them without the
+            // GIL so other Python threads keep going.
+            let borrowed = leaf.borrow();
+            let core = borrowed.core();
+            let inner = &self.inner;
+            let (out, report) = py
+                .detach(|| inner.generate(core))
                 .map_err(molrs_error_to_pyerr)?;
+            drop(borrowed);
             return Ok((
                 leaf.borrow().derive(py, out)?.into_any(),
                 report_to_py(report),

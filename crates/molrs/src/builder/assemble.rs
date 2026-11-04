@@ -177,6 +177,8 @@ struct TemplatePort {
     handle_row: usize,
     /// Anchor and handle positions in the template (Å), when both have them.
     atoms: Option<(Vec3, Vec3)>,
+    /// The anchor element's covalent radius (Å), when the anchor has one.
+    anchor_radius: Option<f64>,
     /// Centre of mass → handle (Å); `None` when the template has no centre.
     direction: Option<Vec3>,
 }
@@ -564,25 +566,37 @@ impl<G: Graph> Assembler<G> {
                     site: u,
                     source,
                 };
-                let parent = match parent {
-                    None => None,
+                // One join per site bond to the parent: the walk's bond first,
+                // then every parallel bond to the same parent (a ladder).
+                let join_through = |p: usize, b: usize| -> Result<ParentJoin, AssembleError> {
+                    let (anchor, handle) = port_of(p, b).atoms.ok_or_else(|| {
+                        place_err(PlaceError::Port(format!(
+                            "the port of site {p} toward site {u} has an atom without x/y/z"
+                        )))
+                    })?;
+                    Ok(ParentJoin {
+                        port: port_of(u, b).id,
+                        anchor: transform_point(&poses[p], anchor),
+                        handle: transform_point(&poses[p], handle),
+                        anchor_radius: port_of(p, b).anchor_radius,
+                    })
+                };
+                let (parent, extra_parents) = match parent {
+                    None => (None, Vec::new()),
                     Some((p, b)) => {
-                        let (anchor, handle) = port_of(p, b).atoms.ok_or_else(|| {
-                            place_err(PlaceError::Port(format!(
-                                "the port of site {p} toward site {u} has an atom without x/y/z"
-                            )))
-                        })?;
-                        Some(ParentJoin {
-                            port: port_of(u, b).id,
-                            anchor: transform_point(&poses[p], anchor),
-                            handle: transform_point(&poses[p], handle),
-                        })
+                        let extra = graph.incident[u]
+                            .iter()
+                            .filter(|&&(partner, other)| partner == p && other != b)
+                            .map(|&(_, other)| join_through(p, other))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        (Some(join_through(p, b)?), extra)
                     }
                 };
                 let site = PlaceSite {
                     position: graph.positions.as_ref().map(|ps| ps[u]),
                     turn: turns[u],
                     parent,
+                    extra_parents,
                 };
                 poses[u] = self
                     .placer
@@ -893,6 +907,12 @@ impl<G: Graph> Assembler<G> {
                 anchor_row: row(port.anchor)?,
                 handle_row: row(port.handle)?,
                 atoms: position(port.anchor).zip(handle),
+                anchor_radius: template
+                    .get_node(port.anchor)
+                    .ok()
+                    .and_then(|atom| atom.atomic_number())
+                    .and_then(crate::core::Element::by_number)
+                    .map(|element| f64::from(element.covalent_radius())),
                 direction: center.zip(handle).map(|(c, h)| sub(h, c)),
                 port,
             });
@@ -1355,13 +1375,15 @@ mod tests {
     }
 
     #[test]
-    fn a_grown_chain_joins_each_copy_at_the_parent_handle_distance() {
+    fn a_grown_chain_joins_each_copy_at_the_covalent_bond_length() {
         let world = grower()
             .assemble(&topology(&["M", "M", "M"], &[(0, 1), (1, 2)]))
             .expect("a grown M chain");
 
         assert_eq!(world.n_atoms(), 3 * 5 - 4);
-        // Each inter-unit C–C bond takes the parent's C–H length, 1.0 Å.
+        // Each inter-unit C–C bond is two carbon covalent radii long, not the
+        // parent's C–H length (1.0 Å) the leaving hydrogen sat at.
+        let length = 2.0 * f64::from(crate::core::Element::C.covalent_radius());
         let mut joins = Vec::new();
         for (_, bond) in world.bonds() {
             let (a, b) = (bond.nodes[0], bond.nodes[1]);
@@ -1374,7 +1396,7 @@ mod tests {
         }
         assert_eq!(joins.len(), 2);
         for d in joins {
-            assert!((d - 1.0).abs() < TOL, "join length {d}");
+            assert!((d - length).abs() < 1e-9, "join length {d}, want {length}");
         }
     }
 

@@ -12,6 +12,11 @@ use crate::op::vec3::dihedral;
 
 use super::valence::atomic_number;
 
+mod counts;
+mod paths;
+
+use paths::{PathHistograms, ScoreHistogram};
+
 /// Weight of a path position, `0.11` (Antechamber Eq. (I)).
 const POSITION_WEIGHT: f64 = 0.11;
 
@@ -245,11 +250,17 @@ impl EquivalenceClasses {
 ///
 /// # Performance
 ///
-/// The enumeration is exponential in the worst case — it walks every simple path
-/// from every atom. Drug-sized organics are unproblematic (the antechamber oracle's
-/// 37 molecules peak at 28 paths for a single atom), but a large fused-ring system
-/// can blow up; [`EquivalenceOptions::max_path_length`] is the escape hatch, and is
-/// why antechamber ships `-pl`.
+/// The paths are **counted, not walked**. A molecule with `k` rings in series has
+/// `~2^k` simple paths per atom — a 10-unit conjugated polymer has ~10¹⁶ — so the
+/// scores are accumulated as a histogram over the block-cut tree (see the `paths`
+/// submodule): paths arriving at a cut atom are merged by their running sum and
+/// length, and each biconnected block is walked once per such state set, through
+/// its in-block paths merged by atomic-number sequence. Twin atoms (a methyl's
+/// hydrogens) are computed once. The result is bit-for-bit the partition the walk
+/// produces. What remains exponential is the enumeration *inside one block*, i.e.
+/// in the size of a single fused ring system;
+/// [`EquivalenceOptions::max_path_length`] (antechamber's `-pl`) still bounds
+/// that. Atoms are processed in parallel under `rayon`.
 ///
 /// # Provenance
 ///
@@ -280,26 +291,35 @@ pub fn perceive_equivalence_classes(
         EquivalenceLevel::PathsAndGeometry => flat.restricted_torsions(),
         _ => Vec::new(),
     };
-    let mut scorer = PathScorer {
-        flat: &flat,
-        geom: &geom,
-        max_path_length: opts.max_path_length,
-        path: Vec::with_capacity(n),
-        on_path: vec![false; n],
-        scores: Vec::new(),
+    let engine = PathHistograms::new(&flat, &geom, opts.max_path_length);
+    // At `-eq 2` a twin swap does not preserve the geometry (the cis and the
+    // trans hydrogen of a =CH₂), so every atom is computed.
+    let twin_of = if geom.is_empty() {
+        flat.twin_representatives()
+    } else {
+        (0..n).collect()
     };
+    let histograms = histograms_of(&engine, &twin_of);
 
-    // Group by the sorted score array. Grouping on the IEEE-754 bit patterns is
-    // exactly `equatom.c`'s pairwise `!=` comparison — the scores are finite and
-    // positive, so bits agree iff the values do — and it is hashable, which turns
-    // antechamber's O(N²) sweep into one pass.
-    let mut seen: HashMap<Vec<u64>, u32> = HashMap::new();
+    // Group by the score histogram. A histogram keyed on the IEEE-754 bit
+    // patterns is the sorted score array with its repeats counted, so equal
+    // histograms are exactly `equatom.c`'s pairwise `!=` comparison finding no
+    // difference — the scores are finite and positive, so bits agree iff the
+    // values do — and it is hashable, which turns antechamber's O(N²) sweep
+    // into one pass.
+    let mut seen: HashMap<ScoreHistogram, u32> = HashMap::new();
     let mut class_of = HashMap::with_capacity(n);
+    let mut class_of_row: Vec<u32> = Vec::with_capacity(n);
     let mut members: Vec<Vec<NodeId>> = Vec::new();
-    for i in 0..n {
-        let key: Vec<u64> = scorer.scores_for(i).iter().map(|s| s.to_bits()).collect();
+    for (i, key) in histograms.into_iter().enumerate() {
         let next = seen.len() as u32;
-        let class = *seen.entry(key).or_insert(next);
+        // A twin shares its representative's histogram, hence its class; the
+        // representative is its twin set's first row, so it is classed already.
+        let class = match key {
+            Some(key) => *seen.entry(key).or_insert(next),
+            None => class_of_row[twin_of[i]],
+        };
+        class_of_row.push(class);
         if class as usize == members.len() {
             members.push(Vec::new());
         }
@@ -308,6 +328,22 @@ pub fn perceive_equivalence_classes(
     }
 
     EquivalenceClasses { class_of, members }
+}
+
+/// Every twin-set representative's score histogram, in graph atom order
+/// (`None` for the other twins) — one independent computation per atom, so it
+/// runs in parallel when `rayon` is on.
+fn histograms_of(engine: &PathHistograms<'_>, twin_of: &[usize]) -> Vec<Option<ScoreHistogram>> {
+    let one = |i: usize| (twin_of[i] == i).then(|| engine.histogram(i));
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        (0..twin_of.len()).into_par_iter().map(one).collect()
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        (0..twin_of.len()).map(one).collect()
+    }
 }
 
 /// One rotation-restricted torsion (antechamber's `GEOM`), used at `-eq 2`.
@@ -328,6 +364,8 @@ struct Flat {
     z: Vec<u8>,
     /// Per atom: neighbour indices, in bond order — antechamber's `con[]`.
     adj: Vec<Vec<usize>>,
+    /// Per atom, per `adj` slot: the index into `bonds` of that bond.
+    adj_bond: Vec<Vec<usize>>,
     /// Per atom: coordinates, for the `-eq 2` torsions.
     xyz: Vec<[f64; 3]>,
     /// Per bond: endpoints and chemical class.
@@ -352,6 +390,7 @@ impl Flat {
         let rows = mol.atom_table();
 
         let mut adj = vec![Vec::new(); ids.len()];
+        let mut adj_bond = vec![Vec::new(); ids.len()];
         let mut bonds = Vec::new();
         for (_, bond) in mol.bonds() {
             let (Some(i), Some(j)) = (rows.row(bond.nodes[0]), rows.row(bond.nodes[1])) else {
@@ -359,6 +398,8 @@ impl Flat {
             };
             adj[i].push(j);
             adj[j].push(i);
+            adj_bond[i].push(bonds.len());
+            adj_bond[j].push(bonds.len());
             // The *class*, not the number: "is this a double bond" must stay
             // false for an aromatic bond whose Kekulé phase happens to be 2.
             bonds.push((i, j, BondOrder::from_prop(bond.props.get(keys::BOND_TYPE))));
@@ -368,9 +409,38 @@ impl Flat {
             ids,
             z,
             adj,
+            adj_bond,
             xyz,
             bonds,
         }
+    }
+
+    /// Per atom, the first row of its **twin set**: atoms of one element with
+    /// the same neighbours, as multisets (the hydrogens of a methyl, the
+    /// fluorines of a CF₃). Swapping two twins maps the graph onto itself, and
+    /// an automorphism maps every path to a path with the same atomic numbers
+    /// in the same order, so twins have bit-identical score histograms and only
+    /// one per set need be computed.
+    ///
+    /// That holds only while the walk explores every neighbour: an atom with
+    /// more than [`MAX_CON`] neighbours is walked out of through its first six
+    /// alone, in bond order, which a swap does not preserve. Twins touching such
+    /// an atom — and atoms with a self-loop — are their own representatives.
+    fn twin_representatives(&self) -> Vec<usize> {
+        let n = self.adj.len();
+        let mut first: HashMap<(u8, Vec<usize>), usize> = HashMap::new();
+        (0..n)
+            .map(|i| {
+                let crowded = |a: usize| self.adj[a].len() > MAX_CON;
+                if self.adj[i].contains(&i) || crowded(i) || self.adj[i].iter().any(|&a| crowded(a))
+                {
+                    return i;
+                }
+                let mut around = self.adj[i].clone();
+                around.sort_unstable();
+                *first.entry((self.z[i], around)).or_insert(i)
+            })
+            .collect()
     }
 
     /// The torsions whose E/Z is fixed, for `-eq 2`.
@@ -439,109 +509,6 @@ impl Flat {
     }
 }
 
-/// The depth-first walk that scores every simple path out of an atom.
-struct PathScorer<'a> {
-    flat: &'a Flat,
-    geom: &'a [Torsion],
-    max_path_length: Option<usize>,
-    /// The path currently being walked (`equatom.c`'s `selectelement`).
-    path: Vec<usize>,
-    /// Membership of `path`, for an O(1) "have I visited this atom?" test.
-    on_path: Vec<bool>,
-    /// The scores collected for the atom being processed.
-    scores: Vec<f64>,
-}
-
-impl PathScorer<'_> {
-    /// Every path score for one atom, sorted ascending.
-    fn scores_for(&mut self, atom: usize) -> &[f64] {
-        self.scores.clear();
-        self.path.clear();
-        self.on_path.iter_mut().for_each(|v| *v = false);
-        self.walk(atom);
-        // Ascending, as `equatom.c::sort()` leaves them. No NaN can occur: every
-        // term is finite and positive.
-        self.scores.sort_by(f64::total_cmp);
-        &self.scores
-    }
-
-    /// Extend the current path by `atom`, recurse into its unvisited neighbours,
-    /// and score the path that ends here.
-    fn walk(&mut self, atom: usize) {
-        self.path.push(atom);
-        self.on_path[atom] = true;
-
-        // `-pl`: a path longer than the cap is abandoned *before* it is scored.
-        let capped = self
-            .max_path_length
-            .is_some_and(|max| self.path.len() > max);
-        if !capped {
-            let degree = self.flat.adj[atom].len();
-            for k in 0..degree.min(MAX_CON) {
-                let next = self.flat.adj[atom][k];
-                if !self.on_path[next] {
-                    self.walk(next);
-                }
-            }
-            // The path ending here is scored when the walk reaches a free slot of
-            // `con[]` — so an atom with `MAX_CON` neighbours terminates no path.
-            if degree < MAX_CON {
-                let score = self.score();
-                self.scores.push(score);
-            }
-        }
-
-        self.on_path[atom] = false;
-        self.path.pop();
-    }
-
-    /// Score the current path: Antechamber Eq. (I), accumulated left to right in
-    /// the same order as `scorepath()` accumulates it, so that the exact equality
-    /// the classification rests on is the same equality antechamber tests.
-    fn score(&self) -> f64 {
-        let mut score = 0.0;
-        for (j, atom) in self.path.iter().enumerate() {
-            let position = (j + 1) as f64 * POSITION_WEIGHT;
-            let element = f64::from(self.flat.z[*atom]) * ELEMENT_WEIGHT;
-            score += self.coefficient(j) * (position + element);
-        }
-        score
-    }
-
-    /// The E/Z coefficient of one path position (`1.0` unless `-eq 2` found a
-    /// restricted torsion spanning it).
-    ///
-    /// `scorepath()` tests two windows — the four positions *ending* at `j` and the
-    /// four *starting* at `j` — each in both directions, and lets the second
-    /// override the first. Ported as written.
-    fn coefficient(&self, j: usize) -> f64 {
-        if self.geom.is_empty() {
-            return 1.0;
-        }
-        let mut coef = 1.0;
-        if j >= 3
-            && let Some(c) = self.match_torsion(&self.path[j - 3..=j])
-        {
-            coef = c;
-        }
-        if self.path.len() - j > 3
-            && let Some(c) = self.match_torsion(&self.path[j..=j + 3])
-        {
-            coef = c;
-        }
-        coef
-    }
-
-    /// The coefficient of the restricted torsion this four-atom window traverses,
-    /// in either direction, if any.
-    fn match_torsion(&self, window: &[usize]) -> Option<f64> {
-        self.geom
-            .iter()
-            .find(|t| window == t.atoms || window.iter().rev().copied().eq(t.atoms.iter().copied()))
-            .map(|t| if t.trans { TRANS_COEF } else { CIS_COEF })
-    }
-}
-
 /// Perceive charge-equivalence classes and write them onto `mol`, in place:
 /// every atom receives an [`EQUIV_CLASS`](crate::core::keys::EQUIV_CLASS) id
 /// (0-based), the [`perceive_equivalence_classes`] partition under `opts`
@@ -570,198 +537,4 @@ pub fn assign_equivalence_classes(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::{Element, Props};
-    use crate::props;
-
-    /// An atom of element `el` with no coordinates.
-    fn atom(el: Element) -> Props {
-        props! { keys::ATOMIC_NUMBER => el }
-    }
-
-    /// An atom of element `el` at `[x, y, z]`.
-    fn atom_at(el: Element, [x, y, z]: [f64; 3]) -> Props {
-        props! { keys::ATOMIC_NUMBER => el, keys::X => x, keys::Y => y, keys::Z => z }
-    }
-
-    /// Methanol, with the raw `sqm` Mulliken charges antechamber's own run
-    /// produced (the methyl hydrogens are split 0.053 / 0.098 / 0.053 by the
-    /// conformer).
-    fn methanol() -> Atomistic {
-        let mut mol = Atomistic::new();
-        let c = mol
-            .add_atom(atom_at(Element::C, [-0.371, -0.017, -0.004]))
-            .unwrap();
-        let o = mol
-            .add_atom(atom_at(Element::O, [0.893, 0.621, -0.023]))
-            .unwrap();
-        let h1 = mol
-            .add_atom(atom_at(Element::H, [-0.481, -0.582, 0.924]))
-            .unwrap();
-        let h2 = mol
-            .add_atom(atom_at(Element::H, [-1.153, 0.744, -0.061]))
-            .unwrap();
-        let h3 = mol
-            .add_atom(atom_at(Element::H, [-0.455, -0.687, -0.863]))
-            .unwrap();
-        let ho = mol
-            .add_atom(atom_at(Element::H, [1.567, -0.079, 0.028]))
-            .unwrap();
-        for (a, b) in [(c, o), (c, h1), (c, h2), (c, h3), (o, ho)] {
-            mol.add_bond(a, b, props! {}).expect("bond");
-        }
-        for (a, q) in [
-            (c, -0.073),
-            (o, -0.326),
-            (h1, 0.053),
-            (h2, 0.098),
-            (h3, 0.053),
-            (ho, 0.195),
-        ] {
-            mol.set_atom(a, keys::CHARGE, q).expect("charge");
-        }
-        mol
-    }
-
-    #[test]
-    fn methyl_hydrogens_are_one_class_and_the_hydroxyl_is_not() {
-        let mol = methanol();
-        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
-        let classes = perceive_equivalence_classes(&mol, EquivalenceOptions::bcc());
-
-        assert_eq!(classes.n_classes(), 4, "C, O, 3×methyl H, hydroxyl H");
-        let methyl = classes.class_of(ids[2]).expect("H class");
-        assert_eq!(classes.class_of(ids[3]), Some(methyl));
-        assert_eq!(classes.class_of(ids[4]), Some(methyl));
-        assert_ne!(
-            classes.class_of(ids[5]),
-            Some(methyl),
-            "hydroxyl H is not a methyl H"
-        );
-    }
-
-    #[test]
-    fn off_gives_every_atom_its_own_class() {
-        let mol = methanol();
-        let classes = perceive_equivalence_classes(&mol, EquivalenceOptions::off());
-        assert_eq!(classes.n_classes(), mol.n_atoms());
-
-        assert!(classes.classes().all(|c| c.len() == 1));
-    }
-
-    #[test]
-    fn path_score_is_blind_to_the_order_of_atoms_along_a_path() {
-        // The score depends on a path only through its length and its sum of
-        // atomic numbers, which is why automorphism orbits are the wrong engine.
-        let mut mol = Atomistic::new();
-        let c = mol.add_atom(atom(Element::C)).unwrap();
-        let n = mol.add_atom(atom(Element::N)).unwrap();
-        let o = mol.add_atom(atom(Element::O)).unwrap();
-        mol.add_bond(c, n, props! {}).expect("bond");
-        mol.add_bond(n, o, props! {}).expect("bond");
-        let flat = Flat::new(&mol);
-        let mut scorer = PathScorer {
-            flat: &flat,
-            geom: &[],
-            max_path_length: None,
-            path: Vec::new(),
-            on_path: vec![false; 3],
-            scores: Vec::new(),
-        };
-        scorer.path = vec![0, 1, 2]; // C–N–O
-        let cno = scorer.score();
-        scorer.path = vec![0, 2, 1]; // C–O–N (not a real path; the formula only)
-        let con = scorer.score();
-        assert_eq!(cno.to_bits(), con.to_bits());
-    }
-
-    /// ac-003 — the score comparison is **exact**, and must stay exact.
-    ///
-    /// Two mathematically-distinct scores are always at least `0.01` apart: a score
-    /// is `(11·T + 8·S)/100` for integers `T` (positions) and `S` (Σ Z), and
-    /// `gcd(11, 8) = 1`. So the *only* way two sorted score arrays can differ by
-    /// less than a tolerance anyone would pick is the floating-point one: the arrays
-    /// are mathematically **equal** and disagree in the last bit because the paths
-    /// visit the same atomic numbers in a different order.
-    ///
-    /// This fixture is exactly that. Two fragments in one graph — antechamber
-    /// equivalences across a whole file, so a salt's cation and anion are compared
-    /// too. Both nitrogens see `{O, S}`; both have four paths; the mathematical
-    /// profiles are identical, the length-3 path being `N–O–Cl` (7 + 8 + 17) in one
-    /// and `N–S–F` (7 + 16 + 9) in the other — Σ Z = 32 either way. They differ by
-    /// **4.4e-16**, and antechamber's `!=` keeps them apart.
-    ///
-    /// The fragments are contrived, deliberately: an exhaustive sweep of every
-    /// valence-legal fragment up to five heavy atoms finds **no** ordinary molecule
-    /// where two atoms tie mathematically but not in `f64`. That is a statement
-    /// about how safe the exact comparison is in practice, not a licence to relax
-    /// it — a tolerance here would be a silent, unbounded charge-smearing bug, and
-    /// this test is what stops one being introduced.
-    #[test]
-    fn two_atoms_a_tolerance_would_merge_are_kept_apart() {
-        let mut mol = Atomistic::new();
-        // Fragment 1: Cl–O–N(–S).
-        let n1 = mol.add_atom(atom(Element::N)).unwrap();
-        let o1 = mol.add_atom(atom(Element::O)).unwrap();
-        let cl = mol.add_atom(atom(Element::Cl)).unwrap();
-        let s1 = mol.add_atom(atom(Element::S)).unwrap();
-        // Fragment 2: F–S–N(–O).
-        let n2 = mol.add_atom(atom(Element::N)).unwrap();
-        let s2 = mol.add_atom(atom(Element::S)).unwrap();
-        let f2 = mol.add_atom(atom(Element::F)).unwrap();
-        let o2 = mol.add_atom(atom(Element::O)).unwrap();
-        for (a, b) in [(n1, o1), (o1, cl), (n1, s1), (n2, s2), (s2, f2), (n2, o2)] {
-            mol.add_bond(a, b, props! {}).expect("bond");
-        }
-
-        // The two score arrays are the same length and agree to 4.4e-16 …
-        let flat = Flat::new(&mol);
-        let mut scorer = PathScorer {
-            flat: &flat,
-            geom: &[],
-            max_path_length: None,
-            path: Vec::new(),
-            on_path: vec![false; mol.n_atoms()],
-            scores: Vec::new(),
-        };
-        let a: Vec<f64> = scorer.scores_for(0).to_vec();
-        let b: Vec<f64> = scorer.scores_for(4).to_vec();
-        assert_eq!(a.len(), b.len(), "same number of paths");
-        let worst = a
-            .iter()
-            .zip(&b)
-            .map(|(x, y)| (x - y).abs())
-            .fold(0.0f64, f64::max);
-        assert!(worst > 0.0, "the arrays are not identical");
-        assert!(
-            worst < 1.0e-15,
-            "the arrays differ by {worst:e} — below any tolerance one would pick"
-        );
-
-        // … and they are still NOT merged.
-        let classes = perceive_equivalence_classes(&mol, EquivalenceOptions::bcc());
-        assert_ne!(
-            classes.class_of(n1),
-            classes.class_of(n2),
-            "a tolerance-based comparison merged two atoms antechamber keeps apart"
-        );
-    }
-
-    #[test]
-    fn a_path_length_cap_scores_no_longer_path() {
-        let mol = methanol();
-        let uncapped = perceive_equivalence_classes(&mol, EquivalenceOptions::bcc());
-        let capped = perceive_equivalence_classes(
-            &mol,
-            EquivalenceOptions {
-                level: EquivalenceLevel::Paths,
-                max_path_length: Some(1),
-            },
-        );
-        // With only the one-atom paths scored, every atom is scored by its element
-        // alone: the three methyl H, the hydroxyl H all collapse into one class.
-        assert!(capped.n_classes() < uncapped.n_classes());
-        assert_eq!(capped.n_classes(), 3, "C | O | every H");
-    }
-}
+mod tests;

@@ -3843,9 +3843,10 @@ class GrowthPlacer:
 
     The first copy of a molecule keeps its template pose (its centroid
     on the site when the site graph has positions); every later copy is
-    rotated and moved so the anchor of its port toward its parent lands on
-    the parent's leaving handle, pointing back along that bond. Needs no site
-    positions; bond lengths and overlaps are left to a later minimisation.
+    rotated and moved so the anchor of its port toward its parent points back
+    along the parent's leaving bond, one covalent bond length (the two
+    anchors' covalent radii) from the parent's anchor. Needs no site
+    positions; bond angles and overlaps are left to a later minimisation.
     Takes no arguments.
     """
 
@@ -3966,6 +3967,18 @@ class Conformer:
         use_basic_knowledge: bool = True,
     ) -> Self: ...
     def generate(self, mol: Atomistic) -> tuple[Atomistic, ConformerReport]: ...
+
+class Depictor:
+    """2D drawing coordinates for a molecular graph; deterministic.
+
+    Construct with the bond length to draw, then call :meth:`layout`.
+    Subclassable.
+    """
+
+    def __new__(cls, bond_length: float = 1.5) -> Self: ...
+    @property
+    def bond_length(self) -> float: ...
+    def layout(self, mol: Atomistic) -> Atomistic: ...
 
 # ---------------------------------------------------------------------------
 # Force field

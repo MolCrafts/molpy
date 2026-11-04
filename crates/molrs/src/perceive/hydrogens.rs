@@ -54,10 +54,17 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     // up front so that we don't hold a borrow while mutating.
     let mut additions: Vec<(NodeId, u8, u32)> = Vec::new();
     let mut declared: Vec<NodeId> = Vec::new();
+    // Heavy atoms the valence model fills with no hydrogen to add.
+    let mut filled: Vec<NodeId> = Vec::new();
     for (id, atom) in new_mol.atoms() {
         let z = species(id, &atom)?;
         if z == Element::H.z() {
-            continue; // existing hydrogens are left alone
+            // Existing hydrogens are left alone; one whose valence is full
+            // (a port's handle H, say) still carries no undrawn hydrogen.
+            if n_implicit_hydrogens(&new_mol, id) == Some(0) {
+                filled.push(id);
+            }
+            continue;
         }
         if atom.get(keys::H_COUNT).is_some() {
             declared.push(id);
@@ -66,7 +73,8 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
         // model does not fill: no hydrogens for them.
         match n_implicit_hydrogens(&new_mol, id) {
             Some(n) if n > 0 => additions.push((id, z, n)),
-            _ => {}
+            Some(_) => filled.push(id),
+            None => {}
         }
     }
     // A declared `h_count` counts the hydrogens an atom carries undrawn. Once
@@ -74,6 +82,16 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     // would count every hydrogen twice — once as a bond, once as declared.
     for &id in &declared {
         new_mol.set_atom(id, keys::H_COUNT, 0)?;
+    }
+    // Once drawn, every atom the valence model filled carries no undrawn
+    // hydrogen, and neither does a drawn hydrogen: when the molecule states
+    // `h_count` at all, those atoms state their exact 0 too, so the column
+    // stays dense instead of null on them (a writer refuses a null cell).
+    let states_h_count = !declared.is_empty();
+    if states_h_count {
+        for id in additions.iter().map(|&(id, _, _)| id).chain(filled) {
+            new_mol.set_atom(id, keys::H_COUNT, 0)?;
+        }
     }
 
     for (heavy_id, heavy_z, n) in additions {
@@ -107,6 +125,9 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
                 },
             };
             let h_id = new_mol.add_atom(h)?;
+            if states_h_count {
+                new_mol.set_atom(h_id, keys::H_COUNT, 0)?;
+            }
             // `Atomistic::add_bond` already stamps the bond Single/Single, so
             // there is nothing left to set. Both endpoints exist (one is the
             // atom just added), so the only error `add_bond` has — an unknown
@@ -804,6 +825,45 @@ mod tests {
             .add_atom(props! { keys::ATOMIC_NUMBER => Element::C, keys::H_COUNT => 2 })
             .unwrap();
         assert_eq!(n_implicit_hydrogens(&g, id), Some(2));
+    }
+
+    /// Hydroxide as SMILES states it (`[OH-]`, one declared H): after drawing,
+    /// the oxygen states 0 and so does the drawn hydrogen, so `h_count` has a
+    /// value on every row rather than a null on the new one.
+    #[test]
+    fn drawn_hydrogens_state_h_count_when_the_molecule_does() {
+        let mut g = Atomistic::new();
+        g.add_atom(props! {
+            keys::ATOMIC_NUMBER => Element::O,
+            keys::H_COUNT => 1,
+            keys::FORMAL_CHARGE => -1,
+        })
+        .unwrap();
+        let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
+        assert_eq!(result.n_atoms(), 2);
+        for (_, a) in result.atoms() {
+            assert_eq!(a.get_int(keys::H_COUNT), Some(0), "{a:?}");
+        }
+
+        // An explicit hydrogen already drawn (a port's handle) states 0 too.
+        let mut ported = Atomistic::new();
+        let o = ported
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O, keys::H_COUNT => 1 })
+            .unwrap();
+        let handle = ported.add_atom(atom(Element::H)).unwrap();
+        ported.add_bond(o, handle, props! {}).unwrap();
+        let water = add_hydrogens(&ported).expect("repletion succeeds");
+        assert!(
+            water
+                .atoms()
+                .all(|(_, a)| a.get_int(keys::H_COUNT) == Some(0))
+        );
+
+        // A molecule that states no h_count gains no h_count column.
+        let mut plain = Atomistic::new();
+        plain.add_atom(atom(Element::C)).unwrap();
+        let methane = add_hydrogens(&plain).expect("repletion succeeds");
+        assert!(methane.atoms().all(|(_, a)| a.get(keys::H_COUNT).is_none()));
     }
 
     /// An added hydrogen's mass is the element's mass, read from the periodic

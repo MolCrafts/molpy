@@ -160,3 +160,62 @@ def test_a_library_of_mixed_graph_types_is_a_type_error() -> None:
 def test_an_empty_library_is_a_value_error() -> None:
     with pytest.raises(ValueError, match="at least one template"):
         Assembler({}, GrowthPlacer())
+
+
+def test_a_grown_chain_joins_units_at_the_covalent_bond_length() -> None:
+    """The inter-unit C–C bond is two carbon covalent radii (1.52 Å) long, not
+    the C–H length of the hydrogen it replaced."""
+    sites = mp.io.cgsmiles.read_cgsmiles("{[#M]|3}").to_coarsegrain()
+    frame = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(sites).to_frame()
+    atoms, bonds = frame["atoms"], frame["bonds"]
+    xyz = np.stack([np.asarray(atoms["x"]), np.asarray(atoms["y"]), np.asarray(atoms["z"])], axis=1)
+    z = np.asarray(atoms["atomic_number"])
+    lengths = sorted(
+        round(float(np.linalg.norm(xyz[i] - xyz[j])), 3)
+        for i, j in zip(np.asarray(bonds["atomi"]), np.asarray(bonds["atomj"]))
+        if z[i] == 6 and z[j] == 6
+    )
+    assert lengths == [1.52, 1.52, 1.54, 1.54, 1.54]
+
+
+def _ladder_unit() -> mp.core.Atomistic:
+    """Four carbons in a square, two ``<`` ports on the left and two ``>`` on
+    the right (labels a, b pair the rails), hydrogens as leaving groups."""
+    unit = mp.core.Atomistic()
+    c = [unit.add_atom(atomic_number=6, x=x, y=y, z=0.0, mass=12.011) for x, y in [(0, 0), (0, 1.4), (1.4, 0), (1.4, 1.4)]]
+    h = [unit.add_atom(atomic_number=1, x=x, y=y, z=0.0, mass=1.008) for x, y in [(-1.09, 0), (-1.09, 1.4), (2.49, 0), (2.49, 1.4)]]
+    for i, j in [(0, 1), (0, 2), (1, 3), (2, 3)]:
+        unit.add_bond(c[i], c[j])
+    for ci, hi in zip(c, h):
+        unit.add_bond(ci, hi)
+    unit.add_port(c[0], h[0], "<", "a")
+    unit.add_port(c[1], h[1], "<", "b")
+    unit.add_port(c[2], h[2], ">", "a")
+    unit.add_port(c[3], h[3], ">", "b")
+    return unit
+
+
+def test_a_ladder_closes_both_bonds_between_neighbours() -> None:
+    """Two site bonds between neighbours (a ladder) are both closed at the
+    covalent length, with no atoms piled on each other."""
+    frame = mp.core.Frame(
+        {
+            "atoms": {"type": np.array(["U", "U", "U"])},
+            "bonds": {"atomi": np.array([0, 0, 1, 1]), "atomj": np.array([1, 1, 2, 2])},
+        }
+    )
+    world = Assembler({"U": _ladder_unit()}, GrowthPlacer()).assemble(mp.core.CoarseGrain.from_frame(frame)).to_frame()
+    atoms, bonds = world["atoms"], world["bonds"]
+    xyz = np.stack([np.asarray(atoms["x"]), np.asarray(atoms["y"]), np.asarray(atoms["z"])], axis=1)
+    frag = np.asarray(atoms["frag_id"])
+    pairs = list(zip(np.asarray(bonds["atomi"]), np.asarray(bonds["atomj"])))
+    joins = [float(np.linalg.norm(xyz[i] - xyz[j])) for i, j in pairs if frag[i] != frag[j]]
+    assert len(joins) == 4
+    assert np.allclose(joins, 1.52, atol=1e-3), joins
+    bonded = {tuple(sorted((int(i), int(j)))) for i, j in pairs}
+    distances = np.linalg.norm(xyz[:, None] - xyz[None], axis=2)
+    crowded = [
+        (i, j) for i in range(len(xyz)) for j in range(i + 1, len(xyz))
+        if (i, j) not in bonded and distances[i, j] < 1.0
+    ]
+    assert crowded == []

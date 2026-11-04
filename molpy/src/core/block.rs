@@ -63,13 +63,7 @@ use crate::error::ffi_error_to_pyerr;
 /// sub = b[b["x"] > 1.5]       # a new Block of the selected rows
 /// assert b.validity("x") is None   # no holes in that column
 /// ```
-#[pyclass(
-    module = "molpy.core",
-    name = "Block",
-    from_py_object,
-    unsendable,
-    subclass
-)]
+#[pyclass(module = "molpy.core", name = "Block", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyBlock {
     pub(crate) inner: BlockRef,
@@ -833,15 +827,16 @@ impl PyBlock {
     /// single-frame FFI store.
     pub(crate) fn from_core_block(block: CoreBlock) -> PyResult<Self> {
         let arena = molrs_ffi::FrameArenaCell::default();
-        let frame = arena.borrow_mut().frame_new();
-        arena
-            .borrow_mut()
-            .set_block(frame, "__block__", block.deep_copy())
-            .map_err(ffi_error_to_pyerr)?;
-        let handle = arena
-            .borrow()
-            .get_block(frame, "__block__")
-            .map_err(ffi_error_to_pyerr)?;
+        let handle = {
+            let mut store = arena.write().map_err(ffi_error_to_pyerr)?;
+            let frame = store.frame_new();
+            store
+                .set_block(frame, "__block__", block.deep_copy())
+                .map_err(ffi_error_to_pyerr)?;
+            store
+                .get_block(frame, "__block__")
+                .map_err(ffi_error_to_pyerr)?
+        };
         Ok(Self {
             inner: BlockRef::new(arena, handle),
         })
@@ -1502,7 +1497,7 @@ where
 // ---------------------------------------------------------------------------
 
 /// Keep a typed column buffer alive for a numpy view of any storage width.
-#[pyclass(module = "molpy._core", unsendable, subclass)]
+#[pyclass(module = "molpy._core", subclass)]
 struct ArrayOwner {
     _keep: Box<dyn std::any::Any + Send + Sync>,
 }

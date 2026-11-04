@@ -246,10 +246,10 @@ impl PySitePlacer {
 /// Grows each molecule copy by copy in the assembler's walk order: the first
 /// copy keeps its template pose (its centroid on the site when the
 /// site graph has positions), and every later copy is rotated and moved so
-/// the anchor of its port toward its parent lands on the parent's leaving
-/// handle, pointing back along that bond. Needs no site positions; bond
-/// lengths and overlaps are left to a later minimisation. Takes no
-/// arguments.
+/// the anchor of its port toward its parent points back along the parent's
+/// leaving bond, one covalent bond length (the two anchors' covalent radii)
+/// from the parent's anchor. Needs no site positions; bond angles and
+/// overlaps are left to a later minimisation. Takes no arguments.
 #[pyclass(module = "molpy.builder", name = "GrowthPlacer", frozen)]
 pub struct PyGrowthPlacer;
 

@@ -25,14 +25,28 @@
 //!
 //! ## Threading
 //!
-//! [`FrameArenaCell`] is `Rc<RefCell<_>>`. All current FFI consumers (wasm
-//! is single-threaded; python holds the GIL; cxx is used from
-//! single-threaded C++ today) satisfy this. Native multi-threaded Rust
-//! consumers hold a [`FrameArena`] directly or wrap it themselves in
-//! `Arc<Mutex<_>>` (molc does).
+//! [`FrameArenaCell`] is `Arc<RwLock<_>>`, so [`FrameRef`] and [`BlockRef`]
+//! are `Send + Sync`: a binding may hand a frame to another thread and drop it
+//! there (Python thread pools, `asyncio.to_thread`).
+//!
+//! Every access *tries* the lock and never waits. Readers share it; a writer
+//! needs it alone. An access that finds the lock held in a conflicting mode is
+//! [`FfiError::FrameBusy`] — on the same thread that is a callback reaching
+//! back into the frame an operation is running on (an MD calculator reading
+//! the frame it steps), which waiting would deadlock. Two threads only
+//! contend when a native consumer touches the frame without holding the
+//! binding's interpreter lock (the Python GIL), and they get the same refusal
+//! rather than a wait that could deadlock against that lock. A panic inside
+//! an access does not poison the frame: the store is still taken, as the
+//! former `RefCell` did.
+//!
+//! The lock guards the arena — the frame map, its blocks' column maps, the
+//! handle versions. Column buffers are `Arc`-shared (`molrs::core::Column`),
+//! so a zero-copy view a binding hands out holds its own reference and stays
+//! valid after the lock is released; a later column write replaces or
+//! copies-on-write the column instead of reallocating under the view.
 
-use std::cell::{Ref, RefCell, RefMut};
-use std::rc::Rc;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
 use molrs::core::Frame;
 use molrs::core::MetaMap;
@@ -43,28 +57,44 @@ use crate::error::FfiError;
 use crate::frame_arena::FrameArena;
 use crate::handle::{BlockHandle, FrameId};
 
-/// Single-threaded shared ownership of a [`FrameArena`]; a new empty one is
-/// `FrameArenaCell::default()`.
-pub type FrameArenaCell = Rc<RefCell<FrameArena>>;
+/// Shared, thread-safe ownership of a [`FrameArena`]; a new empty one is
+/// `FrameArenaCell::default()`. Cloning is one `Arc` bump.
+#[derive(Clone, Default)]
+pub struct FrameArenaCell(Arc<RwLock<FrameArena>>);
+
+impl FrameArenaCell {
+    /// The store, for reading; [`FfiError::FrameBusy`] while a writer holds it.
+    pub fn read(&self) -> Result<RwLockReadGuard<'_, FrameArena>, FfiError> {
+        match self.0.try_read() {
+            Ok(guard) => Ok(guard),
+            Err(TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => Err(FfiError::FrameBusy),
+        }
+    }
+
+    /// The store, for writing; [`FfiError::FrameBusy`] while anything holds it.
+    pub fn write(&self) -> Result<RwLockWriteGuard<'_, FrameArena>, FfiError> {
+        match self.0.try_write() {
+            Ok(guard) => Ok(guard),
+            Err(TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => Err(FfiError::FrameBusy),
+        }
+    }
+
+    /// True if both cells share one arena.
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
 
 /// An owned column as `(values, shape)`, or `None` when absent.
 pub type OwnedColumn<T> = Option<(Vec<T>, Vec<usize>)>;
-
-/// The store, for reading; [`FfiError::FrameBusy`] while a writer holds it.
-fn read(arena: &FrameArenaCell) -> Result<Ref<'_, FrameArena>, FfiError> {
-    arena.try_borrow().map_err(|_| FfiError::FrameBusy)
-}
-
-/// The store, for writing; [`FfiError::FrameBusy`] while anything holds it.
-fn write(arena: &FrameArenaCell) -> Result<RefMut<'_, FrameArena>, FfiError> {
-    arena.try_borrow_mut().map_err(|_| FfiError::FrameBusy)
-}
 
 // =====================================================================
 // FrameRef
 // =====================================================================
 
-/// A paired [`FrameId`] + [`FrameArenaCell`]. Cheap to clone (two `Rc` bumps).
+/// A paired [`FrameId`] + [`FrameArenaCell`]. Cheap to clone (one `Arc` bump).
 ///
 /// Bindings wrap this as their `Frame` type and add language-specific
 /// attributes (e.g. `#[wasm_bindgen]`, `#[pyclass]`).
@@ -82,7 +112,7 @@ impl FrameRef {
 
     /// Run a closure with immutable access to the underlying [`Frame`].
     pub fn with<R>(&self, f: impl FnOnce(&Frame) -> R) -> Result<R, FfiError> {
-        read(&self.arena)?.with_frame(self.id, f)
+        self.arena.read()?.with_frame(self.id, f)
     }
 
     /// Run a closure with mutable access to the underlying [`Frame`].
@@ -91,7 +121,7 @@ impl FrameRef {
     /// closure returns, since `&mut Frame` permits arbitrary block
     /// modifications.
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut Frame) -> R) -> Result<R, FfiError> {
-        write(&self.arena)?.with_frame_mut(self.id, f)
+        self.arena.write()?.with_frame_mut(self.id, f)
     }
 
     /// Run a closure with mutable access to the frame's metadata only.
@@ -99,14 +129,14 @@ impl FrameRef {
     /// Unlike [`with_mut`](Self::with_mut), block handles on this frame stay
     /// valid: the closure cannot reach a block.
     pub fn with_meta_mut<R>(&self, f: impl FnOnce(&mut MetaMap) -> R) -> Result<R, FfiError> {
-        write(&self.arena)?.with_frame_meta_mut(self.id, f)
+        self.arena.write()?.with_frame_meta_mut(self.id, f)
     }
 
     /// Resolve a child block key into a [`BlockRef`]. Returns
     /// `Err(KeyNotFound)` if the key is absent from this frame.
     pub fn block(&self, key: &str) -> Result<BlockRef, FfiError> {
-        let handle = read(&self.arena)?.get_block(self.id, key)?;
-        Ok(BlockRef::new(Rc::clone(&self.arena), handle))
+        let handle = self.arena.read()?.get_block(self.id, key)?;
+        Ok(BlockRef::new(self.arena.clone(), handle))
     }
 
     /// True if the frame has a block at `key`.
@@ -124,17 +154,17 @@ impl FrameRef {
 
     /// Replace / clear the simbox.
     pub fn set_box(&self, simbox: Option<SimBox>) -> Result<(), FfiError> {
-        write(&self.arena)?.set_frame_box(self.id, simbox)
+        self.arena.write()?.set_frame_box(self.id, simbox)
     }
 
     /// Deep-clone the frame's data out of the arena.
     pub fn clone_frame(&self) -> Result<Frame, FfiError> {
-        read(&self.arena)?.clone_frame(self.id)
+        self.arena.read()?.clone_frame(self.id)
     }
 
     /// Drop the frame from the arena, invalidating every handle to it.
     pub fn drop_frame(self) -> Result<(), FfiError> {
-        write(&self.arena)?.drop_frame(self.id)
+        self.arena.write()?.drop_frame(self.id)
     }
 }
 
@@ -142,7 +172,10 @@ impl Default for FrameRef {
     /// A new empty frame inside a fresh [`FrameArenaCell`].
     fn default() -> Self {
         let arena = FrameArenaCell::default();
-        let id = arena.borrow_mut().frame_new();
+        let id = arena
+            .write()
+            .expect("a fresh arena has no other holder")
+            .frame_new();
         Self { id, arena }
     }
 }
@@ -168,12 +201,12 @@ impl BlockRef {
 
     /// Run a closure with immutable access to the underlying [`Block`].
     pub fn with<R>(&self, f: impl FnOnce(&Block) -> R) -> Result<R, FfiError> {
-        read(&self.arena)?.with_block(&self.handle, f)
+        self.arena.read()?.with_block(&self.handle, f)
     }
 
     /// Run a closure with mutable access; bumps the handle version.
     pub fn with_mut<R>(&mut self, f: impl FnOnce(&mut Block) -> R) -> Result<R, FfiError> {
-        write(&self.arena)?.with_block_mut(&mut self.handle, f)
+        self.arena.write()?.with_block_mut(&mut self.handle, f)
     }
 
     // ---- Metadata ----
@@ -210,7 +243,7 @@ impl BlockRef {
 
     /// Deep-clone the block data out of the arena.
     pub fn clone_block(&self) -> Result<Block, FfiError> {
-        read(&self.arena)?.clone_block(&self.handle)
+        self.arena.read()?.clone_block(&self.handle)
     }
 
     // ---- Typed column access ----
@@ -282,7 +315,8 @@ mod tests {
             .unwrap();
         frame
             .arena
-            .borrow_mut()
+            .write()
+            .unwrap()
             .set_block(frame.id, "atoms", atoms)
             .unwrap();
         frame
@@ -334,6 +368,62 @@ mod tests {
             stale.has_block("atoms"),
             Err(FfiError::InvalidFrameId)
         ));
+    }
+
+    #[test]
+    fn handles_cross_threads_and_share_one_store() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<FrameRef>();
+        assert_send_sync::<BlockRef>();
+
+        let frame = frame_with_atoms();
+        let remote = frame.clone();
+        std::thread::spawn(move || {
+            let mut atoms = remote.block("atoms").unwrap();
+            atoms
+                .with_mut(|b| b.get_mut("x").unwrap().get_mut::<F>().unwrap()[0] = 5.0)
+                .unwrap();
+        })
+        .join()
+        .unwrap();
+        let atoms = frame.block("atoms").unwrap();
+        assert_eq!(
+            atoms.copy::<F>("x").unwrap(),
+            Some((vec![5.0, 2.0], vec![2]))
+        );
+
+        let readers: Vec<_> = (0..2)
+            .map(|_| {
+                let atoms = atoms.clone();
+                std::thread::spawn(move || {
+                    (0..1000)
+                        .map(|_| atoms.borrow::<F, _>("x", |x, _| x.iter().sum::<F>()))
+                        .all(|sum| matches!(sum, Ok(Some(s)) if s == 7.0))
+                })
+            })
+            .collect();
+        assert!(readers.into_iter().all(|r| r.join().unwrap()));
+    }
+
+    /// Two readers share the store, so a read nested inside a read is fine.
+    #[test]
+    fn a_read_inside_a_read_of_the_same_frame_is_allowed() {
+        let frame = frame_with_atoms();
+        let n = frame.with(|_| frame.block("atoms").and_then(|b| b.n_rows()));
+        assert_eq!(n.unwrap().unwrap(), 2);
+    }
+
+    /// A panic inside a write does not lock the frame away for good.
+    #[test]
+    fn a_panic_inside_a_write_leaves_the_frame_usable() {
+        let frame = frame_with_atoms();
+        let remote = frame.clone();
+        let panicked = std::thread::spawn(move || {
+            remote.with_mut(|_| panic!("calculator failed")).unwrap();
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert!(frame.has_block("atoms").unwrap());
     }
 
     /// A callback that reaches back into the frame a writer is running on —

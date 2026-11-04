@@ -136,7 +136,7 @@ fn mapping_to_meta_map(source: &Bound<'_, PyAny>) -> PyResult<MetaMap> {
 /// are live `collections.abc` views in insertion order. A non-`str` lookup is
 /// absent; a non-`str` write raises `TypeError`. Deleting a not-yet-visited
 /// key while iterating `values()` or `items()` raises `KeyError`.
-#[pyclass(module = "molpy.core", name = "FrameMeta", unsendable, subclass)]
+#[pyclass(module = "molpy.core", name = "FrameMeta", subclass)]
 pub struct PyFrameMeta {
     inner: FrameRef,
 }
@@ -625,13 +625,7 @@ impl PyMetaDocument {
 /// frame["atoms"]["y"] = np.zeros(3)   # writes into the stored block
 /// print(frame)          # Frame(blocks=['atoms'], box=yes)
 /// ```
-#[pyclass(
-    module = "molpy.core",
-    name = "Frame",
-    from_py_object,
-    unsendable,
-    subclass
-)]
+#[pyclass(module = "molpy.core", name = "Frame", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyFrame {
     pub(crate) inner: FrameRef,
@@ -766,7 +760,8 @@ impl PyFrame {
         };
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(ffi_error_to_pyerr)?
             .set_block(self.inner.id, key, core_block)
             .map_err(ffi_error_to_pyerr)
     }
@@ -789,7 +784,8 @@ impl PyFrame {
     fn __delitem__(&mut self, key: &str) -> PyResult<()> {
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(ffi_error_to_pyerr)?
             .del_block(self.inner.id, key)
             .map_err(ffi_error_to_pyerr)
     }
@@ -1142,12 +1138,12 @@ impl PyFrame {
     /// Export this frame's FFI handle as a ``PyCapsule``.
     ///
     /// The capsule wraps a *clone* of this frame's ``FrameRef`` handle. The
-    /// clone shares the same underlying ``Store`` (``Rc<RefCell<Store>>``),
+    /// clone shares the same underlying store (``Arc<RwLock<FrameArena>>``),
     /// so a consumer (e.g. Atomiverse C++ via the molcxx bridge) that
     /// resolves the capsule reads and writes the *same* frame data: no deep
     /// copy is made. The capsule's destructor reclaims the boxed
-    /// ``FrameRef`` on capsule destruction, dropping its two ``Rc``
-    /// references.
+    /// ``FrameRef`` on capsule destruction, on whichever thread drops it,
+    /// releasing its ``Arc`` reference.
     ///
     /// Pointer indirection: PyO3's ``PyCapsule::new`` heap-boxes its
     /// payload, and the payload here is a ``#[repr(transparent)]``
@@ -1170,11 +1166,8 @@ impl PyFrame {
     ///     handle).
     fn _ffi_frameref_capsule<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyCapsule>> {
         // Box a clone of the handle and hand the raw pointer to the capsule.
-        // `FrameRef` holds an `Rc` and is therefore not `Send`; a bare
-        // `*mut FrameRef` is not `Send` either, so wrap it in `FrameRefPtr`
-        // which asserts `Send`. This is sound because the capsule is only
-        // ever touched under the GIL (molrs FFI is single-threaded — see the
-        // threading note in `molrs_ffi::shared`).
+        // A bare `*mut FrameRef` is not `Send`, so it rides in `FrameRefPtr`,
+        // which is: the pointee `FrameRef` is `Send + Sync`.
         let raw = FrameRefPtr(Box::into_raw(Box::new(self.inner.clone())));
         let name = molrs_ffi::abi::frameref_capsule_name().to_owned();
         PyCapsule::new_with_destructor(py, raw, Some(name), |ptr: FrameRefPtr, _ctx| {
@@ -1190,7 +1183,7 @@ impl PyFrame {
     /// Symmetric with [`_ffi_frameref_capsule`](Self::_ffi_frameref_capsule):
     /// the consumer wraps its result frame in a `FrameRef`, exports a capsule of
     /// the same shape and name, and calls this. The new `Frame` **shares** the
-    /// producer's store (one `Rc` bump), so no deep copy is made.
+    /// producer's store (one `Arc` bump), so no deep copy is made.
     #[staticmethod]
     fn _from_ffi_frameref_capsule(capsule: &Bound<'_, PyCapsule>) -> PyResult<Self> {
         // `pointer_checked` validates the capsule name and rejects a null
@@ -1210,8 +1203,7 @@ impl PyFrame {
         let pp = ptr.as_ptr() as *const *const FrameRef;
         // SAFETY: a `"molrs.FrameRef"` capsule's `void*` is `*mut *mut FrameRef`
         // (the exporter boxes a `*mut FrameRef`). Deref once to reach the cloned
-        // handle and `.clone()` it (two `Rc` bumps) onto the same store. The
-        // capsule is only ever touched under the GIL.
+        // handle and `.clone()` it (one `Arc` bump) onto the same store.
         let fref = unsafe { (**pp).clone() };
         Ok(Self { inner: fref })
     }
@@ -1220,10 +1212,10 @@ impl PyFrame {
 /// `Send` wrapper around a `*mut FrameRef` so it can ride inside a
 /// `PyCapsule` (whose payload must be `Send`).
 ///
-/// `FrameRef` is `!Send` (it holds an `Rc`), and raw pointers are `!Send` by
-/// default. The capsule is only ever created, read, and destroyed while the
-/// Python GIL is held, so no cross-thread access of the `Rc` ever occurs —
-/// the `unsafe impl Send` is upheld by that single-threaded discipline.
+/// Raw pointers are `!Send` by default. The pointee is a boxed `FrameRef`,
+/// which is `Send + Sync` (its store is `Arc<RwLock<_>>`), and the box is
+/// reclaimed exactly once by the capsule destructor, so the capsule may be
+/// dropped on any thread.
 ///
 /// `#[repr(transparent)]` guarantees this newtype has exactly the layout of
 /// the wrapped `*mut FrameRef`. PyO3's `PyCapsule::new` heap-boxes the
@@ -1234,18 +1226,22 @@ impl PyFrame {
 #[repr(transparent)]
 struct FrameRefPtr(*mut FrameRef);
 
-// SAFETY: see the type-level doc — single-threaded, GIL-guarded use only.
+// SAFETY: see the type-level doc — the pointee is `Send + Sync` and owned
+// by the capsule alone.
 unsafe impl Send for FrameRefPtr {}
 
 impl PyFrame {
     /// Create a `PyFrame` from a Rust `CoreFrame`, allocating a new FFI store.
     pub(crate) fn from_core_frame(frame: CoreFrame) -> PyResult<Self> {
         let arena = molrs_ffi::FrameArenaCell::default();
-        let id = arena.borrow_mut().frame_new();
-        arena
-            .borrow_mut()
-            .set_frame(id, frame.deep_copy())
-            .map_err(ffi_error_to_pyerr)?;
+        let id = {
+            let mut store = arena.write().map_err(ffi_error_to_pyerr)?;
+            let id = store.frame_new();
+            store
+                .set_frame(id, frame.deep_copy())
+                .map_err(ffi_error_to_pyerr)?;
+            id
+        };
         Ok(Self {
             inner: FrameRef::new(arena, id),
         })

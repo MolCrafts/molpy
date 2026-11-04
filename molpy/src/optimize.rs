@@ -114,12 +114,19 @@ impl PyLbfgs {
     fn with_compiled<R>(
         &self,
         py: Python<'_>,
-        f: impl FnOnce(&Lbfgs<&Potentials>) -> Result<R, OptimizeError>,
-    ) -> PyResult<R> {
+        f: impl FnOnce(&Lbfgs<&Potentials>) -> Result<R, OptimizeError> + Send,
+    ) -> PyResult<R>
+    where
+        R: Send,
+    {
         let pots = self.potentials.borrow(py);
         let compiled = pots.compiled()?;
         compiled.require_pair_lists().map_err(ir::compile_err)?;
-        let out = f(&Lbfgs::new(compiled, self.settings));
+        // The descent is native work: release the GIL so other Python
+        // threads run meanwhile. A Python potential member re-takes it for
+        // its own evaluation.
+        let settings = self.settings;
+        let out = py.detach(|| f(&Lbfgs::new(compiled, settings)));
         take_err(&pots.err_slots)?;
         out.map_err(optimize_err)
     }
@@ -174,12 +181,15 @@ impl PyLbfgs {
     ///     atom, or the potentials were moved.
     fn minimize(&self, py: Python<'_>, frame: &PyFrame) -> PyResult<PyOptimizationReport> {
         let pots = self.potentials.borrow(py);
+        let settings = self.settings;
         let report = frame.with_frame_mut(|core| -> PyResult<OptimizationReport> {
             pots.bind_python(core)?;
             let pot = pots.compiled()?;
             pot.require_pair_lists().map_err(ir::compile_err)?;
-            Lbfgs::new(pot, self.settings)
-                .minimize(core)
+            // Native descent without the GIL (see ``with_compiled``); the
+            // frame stays write-locked, so another thread touching it gets
+            // ``FrameBusy`` instead of a torn read.
+            py.detach(|| Lbfgs::new(pot, settings).minimize(core))
                 .map_err(optimize_err)
         })??;
         take_err(&pots.err_slots)?;

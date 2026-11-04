@@ -30,7 +30,7 @@ pub fn abi_line() -> &'static str {
 }
 
 /// Size and alignment of every type a handle exchange dereferences: the
-/// handles themselves and what they point at. A change to any of them inside
+/// handles themselves and what they point at, down to the arena lock. A change to any of them inside
 /// a minor line fails `tests::layout_matches_the_snapshot` (the `ffi` gate)
 /// and changes [`build_fingerprint`].
 pub fn layout() -> Vec<(&'static str, usize, usize)> {
@@ -50,6 +50,14 @@ pub fn layout() -> Vec<(&'static str, usize, usize)> {
             "FrameArena",
             size_of::<crate::FrameArena>(),
             align_of::<crate::FrameArena>(),
+        ),
+        // What a `FrameArenaCell` points at: the lock a consumer takes on
+        // every access. Listed so a build whose arena lock differs (the
+        // former `RefCell`, another platform's `RwLock`) refuses the capsule.
+        (
+            "FrameArenaLock",
+            size_of::<std::sync::RwLock<crate::FrameArena>>(),
+            align_of::<std::sync::RwLock<crate::FrameArena>>(),
         ),
         (
             "RegionRef",
@@ -163,6 +171,7 @@ mod tests {
         ("FrameRef", 16, 8),
         ("BlockRef", 48, 8),
         ("FrameArena", 32, 8),
+        ("FrameArenaLock", 48, 8),
         ("RegionRef", 16, 8),
         ("Frame", 1224, 8),
         ("Block", 328, 8),

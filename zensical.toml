@@ -143,6 +143,7 @@ nav = [
     { "Builder" = "api/builder.md" },
     { "Packing" = "api/pack.md" },
     { "Conformer" = "api/conformer.md" },
+    { "Depict" = "api/depict.md" },
     # Parameterization
     { "Typifier" = "api/typifier.md" },
     { "Potentials" = "api/potential.md" },

@@ -99,6 +99,25 @@ for s in report.stages:
 A stage that reports `converged = False` means it exhausted its step budget —
 the geometry is usable but not fully relaxed.
 
+## 2D coordinates for a sketch
+
+A drawing needs different coordinates from a simulation: a flat layout where
+rings are regular polygons and chains zigzag, not the puckered 3D geometry of
+the embedder. `mp.depict.Depictor` computes it from the graph alone and keeps
+every property, so formal charges and ports reach a 2D viewer with the
+positions:
+
+```python
+cation = mp.io.smiles.read_smiles_fragment("[<]c1ccc(CC[N+](C)(C)C)cc1").to_template()
+flat = mp.depict.Depictor().layout(cation)
+sketch = flat.to_frame()
+print(sketch["atoms"]["z"].max(), sketch["atoms"]["formal_charge"].max())
+```
+
+The layout is deterministic, uses one bond length (1.5 by default) and
+replaces any coordinates the input had; keep the 3D molecule if you need
+both.
+
 ## Pitfalls
 
 - **No `seed` = non-reproducible.** Two runs give different (both valid)
