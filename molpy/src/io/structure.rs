@@ -178,6 +178,12 @@ frame_reader!(
 frame_writer!(
     /// Write a frame as a one-molecule Tripos MOL2 file.
     ///
+    /// The atom type is the ``type`` column as given (SYBYL ``C.3`` or a
+    /// force-field type); without that column it is the bare element symbol
+    /// (from ``element``, else ``atomic_number``), which SYBYL allows and
+    /// :func:`read_mol2` reads back as the element. A frame stating none of
+    /// the three is refused.
+    ///
     /// Parameters
     /// ----------
     /// sink : os.PathLike | bytearray

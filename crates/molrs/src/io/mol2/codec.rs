@@ -544,11 +544,14 @@ impl<R: BufRead> FrameReader for Mol2Reader<R> {
 /// Write a Frame as a single-molecule `.mol2` file.
 ///
 /// The atom `type` column is written as given — SYBYL (`C.3`) or force-field
-/// (GAFF `c3`) — and is required: it is never derived from `element`, because a
-/// SYBYL type encodes hybridization the frame may not state. The `element`
-/// column itself has no MOL2 field; [`read_mol2`] derives it back from the type
-/// or the name (a frame without `name` is written with element-based names,
-/// `C1`, `Br12`, which read back as their elements).
+/// (GAFF `c3`). A frame without the column is written with the bare element
+/// symbol as the atom type (`C`, `Br`), which SYBYL allows and [`read_mol2`]
+/// reads back as the element; the symbol comes from `element`, else from
+/// `atomic_number`, and a frame that states none of the three is refused. A
+/// hybridized type (`C.3`, `C.ar`) is never guessed from the element. The
+/// `element` column itself has no MOL2 field; [`read_mol2`] derives it back
+/// from the type or the name (a frame without `name` is written with
+/// element-based names, `C1`, `Br12`, which read back as their elements).
 ///
 /// A bond's SYBYL type is its `type` cell when that cell is a SYBYL bond type
 /// (`1`, `2`, `3`, `am`, `ar`, `du`, `un`, `nc`), else the canonical
@@ -620,18 +623,11 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer, "@<TRIPOS>ATOM")?;
     let id_col = atoms.get("id").and_then(|c| c.get::<u64>());
     // The Tripos atom type is where mol2 spells the species (`C.3`, `O.2`, or
-    // a force-field type), so it is required and never made up. The atom name
-    // is a label: an absent column, or a null cell, is named as antechamber
-    // names atoms, element symbol then 1-based row (`C1`, `H7`).
-    let required_str =
-        |key: &str| {
-            atoms.get(key).and_then(|c| c.get::<String>()).ok_or_else(|| {
-            invalid_data(format!(
-                "MOL2 write: atoms block has no string '{key}' column; set it before writing"
-            ))
-        })
-        };
+    // a force-field type): `type` as given, else the bare element symbol. The
+    // atom name is a label: an absent column, or a null cell, is named as
+    // antechamber names atoms, element symbol then 1-based row (`C1`, `H7`).
     let names = atom_names(atoms, n)?;
+    let types = atom_types(atoms, n)?;
     let xs = atoms
         .get("x")
         .and_then(|c| c.get::<f64>())
@@ -644,13 +640,12 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         .get("z")
         .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let type_col = required_str(keys::TYPE)?;
     let subst_id_col = atoms.get(keys::RES_ID).and_then(|c| c.get::<u64>());
     let subst_name_col = atoms.get(keys::RES_NAME).and_then(|c| c.get::<String>());
     for i in 0..n {
         let id = id_col.map(|c| c[[i]]).unwrap_or((i as Idx) + 1);
         let name = names[i].as_str();
-        let atype = type_col[[i]].as_str();
+        let atype = types[i].as_str();
         let sid = subst_id_col.map(|c| c[[i]]).unwrap_or(1);
         let sname = subst_name_col.map(|c| c[[i]].as_str()).unwrap_or("MOL");
         write!(
@@ -731,8 +726,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
 fn atom_names(atoms: &Block, n: usize) -> Result<Vec<String>> {
     let stated = atoms.get("name").and_then(|c| c.get::<String>());
     let valid = atoms.validity("name");
-    let symbols = atoms.get(keys::ELEMENT).and_then(|c| c.get::<String>());
-    let numbers = atoms.get(keys::ATOMIC_NUMBER).and_then(|c| c.get::<u64>());
+    let symbol = species_symbol(atoms);
     (0..n)
         .map(|i| {
             if let Some(column) = stated
@@ -740,28 +734,80 @@ fn atom_names(atoms: &Block, n: usize) -> Result<Vec<String>> {
             {
                 return Ok(column[[i]].clone());
             }
-            let symbol = match (symbols, numbers) {
-                (Some(column), _) if !column[[i]].is_empty() => column[[i]].clone(),
-                (_, Some(column)) => u8::try_from(column[[i]])
-                    .ok()
-                    .and_then(molrs::core::Element::by_number)
-                    .map(|e| e.symbol().to_string())
-                    .ok_or_else(|| {
-                        invalid_data(format!(
-                            "MOL2 write: atoms row {i}: atomic_number {} names no element",
-                            column[[i]]
-                        ))
-                    })?,
-                _ => {
-                    return Err(invalid_data(format!(
-                        "MOL2 write: atoms row {i} has no name and the frame states \
-                         no 'element' or 'atomic_number' to name it from"
-                    )));
-                }
-            };
+            let symbol = symbol(i)?.ok_or_else(|| {
+                invalid_data(format!(
+                    "MOL2 write: atoms row {i} has no name and the frame states \
+                     no 'element' or 'atomic_number' to name it from"
+                ))
+            })?;
             Ok(format!("{symbol}{}", i + 1))
         })
         .collect()
+}
+
+/// The MOL2 atom type of every row: the `type` cell where the frame has the
+/// column (SYBYL `C.3` or force-field `c3`, as given), else the bare element
+/// symbol (the `element` column, or the symbol of `atomic_number`), which
+/// SYBYL allows as an atom type and [`read_mol2`] reads back as the element.
+/// Hybridization is never guessed: a frame without types gets `C`, not `C.3`.
+///
+/// # Errors
+///
+/// `InvalidData` when the frame has no `type` column and a row states its
+/// species in neither column, or `atomic_number` holds no element's number.
+fn atom_types(atoms: &Block, n: usize) -> Result<Vec<String>> {
+    if let Some(column) = atoms.get(keys::TYPE).and_then(|c| c.get::<String>()) {
+        return Ok((0..n).map(|i| column[[i]].clone()).collect());
+    }
+    let symbol = species_symbol(atoms);
+    (0..n)
+        .map(|i| {
+            symbol(i)?.ok_or_else(|| {
+                invalid_data(format!(
+                    "MOL2 write: atoms block has no string 'type' column and row {i} \
+                     states no 'element' or 'atomic_number' to write as the atom type; \
+                     set one of them before writing"
+                ))
+            })
+        })
+        .collect()
+}
+
+/// The element symbol `atoms` states for a row, looked up on demand: the live,
+/// non-empty `element` cell, else the symbol of a live `atomic_number`; `None`
+/// for a row that states neither. What a missing name or type is spelled from.
+///
+/// # Errors
+///
+/// `InvalidData` when the row's `atomic_number` names no element.
+fn species_symbol(atoms: &Block) -> impl Fn(usize) -> Result<Option<String>> + '_ {
+    let symbols = atoms.get(keys::ELEMENT).and_then(|c| c.get::<String>());
+    let symbol_valid = atoms.validity(keys::ELEMENT);
+    let numbers = atoms.get(keys::ATOMIC_NUMBER).and_then(|c| c.get::<u64>());
+    let number_valid = atoms.validity(keys::ATOMIC_NUMBER);
+    move |i| {
+        if let Some(column) = symbols
+            && symbol_valid.is_none_or(|mask| mask[i])
+            && !column[[i]].is_empty()
+        {
+            return Ok(Some(column[[i]].clone()));
+        }
+        let Some(number) = numbers
+            .filter(|_| number_valid.is_none_or(|mask| mask[i]))
+            .map(|column| column[[i]])
+        else {
+            return Ok(None);
+        };
+        u8::try_from(number)
+            .ok()
+            .and_then(molrs::core::Element::by_number)
+            .map(|e| Some(e.symbol().to_string()))
+            .ok_or_else(|| {
+                invalid_data(format!(
+                    "MOL2 write: atoms row {i}: atomic_number {number} names no element"
+                ))
+            })
+    }
 }
 
 /// `true` when `token` is one of the SYBYL bond types a MOL2 `BOND` record
@@ -939,6 +985,81 @@ mod tests {
             .unwrap();
         let err = write_frame_to(&mut Vec::new(), &frame).expect_err("no species");
         assert!(err.to_string().contains("no name"), "{err}");
+    }
+
+    /// A frame that states its species but has no `type` column is written
+    /// with the bare element symbol as the SYBYL atom type (`C`, `Br`, never
+    /// a guessed `C.3`), which reads back as the element; one that states
+    /// neither `type`, `element` nor `atomic_number` is refused.
+    #[test]
+    fn absent_atom_types_are_the_bare_element_symbols() {
+        use ndarray::Array1;
+        let mut atoms = Block::new();
+        for (key, v) in [("x", [0.0, 1.9, 3.0]), ("y", [0.0; 3]), ("z", [0.0; 3])] {
+            atoms
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
+                .unwrap();
+        }
+        let symbols = ["C", "Br", "H"].map(str::to_string);
+        atoms
+            .insert(
+                keys::ELEMENT,
+                Array1::from_vec(symbols.to_vec()).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let mut bonds = Block::new();
+        for (key, v) in [("atomi", [0_u64, 0]), ("atomj", [1_u64, 2])] {
+            bonds
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
+                .unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+
+        let types_of = |frame: &Frame| -> Vec<String> {
+            let mut buf = Vec::new();
+            write_frame_to(&mut buf, frame).unwrap();
+            let text = String::from_utf8(buf).unwrap();
+            assert!(text.contains("@<TRIPOS>ATOM\n"), "{text}");
+            assert!(text.contains("@<TRIPOS>BOND\n"), "{text}");
+            let back = read_mol2(text.as_bytes()).unwrap();
+            assert_eq!(back["bonds"].n_rows(), Some(2));
+            assert_eq!(elements_of(&back), symbols.clone().map(Some));
+            let types = back["atoms"]
+                .get(keys::TYPE)
+                .and_then(|c| c.get::<String>())
+                .unwrap();
+            types.iter().cloned().collect()
+        };
+        assert_eq!(types_of(&frame), symbols);
+
+        // `atomic_number` spells the symbol when `element` is absent too.
+        let atoms = frame.get_mut("atoms").unwrap();
+        atoms.remove(keys::ELEMENT).unwrap();
+        atoms
+            .insert(
+                keys::ATOMIC_NUMBER,
+                Array1::from_vec(vec![6_u64, 35, 1]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(types_of(&frame), symbols);
+
+        // Neither column: nothing spells the type, so the write is refused
+        // (named atoms, so that the type is what is missing).
+        let atoms = frame.get_mut("atoms").unwrap();
+        atoms.remove(keys::ATOMIC_NUMBER).unwrap();
+        atoms
+            .insert(
+                "name",
+                Array1::from_vec(["C1", "Br2", "H3"].map(str::to_string).to_vec()).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let err = write_frame_to(&mut Vec::new(), &frame).expect_err("no type");
+        assert!(err.to_string().contains("'type'"), "{err}");
     }
 
     /// The `element` column of a read frame, `None` for a null row.

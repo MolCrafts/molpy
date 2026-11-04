@@ -95,6 +95,52 @@ class TestWriteMol2:
         assert back["bonds"]["atomi"].tolist() == frame["bonds"]["atomi"].tolist()
         assert back["bonds"]["atomj"].tolist() == frame["bonds"]["atomj"].tolist()
 
+    def test_element_only_frame_writes_bare_symbols_as_the_atom_types(self, tmp_path):
+        """SYBYL allows a bare element symbol as the atom type, and the reader
+        maps it back to ``element``: a frame with ``element`` but no ``type``
+        is written as ``C`` / ``H`` (never a guessed ``C.ar``) and round-trips."""
+        frame = _benzene_frame()
+        out = tmp_path / "benzene.mol2"
+        mp.io.write_mol2(out, frame)
+        back = _read(out)
+        assert _elements(back) == ["C"] * 6 + ["H"] * 6
+        assert list(back["atoms"]["type"]) == ["C"] * 6 + ["H"] * 6
+        assert list(back["bonds"]["bond_type"]) == [4] * 6 + [1] * 6
+        assert back["bonds"]["atomi"].tolist() == frame["bonds"]["atomi"].tolist()
+        assert back["bonds"]["atomj"].tolist() == frame["bonds"]["atomj"].tolist()
+
+    def test_frame_with_neither_type_nor_element_is_refused(self, tmp_path):
+        """Nothing spells the atom type without ``type``, ``element`` or
+        ``atomic_number``: the write is refused, not padded."""
+        frame = _benzene_frame()
+        frame["atoms"]["name"] = np.array(
+            [f"C{i}" for i in range(1, 7)] + [f"H{i}" for i in range(1, 7)]
+        )
+        del frame["atoms"]["element"]
+        with pytest.raises(ValueError, match="no string 'type' column"):
+            mp.io.write_mol2(tmp_path / "out.mol2", frame)
+
+
+def _benzene_frame() -> mp.Frame:
+    """Benzene stated by geometry and ``element`` alone: six ring carbons,
+    six hydrogens, aromatic C-C and single C-H bonds, no ``type`` or ``name``."""
+    angles = np.deg2rad(np.arange(6) * 60.0)
+    ring = np.arange(6, dtype=np.uint64)
+    frame = mp.Frame()
+    frame["atoms"] = {
+        "element": np.array(["C"] * 6 + ["H"] * 6),
+        "x": np.concatenate([1.39 * np.cos(angles), 2.47 * np.cos(angles)]),
+        "y": np.concatenate([1.39 * np.sin(angles), 2.47 * np.sin(angles)]),
+        "z": np.zeros(12),
+    }
+    frame["bonds"] = {
+        "atomi": np.concatenate([ring, ring]),
+        "atomj": np.concatenate([(ring + 1) % 6, ring + 6]),
+        "bond_type": np.array([4] * 6 + [1] * 6, dtype=np.uint64),
+        "bond_number": np.array([0] * 6 + [1] * 6, dtype=np.uint64),
+    }
+    return frame
+
 
 def _mol2_text(atoms: list[tuple[str, str]]) -> str:
     """A one-molecule MOL2 of ``(name, type)`` atoms on a line, no bonds."""
