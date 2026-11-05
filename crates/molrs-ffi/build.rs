@@ -1,7 +1,7 @@
-//! Records the compiler that builds this crate: part of the ABI fingerprint
-//! (`abi::build_fingerprint`), because struct layout is the compiler's choice
-//! and two builds of one minor line by different `rustc`s may lay a handle
-//! out differently.
+//! Records the compiler that builds this crate: part of the handle-layout
+//! fingerprint (`abi::build_fingerprint`), because struct layout is the
+//! compiler's choice and two builds of one source by different `rustc`s may
+//! lay a handle out differently.
 
 use std::process::Command;
 

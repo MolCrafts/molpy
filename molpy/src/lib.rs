@@ -60,38 +60,6 @@ mod stream;
 mod symmetry;
 mod virtual_sites;
 
-/// The FFI ABI handshake token of this build.
-///
-/// Returns ``(abi_line, version, frameref_capsule_name, forcefield_capsule_name,
-/// regionref_capsule_name)``
-/// — e.g. ``("0.20", "0.20.1", "molrs.FrameRef/0.20+<fingerprint>", …)``, the
-/// fingerprint naming the compiler and handle layout of this build.
-///
-/// A downstream extension that exchanges ``molrs_ffi`` handle capsules with
-/// this wheel (e.g. molpack) calls this once at import and compares
-/// ``abi_line`` against the line of the molrs it statically embeds; a mismatch
-/// is raised as a clear ``ImportError`` instead of surfacing later as a
-/// capsule-name ``ValueError`` (or, before capsule names were versioned,
-/// undefined behavior). The capsule names also carry the build fingerprint,
-/// so two builds exchange handles only when compiler and layout agree too
-/// (`molrs-ffi`'s layout snapshot test is the gate on the layout).
-#[pyfunction]
-fn _ffi_abi_token() -> (&'static str, &'static str, String, String, String) {
-    (
-        molrs_ffi::abi::abi_line(),
-        env!("CARGO_PKG_VERSION"),
-        molrs_ffi::abi::frameref_capsule_name()
-            .to_string_lossy()
-            .into_owned(),
-        molrs_ffi::abi::forcefield_capsule_name()
-            .to_string_lossy()
-            .into_owned(),
-        molrs_ffi::abi::regionref_capsule_name()
-            .to_string_lossy()
-            .into_owned(),
-    )
-}
-
 /// Add the `#[pyfunction]` `f` to `m` with `module`, the Python module it is
 /// re-exported from, as its `__module__` — what `#[pyclass(module = …)]` is
 /// for a class.
@@ -123,7 +91,6 @@ pub(crate) fn add_submodule(
 #[pyo3(name = "_core")]
 fn molpy_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
-    m.add_function(wrap_pyfunction!(_ffi_abi_token, m)?)?;
     m.add_function(wrap_pyfunction!(pickle::_restore_pickled_state, m)?)?;
 
     core::register(m)?;

@@ -48,8 +48,8 @@ pub(crate) fn frame_new() -> Box<FrameRef> {
 ///
 /// This is the cross-extension ingress point. molpy's
 /// `Frame._ffi_frameref_capsule()` produces a `PyCapsule` named
-/// `molrs_ffi::abi::frameref_capsule_name()` — `"molrs.FrameRef/<major.minor>"`,
-/// carrying the ABI line. PyO3 heap-boxes the capsule payload, and that payload
+/// `molrs_ffi::abi::frameref_capsule_name()` — `"molrs.FrameRef/<fingerprint>"`,
+/// carrying the build fingerprint. PyO3 heap-boxes the capsule payload, and that payload
 /// is a `#[repr(transparent)]` `FrameRefPtr` — itself a `*mut FrameRef`
 /// (a clone of the Python frame's handle). The capsule's `void*` is
 /// therefore `*mut *mut molrs_ffi::FrameRef`.
@@ -67,8 +67,7 @@ pub(crate) fn frame_new() -> Box<FrameRef> {
 /// capsule from `molpy.Frame._ffi_frameref_capsule()`, asked for with the
 /// name THIS build accepts — [`frameref_capsule_name`], never a name the
 /// producer reports — and valid for the duration of this call. The name
-/// carries the molrs minor line and the build fingerprint (compiler and
-/// handle layout), so a producer that may lay a handle out differently fails
+/// carries the build fingerprint (compiler and handle layout), so a producer that may lay a handle out differently fails
 /// the name check instead of being dereferenced here. The caller must keep
 /// the capsule alive during the call (hold the GIL); the returned handle is
 /// `Send + Sync` and may then be used without it — an access that meets a
