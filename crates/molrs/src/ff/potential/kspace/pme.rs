@@ -901,9 +901,15 @@ fn compute_bspline_moduli(grid_size: usize, order: usize) -> Vec<F> {
         }
         *moduli_k = sum_cos * sum_cos + sum_sin * sum_sin;
     }
-    // Avoid division by zero at k=0
-    if moduli[0] < 1e-30 {
-        moduli[0] = 1e-30;
+    // An odd-order spline's modulus vanishes at the Nyquist index of an even
+    // grid (and can come near zero elsewhere): it takes the mean of its
+    // neighbours, as OpenMM and GROMACS do, instead of dividing by rounding.
+    let max = moduli.iter().copied().fold(0.0, F::max);
+    for k in 0..grid_size {
+        if moduli[k] < 1e-7 * max {
+            moduli[k] =
+                0.5 * (moduli[(k + grid_size - 1) % grid_size] + moduli[(k + 1) % grid_size]);
+        }
     }
     moduli
 }
@@ -1778,6 +1784,38 @@ mod tests {
             }
             other => panic!("NoBox expected, got {other:?}"),
         }
+    }
+
+    /// An odd-order B-spline's structure factor vanishes at the Nyquist
+    /// index of an even grid, so its modulus there is zero to rounding.
+    /// Dividing by it prices that wave vector at ~1e30; the modulus is the
+    /// mean of its neighbours instead (OpenMM, GROMACS), and order 5 agrees
+    /// with order 4 on the same converged grid.
+    #[test]
+    fn an_odd_order_prices_the_nyquist_wave_as_its_neighbours() {
+        let moduli = compute_bspline_moduli(16, 5);
+        let max = moduli.iter().copied().fold(0.0, F::max);
+        assert!(
+            moduli.iter().all(|&m| m > 1e-7 * max),
+            "no modulus near zero: {moduli:?}"
+        );
+        let coords = [4.03, 5.11, 4.87, 6.71, 5.29, 4.62, 5.13, 3.77, 6.24];
+        let energy = |order: usize| {
+            let params = PairCoulLongPmeParams {
+                alpha: 0.35,
+                cutoff: 4.5,
+                grid_size: [32, 32, 32],
+                order,
+                coulomb: 332.06371,
+            };
+            PairCoulLongPme::new(params, ION_CHARGES.to_vec(), cubic_box(10.0), vec![])
+                .energy_at(&coords)
+        };
+        let (e4, e5) = (energy(4), energy(5));
+        assert!(
+            (e4 - e5).abs() < 1e-3 * e4.abs(),
+            "order 4 {e4} vs order 5 {e5}"
+        );
     }
 
     // --- Box inversion test ---
