@@ -388,6 +388,7 @@ impl<'a> Parser<'a> {
 
         Ok((
             BondingDescriptor {
+                span: self.scanner.span_from(start),
                 kind,
                 label,
                 order: None,
@@ -2339,15 +2340,33 @@ mod tests {
             .unwrap_or_else(|e| panic!("parse_fragment_smiles({input:?}) failed: {e}"))
     }
 
-    fn descriptor(kind: DescriptorKind, label: &str, order: Option<BondKind>) -> BondingDescriptor {
-        BondingDescriptor {
-            kind,
-            label: label.to_owned(),
-            order,
+    #[derive(Debug)]
+    struct ExpectedDescriptor(DescriptorKind, String, Option<BondKind>);
+
+    impl PartialEq<ExpectedDescriptor> for BondingDescriptor {
+        fn eq(&self, expected: &ExpectedDescriptor) -> bool {
+            self.kind == expected.0 && self.label == expected.1 && self.order == expected.2
         }
     }
 
+    fn descriptor(
+        kind: DescriptorKind,
+        label: &str,
+        order: Option<BondKind>,
+    ) -> ExpectedDescriptor {
+        ExpectedDescriptor(kind, label.to_owned(), order)
+    }
+
     // -- fragment dialect: anchoring (R4.2 / R4.3) --------------------------
+
+    #[test]
+    fn descriptors_keep_their_written_position_relative_to_chiral_branches() {
+        let text = "[C@H](F)([>])Cl";
+        let ir = fragment(text);
+        let descriptor = &ir.components[0].head.descriptors[0];
+        assert_eq!(descriptor.span, Span::new(9, 12));
+        assert_eq!(&text[descriptor.span.start..descriptor.span.end], "[>]");
+    }
 
     #[test]
     fn test_fragment_symmetric_descriptors_anchor_on_first_and_last_atom() {

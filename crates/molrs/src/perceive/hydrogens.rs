@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::valence::n_implicit_hydrogens;
+use super::valence::{n_implicit_hydrogens, n_implicit_hydrogens_reserving};
 use crate::core::Atomistic;
 use crate::core::NeighborKinds;
 use crate::core::NodeId;
@@ -18,6 +18,11 @@ use molrs::core::MolRsError;
 
 /// Return a new [`Atomistic`] with explicit hydrogen atoms added to every
 /// heavy atom that has unfilled valence.
+///
+/// At a port anchor, reserve the pending bond order before filling valence.
+/// A double-bond port with a single-bonded H handle therefore reserves one
+/// additional valence; its handle stays a real singly bonded hydrogen. A
+/// bracket atom's declared `h_count` remains authoritative.
 ///
 /// Each heavy atom gets [`n_implicit_hydrogens`] hydrogens: its element's default
 /// valences against the sum of its current bond orders, with the formal
@@ -45,6 +50,20 @@ use molrs::core::MolRsError;
 /// thread.
 pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     let mut new_mol = mol.clone();
+    let alkene_stereo = crate::core::stereo::AlkeneStereo::capture(mol, &HashSet::new())?;
+
+    // Reservations are directional: they affect the anchor, never the
+    // leaving handle's valence. Keep the real bonds untouched for geometry.
+    let mut reserved = HashMap::new();
+    for id in mol.port_ids() {
+        let port = mol.get_port(id)?;
+        let bond = mol
+            .bond_between(port.anchor, port.handle)
+            .ok_or_else(|| MolRsError::validation("port handle is not bonded to its anchor"))?;
+        if port.order.count() > mol.bond_number(bond)?.count() {
+            reserved.insert((port.anchor, bond), port.order);
+        }
+    }
 
     // Mass (amu) of the hydrogens this call appends, read once from the
     // periodic table: a literal is a second home for a number `Element` owns.
@@ -56,6 +75,7 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     let mut declared: Vec<NodeId> = Vec::new();
     // Heavy atoms the valence model fills with no hydrogen to add.
     let mut filled: Vec<NodeId> = Vec::new();
+    let mut stereo_after_repletion = Vec::new();
     for (id, atom) in new_mol.atoms() {
         let z = species(id, &atom)?;
         if z == Element::H.z() {
@@ -71,8 +91,24 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
         }
         // `None` covers the wildcard (Z = 0) and every atom the valence
         // model does not fill: no hydrogens for them.
-        match n_implicit_hydrogens(&new_mol, id) {
-            Some(n) if n > 0 => additions.push((id, z, n)),
+        let n_hydrogens =
+            n_implicit_hydrogens_reserving(&new_mol, id, |bond| reserved.get(&(id, bond)).copied());
+        match n_hydrogens {
+            Some(n) if n > 0 => {
+                if let Some(label @ ("CW" | "CCW")) = atom.get_str(keys::STEREO) {
+                    if n != 1
+                        || atom.get_int(keys::H_COUNT) != Some(1)
+                        || new_mol.neighbors(id, NeighborKinds::BONDS).count() != 3
+                    {
+                        return Err(MolRsError::validation(
+                            "hydrogen addition cannot preserve the declared tetrahedral reference",
+                        ));
+                    }
+                    stereo_after_repletion
+                        .push((id, crate::core::stereo::label_after_drawing_hydrogen(label)));
+                }
+                additions.push((id, z, n));
+            }
             Some(_) => filled.push(id),
             None => {}
         }
@@ -97,18 +133,23 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     for (heavy_id, heavy_z, n) in additions {
         // Hydrogen positions, when the heavy atom has coordinates to place
         // them from; `None` is the topology-only path.
-        let positions: Option<Vec<[f64; 3]>> = new_mol.get_atom(heavy_id)?.position().map(|p| {
-            let existing: Vec<[f64; 3]> = new_mol
-                .neighbors(heavy_id, NeighborKinds::BONDS)
-                .filter_map(|(nb, _)| new_mol.get_atom(nb).ok()?.position())
-                .map(|q| unit([q[0] - p[0], q[1] - p[1], q[2] - p[2]]))
-                .collect();
+        let positions = if let Some(p) = new_mol.get_atom(heavy_id)?.position() {
+            let mut existing = Vec::new();
+            for (neighbor, _) in new_mol.neighbors(heavy_id, NeighborKinds::BONDS) {
+                if let Some(q) = new_mol.get_atom(neighbor)?.position() {
+                    existing.push(unit([q[0] - p[0], q[1] - p[1], q[2] - p[2]]));
+                }
+            }
             let len = cap_length(heavy_z);
-            cap_directions(&existing, n as usize)
-                .into_iter()
-                .map(|d| [p[0] + len * d[0], p[1] + len * d[1], p[2] + len * d[2]])
-                .collect()
-        });
+            Some(
+                cap_directions(&existing, n as usize)
+                    .into_iter()
+                    .map(|d| [p[0] + len * d[0], p[1] + len * d[1], p[2] + len * d[2]])
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
 
         for k in 0..n as usize {
             let h = match &positions {
@@ -138,6 +179,12 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
         }
     }
 
+    for (id, label) in stereo_after_repletion {
+        new_mol.set_atom(id, keys::STEREO, label)?;
+    }
+    for stereo in alkene_stereo {
+        new_mol.set_bond(stereo.bond, keys::STEREO, stereo.label_after(&new_mol)?)?;
+    }
     Ok(new_mol)
 }
 
@@ -333,29 +380,98 @@ pub fn remove_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
         }
     }
 
+    // An end of an `E` / `Z` bond whose explicit substituents would all go
+    // keeps the one its geometry is read against, as a port keeps its
+    // handle; an end with other substituents left is restated against them.
+    let removed: HashSet<NodeId> = h_ids.iter().copied().collect();
+    let mut kept: HashSet<NodeId> = HashSet::new();
+    for (_, bond) in new_mol.bonds() {
+        if !matches!(bond.props.get_str(keys::STEREO), Some("E" | "Z")) {
+            continue;
+        }
+        for side in 0..2 {
+            let (end, partner) = (bond.nodes[side], bond.nodes[1 - side]);
+            let subs: Vec<NodeId> = new_mol
+                .neighbors(end, NeighborKinds::BONDS)
+                .map(|(neighbor, _)| neighbor)
+                .filter(|&neighbor| neighbor != partner)
+                .collect();
+            if !subs.is_empty()
+                && subs.iter().all(|sub| removed.contains(sub))
+                && let Some(reference) = crate::core::stereo::priority_substituent(&new_mol, &subs)
+            {
+                kept.insert(reference);
+            }
+        }
+    }
+    h_ids.retain(|id| !kept.contains(id));
+
+    implicitize_hydrogens(&mut new_mol, &h_ids)?;
+    Ok(new_mol)
+}
+
+/// Replace selected terminal hydrogen atoms by implicit counts, preserving
+/// declared tetrahedral reference order. Used by hydrogen removal and by
+/// CGsmiles expansion to discard only its generated unconsumed port caps.
+pub(crate) fn implicitize_hydrogens(
+    mol: &mut Atomistic,
+    h_ids: &[NodeId],
+) -> Result<(), MolRsError> {
+    let removed: HashSet<NodeId> = h_ids.iter().copied().collect();
+    let alkene_stereo = crate::core::stereo::AlkeneStereo::capture(mol, &removed)?;
     // A heavy atom that declares its undrawn hydrogens (`h_count`) keeps
     // declaring all of them: the ones removed here become undrawn too, so
     // drawing and removing hydrogens round-trips the count.
     let mut undrawn: HashMap<NodeId, i32> = HashMap::new();
-    for &h in &h_ids {
-        let (heavy, _) = new_mol
+    for &h in h_ids {
+        let (heavy, _) = mol
             .neighbors(h, NeighborKinds::BONDS)
             .next()
             .expect("a removed hydrogen has its one bond");
-        if new_mol.get_atom(heavy)?.get(keys::H_COUNT).is_some() {
+        let atom = mol.get_atom(heavy)?;
+        if atom.get(keys::H_COUNT).is_some()
+            || matches!(atom.get_str(keys::STEREO), Some("CW" | "CCW"))
+        {
             *undrawn.entry(heavy).or_insert(0) += 1;
         }
     }
     for (heavy, removed) in undrawn {
-        let before = new_mol.get_atom(heavy)?.get_int(keys::H_COUNT).unwrap_or(0);
-        new_mol.set_atom(heavy, keys::H_COUNT, before + removed)?;
+        let atom = mol.get_atom(heavy)?;
+        let before = atom.get_int(keys::H_COUNT).unwrap_or(0);
+        let after = before.checked_add(removed).ok_or_else(|| {
+            MolRsError::validation("implicit hydrogen count overflow during hydrogen removal")
+        })?;
+        if let Some(label @ ("CW" | "CCW")) = atom.get_str(keys::STEREO) {
+            let neighbors: Vec<_> = mol
+                .neighbors(heavy, NeighborKinds::BONDS)
+                .map(|(id, _)| id)
+                .collect();
+            if removed != 1 || before != 0 || neighbors.len() != 4 {
+                return Err(MolRsError::validation(
+                    "hydrogen removal cannot preserve the declared tetrahedral reference",
+                ));
+            }
+            let at = neighbors
+                .iter()
+                .position(|id| h_ids.contains(id))
+                .expect("selected hydrogen is a neighbor");
+            mol.set_atom(
+                heavy,
+                keys::STEREO,
+                crate::core::stereo::label_after_undrawing_hydrogen(label, at),
+            )?;
+        }
+        mol.set_atom(heavy, keys::H_COUNT, after)?;
     }
 
     // `del_atoms`' only failure is an unknown handle, and every handle here is
     // live (see `# Errors`). Returning it keeps a broken node table a value
     // the caller can handle instead of a panic.
-    new_mol.del_atoms(&h_ids)?;
-    Ok(new_mol)
+    mol.del_atoms(h_ids)?;
+    for stereo in alkene_stereo {
+        mol.set_bond(stereo.bond, keys::STEREO, stereo.label_after(mol)?)?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -699,6 +815,147 @@ mod tests {
     // ── remove_hydrogens tests ──────────────────────────────────────────────
 
     #[test]
+    fn hydrogen_addition_preserves_alkene_geometry_when_priority_changes() {
+        // In *–C=C–F, replacing the implicit H by an explicit H changes the
+        // left reference from wildcard Z=0 to H Z=1; the right remains F.
+        let mut mol = Atomistic::new();
+        let wildcard = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => 0_u8 })
+            .unwrap();
+        let left = mol.add_atom(atom(Element::C)).unwrap();
+        let right = mol.add_atom(atom(Element::C)).unwrap();
+        let fluorine = mol.add_atom(atom(Element::F)).unwrap();
+        mol.add_bond(wildcard, left, props! {}).unwrap();
+        let double = mol
+            .add_bond(
+                left,
+                right,
+                props! {
+                    keys::BOND_TYPE => BondOrder::Double,
+                    keys::BOND_NUMBER => BondNumber::Double,
+                    keys::STEREO => "E",
+                },
+            )
+            .unwrap();
+        mol.add_bond(right, fluorine, props! {}).unwrap();
+        let filled = add_hydrogens(&mol).unwrap();
+        assert_eq!(filled.n_atoms(), 6);
+        assert_eq!(
+            filled.get_bond(double).unwrap().props.get_str(keys::STEREO),
+            Some("Z")
+        );
+        assert_eq!(
+            mol.get_bond(double).unwrap().props.get_str(keys::STEREO),
+            Some("E")
+        );
+    }
+
+    /// E/Z is read where perception writes it, on the Double class; a
+    /// Kekulé-numbered aromatic bond carrying the label is not an alkene.
+    #[test]
+    fn alkene_geometry_follows_the_double_class_that_perception_labels() {
+        let mut mol = Atomistic::new();
+        let left = mol.add_atom(atom(Element::C)).unwrap();
+        let right = mol.add_atom(atom(Element::C)).unwrap();
+        let f = mol.add_atom(atom(Element::F)).unwrap();
+        let cl = mol.add_atom(atom(Element::Cl)).unwrap();
+        mol.add_bond(f, left, props! {}).unwrap();
+        let bond = mol
+            .add_bond(
+                left,
+                right,
+                props! {
+                    keys::BOND_TYPE => BondOrder::Aromatic,
+                    keys::BOND_NUMBER => BondNumber::Double,
+                    keys::STEREO => "E",
+                },
+            )
+            .unwrap();
+        mol.add_bond(right, cl, props! {}).unwrap();
+        let error = add_hydrogens(&mol).unwrap_err().to_string();
+        assert!(error.contains("requires a double bond"), "{error}");
+        mol.set_bond_class(bond, BondOrder::Double, BondNumber::Double)
+            .unwrap();
+        let filled = add_hydrogens(&mol).unwrap();
+        assert_eq!(
+            filled.get_bond(bond).unwrap().props.get_str(keys::STEREO),
+            Some("E")
+        );
+    }
+
+    /// `[H]/C=C/F` stores its geometry against the explicit hydrogen; that
+    /// hydrogen outlives removal, and a second hydrogen drawn beside it
+    /// does not.
+    #[test]
+    fn hydrogen_removal_keeps_the_hydrogen_an_alkene_is_read_against() {
+        let mut mol = Atomistic::new();
+        let h = mol.add_atom(atom(Element::H)).unwrap();
+        let left = mol.add_atom(atom(Element::C)).unwrap();
+        let right = mol.add_atom(atom(Element::C)).unwrap();
+        let f = mol.add_atom(atom(Element::F)).unwrap();
+        mol.add_bond(h, left, props! {}).unwrap();
+        let double = mol
+            .add_bond(
+                left,
+                right,
+                props! {
+                    keys::BOND_TYPE => BondOrder::Double,
+                    keys::BOND_NUMBER => BondNumber::Double,
+                    keys::STEREO => "E",
+                },
+            )
+            .unwrap();
+        mol.add_bond(right, f, props! {}).unwrap();
+        let stripped = remove_hydrogens(&mol).unwrap();
+        assert_eq!(stripped.n_atoms(), 4);
+        assert_eq!(
+            stripped
+                .get_bond(double)
+                .unwrap()
+                .props
+                .get_str(keys::STEREO),
+            Some("E")
+        );
+        let drawn = add_hydrogens(&mol).unwrap();
+        assert_eq!(drawn.n_atoms(), 6);
+        let stripped = remove_hydrogens(&drawn).unwrap();
+        assert_eq!(stripped.n_atoms(), 4);
+        assert!(stripped.get_atom(h).is_ok(), "the reference hydrogen stays");
+        assert_eq!(
+            stripped
+                .get_bond(double)
+                .unwrap()
+                .props
+                .get_str(keys::STEREO),
+            Some("E")
+        );
+    }
+
+    #[test]
+    fn hydrogen_removal_refuses_implicit_count_overflow() {
+        let mut mol = Atomistic::new();
+        let c = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::H_COUNT => i32::MAX,
+            })
+            .unwrap();
+        let h = mol.add_atom(atom(Element::H)).unwrap();
+        mol.add_bond(c, h, props! {}).unwrap();
+        let error = remove_hydrogens(&mol).unwrap_err().to_string();
+        assert!(
+            error.contains("implicit hydrogen count overflow"),
+            "{error}"
+        );
+        assert_eq!(
+            mol.get_atom(c).unwrap().get_int(keys::H_COUNT),
+            Some(i32::MAX)
+        );
+        assert_eq!(mol.n_atoms(), 2);
+        assert_eq!(mol.n_bonds(), 1);
+    }
+
+    #[test]
     fn test_remove_hydrogens_methane() {
         // C + 4H → remove → 1 atom (C only), 0 bonds
         let mut g = Atomistic::new();
@@ -886,6 +1143,52 @@ mod tests {
     }
 
     // ---- ports ride along untouched ---------------------------------------
+
+    #[test]
+    fn repletion_reserves_multiple_bond_ports_without_changing_handle_bonds() {
+        for (order, n_added) in [(BondNumber::Double, 2), (BondNumber::Triple, 1)] {
+            let mut g = Atomistic::new();
+            let c = g.add_atom(atom(Element::C)).unwrap();
+            let h = g.add_atom(atom(Element::H)).unwrap();
+            let bond = g.add_bond(c, h, Props::new()).unwrap();
+            let port = g.add_port(c, h, PortKind::Symmetric, "", order).unwrap();
+            let result = add_hydrogens(&g).unwrap();
+            assert_eq!(result.n_atoms(), 2 + n_added);
+            assert_eq!(result.bond_number(bond).unwrap(), BondNumber::Single);
+            assert_eq!(result.get_port(port).unwrap().order, order);
+            assert_eq!(add_hydrogens(&result).unwrap().n_atoms(), result.n_atoms());
+            assert_eq!(g.n_atoms(), 2);
+        }
+    }
+
+    #[test]
+    fn repletion_selects_valence_after_reserving_a_port() {
+        // Sulfur has allowed valences 2, 4, 6. One C bond plus one future
+        // double bond demands 3, so valence 4 leaves exactly one new H.
+        let mut g = Atomistic::new();
+        let s = g.add_atom(atom(Element::S)).unwrap();
+        let c = g.add_atom(atom(Element::C).with(keys::H_COUNT, 3)).unwrap();
+        let h = g.add_atom(atom(Element::H)).unwrap();
+        g.add_bond(s, c, Props::new()).unwrap();
+        g.add_bond(s, h, Props::new()).unwrap();
+        g.add_port(s, h, PortKind::Symmetric, "", BondNumber::Double)
+            .unwrap();
+        let result = add_hydrogens(&g).unwrap();
+        assert_eq!(result.neighbors(s, NeighborKinds::BONDS).count(), 3);
+        assert_eq!(result.n_atoms(), 7); // three initial + one S-H + three C-H
+    }
+
+    #[test]
+    fn repletion_keeps_a_bracket_hydrogen_count_at_a_multiple_bond_port() {
+        let mut g = Atomistic::new();
+        let c = g.add_atom(atom(Element::C).with(keys::H_COUNT, 2)).unwrap();
+        let h = g.add_atom(atom(Element::H)).unwrap();
+        g.add_bond(c, h, Props::new()).unwrap();
+        g.add_port(c, h, PortKind::Symmetric, "", BondNumber::Double)
+            .unwrap();
+        let result = add_hydrogens(&g).unwrap();
+        assert_eq!(result.n_atoms(), 4); // two declared H plus the leaving handle
+    }
 
     #[test]
     fn add_hydrogens_keeps_the_ports_kind_and_caps_a_ported_c_c_o() {

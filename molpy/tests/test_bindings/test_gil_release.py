@@ -30,7 +30,9 @@ def _alkane(n_carbons: int) -> tuple[object, object]:
     frame = typifier.typify(mol).to_frame()
     rng = np.random.default_rng(0)
     for axis in ("x", "y", "z"):  # start away from the minimum so it works for a while
-        frame["atoms"][axis] = np.asarray(frame["atoms"][axis]) + rng.normal(0.0, 0.3, frame["atoms"].n_rows)
+        frame["atoms"][axis] = np.asarray(frame["atoms"][axis]) + rng.normal(
+            0.0, 0.3, frame["atoms"].n_rows
+        )
     return mp.ff.PotentialCompiler(typifier.forcefield()).compile(frame), frame
 
 

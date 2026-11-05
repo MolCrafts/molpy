@@ -171,11 +171,14 @@ graph of named beads — here three `EO` units in a row — and the block after 
 says what each name is made of. A bonding descriptor such as `[<]` or `[>]`
 marks where a fragment may bond: `<` joins `>`.
 
-`CgSmilesIr` parses the string once and reads it three ways. `templates()`
+`CgSmilesIr` parses the string once and reads it four ways. `templates()`
 returns each fragment as an `mp.Atomistic` template that keeps its descriptors
 as **ports**: an anchor atom plus a hydrogen handle that leaves when the port
-bonds. `to_coarsegrain()` returns the bead graph, one site per unit, which is
-the topology [Assembly](02_assembly.md) grows. `to_atomistic()` expands the
+bonds. `to_assembly_graph()` returns the deepest bead graph with those exact
+port pairings, including multiple connections between the same instances and
+connections inherited from higher levels. It is the topology
+[Assembly](02_assembly.md) grows. `to_coarsegrain()` projects the coarsest
+level for graph matching and discards these assembly details. `to_atomistic()` expands the
 whole string into one heavy-atom graph, turning every paired descriptor into a
 bond.
 
@@ -190,7 +193,7 @@ for port in eo.ports:
     handle = mp.Element.by_number(port.handle_atom.get("atomic_number")).symbol
     print(f"  port {port.get('port_kind')}: anchor {anchor}, leaving {handle}")
 
-sites = ir.to_coarsegrain()  # the topology: one site per unit
+sites = ir.to_assembly_graph()  # exact resolved connections, one site per unit
 bead_types = [bead.get("bead_type") for bead in sites.beads]
 print(f"site graph: {bead_types}, {len(sites.bonds)} bonds")
 
@@ -218,7 +221,8 @@ to_atomistic(): 9 heavy atoms, 8 bonds
 | Missing hydrogens / aromaticity | A perceived structure | `mp.perceive.add_hydrogens(mol)`, `mp.perceive.assign_*(mol)` |
 | A CGsmiles string with fragments | Ported unit templates | `mp.io.cgsmiles.read_cgsmiles(s).templates()` |
 | One fragment body such as `[<]OCC[>]` | One ported unit template | `mp.io.smiles.read_smiles_fragment(body).to_template()` |
-| A CGsmiles string | A site graph (topology) | `mp.io.cgsmiles.read_cgsmiles(s).to_coarsegrain()` |
+| A CGsmiles string with fragments | A site graph with exact resolved connections | `mp.io.cgsmiles.read_cgsmiles(s).to_assembly_graph()` |
+| A CGsmiles string | A simplified coarsest-level graph for matching | `mp.io.cgsmiles.read_cgsmiles(s).to_coarsegrain()` |
 | Unit templates and a site graph | A polymer | `mp.builder.Assembler(library, mp.builder.GrowthPlacer())` |
 
 Reach for `SmartsPattern` only for matching rules that feed the typifier, never

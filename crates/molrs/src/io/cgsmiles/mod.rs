@@ -244,12 +244,14 @@
 //!     crate::io::smiles::SmilesErrorKind::CgSquashUnsupported
 
 mod ast;
+mod connections;
 #[cfg(test)]
 pub(super) mod fixtures;
 mod instantiate;
 mod parser;
 mod resolve;
 mod templates;
+mod to_assembly_graph;
 mod to_atomistic;
 mod to_coarsegrain;
 mod validate;

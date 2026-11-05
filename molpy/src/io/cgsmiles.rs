@@ -894,6 +894,28 @@ impl PyCgSmilesIr {
         PyCoarseGrain::from_core(py, cg)
     }
 
+    /// Build an explicit assembly graph from the deepest coarse level.
+    ///
+    /// Each resolved pair becomes one connection carrying ``src_port``,
+    /// ``dst_port`` and its atomistic bond class. Port ordinals refer to the
+    /// unchanged templates returned by :meth:`templates`; parallel bonds
+    /// and connections from upper levels are preserved. Generate template
+    /// conformers before calling :meth:`molpy.builder.Assembler.assemble`.
+    ///
+    /// Returns:
+    ///     CoarseGrain: The resolved site graph, without coordinates.
+    ///
+    /// Raises:
+    ///     SmilesError: If the input has no fragment definitions or its
+    ///         resolved pairs do not describe a complete assembly graph.
+    fn to_assembly_graph(&self, py: Python<'_>) -> PyResult<Py<PyCoarseGrain>> {
+        let cg = self
+            .inner
+            .to_assembly_graph()
+            .map_err(smiles_error_to_pyerr)?;
+        PyCoarseGrain::from_core(py, cg)
+    }
+
     /// ``CgSmilesIr('…', levels=…)``, quoting the string that was parsed.
     fn __repr__(&self) -> String {
         format!(

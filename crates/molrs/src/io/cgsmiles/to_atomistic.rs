@@ -18,30 +18,12 @@
 //! Only the lowest level becomes atoms. The pairs of an intermediate level
 //! stay on the IR for a reader that wants the coarse graph itself.
 
-use std::collections::BTreeMap;
-
-use crate::io::cgsmiles::resolve::FragmentCache;
+use crate::io::cgsmiles::CgSmilesIr;
 use crate::io::cgsmiles::templates::cg_build;
-use crate::io::cgsmiles::{
-    CgFragmentDef, CgGraph, CgSmilesIr, FragmentBody, PairEnd, ResolvedPair,
-};
-use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
-use molrs::core::Atomistic;
-use molrs::core::NodeId;
-use molrs::core::keys;
+use crate::io::smiles::SmilesError;
+use molrs::core::{Atomistic, GraphAccess, LinkRequest, RelationId};
 use molrs::op::I;
 use molrs::op::Rigid;
-
-/// The lowest level of an IR, with the fragment table that defines its
-/// nodes and its resolved pairs, as [`CgSmilesIr::lowest_level`] reads them.
-struct LowestLevel<'ir> {
-    /// The fragment definitions the level's node names refer to.
-    defs: &'ir BTreeMap<String, CgFragmentDef>,
-    /// The lowest level — the IR's last.
-    level: &'ir CgGraph,
-    /// That level's resolved pairs.
-    pairs: &'ir [ResolvedPair],
-}
 
 impl CgSmilesIr {
     /// Expand the lowest coarse-grained level into one [`Atomistic`] graph.
@@ -51,7 +33,8 @@ impl CgSmilesIr {
     /// those copies, carrying the class the pairing decided: the bond symbol
     /// the notation wrote next to either descriptor if it wrote one, otherwise
     /// aromatic if both port atoms are written aromatic, otherwise single.
-    /// Ports left unpaired create nothing at all.
+    /// Unpaired single ports become implicit hydrogen caps. An unpaired
+    /// non-single port requires an explicit cap fragment and is refused.
     ///
     /// # Per-atom instance membership
     ///
@@ -66,7 +49,8 @@ impl CgSmilesIr {
     ///
     /// No coordinates, no hydrogen repletion, no aromaticity perception and no
     /// kekulization: `to_atomistic` builds the graph the notation states and
-    /// stops. The atom count is the heavy-atom count the bodies wrote.
+    /// stops. Explicit atoms written in the bodies are retained; temporary
+    /// port hydrogens are removed after linking, preserving declared stereo.
     ///
     /// # Indices, and what is guaranteed about them
     ///
@@ -97,12 +81,12 @@ impl CgSmilesIr {
     ///
     /// # Errors
     ///
-    /// [`SmilesErrorKind::CgNotExpandable`] when there is no atomistic body to
+    /// [`SmilesErrorKind::CgNotExpandable`](crate::io::smiles::SmilesErrorKind::CgNotExpandable) when there is no atomistic body to
     /// expand: a base-only string (payload `base-only string (no fragment
     /// table)`) or a lowest level whose bodies are coarse graphs (payload the
     /// fragment's name).
     ///
-    /// [`SmilesErrorKind::CgBuild`] when a structural write to the graph
+    /// [`SmilesErrorKind::CgBuild`](crate::io::smiles::SmilesErrorKind::CgBuild) when a structural write to the graph
     /// fails — replicating a run of instances (which stamps `frag_id`),
     /// adding a bond, or classing it — or when the IR names a fragment its own
     /// table does not define, or a port the converted body does not hold. No
@@ -140,7 +124,7 @@ impl CgSmilesIr {
     /// level becomes one bond of the class it resolved. Each run of
     /// consecutive nodes naming one definition is placed by a single
     /// [`Atomistic::replicate`] under identity transforms, so node order — and
-    /// hence atom row order — is the level's.
+    /// hence `frag_id` — follows the level. Removing cap atoms may reorder rows.
     ///
     /// **`frag_id` is the lowest-level node index.** Every atom of node `i`'s
     /// copy carries `frag_id = i`.
@@ -149,171 +133,75 @@ impl CgSmilesIr {
     ///
     /// Those of [`to_atomistic`](Self::to_atomistic).
     fn expand_lowest_level(&self) -> Result<Atomistic, SmilesError> {
-        let LowestLevel { defs, level, pairs } = self.lowest_level()?;
-        let nodes = &level.nodes;
-        let mut cache = FragmentCache::default();
+        let templates = self.templates()?;
+        let assembly = self.lowest_assembly(&templates)?;
+        let names = &assembly.names;
+        let build = |reason| cg_build(self.span, reason);
         let mut mol = Atomistic::new();
-        let mut ports: Vec<Vec<NodeId>> = Vec::with_capacity(nodes.len());
+        // Per instance, its ports in template port order.
+        let mut ports: Vec<Vec<RelationId>> = Vec::with_capacity(names.len());
         let mut first = 0;
-        while first < nodes.len() {
-            let name = &nodes[first].name;
-            let last = nodes[first..]
+        while first < names.len() {
+            let name = names[first];
+            let last = names[first..]
                 .iter()
-                .position(|node| node.name != *name)
-                .map_or(nodes.len(), |len| first + len);
-            let Some(def) = defs.get(name) else {
-                let reason = format!("no definition for fragment '{name}'");
-                return Err(cg_build(self.span, reason));
-            };
-            let FragmentBody::Smiles(body) = &def.body else {
-                return Err(self.not_expandable(name.clone()));
-            };
-            // One conversion per definition, one replicate per run.
-            let (template, map) = cache
-                .get_or_build(name, body)
-                .map_err(|e| SmilesError::new(e.kind, e.span, "", Notation::CgSmiles))?;
-            // The row of each port atom in the template: replicate returns
-            // handles copy-major in template row order.
-            let port_rows = map
-                .iter()
-                .enumerate()
-                .map(|(port, (atom, _))| {
-                    template.atom_table().row(*atom).ok_or_else(|| {
-                        let reason = format!("port {port} of fragment '{name}' is no atom of it");
-                        cg_build(self.span, reason)
-                    })
-                })
-                .collect::<Result<Vec<usize>, SmilesError>>()?;
+                .position(|other| *other != name)
+                .map_or(names.len(), |len| first + len);
+            let template = &templates[name];
             let frag_ids = (first..last)
                 .map(|instance| {
-                    I::try_from(instance).map_err(|e| {
-                        cg_build(self.span, format!("instance {instance} is not an Int: {e}"))
-                    })
+                    I::try_from(instance)
+                        .map_err(|e| build(format!("instance {instance} is not an Int: {e}")))
                 })
-                .collect::<Result<Vec<I>, SmilesError>>()?;
-            let transforms = vec![Rigid::IDENTITY; frag_ids.len()];
+                .collect::<Result<Vec<_>, _>>()?;
+            let run = |e| build(format!("instances {first}..{last} of '{name}': {e}"));
             let handles = mol
-                .replicate(template, &transforms, &frag_ids)
-                .map_err(|e| {
-                    cg_build(
-                        self.span,
-                        format!("instances {first}..{last} of '{name}': {e}"),
-                    )
-                })?;
-            let n = template.n_atoms();
-            for copy in 0..frag_ids.len() {
-                ports.push(
-                    port_rows
-                        .iter()
-                        .map(|&row| handles[copy * n + row])
-                        .collect(),
-                );
-            }
+                .replicate(template, &vec![Rigid::IDENTITY; frag_ids.len()], &frag_ids)
+                .map_err(run)?;
+            ports.extend(
+                mol.graph()
+                    .copied_ports(template.graph(), &handles)
+                    .map_err(run)?,
+            );
             first = last;
         }
-        self.bond_pairs(&mut mol, &ports, pairs)?;
+        let requests = assembly
+            .connections
+            .iter()
+            .map(|connection| {
+                let port = |(instance, port): (usize, usize)| {
+                    ports
+                        .get(instance)
+                        .and_then(|list| list.get(port))
+                        .copied()
+                        .ok_or_else(|| build(format!("no port {port} on instance {instance}")))
+                };
+                Ok(LinkRequest {
+                    a: port(connection.ends[0])?,
+                    b: port(connection.ends[1])?,
+                    class: Some((connection.kind.bond_type(), connection.kind.bond_number())),
+                })
+            })
+            .collect::<Result<Vec<_>, SmilesError>>()?;
+        mol.link_many(&requests)
+            .map_err(|e| build(format!("bond between two fragments: {e}")))?;
+
+        // Only generated unpaired handles become implicit hydrogens; explicit
+        // atoms written in a fragment body are never removed here. Every
+        // handle left is a single port's: `lowest_assembly` refused any other.
+        let caps = mol
+            .port_ids()
+            .map(|id| {
+                mol.get_port(id)
+                    .map(|port| port.handle)
+                    .map_err(|e| build(e.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        crate::perceive::implicitize_hydrogens(&mut mol, &caps)
+            .map_err(|e| build(e.to_string()))?;
         Ok(mol)
     }
-
-    /// Turn every resolved pair of the lowest level into one classed bond.
-    ///
-    /// `instances` is the port map of each node of that level, as
-    /// [`expand_lowest_level`](CgSmilesIr::expand_lowest_level) built it, and `pairs`
-    /// that level's resolved pairs — passed in rather than read off `self`, so
-    /// this step cannot mistake another level's list for its own.
-    ///
-    /// # Errors
-    ///
-    /// [`SmilesErrorKind::CgBuild`] when a pair does not name two last-level
-    /// ports, when it names an instance or a port the level does not offer, or
-    /// when the graph refuses the bond or its class.
-    fn bond_pairs(
-        &self,
-        mol: &mut Atomistic,
-        instances: &[Vec<NodeId>],
-        pairs: &[ResolvedPair],
-    ) -> Result<(), SmilesError> {
-        for pair in pairs {
-            let src = self.port_atom(&pair.src, instances)?;
-            let dst = self.port_atom(&pair.dst, instances)?;
-            // An unstated class would be stamped single, so the class the
-            // pairing resolved is written in the bond's own props.
-            mol.add_bond(
-                src,
-                dst,
-                crate::props! {
-                    keys::BOND_TYPE => pair.kind.bond_type(),
-                    keys::BOND_NUMBER => pair.kind.bond_number(),
-                },
-            )
-            .map_err(|e| cg_build(self.span, format!("bond between two fragments: {e}")))?;
-        }
-        Ok(())
-    }
-
-    /// The accumulated-graph atom one pair end names.
-    ///
-    /// # Errors
-    ///
-    /// [`SmilesErrorKind::CgBuild`] for an end that is not a last-level port
-    /// ([`PairEnd::Sub`] belongs to an intermediate level, which grows no
-    /// atoms), or for an instance or port index the level does not offer.
-    fn port_atom(&self, end: &PairEnd, instances: &[Vec<NodeId>]) -> Result<NodeId, SmilesError> {
-        let PairEnd::Body { instance, port } = end else {
-            return Err(cg_build(
-                self.span,
-                format!("{end:?} is not a last-level port"),
-            ));
-        };
-        instances
-            .get(*instance)
-            .and_then(|ports| ports.get(*port))
-            .copied()
-            .ok_or_else(|| cg_build(self.span, format!("no port {port} on instance {instance}")))
-    }
-
-    /// The lowest level with what every reader of it needs: the fragment
-    /// table that defines its nodes, the level itself and its resolved pairs.
-    ///
-    /// # Errors
-    ///
-    /// [`SmilesErrorKind::CgBuild`] when there is not one pair list per level
-    /// — the reader always builds one, and a hand-built IR that breaks it
-    /// would otherwise read as a pairless level — and
-    /// [`SmilesErrorKind::CgNotExpandable`] for a base-only string (no
-    /// fragment table, or no level), which writes beads and never says what
-    /// they are made of. The first check makes the lowest level's pair list
-    /// present exactly when the lowest level is.
-    fn lowest_level(&self) -> Result<LowestLevel<'_>, SmilesError> {
-        if self.pairs.len() != self.levels.len() {
-            let reason = format!(
-                "pairs/levels misaligned: {} pair lists for {} levels",
-                self.pairs.len(),
-                self.levels.len()
-            );
-            return Err(cg_build(self.span, reason));
-        }
-        match (self.fragments.last(), self.levels.last(), self.pairs.last()) {
-            (Some(defs), Some(level), Some(pairs)) => Ok(LowestLevel { defs, level, pairs }),
-            _ => Err(self.not_expandable("base-only string (no fragment table)".to_owned())),
-        }
-    }
-
-    /// A refusal that there is nothing atomistic to expand, spanned at the
-    /// whole string.
-    fn not_expandable(&self, payload: String) -> SmilesError {
-        SmilesError::new(
-            SmilesErrorKind::CgNotExpandable(payload),
-            self.span,
-            "",
-            Notation::CgSmiles,
-        )
-    }
 }
-
-// ==========================================================================
-// Tests
-// ==========================================================================
 
 #[cfg(test)]
 mod tests {

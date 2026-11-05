@@ -170,7 +170,9 @@ class TestMol2Elements:
     def test_gaff_typed_elements_come_from_the_names(self, tmp_path):
         path = tmp_path / "gaff.mol2"
         path.write_text(
-            _mol2_text([("C1", "c3"), ("C2", "ca"), ("H3", "hc"), ("Br12", "br"), ("O5", "oh")]),
+            _mol2_text(
+                [("C1", "c3"), ("C2", "ca"), ("H3", "hc"), ("Br12", "br"), ("O5", "oh")]
+            ),
             encoding="utf-8",
         )
         assert _elements(_read(path)) == ["C", "C", "H", "Br", "O"]
@@ -178,7 +180,15 @@ class TestMol2Elements:
     def test_sybyl_typed_elements_come_from_the_types(self, tmp_path):
         path = tmp_path / "sybyl.mol2"
         path.write_text(
-            _mol2_text([("CA", "C.3"), ("X", "C.ar"), ("OXT", "O.3"), ("HO", "H"), ("BR", "Br")]),
+            _mol2_text(
+                [
+                    ("CA", "C.3"),
+                    ("X", "C.ar"),
+                    ("OXT", "O.3"),
+                    ("HO", "H"),
+                    ("BR", "Br"),
+                ]
+            ),
             encoding="utf-8",
         )
         assert _elements(_read(path)) == ["C", "C", "O", "H", "Br"]
@@ -199,8 +209,9 @@ class TestMol2Elements:
         assert _elements(_read(out)) == _elements(frame)
 
 
-
-def test_force_field_bond_type_names_do_not_replace_the_bond_order(tmp_path: Path) -> None:
+def test_force_field_bond_type_names_do_not_replace_the_bond_order(
+    tmp_path: Path,
+) -> None:
     """A typed frame carries GAFF bond type names (``ca-ca``) in ``bonds.type``.
     They say nothing about the order, so the BOND records still get the SYBYL
     order from ``bond_type`` / ``bond_number`` and read back aromatic/double."""
@@ -211,12 +222,12 @@ def test_force_field_bond_type_names_do_not_replace_the_bond_order(tmp_path: Pat
         "@<TRIPOS>BOND\n1 1 2 ar\n2 2 3 1\n3 3 4 2\n"
     )
     source = tmp_path / "in.mol2"
-    source.write_text(text)
+    source.write_text(text, encoding="utf-8")
     frame = mp.io.read_mol2(source)
     frame["bonds"]["type"] = np.array(["ca-ca", "ca-c", "c-o"])
     out = tmp_path / "out.mol2"
     mp.io.write_mol2(out, frame)
-    rows = out.read_text().split("@<TRIPOS>BOND\n", 1)[1].split()
+    rows = out.read_text(encoding="utf-8").split("@<TRIPOS>BOND\n", 1)[1].split()
     assert rows[3::4] == ["ar", "1", "2"]
     back = mp.io.read_mol2(out)
     assert list(back["bonds"]["bond_type"]) == [4, 1, 2]

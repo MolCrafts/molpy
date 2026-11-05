@@ -49,17 +49,21 @@ impl fmt::Display for CenterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => write!(f, "center of an empty node set"),
-            Self::NotFound { node } => write!(f, "node {node:?} is not in this graph"),
+            Self::NotFound { node } => {
+                write!(f, "node {} is not in this graph", u64::from(*node))
+            }
             Self::BadPosition { node } => write!(
                 f,
-                "node {node:?} has a missing or non-finite '{}'/'{}'/'{}'",
+                "node {} has a missing or non-finite '{}'/'{}'/'{}'",
+                u64::from(*node),
                 keys::X,
                 keys::Y,
                 keys::Z
             ),
             Self::BadMass { node } => write!(
                 f,
-                "node {node:?} has a missing, negative or non-finite '{}'",
+                "node {} has a missing, negative or non-finite '{}'",
+                u64::from(*node),
                 keys::MASS
             ),
             Self::ZeroMass => write!(f, "total mass is not positive and finite"),

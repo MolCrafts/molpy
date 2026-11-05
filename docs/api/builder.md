@@ -18,7 +18,7 @@ are implementation modules, outside `mp.builder.__all__`.
 | `mp.builder.GrowthPlacer` | Grows each molecule breadth-first onto its parent's ports; needs no site positions | Topologies from CGsmiles notation |
 | `mp.builder.SitePlacer` | Puts each copy's centroid on its site | Sites with positions (a coarsened CG model) |
 | `mp.builder.AxisOrienter` | Turns each copy onto its site: backbone-to-centre along the site axis and joining atoms along the bonds for chain units; port directions fitted to bond directions for branch units | Backmapping with `SitePlacer` |
-| `mp.io.cgsmiles.CgSmilesIr` | `.templates()` → name → ported `mp.Atomistic`; `.to_coarsegrain()` → site graph | Writing units and topologies |
+| `mp.io.cgsmiles.CgSmilesIr` | `.templates()` → name → ported `mp.Atomistic`; `.to_assembly_graph()` → exact resolved site graph; `.to_coarsegrain()` → simplified projection | Writing units and topologies |
 | `mp.io.smiles.read_smiles_fragment` | `read_smiles_fragment(body).to_template()` → one ported `mp.Atomistic` from a fragment body | Writing one unit |
 | `mp.perceive.SubgraphMatcher` / `mp.builder.Coarsener` | Find bead groups in a CG model; turn them into sites with a position and an axis | Site graphs from a CG model |
 | `SystemPlanner` / `PolydisperseChainGenerator` / `Chain` / `SystemPlan` | Sample a polydisperse chain plan to a target mass | Bulk / MW-distributed systems |
@@ -62,8 +62,11 @@ assert set(atoms["mol_id"].tolist()) == {1}  # one connected component
 assert chain.n_ports == 2  # the chain ends keep their ports and hydrogens
 ```
 
-Each bond joins one accepting port of each end, chosen by the assembler; the
-leaving handles are removed and their charge folds onto the anchors. A build
+Each bond joins one accepting port of each end. Supply `src_port` and
+`dst_port` to `sites.add_bond(a, b, ...)` to fix the template port ordinals;
+without them the assembler chooses from the remaining compatible ports.
+The leaving handles are removed and their partial charge folds onto the
+anchors. Formal charges must already describe the product fragments. A build
 that cannot give every bond a port raises `ValueError` naming the site. For a
 site graph coarsened from a CG model, use
 `mp.builder.Assembler(library, mp.builder.SitePlacer(), mp.builder.AxisOrienter())` — see

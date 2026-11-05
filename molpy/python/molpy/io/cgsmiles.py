@@ -5,8 +5,10 @@ resolution at which one particle, a *bead*, stands in for a whole group of
 atoms. :func:`read_cgsmiles` reads a string; ``to_atomistic()`` expands its
 lowest level into atoms (topology only — atoms, bonds and the per-atom
 ``frag_id`` saying which bead each atom came from), ``templates()`` builds one
-ported template per fragment, and ``to_coarsegrain()`` reads the coarsest
-level as a bead graph. A line notation states no geometry, so coordinates,
+ported template per fragment, and ``to_assembly_graph()`` returns the
+lowest coarse level with exact port pairings and chemical bond classes for
+``molpy.builder.Assembler``. ``to_coarsegrain()`` projects only the coarsest
+level as a bead graph and discards pairing, multiplicity and deeper levels. A line notation states no geometry, so coordinates,
 hydrogens and perception remain separate steps.
 
 :class:`CgSmilesIr` is the parsed string, handed out by :func:`read_cgsmiles`

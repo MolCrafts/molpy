@@ -248,6 +248,7 @@ mod tests {
     fn test_descriptor_bearing_ir_is_rejected_by_the_plain_validator() {
         let mut mol = SmilesIr::parse("CCO").unwrap();
         mol.components[0].head.descriptors.push(BondingDescriptor {
+            span: crate::line_notation::ast::Span::new(0, 0),
             kind: DescriptorKind::Symmetric,
             label: String::new(),
             order: None,

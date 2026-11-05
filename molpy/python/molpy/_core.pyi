@@ -1652,7 +1652,11 @@ class Atomistic:
     def term_blocks(self) -> list[str]: ...
     # --- ports ---
     @property
-    def ports(self) -> Refs[Port]: ...
+    def ports(self) -> Refs[Port]:
+        """Live ports in table row order, indexed from zero. Conformation
+        and copying preserve the correspondence; deleting ports may reorder
+        rows. Do not change template ports after constructing a connection
+        plan that refers to their ordinals."""
     @property
     def n_ports(self) -> int: ...
     def add_port(
@@ -1792,7 +1796,26 @@ class CoarseGrain:
     def bonds(self) -> Refs[CgBond]: ...
     @property
     def n_bonds(self) -> int: ...
-    def add_bond(self, a: Bead, b: Bead, /, **props: PropValue) -> CgBond: ...
+    def add_bond(self, a: Bead, b: Bead, /, **props: PropValue) -> CgBond:
+        """Add one connection, including another between the same beads.
+
+        Args:
+            a: Source bead.
+            b: Destination bead.
+            **props: Connection properties. ``src_port`` and ``dst_port``
+                are nonnegative integer ordinals in the source and
+                destination templates' port tables. Supply both or neither.
+                Reversing the endpoints also reverses these two properties.
+
+        Returns:
+            The new connection, whose explicit ports Assembler must use.
+
+        Raises:
+            ValueError: A property is invalid, including a negative or
+                non-integer port ordinal. That the two ordinals come
+                together, exist in their templates and accept each other is
+                checked by Assembler, which owns the template library.
+        """
     def del_bond(self, bond: CgBond) -> None: ...
     def del_bonds(self, bonds: Iterable[CgBond]) -> None: ...
     @overload
@@ -1809,7 +1832,11 @@ class CoarseGrain:
     ) -> list[tuple[str, Bead, Any]]: ...
     # --- ports ---
     @property
-    def ports(self) -> Refs[Port]: ...
+    def ports(self) -> Refs[Port]:
+        """Live ports in table row order, indexed from zero. Conformation
+        and copying preserve the correspondence; deleting ports may reorder
+        rows. Do not change template ports after constructing a connection
+        plan that refers to their ordinals."""
     @property
     def n_ports(self) -> int: ...
     def add_port(
@@ -2437,6 +2464,7 @@ class keys:
     COORDS: list[Key]
     DIHEDRAL_TYPE_LABELS: Key
     DIPOLE: list[Key]
+    DST_PORT: Key
     ELEMENT: Key
     ENDPOINTS: list[Key]
     EXCLUDE_14: Key
@@ -2471,6 +2499,7 @@ class keys:
     RES_ID: Key
     RES_NAME: Key
     SPACE_GROUP: Key
+    SRC_PORT: Key
     STYLE: Key
     SYMOPS: Key
     TYPE: Key
@@ -2860,10 +2889,25 @@ class CgSmilesIr:
         """One ported :class:`Atomistic` template per definition of the last
         fragment table, keyed by name. One body alone:
         ``read_smiles_fragment(body).to_template()``."""
+    def to_assembly_graph(self) -> CoarseGrain:
+        """Return the deepest coarse level with explicit resolved connections.
+
+        Every resolved pair becomes one connection with ``src_port`` and
+        ``dst_port`` referring to ``templates()`` port ordinals. Parallel
+        connections, connections derived from upper levels and chemical
+        bond classes are preserved. Coordinates remain absent.
+
+        Returns:
+            A site graph for Assembler with the corresponding template library.
+
+        Raises:
+            SmilesError: There is no fragment table, or the IR is invalid.
+        """
     def to_coarsegrain(self) -> CoarseGrain:
         """The coarsest level, ``levels[0]``, as a bead graph: one bead per
         node (``bead_type`` only, no coordinates or mass), one CG bond per
-        edge.
+        edge. Descriptor pairings, deeper levels and multiplicities are
+        discarded; use ``to_assembly_graph()`` for chemical assembly.
 
         Raises
         ------
@@ -3875,7 +3919,13 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
     turned by the orienter (when given) and given its pose by the placer.
     Each site bond joins one port of each end's copy (``<`` with ``>``,
     ``$`` with ``$``); the leaving groups are removed. Any topology works:
-    chains, branches, rings. Every atom gets ``frag_id`` (the site's ordinal)
+    chains, branches, rings and parallel connections. A connection with
+    ``src_port`` and ``dst_port`` fixes both template port ordinals; the
+    assembler validates and reserves them before choosing any omitted ports.
+    Invalid or occupied ports are refused, never replaced. Unused single-bond
+    ports keep their handles; an unused multiple-bond port requires an
+    explicit cap fragment and otherwise raises ``ValueError``.
+    Every atom gets ``frag_id`` (the site's ordinal)
     and ``mol_id`` (its connected component's ordinal + 1).
 
     Parameters

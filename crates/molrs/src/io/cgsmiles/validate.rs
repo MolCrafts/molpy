@@ -130,6 +130,7 @@ mod tests {
     /// An unlabelled descriptor of `kind`, with no bond order written.
     fn descriptor(kind: DescriptorKind) -> BondingDescriptor {
         BondingDescriptor {
+            span: crate::line_notation::ast::Span::new(0, 0),
             kind,
             label: String::new(),
             order: None,

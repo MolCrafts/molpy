@@ -1116,6 +1116,17 @@ impl Atomistic {
         self.graph.link(a, b)
     }
 
+    /// Atomically join a batch of ports with the core's shared chemistry and
+    /// stereochemical substitution rules, each new bond classed as its
+    /// request says.
+    #[cfg(feature = "smiles")]
+    pub(crate) fn link_many(
+        &mut self,
+        requests: &[crate::core::LinkRequest],
+    ) -> Result<Vec<RelationId>, crate::core::LinkManyError> {
+        self.graph.link_many(requests)
+    }
+
     /// Propagate each [`keys::FRAG_ID`] to the unlabelled degree-1 atoms
     /// bonded to a labelled one; returns how many atoms were labelled. See
     /// [`MolGraph::inherit_frag_ids`].

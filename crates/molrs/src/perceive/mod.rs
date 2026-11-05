@@ -91,6 +91,7 @@ pub use equivalence::{
     perceive_equivalence_classes,
 };
 pub use hybridization::{Hybridization, perceive_conjugated_atoms, perceive_hybridizations};
+pub(crate) use hydrogens::implicitize_hydrogens;
 pub use hydrogens::{add_hydrogens, remove_hydrogens};
 pub use kekule::assign_kekule_bond_orders;
 #[cfg(feature = "smiles")]
@@ -108,9 +109,6 @@ pub use rotatable::{
 pub use stereo::{
     BondStereo, TetrahedralStereo, assign_stereo, chiral_volume, perceive_bond_stereo,
     perceive_chiral_centers, perceive_tetrahedral_stereo,
-};
-pub(crate) use stereo::{
-    TetrahedralSite, priority_substituent, stated_hydrogen_count, tetrahedral_reference,
 };
 pub use subgraph::SubgraphMatcher;
 pub use symmetry_classes::{assign_symmetry_classes, perceive_symmetry_classes};
