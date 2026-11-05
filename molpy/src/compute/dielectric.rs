@@ -69,6 +69,7 @@ impl PyDipoleMoment {
     #[pyo3(signature = (*, positions, charges, partition = None))]
     fn compute<'py>(
         &self,
+        py: Python<'py>,
         positions: ArrayArg3<'py, f64>,
         charges: ArrayArg1<'py, f64>,
         partition: Option<Bound<'py, PyAny>>,
@@ -77,11 +78,14 @@ impl PyDipoleMoment {
             .as_ref()
             .map(args::PartitionArg::extract)
             .transpose()?;
-        let out = self.inner.compute(DipoleMomentInput {
-            positions: positions.as_array(),
-            charges: charges.as_array(),
-            partition: partition.as_ref().map(args::PartitionArg::partition),
-        })?;
+        let out = {
+            let input = DipoleMomentInput {
+                positions: positions.as_array(),
+                charges: charges.as_array(),
+                partition: partition.as_ref().map(args::PartitionArg::partition),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -120,17 +124,21 @@ impl PyStaticDielectric {
     #[pyo3(signature = (*, dipoles, volume, temperature, boundary))]
     fn compute(
         &self,
+        py: Python<'_>,
         dipoles: ArrayArg2<'_, f64>,
         volume: f64,
         temperature: f64,
         boundary: &str,
     ) -> Result<PyStaticDielectricResult> {
-        let out = self.inner.compute(StaticDielectricInput {
-            dipoles: dipoles.as_array(),
-            volume,
-            temperature,
-            boundary: boundary.parse()?,
-        })?;
+        let out = {
+            let input = StaticDielectricInput {
+                dipoles: dipoles.as_array(),
+                volume,
+                temperature,
+                boundary: boundary.parse()?,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

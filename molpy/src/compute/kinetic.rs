@@ -65,13 +65,17 @@ impl PyKineticEnergy {
     #[pyo3(signature = (*, masses, velocities))]
     fn compute(
         &self,
+        py: Python<'_>,
         masses: ArrayArg1<'_, f64>,
         velocities: ArrayArg2<'_, f64>,
     ) -> Result<PyKineticEnergyResult> {
-        let out = self.inner.compute(KineticEnergyInput {
-            masses: masses.as_array(),
-            velocities: velocities.as_array(),
-        })?;
+        let out = {
+            let input = KineticEnergyInput {
+                masses: masses.as_array(),
+                velocities: velocities.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

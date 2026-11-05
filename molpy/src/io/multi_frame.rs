@@ -94,7 +94,7 @@ macro_rules! frame_reader_class {
         impl $py {
             #[new]
             fn py_new(source: PySource<'_>) -> PyResult<Self> {
-                let inner = source.read(<$core>::open).map_err(io_error_to_pyerr)?;
+                let inner = source.open(<$core>::open).map_err(io_error_to_pyerr)?;
                 Ok(Self {
                     inner: Some(inner),
                     cursor: 0,

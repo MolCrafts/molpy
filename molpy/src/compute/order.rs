@@ -202,10 +202,17 @@ impl PySteinhardt {
     }
 
     #[pyo3(signature = (*, neighbors))]
-    fn compute(&self, neighbors: PyRef<'_, PyNeighbors>) -> Result<PySteinhardtResult> {
-        let out = self.inner.compute(SteinhardtInput {
-            neighbors: &neighbors.inner,
-        })?;
+    fn compute(
+        &self,
+        py: Python<'_>,
+        neighbors: PyRef<'_, PyNeighbors>,
+    ) -> Result<PySteinhardtResult> {
+        let out = {
+            let input = SteinhardtInput {
+                neighbors: &neighbors.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -230,10 +237,17 @@ impl PyHexatic {
     }
 
     #[pyo3(signature = (*, neighbors))]
-    fn compute(&self, neighbors: PyRef<'_, PyNeighbors>) -> Result<PyHexaticResult> {
-        let out = self.inner.compute(HexaticInput {
-            neighbors: &neighbors.inner,
-        })?;
+    fn compute(
+        &self,
+        py: Python<'_>,
+        neighbors: PyRef<'_, PyNeighbors>,
+    ) -> Result<PyHexaticResult> {
+        let out = {
+            let input = HexaticInput {
+                neighbors: &neighbors.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -280,13 +294,17 @@ impl PySolidLiquid {
     #[pyo3(signature = (*, qlm, neighbors))]
     fn compute(
         &self,
+        py: Python<'_>,
         qlm: PyRef<'_, PyQlmTable>,
         neighbors: PyRef<'_, PyNeighbors>,
     ) -> Result<PySolidLiquidResult> {
-        let out = self.inner.compute(SolidLiquidInput {
-            qlm: &qlm.inner,
-            neighbors: &neighbors.inner,
-        })?;
+        let out = {
+            let input = SolidLiquidInput {
+                qlm: &qlm.inner,
+                neighbors: &neighbors.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -313,13 +331,17 @@ impl PyContinuousCoordination {
     #[pyo3(signature = (*, qlm, neighbors))]
     fn compute(
         &self,
+        py: Python<'_>,
         qlm: PyRef<'_, PyQlmTable>,
         neighbors: PyRef<'_, PyNeighbors>,
     ) -> Result<PyContinuousCoordinationResult> {
-        let out = self.inner.compute(ContinuousCoordinationInput {
-            qlm: &qlm.inner,
-            neighbors: &neighbors.inner,
-        })?;
+        let out = {
+            let input = ContinuousCoordinationInput {
+                qlm: &qlm.inner,
+                neighbors: &neighbors.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -344,10 +366,13 @@ impl PyNematic {
     }
 
     #[pyo3(signature = (*, directors))]
-    fn compute(&self, directors: ArrayArg2<'_, f64>) -> Result<PyNematicResult> {
-        let out = self.inner.compute(NematicInput {
-            directors: directors.as_array(),
-        })?;
+    fn compute(&self, py: Python<'_>, directors: ArrayArg2<'_, f64>) -> Result<PyNematicResult> {
+        let out = {
+            let input = NematicInput {
+                directors: directors.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -411,10 +436,13 @@ impl PyCubatic {
     }
 
     #[pyo3(signature = (*, directors))]
-    fn compute(&self, directors: ArrayArg2<'_, f64>) -> Result<PyCubaticResult> {
-        let out = self.inner.compute(CubaticInput {
-            directors: directors.as_array(),
-        })?;
+    fn compute(&self, py: Python<'_>, directors: ArrayArg2<'_, f64>) -> Result<PyCubaticResult> {
+        let out = {
+            let input = CubaticInput {
+                directors: directors.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

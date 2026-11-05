@@ -108,6 +108,7 @@ impl PyHBonds {
     #[pyo3(signature = (*, positions, donors, acceptors, pairs))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: ArrayArg3<'_, f64>,
         donors: Vec<[u32; 2]>,
         acceptors: Vec<u32>,
@@ -115,12 +116,15 @@ impl PyHBonds {
     ) -> Result<PyHBondsResult> {
         let donors: Vec<(u32, u32)> = donors.into_iter().map(|[d, h]| (d, h)).collect();
         let pairs: Vec<_> = pairs.iter().map(|table| &table.inner).collect();
-        let out = self.inner.compute(HBondsInput {
-            positions: positions.as_array(),
-            donors: &donors,
-            acceptors: &acceptors,
-            pairs: &pairs,
-        })?;
+        let out = {
+            let input = HBondsInput {
+                positions: positions.as_array(),
+                donors: &donors,
+                acceptors: &acceptors,
+                pairs: &pairs,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
