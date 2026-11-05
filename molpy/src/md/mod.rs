@@ -203,6 +203,9 @@ pub struct PyMD {
     /// Where a Python pair style among the evaluator's kernels parks its
     /// exception (the `Potential` trait has no error channel).
     err_slots: Vec<ErrSlot>,
+    /// Whether the evaluator is a Python potential, which runs Python every
+    /// step: `run` then keeps the GIL rather than re-taking it per step.
+    python_evaluator: bool,
 }
 
 #[pymethods]
@@ -216,6 +219,7 @@ impl PyMD {
         Ok(Self {
             inner: MD::new(preset).map_err(md_err)?,
             err_slots: Vec::new(),
+            python_evaluator: false,
         })
     }
 
@@ -273,10 +277,11 @@ impl PyMD {
         if !native {
             let python = PythonPotential::new(potential)?;
             self.err_slots.clear();
-            return self
-                .inner
+            self.inner
                 .set_bound_potential(MountedPython(python), skin)
-                .map_err(md_err);
+                .map_err(md_err)?;
+            self.python_evaluator = true;
+            return Ok(());
         }
         if potential
             .cast::<PyPotentials>()
@@ -298,15 +303,28 @@ impl PyMD {
         self.err_slots = slots;
         self.inner
             .set_evaluator(FfEvaluator::from_members(members))
-            .map_err(md_err)
+            .map_err(md_err)?;
+        self.python_evaluator = false;
+        Ok(())
     }
 
     /// Advance `frame` for `n_steps`. Coordinates, velocities, forces, image
     /// flags, and `meta["energy"]` / `meta["kinetic"]` are written on `frame`.
-    fn run(&mut self, frame: &PyFrame, n_steps: usize) -> PyResult<()> {
+    ///
+    /// A native run releases the GIL, so other Python threads run meanwhile;
+    /// the frame stays write-locked, so one touching it gets ``FrameBusy``.
+    fn run(&mut self, py: Python<'_>, frame: &PyFrame, n_steps: usize) -> PyResult<()> {
+        let python = self.python_evaluator;
+        let md = &mut self.inner;
         frame
             .inner
-            .with_mut(|f| self.inner.run(f, n_steps))
+            .with_mut(|f| {
+                if python {
+                    md.run(f, n_steps)
+                } else {
+                    py.detach(|| md.run(f, n_steps))
+                }
+            })
             .map_err(ffi_error_to_pyerr)?
             .map_err(md_err)?;
         take_err(&self.err_slots)

@@ -1,7 +1,5 @@
 //! Column representation for heterogeneous data: [`Column`] over [`ColumnArray`].
 
-use std::any::Any;
-use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -33,80 +31,22 @@ macro_rules! map_column {
     };
 }
 
-/// Wrapper around `ArrayD<T>` that optionally defers buffer ownership to a
-/// foreign allocator.
-///
-/// # Storage model
+/// The `ArrayD<T>` a [`Column`] shares.
 ///
 /// [`Column`] variants wrap `Arc<ColumnArray<T>>` so cloning a Column is an
-/// O(1) refcount bump rather than a deep copy. The `ColumnArray` is a thin
-/// wrapper that makes the underlying `ArrayD<T>` either:
-///
-/// * **Rust-owned** — the normal path; `ArrayD<T>`'s backing `Vec<T>` was
-///   allocated by Rust's allocator and is dropped normally when the column array
-///   drops.
-/// * **Foreign-borrowed** — the buffer was allocated by *some other* allocator
-///   (e.g., numpy's). The column array fakes an `ArrayD<T>` pointing at that memory
-///   and skips the `Vec::drop` on column array drop. Instead, it holds an opaque
-///   "keep-alive" object (e.g., a `Py<PyArrayDyn<T>>`) whose own `Drop` is
-///   responsible for releasing the memory via the foreign allocator.
-///
-/// Readers don't need to know which storage is active: they access the inner
-/// array via `Deref<Target = ArrayD<T>>`, and `get::<T>()`, `shape()`, `view()`
-/// etc work identically. Every mutable getter first detaches from foreign
-/// storage (copy-on-write) before returning a mutable reference, so mutation
-/// never reaches into foreign memory.
+/// O(1) refcount bump rather than a deep copy; a mutable getter makes the
+/// `Arc` unique first (copy-on-write). The buffer is always Rust-owned: a
+/// binding copies a foreign array in, so no reference into the core ever
+/// points at memory another runtime may write or free.
+#[derive(Clone)]
 pub struct ColumnArray<T> {
-    array: ManuallyDrop<ArrayD<T>>,
-    /// Optional keep-alive for a foreign-allocated buffer.
-    ///
-    /// When `Some`, the `array` field's `Vec<T>` points at memory managed by
-    /// some other allocator (e.g., numpy). On drop we must NOT run
-    /// `Vec::drop` on that buffer; we drop the keeper instead, and trust that
-    /// the keeper's own `Drop` releases the buffer through its native API.
-    ///
-    /// When `None`, the `array` is Rust-owned and drops normally.
-    foreign_keeper: Option<Box<dyn Any + Send + Sync>>,
+    array: ArrayD<T>,
 }
 
 impl<T> ColumnArray<T> {
-    /// Create a column array owning a Rust-allocated `ArrayD<T>`. This is the normal
-    /// path: the column array drops the inner `ArrayD` normally.
+    /// Wrap an owned `ArrayD<T>`.
     pub fn from_owned(arr: ArrayD<T>) -> Self {
-        Self {
-            array: ManuallyDrop::new(arr),
-            foreign_keeper: None,
-        }
-    }
-
-    /// Create a column array borrowing a foreign-allocated buffer.
-    ///
-    /// # Safety
-    ///
-    /// The caller must guarantee:
-    ///
-    /// * The `arr`'s backing memory was allocated by the same allocator that
-    ///   `keeper`'s `Drop` impl will call into. Typically the caller built
-    ///   `arr` via `Vec::from_raw_parts(ptr, len, len)` where `ptr` was
-    ///   obtained from `keeper` (e.g., numpy array data pointer).
-    /// * The `keeper` keeps the foreign memory alive for at least as long as
-    ///   this column array exists.
-    /// * The foreign buffer will not be mutated or reallocated while any
-    ///   reader holds a reference to it through this column array.
-    ///
-    /// When the column array drops, the inner `ArrayD`'s `Vec` is *not* dropped
-    /// (which would invoke Rust's allocator on foreign memory — UB). Instead,
-    /// `keeper` is dropped, and its own `Drop` impl releases the memory.
-    pub unsafe fn from_foreign<K: Any + Send + Sync>(arr: ArrayD<T>, keeper: K) -> Self {
-        Self {
-            array: ManuallyDrop::new(arr),
-            foreign_keeper: Some(Box::new(keeper)),
-        }
-    }
-
-    /// Is this column array backed by foreign memory?
-    pub fn is_foreign(&self) -> bool {
-        self.foreign_keeper.is_some()
+        Self { array: arr }
     }
 
     /// Direct reference to the inner `ArrayD<T>`.
@@ -124,39 +64,10 @@ impl<T> Deref for ColumnArray<T> {
     }
 }
 
-impl<T: Clone> Clone for ColumnArray<T> {
-    /// Cloning always produces a **Rust-owned** column array (deep-copies the inner
-    /// array out of any foreign buffer). This is the fundamental guarantee
-    /// that lets `Arc::make_mut`-style APIs return a `&mut ArrayD<T>` without
-    /// risking mutation of foreign memory.
-    fn clone(&self) -> Self {
-        Self::from_owned(ArrayD::clone(&self.array))
-    }
-}
-
-impl<T> Drop for ColumnArray<T> {
-    fn drop(&mut self) {
-        if let Some(keeper) = self.foreign_keeper.take() {
-            // Foreign-backed: release the keep-alive, let its Drop free the
-            // underlying buffer via the foreign allocator.
-            // The inner `ArrayD`'s `Vec` is NOT dropped — that would call
-            // Rust's allocator on foreign memory.
-            drop(keeper);
-        } else {
-            // Rust-owned: drop the inner ArrayD normally.
-            // SAFETY: `foreign_keeper` is None, so `array` is a real owned
-            // ArrayD allocated by Rust's global allocator, and this is the
-            // only place `array` is dropped.
-            unsafe { ManuallyDrop::drop(&mut self.array) }
-        }
-    }
-}
-
 impl<T: std::fmt::Debug> std::fmt::Debug for ColumnArray<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ColumnArray")
             .field("shape", &self.array.shape())
-            .field("foreign", &self.is_foreign())
             .finish()
     }
 }
@@ -203,21 +114,10 @@ pub enum Column {
     C128(Arc<ColumnArray<Complex<f64>>>),
 }
 
-/// Force an `Arc<ColumnArray<T>>` to be (1) Rust-owned and (2) uniquely
-/// referenced, so callers can mutate the inner `ArrayD<T>` safely. Clones if
-/// necessary. Returns `&mut ArrayD<T>`.
+/// Make an `Arc<ColumnArray<T>>` uniquely referenced (cloning the array if
+/// it is shared) and return its `&mut ArrayD<T>`: copy-on-write.
 fn realize_owned_mut<T: Clone>(arc: &mut Arc<ColumnArray<T>>) -> &mut ArrayD<T> {
-    // Step 1: if column array is foreign-backed, clone to detach from foreign memory.
-    // Cloning always produces a Rust-owned column array (see ColumnArray::clone).
-    if arc.is_foreign() {
-        *arc = Arc::new((**arc).clone());
-    }
-    // Step 2: make Arc unique via Arc::make_mut (clones column array if shared, which
-    // in turn deep-clones the ArrayD — preserving current CoW semantics).
-    let holder = Arc::make_mut(arc);
-    // Step 3: column array is now guaranteed Rust-owned AND uniquely referenced.
-    // ManuallyDrop's DerefMut gives auto-deref to &mut ArrayD<T>.
-    &mut holder.array
+    &mut Arc::make_mut(arc).array
 }
 
 impl Column {
@@ -327,18 +227,12 @@ impl Column {
         map_column!(self, h => h.array().index_axis(Axis(0), a) == h.array().index_axis(Axis(0), b))
     }
 
-    /// Is this column backed by a foreign (non-Rust) buffer?
-    pub fn is_foreign(&self) -> bool {
-        map_column!(self, a => a.is_foreign())
-    }
-
-    /// A copy that shares no buffer with `self` or with a foreign owner.
+    /// A copy that shares no buffer with `self`.
     ///
     /// [`Clone`] is an `Arc` bump, which is a copy for every Rust writer
     /// (writes go through copy-on-write) but not for a writer that holds the
-    /// buffer itself — a numpy view handed out by a binding, or the numpy array
-    /// a foreign-backed column was forged from. This copies the elements into a
-    /// new Rust-owned buffer.
+    /// buffer itself — a numpy view handed out by a binding. This copies the
+    /// elements into a new buffer.
     pub fn deep_copy(&self) -> Column {
         fn owned<T: Clone>(holder: &Arc<ColumnArray<T>>) -> Arc<ColumnArray<T>> {
             Arc::new(ColumnArray::clone(holder))
@@ -378,8 +272,8 @@ impl Column {
     /// The array, mutably, when this column holds `T` elements; `None` for any
     /// other dtype.
     ///
-    /// Copy-on-write: a shared or foreign-backed buffer is cloned first, so the
-    /// returned reference always refers to uniquely held Rust-owned memory.
+    /// Copy-on-write: a shared buffer is cloned first, so the returned
+    /// reference always refers to uniquely held memory.
     pub fn get_mut<T: BlockDtype>(&mut self) -> Option<&mut ArrayD<T>> {
         T::holder_mut(self).map(realize_owned_mut)
     }
@@ -387,8 +281,7 @@ impl Column {
     /// Resize this column along axis 0 to `new_nrows`.
     ///
     /// See the main doc on `Block::resize`. If the underlying column array is
-    /// shared or foreign-backed, this replaces the column array with a fresh
-    /// Rust-owned copy.
+    /// shared, this replaces the column array with a fresh copy.
     pub fn resize(&mut self, new_nrows: usize) {
         let current = self.shape()[0];
         if new_nrows == current {
@@ -416,14 +309,6 @@ impl Column {
 impl<T: BlockDtype> From<ArrayD<T>> for Column {
     fn from(arr: ArrayD<T>) -> Self {
         T::wrap(Arc::new(ColumnArray::from_owned(arr)))
-    }
-}
-
-/// Wrap a pre-built column array — the zero-copy path for a binding that
-/// forged a foreign-backed one (see [`ColumnArray::from_foreign`]).
-impl<T: BlockDtype> From<ColumnArray<T>> for Column {
-    fn from(holder: ColumnArray<T>) -> Self {
-        T::wrap(Arc::new(holder))
     }
 }
 
@@ -633,78 +518,6 @@ mod tests {
         cloned.get_mut::<f64>().unwrap()[0] = 99.0;
         assert_eq!(col.get::<f64>().unwrap()[0], 1.0);
         assert_eq!(cloned.get::<f64>().unwrap()[0], 99.0);
-    }
-
-    // ---- Foreign column array correctness ----
-
-    /// Test that a foreign-backed column array reads the right data without
-    /// dropping the foreign memory (we use `Vec<f64>` itself as the foreign
-    /// "allocator" — its Drop is what will free memory when the keeper drops).
-    #[test]
-    fn test_foreign_holder_readable() {
-        // "Foreign" keeper = a Rust Vec, but we exercise the ManuallyDrop +
-        // Drop path (keeper drops at end, Vec::drop runs via the keeper's own
-        // Drop, not via ManuallyDrop::drop).
-        let source: Vec<F> = vec![1.0, 2.0, 3.0, 4.0];
-        let ptr = source.as_ptr() as *mut F;
-        let len = source.len();
-        // Forge ArrayD pointing at `source`'s memory. SAFETY: `source` outlives
-        // the column array (kept alive as keeper). We construct cap=len so ndarray
-        // won't try to grow/realloc.
-        let forged = unsafe {
-            let vec = Vec::from_raw_parts(ptr, len, len);
-            ArrayD::from_shape_vec(ndarray::IxDyn(&[len]), vec).unwrap()
-        };
-        let holder = unsafe { ColumnArray::from_foreign(forged, source) };
-        let col = Column::from(holder);
-        assert!(col.is_foreign());
-        let arr = col.get::<f64>().unwrap();
-        assert_eq!(arr.as_slice().unwrap(), &[1.0, 2.0, 3.0, 4.0]);
-    }
-
-    #[test]
-    fn test_foreign_holder_cow_on_mut() {
-        // Set up a foreign column array, then mutate. The mutation should detach
-        // (CoW) and the source Vec should remain intact.
-        let source: Vec<F> = vec![10.0, 20.0, 30.0];
-        let ptr = source.as_ptr() as *mut F;
-        let len = source.len();
-        let forged = unsafe {
-            let vec = Vec::from_raw_parts(ptr, len, len);
-            ArrayD::from_shape_vec(ndarray::IxDyn(&[len]), vec).unwrap()
-        };
-        // Keep the source alive for the assertion below: store a clone in the
-        // keeper, so the original Vec isn't consumed when we check it.
-        let source_clone = source.clone();
-        let holder = unsafe { ColumnArray::from_foreign(forged, source_clone) };
-        let mut col = Column::from(holder);
-        assert!(col.is_foreign());
-
-        // Mutate the column. This should CoW into a Rust-owned column array.
-        col.get_mut::<f64>().unwrap()[0] = 999.0;
-        assert!(!col.is_foreign(), "after mut, holder must be Rust-owned");
-        assert_eq!(col.get::<f64>().unwrap()[0], 999.0);
-
-        // Source Vec is untouched.
-        assert_eq!(source[0], 10.0);
-    }
-
-    #[test]
-    fn test_foreign_holder_clone_detaches() {
-        let source: Vec<F> = vec![7.0, 8.0];
-        let ptr = source.as_ptr() as *mut F;
-        let len = source.len();
-        let forged = unsafe {
-            let vec = Vec::from_raw_parts(ptr, len, len);
-            ArrayD::from_shape_vec(ndarray::IxDyn(&[len]), vec).unwrap()
-        };
-        // The keepalive is the buffer the forged view points into.
-        let holder = unsafe { ColumnArray::from_foreign(forged, source) };
-        // Clone produces a Rust-owned column array.
-        let holder_clone = holder.clone();
-        assert!(holder.is_foreign());
-        assert!(!holder_clone.is_foreign());
-        assert_eq!(holder_clone.array().as_slice().unwrap(), &[7.0, 8.0]);
     }
 
     // ---- raw_bytes ----

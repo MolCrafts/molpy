@@ -1319,11 +1319,11 @@ mod tests {
             .unwrap();
         let mut ff = ForceField::new("test");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style(
-            "pair",
-            "lj/cut",
-            Params::from_iter([("cutoff", F::INFINITY)]),
-        )
+        ff.def_style("pair", "lj/cut", {
+            let mut style = Params::from_iter([("cutoff", F::INFINITY)]);
+            style.set("mixing", "arithmetic");
+            style
+        })
         .unwrap()
         .def_type(
             "A",

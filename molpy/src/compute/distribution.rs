@@ -117,6 +117,7 @@ impl PyDistributionFunction {
     #[pyo3(signature = (*, positions, simbox = None, tuples))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: Vec<ArrayArg2<'_, f64>>,
         simbox: Option<Vec<Option<PyRef<'_, PyBox>>>>,
         tuples: Vec<Vec<Vec<usize>>>,
@@ -138,7 +139,7 @@ impl PyDistributionFunction {
                 tuples: tuples.view(),
             })
             .collect();
-        Ok(self.inner.compute(&frames)?.into())
+        Ok(py.detach(|| self.inner.compute(&frames))?.into())
     }
 }
 
@@ -198,6 +199,7 @@ fn build<const N: usize>(
 }
 
 fn run<const N: usize>(
+    py: Python<'_>,
     inner: &CombinedDistribution<N>,
     positions: &[ArrayArg2<'_, f64>],
     boxes: &[Option<&SimBox>],
@@ -216,7 +218,7 @@ fn run<const N: usize>(
             tuples: std::array::from_fn(|axis| tables[axis].view()),
         })
         .collect();
-    Ok(inner.compute(&frames)?)
+    Ok(py.detach(|| inner.compute(&frames))?)
 }
 
 /// Joint distribution of 2 or 3 internal coordinates over frames
@@ -269,6 +271,7 @@ impl PyCombinedDistribution {
     #[pyo3(signature = (*, positions, simbox = None, tuples))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: Vec<ArrayArg2<'_, f64>>,
         simbox: Option<Vec<Option<PyRef<'_, PyBox>>>>,
         tuples: Vec<Vec<Vec<Vec<usize>>>>,
@@ -286,9 +289,11 @@ impl PyCombinedDistribution {
             })
             .collect::<Result<Vec<_>>>()?;
         let inner = match &self.inner {
-            Combined::Two(inner) => CombinedResult::Two(run(inner, &positions, &boxes, &tables)?),
+            Combined::Two(inner) => {
+                CombinedResult::Two(run(py, inner, &positions, &boxes, &tables)?)
+            }
             Combined::Three(inner) => {
-                CombinedResult::Three(run(inner, &positions, &boxes, &tables)?)
+                CombinedResult::Three(run(py, inner, &positions, &boxes, &tables)?)
             }
         };
         Ok(PyCombinedDistributionResult { inner })

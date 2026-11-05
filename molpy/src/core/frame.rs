@@ -1153,15 +1153,15 @@ impl PyFrame {
     /// ``frame_clone_from_addr`` does exactly that double-resolve.
     ///
     /// The capsule name is ``molrs_ffi::abi::frameref_capsule_name()`` —
-    /// ``"molrs.FrameRef/<major.minor>+<fingerprint>"``. The name carries the
-    /// ABI line and the build fingerprint (compiler and handle layout), so a
-    /// consumer whose build may lay the handle out differently fails the
-    /// name check cleanly instead of dereferencing a drifted layout.
+    /// ``"molrs.FrameRef/<fingerprint>"``. The name carries the build
+    /// fingerprint (compiler and handle layout), so a consumer whose build may
+    /// lay the handle out differently fails the name check cleanly instead of
+    /// dereferencing a drifted layout.
     ///
     /// Returns
     /// -------
     /// capsule
-    ///     A ``PyCapsule`` named ``"molrs.FrameRef/<major.minor>+<fingerprint>"`` whose
+    ///     A ``PyCapsule`` named ``"molrs.FrameRef/<fingerprint>"`` whose
     ///     pointer is ``*mut *mut`` :class:`molrs_ffi.FrameRef` (a cloned
     ///     handle).
     fn _ffi_frameref_capsule<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyCapsule>> {
@@ -1188,16 +1188,14 @@ impl PyFrame {
     fn _from_ffi_frameref_capsule(capsule: &Bound<'_, PyCapsule>) -> PyResult<Self> {
         // `pointer_checked` validates the capsule name and rejects a null
         // payload in one step, returning the `*mut *mut FrameRef`. The name
-        // carries the ABI line, so a producer on another molrs minor line
-        // (or a capsule without the ABI line in its name) fails here cleanly instead of being dereferenced.
+        // carries the build fingerprint, so a producer whose handle layout may
+        // differ fails here cleanly instead of being dereferenced.
         let expected = molrs_ffi::abi::frameref_capsule_name();
         let ptr = capsule.pointer_checked(Some(expected)).map_err(|err| {
             pyo3::exceptions::PyValueError::new_err(format!(
-                "{err} — this build of molcrafts-molrs speaks FFI ABI line \
-                 {line} (capsule name {expected:?}); the producing extension \
-                 embeds a different molrs minor line. Align both packages on \
-                 one minor line.",
-                line = molrs_ffi::abi::abi_line(),
+                "{err} — this build of molpy accepts capsule name {expected:?}; \
+                 the producing extension was built from another molpy source or \
+                 Rust toolchain. Rebuild both from one molpy checkout."
             ))
         })?;
         let pp = ptr.as_ptr() as *const *const FrameRef;

@@ -67,13 +67,17 @@ impl PyCumulativeTrapezoid {
     #[pyo3(signature = (*, correlation, channel))]
     fn compute(
         &self,
+        py: Python<'_>,
         correlation: PyRef<'_, PyTimeCorrelation>,
         channel: usize,
     ) -> Result<PyTimeCorrelation> {
-        let out = self.inner.compute(CumulativeTrapezoidInput {
-            correlation: &correlation.inner,
-            channel,
-        })?;
+        let out = {
+            let input = CumulativeTrapezoidInput {
+                correlation: &correlation.inner,
+                channel,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -99,13 +103,17 @@ impl PyDebyeFit {
     #[pyo3(signature = (*, correlation, channel))]
     fn compute(
         &self,
+        py: Python<'_>,
         correlation: PyRef<'_, PyTimeCorrelation>,
         channel: usize,
     ) -> Result<PyDebyeFitResult> {
-        let out = self.inner.compute(DebyeFitInput {
-            correlation: &correlation.inner,
-            channel,
-        })?;
+        let out = {
+            let input = DebyeFitInput {
+                correlation: &correlation.inner,
+                channel,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -139,13 +147,17 @@ impl PyLinearFit {
     #[pyo3(signature = (*, correlation, channel))]
     fn compute(
         &self,
+        py: Python<'_>,
         correlation: PyRef<'_, PyTimeCorrelation>,
         channel: usize,
     ) -> Result<PyLinearFitResult> {
-        let out = self.inner.compute(LinearFitInput {
-            correlation: &correlation.inner,
-            channel,
-        })?;
+        let out = {
+            let input = LinearFitInput {
+                correlation: &correlation.inner,
+                channel,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -178,13 +190,17 @@ impl PyPlateau {
     #[pyo3(signature = (*, correlation, channel))]
     fn compute(
         &self,
+        py: Python<'_>,
         correlation: PyRef<'_, PyTimeCorrelation>,
         channel: usize,
     ) -> Result<PyPlateauResult> {
-        let out = self.inner.compute(PlateauInput {
-            correlation: &correlation.inner,
-            channel,
-        })?;
+        let out = {
+            let input = PlateauInput {
+                correlation: &correlation.inner,
+                channel,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

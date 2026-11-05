@@ -1808,7 +1808,9 @@ pair_coeff c3 c3 0.107800 3.397710
         let mut ff = ForceField::new("hand");
         ff.set_units("real");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
+        let mut lj_style = Params::from_iter([("cutoff", 9.0)]);
+        lj_style.set("mixing", "arithmetic");
+        ff.def_style("pair", "lj/cut", lj_style)
             .unwrap()
             .def_type("c3", &["c3"], lj(0.1078, 3.39771))
             .unwrap()
@@ -1876,25 +1878,29 @@ pair_coeff c3 c3 0.107800 3.397710
         ff
     }
 
-    /// Combined branch (`lj/cut` + `coul/cut` → `lj/cut/coul/cut`): an
-    /// `lj/cut` declaring no rule is evaluated arithmetically by the kernel,
-    /// so the export must say so — LAMMPS' own default is geometric.
+    /// An `lj/cut` that states no rule has none to write, and LAMMPS would
+    /// mix it by its own default (geometric): the export is refused, alone
+    /// or recombined with `coul/cut` into `lj/cut/coul/cut`.
     #[test]
-    fn combined_undeclared_lj_cut_writes_pair_modify_mix_arithmetic() {
-        let ff = split_pair_ff();
+    fn an_undeclared_lj_cut_mixing_is_refused() {
         let labels = labels_of(&[("atoms", &["c3", "hc"])]);
-        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
-        assert_eq!(
-            lines_starting_with(&text, "pair_modify"),
-            vec!["pair_modify mix arithmetic".to_owned()],
-            "{text}"
-        );
+        let mut combined = lj_only_ff(None);
+        combined
+            .def_style("pair", "coul/cut", Params::from_iter([("cutoff", 10.0)]))
+            .unwrap();
+        for ff in [lj_only_ff(None), combined] {
+            let err = LammpsForcefieldWriter::new(&labels)
+                .written(&ff)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("mixing"), "{err}");
+        }
     }
 
-    /// Single-style branch: the same rule for a lone undeclared `lj/cut`.
+    /// A stated rule is written, in the combined branch too.
     #[test]
-    fn single_undeclared_lj_cut_writes_pair_modify_mix_arithmetic() {
-        let ff = lj_only_ff(None);
+    fn a_stated_lj_cut_mixing_writes_pair_modify_mix() {
+        let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["c3", "hc"])]);
         let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert_eq!(
@@ -1909,7 +1915,7 @@ pair_coeff c3 c3 0.107800 3.397710
     /// for `lj/cut` is geometric); one without (`buck`) writes none.
     #[test]
     fn a_pair_hybrid_writes_each_sub_style_mixing_rule() {
-        let mut ff = lj_only_ff(None);
+        let mut ff = lj_only_ff(Some("arithmetic"));
         ff.def_style("pair", "buck", Params::from_iter([("cutoff", 9.0)]))
             .unwrap()
             .def_type(
@@ -2096,7 +2102,9 @@ pair_coeff c3 c3 0.107800 3.397710
         let mut ff = ForceField::new("hand");
         ff.set_units("real");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
+        let mut lj_style = Params::from_iter([("cutoff", 9.0)]);
+        lj_style.set("mixing", "arithmetic");
+        ff.def_style("pair", "lj/cut", lj_style)
             .unwrap()
             .def_type("oh", &["oh"], lj(0.093, 3.242871))
             .unwrap()

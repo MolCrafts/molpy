@@ -41,10 +41,6 @@ from molpy import version
 __version__ = version.version
 release_date = version.release_date
 
-# FFI ABI handshake, read by name by downstream handle-bridge extensions
-# (molpack) at their import time.
-from molpy._core import _ffi_abi_token  # noqa: F401
-
 import importlib
 import types
 import typing

@@ -635,7 +635,13 @@ pub mod positional {
             .get("mixing")
             .and_then(|v| v.as_text())
             .or_else(|| p.default.as_ref().and_then(ParamValue::as_text))
-            .unwrap_or(crate::ff::ir::CombiningRule::UNDECLARED.name());
+            .ok_or_else(|| {
+                format!(
+                    "{} {}: states no `mixing` rule, and LAMMPS would mix its types by its \
+                     own default (arithmetic | geometric | sixthpower)",
+                    spec.category, spec.name
+                )
+            })?;
         match fixed {
             Some(fixed) if fixed == rule => Ok(Vec::new()),
             Some(fixed) => Err(format!(

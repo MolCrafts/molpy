@@ -69,13 +69,17 @@ macro_rules! pmft_class {
             #[pyo3(signature = (*, pairs, orientations = None))]
             fn compute(
                 &self,
+                py: Python<'_>,
                 pairs: PyRef<'_, PyNeighbors>,
                 orientations: Option<$orientations>,
             ) -> Result<PyPmftResult> {
-                let out = self.inner.compute(PmftInput {
+                let out = {
+            let input = PmftInput {
                     pairs: &pairs.inner,
                     orientations: orientations.as_ref().map(|o| o.as_array()),
-                })?;
+                };
+            py.detach(|| self.inner.compute(input))
+        }?;
                 Ok(PmftArrays::from(out).into())
             }
         }

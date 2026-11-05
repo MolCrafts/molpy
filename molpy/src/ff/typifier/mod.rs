@@ -201,10 +201,11 @@ impl PyTypifier {
         match &self.state {
             TypifierState::Native(typing) => {
                 let graph = graph.cast::<PyAtomistic>()?;
-                let inner = typing
-                    .typifier()
-                    .assign(graph.borrow_mut().core_mut())
-                    .map_err(typing_err)?;
+                let py = graph.py();
+                let typifier = typing.typifier();
+                let mut graph = graph.borrow_mut();
+                let core = graph.core_mut();
+                let inner = py.detach(|| typifier.assign(core)).map_err(typing_err)?;
                 Ok(PyTypeAssignment { inner })
             }
             TypifierState::Python(_) => Err(PyNotImplementedError::new_err(
@@ -237,8 +238,12 @@ impl PyTypifier {
     fn typify(slf: &Bound<'_, Self>, mol: &Bound<'_, PyAtomistic>) -> PyResult<Py<PyAtomistic>> {
         let py = slf.py();
         let native = match &mut slf.borrow_mut().state {
+            // Native typing runs without the GIL, so other Python threads run
+            // meanwhile; the typifier and the graph stay borrowed.
             TypifierState::Native(typing) => {
-                Some(typing.typify(mol.borrow().core()).map_err(typing_err)?)
+                let mol = mol.borrow();
+                let core = mol.core();
+                Some(py.detach(|| typing.typify(core)).map_err(typing_err)?)
             }
             TypifierState::Python(_) => None,
         };

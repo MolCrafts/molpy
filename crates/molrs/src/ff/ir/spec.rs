@@ -612,16 +612,17 @@ fn cutoff() -> ParamSpec {
     p("cutoff", "L")
 }
 
-/// `mixing`, absent the IR's undeclared rule ([`CombiningRule::UNDECLARED`],
-/// arithmetic). Not every engine's default: LAMMPS mixes `lj/cut`
-/// geometrically, which its reader states explicitly.
+/// `mixing`, with no default: engines disagree (LAMMPS mixes `lj/cut`
+/// geometrically, AMBER arithmetically), so a force field whose unlike pairs
+/// are mixed states its rule, and every reader whose format has one writes
+/// it.
 fn mixing() -> ParamSpec {
-    mixing_by(CombiningRule::UNDECLARED)
+    ParamSpec::text("mixing", &crate::ff::ir::COMBINING_RULES)
 }
 
 /// `mixing`, absent `rule`.
 fn mixing_by(rule: CombiningRule) -> ParamSpec {
-    ParamSpec::text("mixing", &["arithmetic", "geometric", "sixthpower"])
+    ParamSpec::text("mixing", &crate::ff::ir::COMBINING_RULES)
         .default_value(ParamValue::Text(rule.name().into()))
 }
 

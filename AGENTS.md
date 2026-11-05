@@ -35,12 +35,13 @@ unified project and precedes the downstream migration. Push no `v*` tag,
 and push nothing, without the operator confirming the target remote and
 branch.
 
-**ABI.** The minor line is the ABI contract. Capsule names
-(`molrs.FrameRef/<major.minor>+<fingerprint>`, …) are defined only in
+**FFI capsules.** There are no internal version numbers: no ABI line, no
+wire/protocol version, no handshake. Capsule names
+(`molrs.FrameRef/<fingerprint>`, …) are defined only in
 `crates/molrs-ffi/src/abi.rs`; the fingerprint hashes the compiler and the
 handle layout, so builds that may disagree on a layout refuse each other's
 capsules. A layout change fails the `ffi` gate's snapshot test
-(`abi::tests::layout_matches_the_snapshot`): bump the minor line with it.
+(`abi::tests::layout_matches_the_snapshot`): update the snapshot with it.
 A binding never hands out a view into storage the core may reallocate: a
 column crosses the seam as a copy, or over a reference-counted column array
 the numpy base keeps alive (`Block`), never as a raw pointer into a `Vec`.

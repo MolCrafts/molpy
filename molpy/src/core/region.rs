@@ -23,9 +23,9 @@
 //! angstroms).
 //!
 //! Every region exports its shared geometry as a ``PyCapsule`` named
-//! ``molrs.RegionRef/<major.minor>`` through ``_ffi_regionref_capsule()``, so
-//! a downstream extension built on the same molrs line (molpack) can evaluate
-//! it in place without marshalling.
+//! ``molrs.RegionRef/<fingerprint>`` through ``_ffi_regionref_capsule()``, so
+//! a downstream extension built from the same molpy source (molpack) can
+//! evaluate it in place without marshalling.
 
 use crate::array::{ArrayArg1, ArrayArg2};
 use crate::core::mesh::PyTriMesh;
@@ -112,7 +112,7 @@ struct RegionRefPtr(*mut molrs_ffi::RegionRef);
 // SAFETY: see the type's doc comment.
 unsafe impl Send for RegionRefPtr {}
 
-/// Export a region as a ``molrs.RegionRef/<major.minor>`` capsule.
+/// Export a region as a ``molrs.RegionRef/<fingerprint>`` capsule.
 fn region_capsule<'py>(py: Python<'py>, region: DynRegion) -> PyResult<Bound<'py, PyCapsule>> {
     let raw = RegionRefPtr(Box::into_raw(Box::new(molrs_ffi::RegionRef::new(region))));
     let name = molrs_ffi::abi::regionref_capsule_name().to_owned();
@@ -331,12 +331,12 @@ macro_rules! region_methods {
             }
 
             /// Export this region's shared geometry as a ``PyCapsule`` named
-            /// ``"molrs.RegionRef/<major.minor>"``.
+            /// ``"molrs.RegionRef/<fingerprint>"``.
             ///
             /// The capsule's pointer is ``*mut *mut`` :class:`molrs_ffi.RegionRef`
-            /// (a cloned handle over the same ``Arc``). A consumer built on the
-            /// same molrs minor line resolves it and evaluates the region in
-            /// place; one on another line fails the capsule name check.
+            /// (a cloned handle over the same ``Arc``). A consumer with the same
+            /// handle layout resolves it and evaluates the region in place; one
+            /// with another layout fails the capsule name check.
             fn _ffi_regionref_capsule<'py>(
                 &self,
                 py: Python<'py>,

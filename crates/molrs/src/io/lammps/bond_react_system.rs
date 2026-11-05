@@ -325,7 +325,9 @@ mod tests {
         let mut ff = ForceField::new("hand");
         ff.set_units("real");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
+        let mut pair = Params::from_iter([("cutoff", 9.0)]);
+        pair.set("mixing", "arithmetic");
+        ff.def_style("pair", "lj/cut", pair)
             .unwrap()
             .def_type("c3", &["c3"], lj(0.1078, 3.39771))
             .unwrap()

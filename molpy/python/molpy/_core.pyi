@@ -60,10 +60,6 @@ def _restore_pickled_state(
     """Pickle state setter: ``obj.__setstate__(state[0])``, then merge the
     instance ``__dict__`` ``state[1]`` back."""
 
-def _ffi_abi_token() -> tuple[str, str, str, str, str]:
-    """FFI ABI handshake: (abi_line, version, frameref_name, forcefield_name,
-    region_name)."""
-
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------

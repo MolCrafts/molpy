@@ -114,10 +114,17 @@ impl PyBondOrientationalOrder {
     }
 
     #[pyo3(signature = (*, neighbors))]
-    fn compute(&self, neighbors: PyRef<'_, PyNeighbors>) -> Result<PyBondOrientationalOrderResult> {
-        let out = self.inner.compute(BondOrientationalOrderInput {
-            neighbors: &neighbors.inner,
-        })?;
+    fn compute(
+        &self,
+        py: Python<'_>,
+        neighbors: PyRef<'_, PyNeighbors>,
+    ) -> Result<PyBondOrientationalOrderResult> {
+        let out = {
+            let input = BondOrientationalOrderInput {
+                neighbors: &neighbors.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -143,10 +150,17 @@ impl PyLocalDescriptors {
     }
 
     #[pyo3(signature = (*, neighbors))]
-    fn compute(&self, neighbors: PyRef<'_, PyNeighbors>) -> Result<PyLocalDescriptorsResult> {
-        let out = self.inner.compute(LocalDescriptorsInput {
-            neighbors: &neighbors.inner,
-        })?;
+    fn compute(
+        &self,
+        py: Python<'_>,
+        neighbors: PyRef<'_, PyNeighbors>,
+    ) -> Result<PyLocalDescriptorsResult> {
+        let out = {
+            let input = LocalDescriptorsInput {
+                neighbors: &neighbors.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -174,15 +188,19 @@ impl PyLocalBondProjection {
     #[pyo3(signature = (*, neighbors, proj_vectors, orientations = None))]
     fn compute(
         &self,
+        py: Python<'_>,
         neighbors: PyRef<'_, PyNeighbors>,
         proj_vectors: ArrayArg2<'_, f64>,
         orientations: Option<ArrayArg2<'_, f64>>,
     ) -> Result<PyLocalBondProjectionResult> {
-        let out = self.inner.compute(LocalBondProjectionInput {
-            neighbors: &neighbors.inner,
-            proj_vectors: proj_vectors.as_array(),
-            orientations: orientations.as_ref().map(|o| o.as_array()),
-        })?;
+        let out = {
+            let input = LocalBondProjectionInput {
+                neighbors: &neighbors.inner,
+                proj_vectors: proj_vectors.as_array(),
+                orientations: orientations.as_ref().map(|o| o.as_array()),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -224,10 +242,17 @@ impl PyEnvironmentMatch {
     }
 
     #[pyo3(signature = (*, neighbors))]
-    fn compute(&self, neighbors: PyRef<'_, PyNeighbors>) -> Result<PyEnvironmentMatchResult> {
-        let out = self.inner.compute(EnvironmentMatchInput {
-            neighbors: &neighbors.inner,
-        })?;
+    fn compute(
+        &self,
+        py: Python<'_>,
+        neighbors: PyRef<'_, PyNeighbors>,
+    ) -> Result<PyEnvironmentMatchResult> {
+        let out = {
+            let input = EnvironmentMatchInput {
+                neighbors: &neighbors.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -258,13 +283,17 @@ impl PyAngularSeparationGlobal {
     #[pyo3(signature = (*, query, reference))]
     fn compute(
         &self,
+        py: Python<'_>,
         query: ArrayArg2<'_, f64>,
         reference: ArrayArg2<'_, f64>,
     ) -> Result<PyAngularSeparationGlobalResult> {
-        let out = self.inner.compute(AngularSeparationGlobalInput {
-            query: query.as_array(),
-            reference: reference.as_array(),
-        })?;
+        let out = {
+            let input = AngularSeparationGlobalInput {
+                query: query.as_array(),
+                reference: reference.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -295,15 +324,19 @@ impl PyAngularSeparationNeighbor {
     #[pyo3(signature = (*, neighbors, query_orientations, point_orientations))]
     fn compute(
         &self,
+        py: Python<'_>,
         neighbors: PyRef<'_, PyNeighbors>,
         query_orientations: ArrayArg2<'_, f64>,
         point_orientations: ArrayArg2<'_, f64>,
     ) -> Result<PyAngularSeparationNeighborResult> {
-        let out = self.inner.compute(AngularSeparationNeighborInput {
-            neighbors: &neighbors.inner,
-            query_orientations: query_orientations.as_array(),
-            point_orientations: point_orientations.as_array(),
-        })?;
+        let out = {
+            let input = AngularSeparationNeighborInput {
+                neighbors: &neighbors.inner,
+                query_orientations: query_orientations.as_array(),
+                point_orientations: point_orientations.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

@@ -393,14 +393,15 @@ impl PyForceField {
     /// compile potentials with **no marshalling**. The capsule's ``void*`` is
     /// ``*mut *mut`` :class:`molrs_ffi.ForceFieldRef`, matching the frame
     /// convention; its name is ``molrs_ffi::abi::forcefield_capsule_name()``
-    /// — ``"molrs.ForceFieldRef/<major.minor>"``, carrying the ABI line so a
-    /// cross-minor consumer fails the name check cleanly. The capsule's
+    /// — ``"molrs.ForceFieldRef/<fingerprint>"``, carrying the build
+    /// fingerprint so a consumer with another handle layout fails the name
+    /// check cleanly. The capsule's
     /// destructor reclaims the boxed handle, dropping its ``Rc``.
     ///
     /// Returns
     /// -------
     /// capsule
-    ///     A ``PyCapsule`` named ``"molrs.ForceFieldRef/<major.minor>"``.
+    ///     A ``PyCapsule`` named ``"molrs.ForceFieldRef/<fingerprint>"``.
     fn _ffi_forcefield_capsule<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyCapsule>> {
         // Box a shared handle (Rc clone of this force field) and hand the raw
         // pointer to the capsule. See `ForceFieldRefPtr` for the Send / layout
