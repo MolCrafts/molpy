@@ -519,7 +519,9 @@ mod tests {
                 .def_type(t, &[], Params::from_iter([("mass", m)].iter().copied()))
                 .unwrap();
         }
-        let lj = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
+        let mut mixing = Params::new();
+        mixing.set("mixing", "arithmetic");
+        let lj = ff.def_style("pair", "lj/cut", mixing).unwrap();
         for (t, _) in TYPES {
             lj.def_type(
                 t,

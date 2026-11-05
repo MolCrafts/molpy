@@ -793,7 +793,10 @@ impl OpenmmXmlWriter {
         let mixing = |style: &Style| -> Result<CombiningRule, ForceFieldWriteError> {
             match style.params().get("mixing").and_then(|v| v.as_text()) {
                 Some(m) => Ok(CombiningRule::parse(m)?),
-                None => Ok(CombiningRule::UNDECLARED),
+                None => Err(refuse(
+                    style,
+                    "it mixes its per-type rows and states no `mixing` rule (arithmetic | geometric | sixthpower)",
+                )),
             }
         };
         let (use_lj_force, combining_rule) = match lj_style {
@@ -1385,11 +1388,11 @@ mod tests {
                     Params::from_iter([("mass", 12.011), ("charge", -0.1)].iter().copied()),
                 )
                 .unwrap();
-            ff.def_style(
-                "pair",
-                "lj/cut",
-                Params::from_iter([("cutoff", 10.0)].iter().copied()),
-            )
+            ff.def_style("pair", "lj/cut", {
+                let mut p = Params::from_iter([("cutoff", 10.0)].iter().copied());
+                p.set("mixing", "arithmetic");
+                p
+            })
             .unwrap()
             .def_type(
                 "CT",
@@ -1739,7 +1742,9 @@ mod tests {
     fn an_lj_cross_row_is_an_nbfix_pair() {
         let mut ff = ForceField::new("charmm");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style("pair", "lj/cut", Params::new())
+        let mut arithmetic = Params::new();
+        arithmetic.set("mixing", "arithmetic");
+        ff.def_style("pair", "lj/cut", arithmetic)
             .unwrap()
             .def_type(
                 "A",

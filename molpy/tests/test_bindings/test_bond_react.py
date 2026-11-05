@@ -21,7 +21,7 @@ def _forcefield() -> mp.ff.forcefield.ForceField:
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
     oh = atoms.def_type("oh", mass=15.999)
-    pairs = ff.def_style("pair", "lj/cut", {"cutoff": 9.0})
+    pairs = ff.def_style("pair", "lj/cut", {"cutoff": 9.0, "mixing": "arithmetic"})
     pairs.def_type("c3", c3, epsilon=0.1, sigma=3.4)
     pairs.def_type("oh", oh, epsilon=0.2, sigma=3.0)
     bonds = ff.def_style("bond", "harmonic")
@@ -137,7 +137,7 @@ def test_a_forcefield_missing_a_label_writes_nothing(tmp_path):
     ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
-    ff.def_style("pair", "lj/cut", {"cutoff": 9.0}).def_type(
+    ff.def_style("pair", "lj/cut", {"cutoff": 9.0, "mixing": "arithmetic"}).def_type(
         "c3", c3, epsilon=0.1, sigma=3.4
     )
     with pytest.raises(ValueError):

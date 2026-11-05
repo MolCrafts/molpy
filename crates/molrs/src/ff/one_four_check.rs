@@ -401,7 +401,7 @@ fn a_dihedral_weight_equals_per_pair_rows_of_its_parameters() {
         let refs = rows.iter().map(|(k, v)| (k.as_str(), v)).collect();
         crate::ff::potential::pair::lj_rows::charmm_pair_params(
             &refs,
-            crate::ff::ir::CombiningRule::Arithmetic,
+            Some(crate::ff::ir::CombiningRule::Arithmetic),
             TYPES[i],
             TYPES[j],
         )

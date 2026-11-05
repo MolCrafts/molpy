@@ -605,7 +605,11 @@ fn every_pair_form_prices_a_pair_list_and_a_table_alike() {
     let cases: Vec<(&str, Params, Rows)> = vec![
         (
             "lj/cut",
-            row(&[("cutoff", 4.0), ("shift", 1.0)]),
+            {
+                let mut style = row(&[("cutoff", 4.0), ("shift", 1.0)]);
+                style.set("mixing", "arithmetic");
+                style
+            },
             vec![
                 ("C", vec!["C"], row(&[("epsilon", 0.11), ("sigma", 3.4)])),
                 ("O", vec!["O"], row(&[("epsilon", 0.21), ("sigma", 2.96)])),
@@ -663,7 +667,11 @@ fn every_pair_form_prices_a_pair_list_and_a_table_alike() {
         ),
         (
             "lj/charmm",
-            row(&[("inner", 2.5), ("cutoff", 4.0)]),
+            {
+                let mut style = row(&[("inner", 2.5), ("cutoff", 4.0)]);
+                style.set("mixing", "arithmetic");
+                style
+            },
             vec![
                 ("C", vec!["C"], row(&[("epsilon", 0.11), ("sigma", 3.4)])),
                 ("O", vec!["O"], row(&[("epsilon", 0.21), ("sigma", 2.96)])),

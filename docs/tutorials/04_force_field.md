@@ -93,8 +93,9 @@ dihedral_style = ff.def_style("dihedral", "opls")
 dihedral_style.def_type("HC-CT-CT-HC", hc, ct, ct, hc, k1=0.0, k2=0.0, k3=0.3, k4=0.0)
 
 # 12-6 Lennard-Jones (LAMMPS: lj/cut); one self pair per atom type. Where a
-# pair style stops is the force field's to declare: its cutoff, in Å.
-pair_style = ff.def_style("pair", "lj/cut", {"cutoff": 10.0})
+# pair style stops is the force field's to declare: its cutoff, in Å. So is
+# how two types' rows mix into a cross pair: OPLS-AA mixes geometrically.
+pair_style = ff.def_style("pair", "lj/cut", {"cutoff": 10.0, "mixing": "geometric"})
 pair_style.def_type("CT", ct, epsilon=0.066, sigma=3.50)
 pair_style.def_type("HC", hc, epsilon=0.030, sigma=2.50)
 pair_style.def_type("OH", oh, epsilon=0.170, sigma=3.12)
