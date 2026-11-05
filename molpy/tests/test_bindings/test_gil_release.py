@@ -11,16 +11,9 @@ import threading
 import time
 
 import numpy as np
+import pytest
 
 import molpy as mp
-
-
-def _loop_rate(seconds: float) -> float:
-    t0 = time.perf_counter()
-    n = 0
-    while time.perf_counter() - t0 < seconds:
-        n += 1
-    return n / seconds
 
 
 def _alkane(n_carbons: int) -> tuple[object, object]:
@@ -37,9 +30,14 @@ def _alkane(n_carbons: int) -> tuple[object, object]:
 
 
 def _runs_beside_python(work) -> None:
-    """``work`` runs on a worker thread while this one keeps counting: the
-    count stays near its free rate only if ``work`` released the GIL."""
-    free = _loop_rate(0.3)
+    """``work`` runs on a worker thread while this one keeps ticking.
+
+    Holding the GIL freezes this thread for the whole native call; releasing
+    it only lets the OS deschedule it for a few milliseconds. So the witness
+    is the longest stall between ticks, not the tick rate: a parallel native
+    kernel may take most of the CPU on a small CI runner and slow the
+    counter without holding the GIL.
+    """
     done = threading.Event()
     failure: list[BaseException] = []
 
@@ -53,15 +51,20 @@ def _runs_beside_python(work) -> None:
     worker = threading.Thread(target=run)
     t0 = time.perf_counter()
     worker.start()
-    ticks = 0
+    last, longest_stall = t0, 0.0
     while not done.is_set():
-        ticks += 1
+        now = time.perf_counter()
+        longest_stall = max(longest_stall, now - last)
+        last = now
     elapsed = time.perf_counter() - t0
     worker.join()
     if failure:
         raise failure[0]
-    assert elapsed > 0.05, "the work finished too fast to measure"
-    assert ticks / elapsed > 0.25 * free, (ticks / elapsed, free)
+    if elapsed < 0.05:
+        # A machine fast enough to finish inside OS scheduling noise cannot
+        # tell a held GIL from a released one; that is not a failure.
+        pytest.skip(f"native call took {elapsed * 1e3:.1f} ms: too fast to measure here")
+    assert longest_stall < 0.5 * elapsed, (longest_stall, elapsed)
 
 
 def _lattice(n_side: int, spacing: float) -> np.ndarray:
@@ -117,7 +120,7 @@ def test_a_neighbor_list_build_lets_other_python_threads_run() -> None:
 
 
 def test_reading_and_writing_let_other_python_threads_run() -> None:
-    pos = _lattice(40, 1.5)
+    pos = _lattice(80, 1.5)
     atoms = mp.core.Block()
     atoms.insert("element", ["Ar"] * len(pos))
     for d, key in enumerate("xyz"):
@@ -131,7 +134,7 @@ def test_reading_and_writing_let_other_python_threads_run() -> None:
 
 
 def test_typing_lets_other_python_threads_run() -> None:
-    mol = mp.io.smiles.read_smiles("C" * 60).to_atomistic()
+    mol = mp.io.smiles.read_smiles("C" * 240).to_atomistic()
     mol = mp.perceive.add_hydrogens(mol)
     typifier = mp.ff.typifier.OplsAaTypifier()
     _runs_beside_python(lambda: typifier.typify(mol))
