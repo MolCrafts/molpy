@@ -122,13 +122,15 @@ impl Frame {
         let rs_block = RsBlock::new();
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .set_block(self.inner.id, key, rs_block)
             .map_err(js_err)?;
         let handle = self
             .inner
             .arena
-            .borrow()
+            .read()
+            .map_err(js_err)?
             .get_block(self.inner.id, key)
             .map_err(js_err)?;
         Ok(Block {
@@ -159,7 +161,8 @@ impl Frame {
         let handle = self
             .inner
             .arena
-            .borrow()
+            .read()
+            .map_err(js_err)?
             .get_block(self.inner.id, key)
             .map_err(js_err)?;
         Ok(Block {
@@ -197,7 +200,8 @@ impl Frame {
         let rs_block = block.inner.clone_block().map_err(js_err)?;
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .set_block(self.inner.id, key, rs_block)
             .map_err(js_err)
     }
@@ -217,7 +221,8 @@ impl Frame {
     pub fn del_block(&self, key: &str) -> Result<(), JsValue> {
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .del_block(self.inner.id, key)
             .map_err(js_err)
     }
@@ -237,7 +242,8 @@ impl Frame {
     pub fn clear(&self) -> Result<(), JsValue> {
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .clear(self.inner.id)
             .map_err(js_err)
     }
@@ -267,7 +273,8 @@ impl Frame {
     pub fn rename_block(&self, old_key: &str, new_key: &str) -> Result<bool, JsValue> {
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .with_frame_mut(self.inner.id, |f| f.rename_block(old_key, new_key))
             .map_err(js_err)
     }
@@ -385,7 +392,8 @@ impl Frame {
         let value = meta_from_js(name, &value)?;
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .with_frame_meta_mut(self.inner.id, |meta| {
                 meta.insert(name.to_string(), value);
             })
@@ -417,7 +425,8 @@ impl Frame {
     pub fn get_box(&self) -> Result<Option<super::simbox::Box>, JsValue> {
         self.inner
             .arena
-            .borrow()
+            .read()
+            .map_err(js_err)?
             .with_frame(self.inner.id, |f| {
                 f.simbox
                     .as_ref()
@@ -448,7 +457,8 @@ impl Frame {
     pub fn set_box(&self, simbox: Option<super::simbox::Box>) -> Result<(), JsValue> {
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .set_frame_box(self.inner.id, simbox.map(|b| b.inner))
             .map_err(js_err)
     }
@@ -494,7 +504,8 @@ impl Frame {
     pub fn drop_frame(&self) -> Result<(), JsValue> {
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .drop_frame(self.inner.id)
             .map_err(js_err)
     }
@@ -631,8 +642,12 @@ fn meta_from_js(name: &str, value: &JsValue) -> Result<MetaValue, JsValue> {
 impl Frame {
     pub(crate) fn from_rs(rs_frame: molrs::core::Frame) -> Result<Self, JsValue> {
         let arena = molrs_ffi::FrameArenaCell::default();
-        let id = arena.borrow_mut().frame_new();
-        arena.borrow_mut().set_frame(id, rs_frame).map_err(js_err)?;
+        let id = arena.write().map_err(js_err)?.frame_new();
+        arena
+            .write()
+            .map_err(js_err)?
+            .set_frame(id, rs_frame)
+            .map_err(js_err)?;
         Ok(Frame {
             inner: FrameRef::new(arena, id),
         })
@@ -648,7 +663,8 @@ impl Frame {
     ) -> Result<R, JsValue> {
         self.inner
             .arena
-            .borrow()
+            .read()
+            .map_err(js_err)?
             .with_frame(self.inner.id, f)
             .map_err(js_err)?
     }

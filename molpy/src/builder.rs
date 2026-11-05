@@ -10,20 +10,17 @@
 use std::collections::HashMap;
 
 use molrs::builder::{
-    AssembleError, Assembler, AxisOrienter, GrowthPlacer, OrientError, Orienter, PlaceError,
-    Placer, SitePlacer,
+    AssembleError, Assembler, AxisOrienter, GrowthPlacer, Orienter, Placer, SitePlacer,
 };
-use molrs::builder::{CarbonTubeBuilder, CoarsenError, Coarsener, GrapheneBuilder, TubeExtent};
-use molrs::core::{Atomistic, CoarseGrain, Graph, LinkManyError, MolGraph, NodeId};
+use molrs::builder::{CarbonTubeBuilder, Coarsener, GrapheneBuilder, TubeExtent};
+use molrs::core::{Atomistic, CoarseGrain, Graph, MolGraph, NodeId};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
 
 use crate::core::frame::PyFrame;
 use crate::core::graph_views::Leaf;
-use crate::core::molgraph::{
-    PyAtomistic, PyCoarseGrain, PyMolGraph, center_error_message, link_error_message,
-};
+use crate::core::molgraph::{PyAtomistic, PyCoarseGrain, PyMolGraph};
 use crate::core::simbox::PyBox;
 
 /// Exact single-wall carbon nanotube builder.
@@ -246,10 +243,10 @@ impl PySitePlacer {
 /// Grows each molecule copy by copy in the assembler's walk order: the first
 /// copy keeps its template pose (its centroid on the site when the
 /// site graph has positions), and every later copy is rotated and moved so
-/// the anchor of its port toward its parent lands on the parent's leaving
-/// handle, pointing back along that bond. Needs no site positions; bond
-/// lengths and overlaps are left to a later minimisation. Takes no
-/// arguments.
+/// the anchor of its port toward its parent points back along the parent's
+/// leaving bond, one covalent bond length (the two anchors' covalent radii)
+/// from the parent's anchor. Needs no site positions; bond angles and
+/// overlaps are left to a later minimisation. Takes no arguments.
 #[pyclass(module = "molpy.builder", name = "GrowthPlacer", frozen)]
 pub struct PyGrowthPlacer;
 
@@ -501,7 +498,7 @@ impl PyAssembler {
     ///     the world breaks the graph type's invariant.
     fn assemble(&self, py: Python<'_>, sites: PyRef<'_, PyCoarseGrain>) -> PyResult<Py<PyAny>> {
         let sites = sites.core().clone();
-        let refuse = |e| PyValueError::new_err(assemble_error_message(e));
+        let refuse = |e: AssembleError| PyValueError::new_err(e.to_string());
         Ok(match &self.inner {
             AnyAssembler::MolGraph(a) => {
                 let world = py.detach(|| a.assemble(&sites)).map_err(refuse)?;
@@ -525,60 +522,6 @@ impl PyAssembler {
             AnyAssembler::CoarseGrain(_) => "CoarseGrain",
         };
         format!("Assembler(<{class} library>)")
-    }
-}
-
-/// The message of an [`AssembleError`] as Python sees it: node and port ids
-/// as int handles, never `NodeId(..)` / `RelationId(..)`. Every variant is
-/// matched by name; the wording of the outer sentence is the core's.
-fn assemble_error_message(e: AssembleError) -> String {
-    match e {
-        AssembleError::Place { name, site, source } => {
-            let reason = match source {
-                PlaceError::Template(center) => format!(
-                    "the template has no centroid: {}",
-                    center_error_message(center)
-                ),
-                other @ (PlaceError::NoPosition
-                | PlaceError::NonFinitePoint
-                | PlaceError::Port(_)) => other.to_string(),
-            };
-            format!("site {site} ('{name}') cannot be placed: {reason}")
-        }
-        AssembleError::Orient { name, site, source } => {
-            let reason = match source {
-                OrientError::Center(center) => format!(
-                    "the template has no centroid: {}",
-                    center_error_message(center)
-                ),
-                other @ (OrientError::Template(_)
-                | OrientError::NoAxis { .. }
-                | OrientError::Frame { .. }) => other.to_string(),
-            };
-            format!("site {site} ('{name}') cannot be oriented: {reason}")
-        }
-        AssembleError::Link {
-            site,
-            partner,
-            source,
-        } => {
-            let reason = match source {
-                LinkManyError::Pair { pair, source } => {
-                    format!("pair {pair} is refused: {}", link_error_message(source))
-                }
-                batch @ (LinkManyError::PortReused { .. }
-                | LinkManyError::DuplicateBond { .. }
-                | LinkManyError::BranchesOverlap { .. }) => batch.to_string(),
-            };
-            format!("site {site} cannot join site {partner}: {reason}")
-        }
-        e @ (AssembleError::TooManyUnits { .. }
-        | AssembleError::Output(_)
-        | AssembleError::Sites(_)
-        | AssembleError::UnknownName { .. }
-        | AssembleError::Template { .. }
-        | AssembleError::Ports { .. }
-        | AssembleError::Replicate { .. }) => e.to_string(),
     }
 }
 
@@ -695,7 +638,7 @@ impl PyCoarsener {
                 py.detach(|| Coarsener::new(graph).coarsen(&groups, &names))
             }
         }
-        .map_err(|e| PyValueError::new_err(coarsen_error_message(e)))?;
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
         PyCoarseGrain::with_member_world(py, sites, Some(source.clone().unbind()))
     }
 
@@ -705,19 +648,6 @@ impl PyCoarsener {
             CoarsenSource::Atomistic(_) => "Atomistic",
         };
         format!("Coarsener(<{source}>)")
-    }
-}
-
-/// The message of a [`CoarsenError`] as Python sees it: node ids as int
-/// handles, never `NodeId(..)`. Every variant is matched by name.
-fn coarsen_error_message(e: CoarsenError) -> String {
-    match e {
-        CoarsenError::Center { group, source } => {
-            format!("group {group}: {}", center_error_message(source))
-        }
-        e @ (CoarsenError::LengthMismatch { .. }
-        | CoarsenError::EmptyGroup { .. }
-        | CoarsenError::Overlap { .. }) => e.to_string(),
     }
 }
 

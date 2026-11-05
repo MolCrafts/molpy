@@ -137,6 +137,7 @@ mod tests {
 
     fn descriptor(label: &str, order: Option<BondKind>) -> BondingDescriptor {
         BondingDescriptor {
+            span: crate::line_notation::ast::Span::new(0, 0),
             kind: DescriptorKind::Symmetric,
             label: label.to_owned(),
             order,

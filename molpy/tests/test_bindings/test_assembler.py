@@ -1,4 +1,4 @@
-"""``mp.builder.Assembler`` / ``SitePlacer`` / ``AxisOrienter`` FFI seam:
+"""``mp.builder.Assembler`` / ``mp.builder.SitePlacer`` / ``mp.builder.AxisOrienter`` FFI seam:
 library values of both graph types, a ``CoarseGrain`` site graph in, the public
 world out as the library's graph type, the id columns and error
 mapping. Port assignment, placement
@@ -16,7 +16,6 @@ from __future__ import annotations
 import molpy as mp
 import numpy as np
 import pytest
-from molpy.builder import Assembler, AxisOrienter, GrowthPlacer, SitePlacer
 
 
 def _monomer() -> mp.core.Atomistic:
@@ -56,8 +55,10 @@ def _sites(names: list[str], *, axes: bool = True) -> mp.core.CoarseGrain:
     return mp.core.CoarseGrain.from_frame(frame)
 
 
-def _assembler(library: dict) -> Assembler:
-    return Assembler(library, SitePlacer(), AxisOrienter())
+def _assembler(library: dict) -> mp.builder.Assembler:
+    return mp.builder.Assembler(
+        library, mp.builder.SitePlacer(), mp.builder.AxisOrienter()
+    )
 
 
 def test_assemble_links_bonded_sites_and_places_atomistic_singles() -> None:
@@ -87,26 +88,28 @@ def test_a_chain_site_without_an_axis_is_a_value_error_naming_the_site() -> None
 
 def test_a_placer_that_is_not_a_site_placer_is_a_type_error() -> None:
     with pytest.raises(TypeError):
-        Assembler({"M": _monomer()}, object(), AxisOrienter())
+        mp.builder.Assembler({"M": _monomer()}, object(), mp.builder.AxisOrienter())
 
 
 def test_an_orienter_that_is_not_an_axis_orienter_is_a_type_error() -> None:
     with pytest.raises(TypeError):
-        Assembler({"M": _monomer()}, SitePlacer(), object())
+        mp.builder.Assembler({"M": _monomer()}, mp.builder.SitePlacer(), object())
 
 
 def test_placers_and_orienter_take_no_arguments() -> None:
     with pytest.raises(TypeError):
-        SitePlacer(1.0)  # type: ignore[call-arg]
+        mp.builder.SitePlacer(1.0)  # type: ignore[call-arg]
     with pytest.raises(TypeError):
-        GrowthPlacer(1.0)  # type: ignore[call-arg]
+        mp.builder.GrowthPlacer(1.0)  # type: ignore[call-arg]
     with pytest.raises(TypeError):
-        AxisOrienter(1.0)  # type: ignore[call-arg]
+        mp.builder.AxisOrienter(1.0)  # type: ignore[call-arg]
 
 
 def test_growth_placer_builds_a_topology_without_positions() -> None:
     sites = mp.io.cgsmiles.read_cgsmiles("{[#M]|3}").to_coarsegrain()
-    world = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(sites)
+    world = mp.builder.Assembler({"M": _monomer()}, mp.builder.GrowthPlacer()).assemble(
+        sites
+    )
 
     # Three copies of 4 atoms, two links remove 4 hydrogens.
     assert world.n_atoms == 8
@@ -116,7 +119,9 @@ def test_growth_placer_builds_a_topology_without_positions() -> None:
 def test_an_orienter_on_a_site_graph_without_positions_is_a_value_error() -> None:
     sites = mp.io.cgsmiles.read_cgsmiles("{[#M]|2}").to_coarsegrain()
     with pytest.raises(ValueError, match="needs site positions"):
-        Assembler({"M": _monomer()}, GrowthPlacer(), AxisOrienter()).assemble(sites)
+        mp.builder.Assembler(
+            {"M": _monomer()}, mp.builder.GrowthPlacer(), mp.builder.AxisOrienter()
+        ).assemble(sites)
 
 
 def _bare_monomer() -> mp.core.MolGraph:
@@ -143,7 +148,9 @@ def _bare_monomer() -> mp.core.MolGraph:
 
 def test_the_world_is_of_the_librarys_graph_type() -> None:
     sites = mp.io.cgsmiles.read_cgsmiles("{[#M]|2}").to_coarsegrain()
-    world = Assembler({"M": _bare_monomer()}, GrowthPlacer()).assemble(sites)
+    world = mp.builder.Assembler(
+        {"M": _bare_monomer()}, mp.builder.GrowthPlacer()
+    ).assemble(sites)
 
     assert type(world) is mp.core.MolGraph
     assert world.n_nodes == 6
@@ -152,11 +159,146 @@ def test_the_world_is_of_the_librarys_graph_type() -> None:
 def test_a_library_of_mixed_graph_types_is_a_type_error() -> None:
     bare = mp.core.MolGraph()
     with pytest.raises(TypeError, match="one graph type"):
-        Assembler({"M": _monomer(), "X": bare}, GrowthPlacer())
+        mp.builder.Assembler({"M": _monomer(), "X": bare}, mp.builder.GrowthPlacer())
     with pytest.raises(TypeError, match="graphs"):
-        Assembler({"M": {}}, GrowthPlacer())
+        mp.builder.Assembler({"M": {}}, mp.builder.GrowthPlacer())
 
 
 def test_an_empty_library_is_a_value_error() -> None:
     with pytest.raises(ValueError, match="at least one template"):
-        Assembler({}, GrowthPlacer())
+        mp.builder.Assembler({}, mp.builder.GrowthPlacer())
+
+
+def test_a_grown_chain_joins_units_at_the_covalent_bond_length() -> None:
+    """The inter-unit C–C bond is two carbon covalent radii (1.52 Å) long, not
+    the C–H length of the hydrogen it replaced."""
+    sites = mp.io.cgsmiles.read_cgsmiles("{[#M]|3}").to_coarsegrain()
+    frame = (
+        mp.builder.Assembler({"M": _monomer()}, mp.builder.GrowthPlacer())
+        .assemble(sites)
+        .to_frame()
+    )
+    atoms, bonds = frame["atoms"], frame["bonds"]
+    xyz = np.stack(
+        [np.asarray(atoms["x"]), np.asarray(atoms["y"]), np.asarray(atoms["z"])], axis=1
+    )
+    z = np.asarray(atoms["atomic_number"])
+    lengths = sorted(
+        round(float(np.linalg.norm(xyz[i] - xyz[j])), 3)
+        for i, j in zip(np.asarray(bonds["atomi"]), np.asarray(bonds["atomj"]))
+        if z[i] == 6 and z[j] == 6
+    )
+    assert lengths == [1.52, 1.52, 1.54, 1.54, 1.54]
+
+
+def _ladder_unit() -> mp.core.Atomistic:
+    """Four carbons in a square, two ``<`` ports on the left and two ``>`` on
+    the right (labels a, b pair the rails), hydrogens as leaving groups."""
+    unit = mp.core.Atomistic()
+    c = [
+        unit.add_atom(atomic_number=6, x=x, y=y, z=0.0, mass=12.011)
+        for x, y in [(0, 0), (0, 1.4), (1.4, 0), (1.4, 1.4)]
+    ]
+    h = [
+        unit.add_atom(atomic_number=1, x=x, y=y, z=0.0, mass=1.008)
+        for x, y in [(-1.09, 0), (-1.09, 1.4), (2.49, 0), (2.49, 1.4)]
+    ]
+    for i, j in [(0, 1), (0, 2), (1, 3), (2, 3)]:
+        unit.add_bond(c[i], c[j])
+    for ci, hi in zip(c, h):
+        unit.add_bond(ci, hi)
+    unit.add_port(c[0], h[0], "<", "a")
+    unit.add_port(c[1], h[1], "<", "b")
+    unit.add_port(c[2], h[2], ">", "a")
+    unit.add_port(c[3], h[3], ">", "b")
+    return unit
+
+
+def test_a_ladder_closes_both_bonds_between_neighbours() -> None:
+    """Two site bonds between neighbours (a ladder) are both closed at the
+    covalent length, with no atoms piled on each other."""
+    frame = mp.core.Frame(
+        {
+            "atoms": {"type": np.array(["U", "U", "U"])},
+            "bonds": {"atomi": np.array([0, 0, 1, 1]), "atomj": np.array([1, 1, 2, 2])},
+        }
+    )
+    world = (
+        mp.builder.Assembler({"U": _ladder_unit()}, mp.builder.GrowthPlacer())
+        .assemble(mp.core.CoarseGrain.from_frame(frame))
+        .to_frame()
+    )
+    atoms, bonds = world["atoms"], world["bonds"]
+    xyz = np.stack(
+        [np.asarray(atoms["x"]), np.asarray(atoms["y"]), np.asarray(atoms["z"])], axis=1
+    )
+    frag = np.asarray(atoms["frag_id"])
+    pairs = list(zip(np.asarray(bonds["atomi"]), np.asarray(bonds["atomj"])))
+    joins = [
+        float(np.linalg.norm(xyz[i] - xyz[j])) for i, j in pairs if frag[i] != frag[j]
+    ]
+    assert len(joins) == 4
+    assert np.allclose(joins, 1.52, atol=1e-3), joins
+    bonded = {tuple(sorted((int(i), int(j)))) for i, j in pairs}
+    distances = np.linalg.norm(xyz[:, None] - xyz[None], axis=2)
+    crowded = [
+        (i, j)
+        for i in range(len(xyz))
+        for j in range(i + 1, len(xyz))
+        if (i, j) not in bonded and distances[i, j] < 1.0
+    ]
+    assert crowded == []
+
+
+@pytest.mark.parametrize("src", [-1, True, 1.5])
+def test_port_ordinals_must_be_unsigned_integers(src) -> None:
+    sites = mp.CoarseGrain()
+    a = sites.add_bead(bead_type="M")
+    b = sites.add_bead(bead_type="M")
+    with pytest.raises(ValueError, match="port"):
+        sites.add_bond(a, b, src_port=src, dst_port=0)
+    assert sites.n_bonds == 0
+
+
+@pytest.mark.parametrize("props", [{"src_port": 0}, {"dst_port": 0}])
+def test_a_lone_port_ordinal_is_refused_by_the_assembler(props) -> None:
+    sites = mp.CoarseGrain()
+    a = sites.add_bead(bead_type="M")
+    b = sites.add_bead(bead_type="M")
+    sites.add_bond(a, b, **props)
+    with pytest.raises(ValueError, match="supplied together"):
+        mp.builder.Assembler({"M": _monomer()}, mp.builder.GrowthPlacer()).assemble(
+            sites
+        )
+
+
+def test_explicit_port_keywords_reach_assembler_and_roundtrip() -> None:
+    sites = mp.CoarseGrain()
+    a = sites.add_bead(bead_type="M")
+    b = sites.add_bead(bead_type="M")
+    sites.add_bond(a, b, src_port=1, dst_port=0)
+    restored = mp.CoarseGrain.from_frame(sites.to_frame())
+    assert restored.bonds["src_port"].tolist() == [1]
+    assert restored.bonds["dst_port"].tolist() == [0]
+    world = mp.builder.Assembler({"M": _monomer()}, mp.builder.GrowthPlacer()).assemble(
+        restored
+    )
+    assert isinstance(world, mp.Atomistic)
+    assert world.n_atoms == 6
+    # Passing two left ports must refuse rather than choose another pair.
+    bad = mp.CoarseGrain()
+    x = bad.add_bead(bead_type="M")
+    y = bad.add_bead(bead_type="M")
+    bad.add_bond(x, y, src_port=1, dst_port=1)
+    with pytest.raises(ValueError, match=r"bond 0.*site 0.*site 1.*incompatible"):
+        mp.builder.Assembler({"M": _monomer()}, mp.builder.GrowthPlacer()).assemble(bad)
+
+
+def test_conformer_preserves_ordinal_port_identity() -> None:
+    template = mp.io.smiles.read_smiles_fragment("[$]COCC[$]").to_template()
+    for ordinal, port in enumerate(template.ports):
+        port.anchor["port_site"] = ordinal
+    posed = mp.conformer.Conformer(seed=42).generate(template)[0]
+    assert [port.anchor["port_site"] for port in posed.ports] == [0, 1]
+    assert [port.anchor["port_site"] for port in template.ports] == [0, 1]
+    assert posed.n_ports == template.n_ports == 2

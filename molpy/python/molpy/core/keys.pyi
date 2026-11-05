@@ -33,6 +33,7 @@ __all__ = [
     "COORDS",
     "DIHEDRAL_TYPE_LABELS",
     "DIPOLE",
+    "DST_PORT",
     "ELEMENT",
     "ENDPOINTS",
     "EQUIV_CLASS",
@@ -78,6 +79,7 @@ __all__ = [
     "RES_ID",
     "RES_NAME",
     "SPACE_GROUP",
+    "SRC_PORT",
     "STEREO",
     "STYLE",
     "SYMMETRY_CLASS",
@@ -124,6 +126,7 @@ CMAP_TYPE_LABELS: Key
 COORDS: list[Key]
 DIHEDRAL_TYPE_LABELS: Key
 DIPOLE: list[Key]
+DST_PORT: Key
 ELEMENT: Key
 ENDPOINTS: list[Key]
 EQUIV_CLASS: Key
@@ -164,6 +167,7 @@ REACT_ID: Key
 RES_ID: Key
 RES_NAME: Key
 SPACE_GROUP: Key
+SRC_PORT: Key
 STYLE: Key
 SYMMETRY_CLASS: Key
 SYMOPS: Key

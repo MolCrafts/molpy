@@ -419,6 +419,13 @@ impl CoarseGrain {
     }
 
     /// Add a CG bond between two existing beads.
+    ///
+    /// Assembly connections optionally carry `src_port` and `dst_port`,
+    /// zero-based rows in the endpoints' template port tables; the schema
+    /// refuses a negative or non-integer ordinal here. That the two come
+    /// together, exist in their templates and accept each other is checked
+    /// by the assembler, which owns the library and is the one reader of
+    /// the pair. Parallel bonds are distinct relations.
     pub fn add_bond(
         &mut self,
         a: NodeId,
@@ -1106,6 +1113,27 @@ mod tests {
         cg.add_bond(b1, b2, props! {}).unwrap();
         assert_eq!(cg.n_beads(), 2);
         assert_eq!(cg.n_bonds(), 1);
+    }
+
+    #[test]
+    fn assembly_port_ordinals_are_unsigned_integers_and_round_trip() {
+        let mut cg = CoarseGrain::new();
+        let a = cg.add_bead(props! { keys::BEAD_TYPE => "A" }).unwrap();
+        let b = cg.add_bead(props! { keys::BEAD_TYPE => "B" }).unwrap();
+        for p in [
+            props! { keys::SRC_PORT => -1, keys::DST_PORT => 0 },
+            props! { keys::SRC_PORT => 1.0, keys::DST_PORT => 0 },
+            props! { keys::SRC_PORT => true, keys::DST_PORT => 0 },
+        ] {
+            assert!(cg.add_bond(a, b, p).is_err());
+            assert_eq!(cg.n_bonds(), 0);
+        }
+        cg.add_bond(a, b, props! { keys::SRC_PORT => 1, keys::DST_PORT => 0 })
+            .unwrap();
+        let restored = CoarseGrain::from_frame(&cg.to_frame().unwrap()).unwrap();
+        let (_, bond) = restored.bonds().next().unwrap();
+        assert_eq!(bond.props.get_int(keys::SRC_PORT), Some(1));
+        assert_eq!(bond.props.get_int(keys::DST_PORT), Some(0));
     }
 
     #[test]

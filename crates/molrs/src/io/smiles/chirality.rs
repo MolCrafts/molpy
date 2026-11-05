@@ -20,16 +20,14 @@
 use crate::core::{Atomistic, NodeId};
 use crate::line_notation::ast::Chirality;
 
-pub(crate) use crate::perceive::{
-    TetrahedralSite as Substituent, tetrahedral_reference as reference_order,
-};
+use crate::core::stereo::TetrahedralSite;
 
 /// How many implicit hydrogens the OpenSMILES order inserts at `id`.
 ///
 /// An absent count inserts none, the same as a stored zero. The reference
 /// order does not use this: a missing `h_count` stays "not stated" there.
 pub(crate) fn implicit_hydrogens(mol: &Atomistic, id: NodeId) -> i32 {
-    crate::perceive::stated_hydrogen_count(mol, id).unwrap_or(0)
+    crate::core::stereo::stated_hydrogen_count(mol, id).unwrap_or(0)
 }
 
 /// OpenSMILES neighbor order for `heavy` written with `has_from` and `h`
@@ -43,10 +41,10 @@ pub(crate) fn opensmiles_order(
     has_from: bool,
     heavy: &[NodeId],
     h: i32,
-) -> Option<[Substituent; 4]> {
-    let mut subs: Vec<Substituent> = heavy.iter().copied().map(Substituent::Atom).collect();
+) -> Option<[TetrahedralSite; 4]> {
+    let mut subs: Vec<TetrahedralSite> = heavy.iter().copied().map(TetrahedralSite::Atom).collect();
     if h == 1 && subs.len() == 3 {
-        subs.insert(usize::from(has_from), Substituent::Hydrogen);
+        subs.insert(usize::from(has_from), TetrahedralSite::Hydrogen);
     }
     if subs.len() == 4 {
         Some([subs[0], subs[1], subs[2], subs[3]])
@@ -66,7 +64,7 @@ pub(crate) fn emission_order(
     parent: Option<NodeId>,
     ring_partners: &[NodeId],
     children: &[NodeId],
-) -> Option<[Substituent; 4]> {
+) -> Option<[TetrahedralSite; 4]> {
     let mut heavy = Vec::with_capacity(4);
     if let Some(parent) = parent {
         heavy.push(parent);
@@ -79,11 +77,13 @@ pub(crate) fn emission_order(
 /// `written`, which is the clock sense of `from`, restated in the order `to`.
 ///
 /// `None` when `to` is not a permutation of `from`: the two orders do not
-/// name the same four substituents, so there is no parity to apply.
-pub(crate) fn chirality_in(
+/// name the same four substituents, so there is no parity to apply. The
+/// sites are any equatable vocabulary — graph substituents, or the written
+/// slots of a fragment body whose descriptors are not atoms yet.
+pub(crate) fn chirality_in<T: PartialEq>(
     written: Chirality,
-    from: &[Substituent; 4],
-    to: &[Substituent; 4],
+    from: &[T; 4],
+    to: &[T; 4],
 ) -> Option<Chirality> {
     let odd = odd_reorder(from, to)?;
     let clockwise = matches!(written, Chirality::Clockwise) ^ odd;
@@ -95,7 +95,7 @@ pub(crate) fn chirality_in(
 }
 
 /// Whether `to` is an odd permutation of `from`.
-fn odd_reorder(from: &[Substituent; 4], to: &[Substituent; 4]) -> Option<bool> {
+fn odd_reorder<T: PartialEq>(from: &[T; 4], to: &[T; 4]) -> Option<bool> {
     let mut seen = [false; 4];
     let mut perm = [0usize; 4];
     for (i, item) in to.iter().enumerate() {
@@ -106,15 +106,7 @@ fn odd_reorder(from: &[Substituent; 4], to: &[Substituent; 4]) -> Option<bool> {
         seen[j] = true;
         perm[i] = j;
     }
-    let mut inversions = 0usize;
-    for i in 0..4 {
-        for j in (i + 1)..4 {
-            if perm[i] > perm[j] {
-                inversions += 1;
-            }
-        }
-    }
-    Some(inversions % 2 == 1)
+    Some(crate::core::stereo::odd_permutation(&perm))
 }
 
 #[cfg(test)]
@@ -122,6 +114,7 @@ mod tests {
     use super::*;
     use crate::core::NeighborKinds;
     use crate::core::keys::STEREO;
+    use crate::core::stereo::tetrahedral_reference;
     use crate::io::smiles::{HydrogenEmit, SmilesEmitOptions, SmilesIr};
     use std::collections::HashSet;
 
@@ -154,9 +147,9 @@ mod tests {
             centre = Some((id, clockwise));
         }
         let (id, clockwise) = centre.expect("no tetrahedral centre");
-        let reference = reference_order(mol, id)
+        let reference = tetrahedral_reference(mol, id)
             .unwrap_or_else(|| panic!("centre {id:?} has no reference order"));
-        let mut ranked: Vec<(Vec<Vec<u8>>, Substituent)> = reference
+        let mut ranked: Vec<(Vec<Vec<u8>>, TetrahedralSite)> = reference
             .iter()
             .copied()
             .map(|subst| (substituent_key(mol, id, subst), subst))
@@ -180,8 +173,8 @@ mod tests {
     /// both rank as Z = 1. Every other atom is the BFS layers of atomic
     /// numbers around it. Distance to a marker such as fluorine splits the
     /// two ring carbons.
-    fn substituent_key(mol: &Atomistic, centre: NodeId, subst: Substituent) -> Vec<Vec<u8>> {
-        let Substituent::Atom(start) = subst else {
+    fn substituent_key(mol: &Atomistic, centre: NodeId, subst: TetrahedralSite) -> Vec<Vec<u8>> {
+        let TetrahedralSite::Atom(start) = subst else {
             return vec![vec![1]];
         };
         let only_the_centre = mol
@@ -285,11 +278,11 @@ mod tests {
 
     #[test]
     fn an_odd_reorder_flips_the_clock() {
-        let n = Substituent::Atom(NodeId::from(1));
-        let br = Substituent::Atom(NodeId::from(2));
-        let o = Substituent::Atom(NodeId::from(3));
-        let c = Substituent::Atom(NodeId::from(4));
-        let h = Substituent::Hydrogen;
+        let n = TetrahedralSite::Atom(NodeId::from(1));
+        let br = TetrahedralSite::Atom(NodeId::from(2));
+        let o = TetrahedralSite::Atom(NodeId::from(3));
+        let c = TetrahedralSite::Atom(NodeId::from(4));
+        let h = TetrahedralSite::Hydrogen;
         // `N[C@](Br)(O)C` is anticlockwise on [N, Br, O, C]. Rooting at Br
         // writes [Br, N, O, C], one swap, so the glyph is `@@`.
         assert_eq!(
@@ -317,9 +310,9 @@ mod tests {
             ),
             Some([
                 h,
-                Substituent::Atom(NodeId::from(2)),
-                Substituent::Atom(NodeId::from(3)),
-                Substituent::Atom(NodeId::from(4))
+                TetrahedralSite::Atom(NodeId::from(2)),
+                TetrahedralSite::Atom(NodeId::from(3)),
+                TetrahedralSite::Atom(NodeId::from(4))
             ])
         );
     }

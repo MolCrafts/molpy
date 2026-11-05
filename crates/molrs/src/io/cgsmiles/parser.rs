@@ -970,7 +970,12 @@ impl<'a> CgParser<'a> {
         let label = self.scanner.input()[label_start..self.scanner.pos()].to_owned();
         self.scanner.advance(); // ']'
         let order = self.pending.take().map(|(o, _)| Self::bond_kind(o));
-        let descriptor = BondingDescriptor { kind, label, order };
+        let descriptor = BondingDescriptor {
+            kind,
+            label,
+            order,
+            span: self.scanner.span_from(start),
+        };
         self.anchor_descriptor(descriptor, self.scanner.span_from(start))
     }
 

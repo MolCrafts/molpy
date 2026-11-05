@@ -15,6 +15,7 @@
 //! | [`optimize`]            | `molrs::optimize`   | `molpy.optimize`     |
 //! | [`md`]                  | `molrs::md`         | `molpy.md`           |
 //! | [`conformer`]           | `molrs::conformer`  | `molpy.conformer`    |
+//! | [`depict`]              | `molrs::depict`     | `molpy.depict`       |
 //! | [`builder`]             | `molrs::builder`    | `molpy.builder`      |
 //! | [`compute`]             | `molrs::compute`    | `molpy.compute`      |
 //! | [`stream`]              | `molrs::stream`     | `molpy.stream`       |
@@ -47,6 +48,7 @@ mod builder;
 mod compute;
 mod conformer;
 mod core;
+mod depict;
 mod ff;
 mod io;
 mod lattice;
@@ -62,7 +64,7 @@ mod virtual_sites;
 ///
 /// Returns ``(abi_line, version, frameref_capsule_name, forcefield_capsule_name,
 /// regionref_capsule_name)``
-/// — e.g. ``("0.20", "0.20.0", "molrs.FrameRef/0.20+<fingerprint>", …)``, the
+/// — e.g. ``("0.20", "0.20.1", "molrs.FrameRef/0.20+<fingerprint>", …)``, the
 /// fingerprint naming the compiler and handle layout of this build.
 ///
 /// A downstream extension that exchanges ``molrs_ffi`` handle capsules with
@@ -130,6 +132,7 @@ fn molpy_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ff::register(m)?;
     optimize::register(m)?;
     conformer::register(m)?;
+    depict::register(m)?;
     builder::register(m)?;
     compute::register(m)?;
     stream::register(m)?;

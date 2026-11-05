@@ -75,8 +75,41 @@ pub(crate) fn default_valence(atno: u8) -> i32 {
 /// late atoms N/O/F the two formulations happen to agree, but for early atoms
 /// (B, C, Si, …) they diverge, which is exactly the bug this rule fixes.
 pub fn n_implicit_hydrogens(mol: &Atomistic, atom_id: NodeId) -> Option<u32> {
-    let atom = mol.get_atom(atom_id).ok()?;
+    n_implicit_hydrogens_reserving(mol, atom_id, |_| None)
+}
 
+/// [`n_implicit_hydrogens`] with the order a port's future bond will have
+/// counted in place of a bond's stored number: `reserved(bond)` names that
+/// order, or `None` to count the bond as stored. Reserving changes only the
+/// anchor's demand; the handle's real single bond is untouched.
+pub(super) fn n_implicit_hydrogens_reserving(
+    mol: &Atomistic,
+    atom_id: NodeId,
+    reserved: impl Fn(crate::core::RelationId) -> Option<crate::core::BondNumber>,
+) -> Option<u32> {
+    mol.atom_table().row(atom_id)?;
+    let atom = mol
+        .get_atom(atom_id)
+        .expect("a live atom row has properties");
+    let bonds: Vec<_> = mol
+        .neighbors(atom_id, NeighborKinds::BONDS)
+        .map(|(_, bid)| {
+            const LIVE: &str = "neighbors yields live bonds";
+            match reserved(bid) {
+                Some(order) => (order.implied_type(), f64::from(order.count())),
+                None => {
+                    let number = mol.bond_number(bid).expect(LIVE).count().max(1) as f64;
+                    (mol.bond_type(bid).expect(LIVE), number)
+                }
+            }
+        })
+        .collect();
+    hydrogens_for_bonds(&atom, &bonds)
+}
+
+/// Apply the element/charge/bracket-hydrogen model to a set of incident
+/// bond demands.
+fn hydrogens_for_bonds(atom: &Props, bonds: &[(BondOrder, f64)]) -> Option<u32> {
     // A declared hydrogen count (SMILES bracket atom) is exact: `[nH]` has one
     // hydrogen and `[C]` has none, whatever the valence model would prefer.
     if let Some(h) = atom.get(keys::H_COUNT).and_then(|v| v.as_f64()) {
@@ -84,7 +117,7 @@ pub fn n_implicit_hydrogens(mol: &Atomistic, atom_id: NodeId) -> Option<u32> {
     }
 
     // The wildcard (Z = 0) names no element, so it has no valence model.
-    let element = Element::by_number(atomic_number(&atom))?;
+    let element = Element::by_number(atomic_number(atom))?;
 
     // RDKit charged-atom valence rule (`getEffectiveAtomicNum` +
     // `calculateImplicitValence` in `Code/GraphMol/Atom.cpp`):
@@ -116,7 +149,7 @@ pub fn n_implicit_hydrogens(mol: &Atomistic, atom_id: NodeId) -> Option<u32> {
     }
 
     // Sum of bond orders connected to this atom (the explicit valence).
-    let demand: f64 = valence_demand(mol, atom_id, valences[0]);
+    let demand: f64 = valence_demand(bonds, valences[0]);
 
     // Select the smallest allowed valence ≥ the (un-charge-adjusted) demand.
     let target = valences
@@ -145,7 +178,10 @@ pub fn n_hydrogens(mol: &Atomistic, atom_id: NodeId) -> u32 {
     let explicit = mol
         .neighbors(atom_id, NeighborKinds::BONDS)
         .filter(|(nb, _)| {
-            mol.get_atom(*nb).ok().and_then(|atom| atom.atomic_number()) == Some(Element::H.z())
+            mol.get_atom(*nb)
+                .expect("neighbors yields live atoms")
+                .atomic_number()
+                == Some(Element::H.z())
         })
         .count() as u32;
     explicit + n_implicit_hydrogens(mol, atom_id).unwrap_or(0)
@@ -184,18 +220,7 @@ pub fn n_hydrogens(mol: &Atomistic, atom_id: NodeId) -> u32 {
 ///
 /// A graph with integral Kekulé orders has no aromatic bonds and is summed
 /// unchanged.
-fn valence_demand(mol: &Atomistic, atom_id: NodeId, lowest_valence: u8) -> f64 {
-    // The two facts are read from their own places: how many bonds this is
-    // (the localized number) and whether it is delocalized (the class).
-    let bonds: Vec<(BondOrder, f64)> = mol
-        .neighbors(atom_id, NeighborKinds::BONDS)
-        .map(|(_, bid)| {
-            const LIVE: &str = "neighbors yields live bonds";
-            let number = mol.bond_number(bid).expect(LIVE).count().max(1) as f64;
-            (mol.bond_type(bid).expect(LIVE), number)
-        })
-        .collect();
-
+fn valence_demand(bonds: &[(BondOrder, f64)], lowest_valence: u8) -> f64 {
     let n_aromatic = bonds.iter().filter(|(t, _)| t.is_aromatic()).count();
     // An aromatic bond contributes its sigma bond here; the extra pi bond is
     // added once below if the atom is still short of its lowest valence.

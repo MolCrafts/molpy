@@ -24,6 +24,7 @@ use rustfft::{Fft, FftPlanner};
 use crate::ff::ir::Params;
 use molrs::core::Frame;
 use molrs::core::Mic;
+use molrs::core::{SimBox, Virial};
 use molrs::op::F;
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,86 @@ struct PmeScratch {
     spline: Vec<[F; 3]>,
     /// Their derivatives, same shape.
     dspline: Vec<[F; 3]>,
+    /// `∂E/∂x` of one evaluation, `3·N` entries.
+    grad: Vec<F>,
+}
+
+// ---------------------------------------------------------------------------
+// The cell an evaluation prices in
+// ---------------------------------------------------------------------------
+
+/// The periodic cell one evaluation prices in: the lattice vectors as rows
+/// (lower-triangular — LAMMPS's restricted triclinic form), their inverse,
+/// the volume and the minimum image.
+#[derive(Clone, Copy, Debug)]
+struct PmeCell {
+    h: [[F; 3]; 3],
+    recip_h: [[F; 3]; 3],
+    volume: F,
+    /// Minimum-image convention of the box, the same kernel every other
+    /// pair loop in molrs uses (`SimBox::mic`).
+    mic: Mic,
+}
+
+impl PmeCell {
+    /// The cell of lattice rows `h`.
+    ///
+    /// # Panics
+    /// If `h` is not a periodic cell [`Mic`] accepts.
+    fn new(h: [[F; 3]; 3]) -> Self {
+        let recip_h = invert_box_vectors(&h);
+        let volume = h[0][0] * h[1][1] * h[2][2]; // lower-triangular determinant
+        // `h` keeps the lattice vectors as rows; `Mic` wants them as columns.
+        let cell = std::array::from_fn(|i| std::array::from_fn(|j| h[j][i]));
+        let mic = Mic::new(cell, [true; 3]).expect("PME requires a valid periodic cell");
+        Self {
+            h,
+            recip_h,
+            volume,
+            mic,
+        }
+    }
+
+    /// The lattice rows of `bx` (the transpose of
+    /// [`SimBox::matrix`](molrs::core::SimBox::matrix), whose columns they
+    /// are), or why the box is not one PME prices in: a box not periodic in
+    /// x, y and z (LAMMPS: "Cannot use nonperiodic boundaries with PPPM"),
+    /// an undefined cell, or a cell outside LAMMPS's restricted triclinic
+    /// form (`a` along x, `b` in the xy plane, positive lengths) — a general
+    /// cell's coordinates rotate with it, which is the caller's to do.
+    fn rows_of(bx: &SimBox) -> Result<[[F; 3]; 3], String> {
+        if !bx.is_cell_defined() {
+            return Err("the frame's box has no cell".into());
+        }
+        if bx.pbc() != [true; 3] {
+            return Err(format!(
+                "the box is periodic in {:?} (x, y, z); Ewald sums need all three",
+                bx.pbc()
+            ));
+        }
+        let h = bx.matrix();
+        // Columns are the lattice vectors: a = (h00, h10, h20), b = (h01, h11, h21).
+        if h[1][0] != 0.0
+            || h[2][0] != 0.0
+            || h[2][1] != 0.0
+            || (0..3).any(|i| h[i][i].is_nan() || h[i][i] <= 0.0)
+        {
+            return Err(format!(
+                "the cell {h:?} is not in LAMMPS's restricted triclinic form \
+                 (a along x, b in the xy plane, positive lengths)"
+            ));
+        }
+        Ok(std::array::from_fn(|r| std::array::from_fn(|c| h[c][r])))
+    }
+
+    /// Minimum-image displacement vector from atom i to atom j.
+    fn min_image_delta(&self, coords: &[F], i: usize, j: usize) -> [F; 3] {
+        self.mic.apply([
+            coords[j * 3] - coords[i * 3],
+            coords[j * 3 + 1] - coords[i * 3 + 1],
+            coords[j * 3 + 2] - coords[i * 3 + 2],
+        ])
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -101,22 +182,26 @@ struct PmeScratch {
 /// [`CoulLong`](crate::ff::potential::pair::CoulLong) and this kernel prices
 /// only the reciprocal part (`direct` off), so the erfc term is not counted
 /// twice.
+///
+/// Each evaluation is one pass: the charges are spread and transformed once,
+/// and the convolution pricing the energy also yields the reciprocal virial,
+/// which with the direct and correction virials makes the kernel's `Σ f ⊗ r`
+/// (so Berendsen pressure coupling runs with it). The neighbour door prices
+/// in the box its table was searched in, so a cell rescaled since the build
+/// is followed; [`Potential::evaluate`] prices in the build frame's cell.
 pub struct PairCoulLongPme {
     params: PairCoulLongPmeParams,
     n_atoms: usize,
     charges: Vec<F>,
-    h: [[F; 3]; 3],       // box matrix (row-major, lower-triangular)
-    recip_h: [[F; 3]; 3], // inverse box matrix
-    volume: F,
+    /// The cell of the frame it was built on: what an evaluation with no
+    /// box of its own prices in.
+    cell: PmeCell,
     /// The special pairs `(i, j, w)`, `i < j`, sorted.
     special: Vec<(usize, usize, F)>,
     self_energy: F,
     bspline_moduli: [Vec<F>; 3],
     fft_plans: FftPlans,
     scratch: Mutex<PmeScratch>,
-    /// Minimum-image convention of the box, the same kernel every other
-    /// pair loop in molrs uses (`SimBox::mic`).
-    mic: Mic,
     /// Whether [`evaluate`](Potential::evaluate) adds the real-space erfc
     /// loop. Off when that term is the pair form beside this kernel.
     direct: bool,
@@ -163,12 +248,7 @@ impl PairCoulLongPme {
             .map(|(i, j, w)| (i.min(j), i.max(j), w))
             .collect();
         special.sort_by_key(|&(i, j, _)| (i, j));
-        let h = box_vectors;
-        let recip_h = invert_box_vectors(&h);
-        let volume = h[0][0] * h[1][1] * h[2][2]; // lower-triangular determinant
-        // `h` keeps the lattice vectors as rows; `Mic` wants them as columns.
-        let cell = std::array::from_fn(|i| std::array::from_fn(|j| h[j][i]));
-        let mic = Mic::new(cell, [true; 3]).expect("PME requires a valid periodic cell");
+        let cell = PmeCell::new(box_vectors);
 
         // Self energy: -α/√π * C * Σq²
         let sum_q2: F = charges.iter().map(|q| q * q).sum();
@@ -214,30 +294,79 @@ impl PairCoulLongPme {
             fft_scratch: vec![zero; max_fft_scratch],
             spline: vec![[0.0; 3]; params.order],
             dspline: vec![[0.0; 3]; params.order],
+            grad: Vec::new(),
         });
 
         Self {
             params,
             n_atoms,
             charges,
-            h,
-            recip_h,
-            volume,
+            cell,
             special,
             self_energy,
             bspline_moduli,
             fft_plans,
             scratch,
-            mic,
             direct,
         }
     }
 
     // -----------------------------------------------------------------------
-    // Direct space energy + gradient
+    // One evaluation
     // -----------------------------------------------------------------------
 
-    fn direct_energy(&self, coords: &[F]) -> F {
+    /// Energy, forces and — when `acc` asks — the virial in `cell`, in one
+    /// pass of each loop: the charges are spread and transformed once, and
+    /// the convolution that prices the energy also gives the reciprocal
+    /// virial and the potential the forces are interpolated from.
+    fn evaluate_in(&self, cell: &PmeCell, coords: &[F], acc: &mut Accumulator<'_>) {
+        let mut scratch = self.scratch.lock().unwrap();
+        let PmeScratch {
+            grid,
+            buf,
+            fft_scratch,
+            spline,
+            dspline,
+            grad,
+        } = &mut *scratch;
+        grad.clear();
+        grad.resize(coords.len(), 0.0);
+        let mut virial = Virial::ZERO;
+        let direct = if self.direct {
+            self.direct_terms(cell, coords, grad, &mut virial)
+        } else {
+            0.0
+        };
+        let exclusion = self.exclusion_terms(cell, coords, grad, &mut virial);
+
+        // Reciprocal space: spread, forward FFT, convolve, inverse FFT
+        // (unnormalized, matching C++ irfftn with norm="forward"), interpolate.
+        let sqrt_coulomb = self.params.coulomb.sqrt();
+        grid.fill(Complex::new(0.0, 0.0));
+        self.spread_charges(cell, coords, grid, spline, sqrt_coulomb);
+        self.fft_3d_forward(grid, buf, fft_scratch);
+        let reciprocal = 0.5 * self.reciprocal_convolution(cell, grid, &mut virial);
+        self.fft_3d_inverse(grid, buf, fft_scratch);
+        self.interpolate_forces(cell, coords, grid, spline, dspline, sqrt_coulomb, grad);
+
+        // Self energy has zero gradient (constant).
+        acc.add_energy(self.self_energy + direct + exclusion + reciprocal);
+        let (forces, tally) = acc.forces_with_virial();
+        for (f, g) in forces.iter_mut().zip(grad.iter()) {
+            *f -= g;
+        }
+        if let Some(total) = tally {
+            *total += virial;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Direct space
+    // -----------------------------------------------------------------------
+
+    /// The minimum-image erfc loop: returns its energy, adds `∂E/∂x` into
+    /// `grad` and `Σ f ⊗ r` into `virial`.
+    fn direct_terms(&self, cell: &PmeCell, coords: &[F], grad: &mut [F], virial: &mut Virial) -> F {
         let alpha = self.params.alpha;
         let cutoff = self.params.cutoff;
         let coulomb = self.params.coulomb;
@@ -250,182 +379,64 @@ impl PairCoulLongPme {
                 if w == 0.0 {
                     continue;
                 }
-                let (dx, dy, dz) = self.min_image_delta(coords, i, j);
-                let r2 = dx * dx + dy * dy + dz * dz;
+                let d = cell.min_image_delta(coords, i, j);
+                let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
                 if r2 >= cutoff2 {
                     continue;
                 }
                 let r = r2.sqrt();
-                let (e, _) = real_space_pair(coulomb, alpha, self.charges[i], self.charges[j], r);
+                let (e, de) = real_space_pair(coulomb, alpha, self.charges[i], self.charges[j], r);
                 energy += w * e;
+                // `de` is dE/dr. The gradient stores ∂E/∂x; evaluate turns it into a force.
+                let factor = w * de / r;
+                add_pair_gradient(grad, virial, i, j, factor, d);
             }
         }
         energy
     }
 
-    fn direct_gradient(&self, coords: &[F], grad: &mut [F]) {
-        let alpha = self.params.alpha;
-        let cutoff = self.params.cutoff;
-        let coulomb = self.params.coulomb;
-        let cutoff2 = cutoff * cutoff;
-
-        for i in 0..self.n_atoms {
-            for j in (i + 1)..self.n_atoms {
-                let w = self.weight(i, j);
-                if w == 0.0 {
-                    continue;
-                }
-                let (dx, dy, dz) = self.min_image_delta(coords, i, j);
-                let r2 = dx * dx + dy * dy + dz * dz;
-                if r2 >= cutoff2 {
-                    continue;
-                }
-                let r = r2.sqrt();
-                let (_, de) = real_space_pair(coulomb, alpha, self.charges[i], self.charges[j], r);
-                // `de` is dE/dr. The gradient stores ∂E/∂x; evaluate turns it into a force.
-                let factor = w * de / r;
-                grad[j * 3] += factor * dx;
-                grad[j * 3 + 1] += factor * dy;
-                grad[j * 3 + 2] += factor * dz;
-                grad[i * 3] -= factor * dx;
-                grad[i * 3 + 1] -= factor * dy;
-                grad[i * 3 + 2] -= factor * dz;
-            }
-        }
-    }
-
     // -----------------------------------------------------------------------
-    // Special-pair correction energy + gradient
+    // Special-pair correction
     // -----------------------------------------------------------------------
 
     /// `−(1 − w) k qᵢqⱼ erf(αr) / r` over the special pairs: the part of a
     /// pair's full-strength reciprocal term its weight does not keep.
-    fn exclusion_energy(&self, coords: &[F]) -> F {
+    /// Returns its energy, adds `∂E/∂x` into `grad` and `Σ f ⊗ r` into
+    /// `virial`.
+    fn exclusion_terms(
+        &self,
+        cell: &PmeCell,
+        coords: &[F],
+        grad: &mut [F],
+        virial: &mut Virial,
+    ) -> F {
         let alpha = self.params.alpha;
         let coulomb = self.params.coulomb;
+        let two_alpha_over_sqrt_pi = 2.0 * alpha / PI.sqrt();
         let mut energy: F = 0.0;
 
         for &(i, j, w) in &self.special {
             if w == 1.0 {
                 continue;
             }
-            let (dx, dy, dz) = self.min_image_delta(coords, i, j);
-            let r = (dx * dx + dy * dy + dz * dz).sqrt();
-            if r < 1e-15 {
-                continue;
-            }
-            let alpha_r = alpha * r;
-            energy -= (1.0 - w) * coulomb * self.charges[i] * self.charges[j] * erf_f(alpha_r) / r;
-        }
-        energy
-    }
-
-    fn exclusion_gradient(&self, coords: &[F], grad: &mut [F]) {
-        let alpha = self.params.alpha;
-        let coulomb = self.params.coulomb;
-        let two_alpha_over_sqrt_pi = 2.0 * alpha / PI.sqrt();
-
-        for &(i, j, w) in &self.special {
-            if w == 1.0 {
-                continue;
-            }
-            let (dx, dy, dz) = self.min_image_delta(coords, i, j);
-            let r2 = dx * dx + dy * dy + dz * dz;
+            let d = cell.min_image_delta(coords, i, j);
+            let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
             if r2 < 1e-30 {
                 continue;
             }
             let r = r2.sqrt();
             let alpha_r = alpha * r;
+            let erf = erf_f(alpha_r);
+            energy -= (1.0 - w) * coulomb * self.charges[i] * self.charges[j] * erf / r;
             let qi_qj = self.charges[i] * self.charges[j];
             let factor = (1.0 - w)
                 * coulomb
                 * qi_qj
-                * (erf_f(alpha_r) - two_alpha_over_sqrt_pi * r * (-alpha_r * alpha_r).exp())
+                * (erf - two_alpha_over_sqrt_pi * r * (-alpha_r * alpha_r).exp())
                 / (r2 * r);
-            grad[j * 3] += factor * dx;
-            grad[j * 3 + 1] += factor * dy;
-            grad[j * 3 + 2] += factor * dz;
-            grad[i * 3] -= factor * dx;
-            grad[i * 3 + 1] -= factor * dy;
-            grad[i * 3 + 2] -= factor * dz;
+            add_pair_gradient(grad, virial, i, j, factor, d);
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Reciprocal space energy + gradient
-    // -----------------------------------------------------------------------
-
-    fn reciprocal_energy(&self, coords: &[F]) -> F {
-        let mut scratch = self.scratch.lock().unwrap();
-        let sqrt_coulomb = self.params.coulomb.sqrt();
-
-        scratch.grid.fill(Complex::new(0.0, 0.0));
-
-        // Spread charges onto grid
-        {
-            let PmeScratch { grid, spline, .. } = &mut *scratch;
-            self.spread_charges(coords, grid, spline, sqrt_coulomb);
-        }
-
-        // Forward 3D FFT — destructure to satisfy borrow checker
-        let PmeScratch {
-            ref mut grid,
-            ref mut buf,
-            ref mut fft_scratch,
-            ..
-        } = *scratch;
-        self.fft_3d_forward(grid, buf, fft_scratch);
-
-        // Convolution + energy accumulation
-        let energy = self.reciprocal_convolution(&mut scratch.grid);
-        0.5 * energy
-    }
-
-    fn reciprocal_gradient(&self, coords: &[F], grad: &mut [F]) {
-        let mut scratch = self.scratch.lock().unwrap();
-        let sqrt_coulomb = self.params.coulomb.sqrt();
-
-        scratch.grid.fill(Complex::new(0.0, 0.0));
-
-        // Spread charges
-        {
-            let PmeScratch { grid, spline, .. } = &mut *scratch;
-            self.spread_charges(coords, grid, spline, sqrt_coulomb);
-        }
-
-        // Forward FFT
-        {
-            let PmeScratch {
-                ref mut grid,
-                ref mut buf,
-                ref mut fft_scratch,
-                ..
-            } = *scratch;
-            self.fft_3d_forward(grid, buf, fft_scratch);
-        }
-
-        // Convolution (modifies grid in-place)
-        let _ = self.reciprocal_convolution(&mut scratch.grid);
-
-        // Inverse FFT (unnormalized, matching C++ irfftn with norm="forward")
-        {
-            let PmeScratch {
-                ref mut grid,
-                ref mut buf,
-                ref mut fft_scratch,
-                ..
-            } = *scratch;
-            self.fft_3d_inverse(grid, buf, fft_scratch);
-        }
-
-        // Interpolate forces from grid
-        let PmeScratch {
-            grid,
-            spline,
-            dspline,
-            ..
-        } = &mut *scratch;
-        self.interpolate_forces(coords, grid, spline, dspline, sqrt_coulomb, grad);
+        energy
     }
 
     // -----------------------------------------------------------------------
@@ -434,6 +445,7 @@ impl PairCoulLongPme {
 
     fn spread_charges(
         &self,
+        cell: &PmeCell,
         coords: &[F],
         grid: &mut [Complex<F>],
         data: &mut [[F; 3]],
@@ -443,7 +455,7 @@ impl PairCoulLongPme {
         let order = self.params.order;
 
         for atom in 0..self.n_atoms {
-            let grid_index = self.compute_spline(coords, atom, data);
+            let grid_index = self.compute_spline(cell, coords, atom, data);
 
             for ix in 0..order {
                 let xindex = (grid_index[0] + ix) % kx;
@@ -465,8 +477,10 @@ impl PairCoulLongPme {
     // Force interpolation from reciprocal grid
     // -----------------------------------------------------------------------
 
+    #[allow(clippy::too_many_arguments)]
     fn interpolate_forces(
         &self,
+        cell: &PmeCell,
         coords: &[F],
         grid: &[Complex<F>],
         data: &mut [[F; 3]],
@@ -478,7 +492,7 @@ impl PairCoulLongPme {
         let order = self.params.order;
 
         for atom in 0..self.n_atoms {
-            let grid_index = self.compute_spline_with_deriv(coords, atom, data, ddata);
+            let grid_index = self.compute_spline_with_deriv(cell, coords, atom, data, ddata);
 
             let mut dpos = [0.0 as F; 3];
             for ix in 0..order {
@@ -502,7 +516,7 @@ impl PairCoulLongPme {
             }
 
             let scale = self.charges[atom] * sqrt_coulomb;
-            let rh = &self.recip_h;
+            let rh = &cell.recip_h;
             let gs = self.params.grid_size;
             // Chain rule: fractional → Cartesian
             grad[atom * 3] += scale * (dpos[0] * gs[0] as F * rh[0][0]);
@@ -519,17 +533,32 @@ impl PairCoulLongPme {
     // Reciprocal convolution — returns raw energy (before ×0.5)
     // -----------------------------------------------------------------------
 
-    fn reciprocal_convolution(&self, grid: &mut [Complex<F>]) -> F {
+    /// Multiply the transformed charge grid by the Ewald kernel in place and
+    /// return `Σ_m eterm(m) |S(m)|²`, twice the reciprocal energy.
+    ///
+    /// Also adds the reciprocal virial `W = −∂E/∂ε` (Essmann et al., J. Chem.
+    /// Phys. 103, 8577 (1995), eq. 2.8) into `virial`: a homogeneous strain
+    /// keeps the fractional coordinates, so the structure factor and the
+    /// spline moduli are fixed and only the volume and the wave vectors
+    /// move, giving `E(m) (δ_αβ − 2 (1/m² + π²/α²) m_α m_β)` per wave
+    /// vector.
+    fn reciprocal_convolution(
+        &self,
+        cell: &PmeCell,
+        grid: &mut [Complex<F>],
+        virial: &mut Virial,
+    ) -> F {
         let [kx, ky, kz] = self.params.grid_size;
         let alpha = self.params.alpha;
         let recip_exp_factor = PI * PI / (alpha * alpha);
-        let rh = &self.recip_h;
-        let scale_factor = PI * self.volume;
+        let rh = &cell.recip_h;
+        let scale_factor = PI * cell.volume;
         let xmod = &self.bspline_moduli[0];
         let ymod = &self.bspline_moduli[1];
         let zmod = &self.bspline_moduli[2];
 
         let mut energy: F = 0.0;
+        let mut w = [0.0 as F; 6];
 
         for (ikx, &xmod_k) in xmod.iter().enumerate().take(kx) {
             let mx = if ikx < kx.div_ceil(2) {
@@ -567,11 +596,23 @@ impl PairCoulLongPme {
                     };
 
                     let g = grid[index];
-                    energy += eterm * (g.re * g.re + g.im * g.im);
+                    let e2 = eterm * (g.re * g.re + g.im * g.im);
+                    energy += e2;
                     grid[index] = g * eterm;
+                    if index != 0 {
+                        let e_m = 0.5 * e2;
+                        let b = 2.0 * (1.0 / m2 + recip_exp_factor);
+                        w[0] += e_m * (1.0 - b * mhx * mhx);
+                        w[1] += e_m * (1.0 - b * mhy * mhy);
+                        w[2] += e_m * (1.0 - b * mhz * mhz);
+                        w[3] -= e_m * b * mhx * mhy;
+                        w[4] -= e_m * b * mhx * mhz;
+                        w[5] -= e_m * b * mhy * mhz;
+                    }
                 }
             }
         }
+        *virial += Virial { components: w };
         energy
     }
 
@@ -671,7 +712,13 @@ impl PairCoulLongPme {
 
     /// Fill `data` (`order` rows) with an atom's B-spline coefficients and
     /// return its grid index.
-    fn compute_spline(&self, coords: &[F], atom: usize, data: &mut [[F; 3]]) -> [usize; 3] {
+    fn compute_spline(
+        &self,
+        cell: &PmeCell,
+        coords: &[F],
+        atom: usize,
+        data: &mut [[F; 3]],
+    ) -> [usize; 3] {
         let order = self.params.order;
         let gs = self.params.grid_size;
         let pos = [coords[atom * 3], coords[atom * 3 + 1], coords[atom * 3 + 2]];
@@ -679,9 +726,9 @@ impl PairCoulLongPme {
         // Wrap position into box
         let mut pos_in_box = pos;
         for i in (0..3).rev() {
-            let s = (pos_in_box[i] * self.recip_h[i][i]).floor();
+            let s = (pos_in_box[i] * cell.recip_h[i][i]).floor();
             for (j, pos_j) in pos_in_box.iter_mut().enumerate() {
-                *pos_j -= s * self.h[i][j];
+                *pos_j -= s * cell.h[i][j];
             }
         }
 
@@ -689,9 +736,9 @@ impl PairCoulLongPme {
         let mut grid_index = [0usize; 3];
         let mut dr = [0.0 as F; 3];
         for i in 0..3 {
-            let mut t = pos_in_box[0] * self.recip_h[0][i]
-                + pos_in_box[1] * self.recip_h[1][i]
-                + pos_in_box[2] * self.recip_h[2][i];
+            let mut t = pos_in_box[0] * cell.recip_h[0][i]
+                + pos_in_box[1] * cell.recip_h[1][i]
+                + pos_in_box[2] * cell.recip_h[2][i];
             t = (t - t.floor()) * gs[i] as F;
             let ti = t as usize;
             dr[i] = t - ti as F;
@@ -706,6 +753,7 @@ impl PairCoulLongPme {
     /// with the derivatives.
     fn compute_spline_with_deriv(
         &self,
+        cell: &PmeCell,
         coords: &[F],
         atom: usize,
         data: &mut [[F; 3]],
@@ -717,18 +765,18 @@ impl PairCoulLongPme {
 
         let mut pos_in_box = pos;
         for i in (0..3).rev() {
-            let s = (pos_in_box[i] * self.recip_h[i][i]).floor();
+            let s = (pos_in_box[i] * cell.recip_h[i][i]).floor();
             for (j, pos_j) in pos_in_box.iter_mut().enumerate() {
-                *pos_j -= s * self.h[i][j];
+                *pos_j -= s * cell.h[i][j];
             }
         }
 
         let mut grid_index = [0usize; 3];
         let mut dr = [0.0 as F; 3];
         for i in 0..3 {
-            let mut t = pos_in_box[0] * self.recip_h[0][i]
-                + pos_in_box[1] * self.recip_h[1][i]
-                + pos_in_box[2] * self.recip_h[2][i];
+            let mut t = pos_in_box[0] * cell.recip_h[0][i]
+                + pos_in_box[1] * cell.recip_h[1][i]
+                + pos_in_box[2] * cell.recip_h[2][i];
             t = (t - t.floor()) * gs[i] as F;
             let ti = t as usize;
             dr[i] = t - ti as F;
@@ -742,16 +790,6 @@ impl PairCoulLongPme {
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
-
-    /// Minimum-image displacement vector from atom i to atom j.
-    fn min_image_delta(&self, coords: &[F], i: usize, j: usize) -> (F, F, F) {
-        let d = self.mic.apply([
-            coords[j * 3] - coords[i * 3],
-            coords[j * 3 + 1] - coords[i * 3 + 1],
-            coords[j * 3 + 2] - coords[i * 3 + 2],
-        ]);
-        (d[0], d[1], d[2])
-    }
 
     /// The weight of the pair `(i, j)`: its special weight, else 1.
     fn weight(&self, i: usize, j: usize) -> F {
@@ -767,37 +805,38 @@ impl PairCoulLongPme {
 // Potential trait
 // ---------------------------------------------------------------------------
 
-/// Energy and forces (`-∇E`) over a flat coordinate vector. The Ewald sum
-/// is not a sum over a pair table's separations, so it tallies no virial.
+/// Energy, forces (`-∇E`) and the virial over a flat coordinate vector, in
+/// the cell of the frame the kernel was built on.
 impl Potential for PairCoulLongPme {
     fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
-        let direct = if self.direct {
-            self.direct_energy(coords)
-        } else {
-            0.0
-        };
-        acc.add_energy(
-            self.self_energy
-                + direct
-                + self.exclusion_energy(coords)
-                + self.reciprocal_energy(coords),
-        );
-        let mut grad = vec![0.0; coords.len()];
-        // Self energy has zero gradient (constant).
-        if self.direct {
-            self.direct_gradient(coords, &mut grad);
-        }
-        self.exclusion_gradient(coords, &mut grad);
-        self.reciprocal_gradient(coords, &mut grad);
-        for (f, g) in acc.forces_without_virial().iter_mut().zip(&grad) {
-            *f -= g;
-        }
+        self.evaluate_in(&self.cell, coords, acc);
     }
 }
 
 // ---------------------------------------------------------------------------
 // Free helper functions
 // ---------------------------------------------------------------------------
+
+/// Add one pair's `∂E/∂x` — `factor · d` on `j`, its negative on `i`, for
+/// the minimum-image separation `d = xⱼ − xᵢ` — and its virial
+/// `fⱼ ⊗ d = −factor · d ⊗ d`.
+#[inline]
+fn add_pair_gradient(
+    grad: &mut [F],
+    virial: &mut Virial,
+    i: usize,
+    j: usize,
+    factor: F,
+    d: [F; 3],
+) {
+    grad[j * 3] += factor * d[0];
+    grad[j * 3 + 1] += factor * d[1];
+    grad[j * 3 + 2] += factor * d[2];
+    grad[i * 3] -= factor * d[0];
+    grad[i * 3 + 1] -= factor * d[1];
+    grad[i * 3 + 2] -= factor * d[2];
+    virial.add_outer([-factor * d[0], -factor * d[1], -factor * d[2]], d);
+}
 
 /// Invert a lower-triangular 3×3 box matrix.
 fn invert_box_vectors(h: &[[F; 3]; 3]) -> [[F; 3]; 3] {
@@ -901,9 +940,15 @@ fn compute_bspline_moduli(grid_size: usize, order: usize) -> Vec<F> {
         }
         *moduli_k = sum_cos * sum_cos + sum_sin * sum_sin;
     }
-    // Avoid division by zero at k=0
-    if moduli[0] < 1e-30 {
-        moduli[0] = 1e-30;
+    // An odd-order spline's modulus vanishes at the Nyquist index of an even
+    // grid (and can come near zero elsewhere): it takes the mean of its
+    // neighbours, as OpenMM and GROMACS do, instead of dividing by rounding.
+    let max = moduli.iter().copied().fold(0.0, F::max);
+    for k in 0..grid_size {
+        if moduli[k] < 1e-7 * max {
+            moduli[k] =
+                0.5 * (moduli[(k + grid_size - 1) % grid_size] + moduli[(k + 1) % grid_size]);
+        }
     }
     moduli
 }
@@ -938,7 +983,16 @@ impl PairDriven for PmeTerms {
         // includes every pair and takes no weight: a 1-4 scale is not a
         // `(1 − s) erf` correction. Binary exclusions remain that list.
         self.real.evaluate_pairs(coords, pairs, factor, acc);
-        self.long.evaluate(coords, acc);
+        // The table's box is the step's: a cell a barostat rescaled since
+        // the kernel was built is priced as it now is.
+        match pairs.simbox() {
+            Some(bx) => {
+                let rows = PmeCell::rows_of(bx)
+                    .unwrap_or_else(|reason| panic!("pair coul/long/pme: {reason}"));
+                self.long.evaluate_in(&PmeCell::new(rows), coords, acc);
+            }
+            None => self.long.evaluate(coords, acc),
+        }
     }
 
     fn binds_a_fixed_pair_list(&self) -> bool {
@@ -1058,49 +1112,22 @@ fn long_range(
 }
 
 /// The frame's periodic cell as [`PairCoulLongPme::new`] takes it: the lattice
-/// vectors as **rows** (lower-triangular), the transpose of
-/// [`SimBox::matrix`](molrs::core::SimBox::matrix), whose columns
-/// they are.
+/// vectors as **rows** (lower-triangular).
 ///
 /// # Errors
 /// [`CompileError::NoBox`](crate::ff::potential::CompileError::NoBox): the
-/// frame has no box, a box not periodic in x, y and z (LAMMPS: "Cannot use
-/// nonperiodic boundaries with PPPM"), an undefined cell, or a cell outside
-/// LAMMPS's restricted triclinic form (`a` along x, `b` in the xy plane,
-/// positive lengths) — a general cell's coordinates rotate with it, which
-/// is the caller's to do.
+/// frame has no box, or one PME does not price in (see [`PmeCell::rows_of`]).
 fn box_vectors(frame: &Frame) -> Result<[[F; 3]; 3], crate::ff::potential::CompileError> {
-    let refuse = |reason: &str| crate::ff::potential::CompileError::NoBox {
+    let refuse = |reason: String| crate::ff::potential::CompileError::NoBox {
         category: "pair".into(),
         style: "coul/long/pme".into(),
-        reason: reason.into(),
+        reason,
     };
     let bx = frame
         .simbox
         .as_ref()
-        .ok_or_else(|| refuse("the frame has no box"))?;
-    if !bx.is_cell_defined() {
-        return Err(refuse("the frame's box has no cell"));
-    }
-    if bx.pbc() != [true; 3] {
-        return Err(refuse(&format!(
-            "the box is periodic in {:?} (x, y, z); Ewald sums need all three",
-            bx.pbc()
-        )));
-    }
-    let h = bx.matrix();
-    // Columns are the lattice vectors: a = (h00, h10, h20), b = (h01, h11, h21).
-    if h[1][0] != 0.0
-        || h[2][0] != 0.0
-        || h[2][1] != 0.0
-        || (0..3).any(|i| h[i][i].is_nan() || h[i][i] <= 0.0)
-    {
-        return Err(refuse(&format!(
-            "the cell {h:?} is not in LAMMPS's restricted triclinic form \
-             (a along x, b in the xy plane, positive lengths)"
-        )));
-    }
-    Ok(std::array::from_fn(|r| std::array::from_fn(|c| h[c][r])))
+        .ok_or_else(|| refuse("the frame has no box".into()))?;
+    PmeCell::rows_of(bx).map_err(refuse)
 }
 
 // ---------------------------------------------------------------------------
@@ -1778,6 +1805,268 @@ mod tests {
             }
             other => panic!("NoBox expected, got {other:?}"),
         }
+    }
+
+    /// An odd-order B-spline's structure factor vanishes at the Nyquist
+    /// index of an even grid, so its modulus there is zero to rounding.
+    /// Dividing by it prices that wave vector at ~1e30; the modulus is the
+    /// mean of its neighbours instead (OpenMM, GROMACS), and order 5 agrees
+    /// with order 4 on the same converged grid.
+    #[test]
+    fn an_odd_order_prices_the_nyquist_wave_as_its_neighbours() {
+        let moduli = compute_bspline_moduli(16, 5);
+        let max = moduli.iter().copied().fold(0.0, F::max);
+        assert!(
+            moduli.iter().all(|&m| m > 1e-7 * max),
+            "no modulus near zero: {moduli:?}"
+        );
+        let coords = [4.03, 5.11, 4.87, 6.71, 5.29, 4.62, 5.13, 3.77, 6.24];
+        let energy = |order: usize| {
+            let params = PairCoulLongPmeParams {
+                alpha: 0.35,
+                cutoff: 4.5,
+                grid_size: [32, 32, 32],
+                order,
+                coulomb: 332.06371,
+            };
+            PairCoulLongPme::new(params, ION_CHARGES.to_vec(), cubic_box(10.0), vec![])
+                .energy_at(&coords)
+        };
+        let (e4, e5) = (energy(4), energy(5));
+        assert!(
+            (e4 - e5).abs() < 1e-3 * e4.abs(),
+            "order 4 {e4} vs order 5 {e5}"
+        );
+    }
+
+    /// Kernel parameters, charges, lattice rows, special pairs, coordinates.
+    type IonCase = (
+        PairCoulLongPmeParams,
+        Vec<F>,
+        [[F; 3]; 3],
+        Vec<(usize, usize, F)>,
+        Vec<F>,
+    );
+
+    /// A restricted triclinic cell of five ions with an excluded and a
+    /// half-weighted special pair.
+    fn triclinic_case() -> IonCase {
+        let params = PairCoulLongPmeParams {
+            alpha: 0.35,
+            cutoff: 4.5,
+            grid_size: [16, 18, 20],
+            order: 5,
+            coulomb: 332.06371,
+        };
+        let charges = vec![0.6, -0.4, -0.2, 0.5, -0.5];
+        let h = [[10.0, 0.0, 0.0], [1.5, 9.5, 0.0], [-1.0, 2.0, 11.0]];
+        let special = vec![(0, 1, 0.0), (1, 2, 0.5)];
+        let coords = vec![
+            4.0, 5.0, 5.0, 5.2, 5.6, 4.4, 6.1, 3.9, 6.3, 1.2, 8.7, 9.9, 9.4, 1.1, 2.2,
+        ];
+        (params, charges, h, special, coords)
+    }
+
+    /// The energy, forces and virial (`[xx, yy, zz, xy, xz, yz]`) of one
+    /// evaluation of the plain door.
+    fn evaluated(pme: &PairCoulLongPme, coords: &[F]) -> (F, Vec<F>, [F; 6]) {
+        let mut acc = crate::ff::potential::Accumulator::new(coords.len()).with_virial();
+        pme.evaluate(coords, &mut acc);
+        let w = acc.virial().expect("PME tallies its virial").components;
+        (acc.energy(), acc.into_forces(), w)
+    }
+
+    /// One pass of each loop prices what the two passes (energy, then
+    /// gradient) priced, bit for bit, at both settings of the direct loop.
+    #[test]
+    fn one_pass_prices_what_two_passes_priced() {
+        let (params, charges, h, special, coords) = triclinic_case();
+        let plain = PairCoulLongPme::new(params.clone(), charges.clone(), h, special.clone());
+        let recip = PairCoulLongPme::reciprocal(params, charges, h, special);
+        let golden: [(&PairCoulLongPme, F, [F; 15]); 2] = [
+            (
+                &plain,
+                -29.50580882646137,
+                [
+                    3.6351685681368555,
+                    -3.191716647232761,
+                    1.5911515979297075,
+                    -0.5646012113130556,
+                    1.6337688105833628,
+                    -0.9558633977445519,
+                    -3.521764189731691,
+                    1.3339913337566505,
+                    -0.8213162735645779,
+                    -0.9388639879839366,
+                    1.1636143563592272,
+                    1.2185037462515507,
+                    1.3902562032832397,
+                    -0.9397497164654142,
+                    -1.0324523096791174,
+                ],
+            ),
+            (
+                &recip,
+                -27.729263633141706,
+                [
+                    1.0232171621298498,
+                    -1.823551625038615,
+                    -0.025770701027010068,
+                    -0.1914652961691976,
+                    0.9289565264227417,
+                    -0.16813202132973992,
+                    -1.282948698868543,
+                    0.6706385957231252,
+                    0.00787464897732798,
+                    -0.9388639879839366,
+                    1.1636143563592272,
+                    1.2185037462515507,
+                    1.3902562032832397,
+                    -0.9397497164654142,
+                    -1.0324523096791174,
+                ],
+            ),
+        ];
+        for (pme, energy, forces) in golden {
+            let (e, f) = pme.energy_forces_at(&coords);
+            assert_eq!(e.to_bits(), energy.to_bits(), "energy {e} vs {energy}");
+            for (k, (g, w)) in f.iter().zip(&forces).enumerate() {
+                assert_eq!(g.to_bits(), w.to_bits(), "force {k}: {g} vs {w}");
+            }
+        }
+    }
+
+    /// The virial is `−∂E/∂ε` under a homogeneous strain of the cell and the
+    /// coordinates together: `x_α += δ x_β` gives `W_αβ = Σ f_α x_β`. The
+    /// strains kept are the ones that keep the cell restricted triclinic
+    /// (`α ≤ β`); the tensor is symmetric, so they are all six components.
+    #[test]
+    fn the_virial_is_minus_the_strain_derivative_of_the_energy() {
+        let (params, charges, h, special, coords) = triclinic_case();
+        let (_, _, w) = evaluated(
+            &PairCoulLongPme::new(params.clone(), charges.clone(), h, special.clone()),
+            &coords,
+        );
+        let strained = |a: usize, b: usize, delta: F| {
+            let strain = |v: &mut [F]| v[a] += delta * v[b];
+            let mut hs = h;
+            for row in &mut hs {
+                strain(row);
+            }
+            let mut xs = coords.clone();
+            for atom in xs.chunks_mut(3) {
+                strain(atom);
+            }
+            PairCoulLongPme::new(params.clone(), charges.clone(), hs, special.clone())
+                .energy_at(&xs)
+        };
+        let delta = 1e-5;
+        let scale = w.iter().map(|c| c.abs()).fold(0.0, F::max);
+        for (k, (a, b)) in [(0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2)]
+            .into_iter()
+            .enumerate()
+        {
+            let fd = -(strained(a, b, delta) - strained(a, b, -delta)) / (2.0 * delta);
+            assert!(
+                (w[k] - fd).abs() < 1e-6 * scale,
+                "W[{k}] = {} vs −dE/dε = {fd}",
+                w[k]
+            );
+        }
+    }
+
+    /// The neighbour door prices in the box its table was searched in: a
+    /// kernel built on a 10 Å cell, handed the pairs of the cell rescaled by
+    /// a barostat, prices what a kernel built on the rescaled cell prices —
+    /// energy, forces and the virial, which the door now reports.
+    #[test]
+    fn the_neighbour_door_prices_the_tables_box() {
+        use molrs::core::{NeighborColumns, NeighborList};
+        let typed = |frame: &Frame| {
+            let mut members = PotentialCompiler::new(&field(SpecialBonds::EXCLUDE_12_13))
+                .compile_typed(frame)
+                .unwrap();
+            match members.remove(0).0 {
+                ForceTerm::Pair(kernel) => kernel,
+                other => panic!("a pair member, got {other:?}"),
+            }
+        };
+        let built_small = typed(&ions(10.0));
+        let mu = 1.03;
+        let scaled: Vec<F> = IONS.iter().map(|x| mu * x).collect();
+        let mut rescaled = ions(10.0 * mu);
+        for (d, key) in ["x", "y", "z"].iter().enumerate() {
+            let col: Vec<F> = scaled.iter().skip(d).step_by(3).copied().collect();
+            rescaled
+                .get_mut(ATOMS)
+                .unwrap()
+                .insert(*key, Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
+        }
+        let built_large = typed(&rescaled);
+        let mut list = NeighborList::new(4.5).unwrap();
+        let points = ndarray::Array2::from_shape_vec((3, 3), scaled.clone()).unwrap();
+        list.build(points.view(), &cubic(10.0 * mu));
+        let table = list.neighbors(NeighborColumns::FULL);
+        assert!(table.simbox().is_some(), "a searched table has its box");
+
+        let run = |kernel: &dyn PairDriven| {
+            let mut acc = crate::ff::potential::Accumulator::new(9).with_virial();
+            kernel.evaluate_pairs(&scaled, &table, &[], &mut acc);
+            let w = acc.virial().expect("the door reports a virial").components;
+            (acc.energy(), acc.into_forces(), w)
+        };
+        let (got_e, got_f, got_w) = run(&*built_small);
+        let (want_e, want_f, want_w) = run(&*built_large);
+        assert_eq!(got_e.to_bits(), want_e.to_bits(), "{got_e} vs {want_e}");
+        assert_eq!(got_f, want_f);
+        assert_eq!(got_w, want_w);
+
+        // The table without its box: the kernel's own cell, 10 Å.
+        let unboxed =
+            crate::ff::potential::pair::fixtures::table_over(&scaled, &[(0, 1), (0, 2), (1, 2)]);
+        let (stale, _) = built_small.over_pairs(&scaled, &unboxed);
+        assert!(
+            (stale - want_e).abs() > 1e-3,
+            "the box matters: {stale} vs {want_e}"
+        );
+    }
+
+    /// Berendsen pressure coupling runs with PME: the step has a virial,
+    /// the cell follows the pressure, and the energy stays finite.
+    #[test]
+    fn a_barostat_couples_a_pme_system() {
+        use crate::md::{BerendsenBarostat, FfEvaluator, MD, VelocityVerlet};
+        use molrs::core::{MetaValue, NeighborList, UnitPreset};
+        let mut frame = ions(10.0);
+        let atoms = frame.get_mut(ATOMS).unwrap();
+        for key in ["vx", "vy", "vz"] {
+            atoms
+                .insert(key, Array1::<F>::zeros(3).into_dyn(), None)
+                .unwrap();
+        }
+        atoms
+            .insert("mass", Array1::from_elem(3, 22.99).into_dyn(), None)
+            .unwrap();
+        let members = PotentialCompiler::new(&field(SpecialBonds::EXCLUDE_12_13))
+            .compile_typed(&frame)
+            .unwrap();
+        let mut md = MD::new(UnitPreset::real()).unwrap();
+        md.set_integrator(VelocityVerlet::new(1.0).unwrap())
+            .unwrap();
+        md.set_neighbor(NeighborList::new(4.9).unwrap(), 0.4)
+            .unwrap();
+        md.set_evaluator(FfEvaluator::from_members(members))
+            .unwrap();
+        md.set_barostat(BerendsenBarostat::new(1.0, 100.0, 4.5e4, 1.0).unwrap())
+            .unwrap();
+        md.run(&mut frame, 5).unwrap();
+        let volume = frame.simbox.as_ref().unwrap().volume();
+        assert!((volume - 1000.0).abs() > 1e-9, "the cell moved: {volume}");
+        assert!(matches!(
+            frame.meta.get("pressure"),
+            Some(MetaValue::F64(p)) if p.is_finite()
+        ));
     }
 
     // --- Box inversion test ---

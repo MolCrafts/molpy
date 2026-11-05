@@ -29,7 +29,6 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3::{PyTraverseError, PyVisit};
 
-use molrs::core::keys;
 use molrs::core::keys::VSITE;
 use molrs::core::{
     Adjacent, Atomistic, BondNumber, BondOrder, CenterError, CoarseGrain, EntityCell,
@@ -126,80 +125,16 @@ fn kind_id_checked(mol: &MolGraph, kind: &str) -> PyResult<KindId> {
         .ok_or_else(|| PyValueError::new_err(format!("kind '{kind}' is not registered")))
 }
 
-/// Render a [`CenterError`] as a Python `ValueError`, through
-/// [`center_error_message`].
+/// Render a [`CenterError`] as a Python `ValueError`; the core's message
+/// already shows node ids as the `int` handles a view carries.
 fn center_error_to_pyerr(e: CenterError) -> PyErr {
-    PyValueError::new_err(center_error_message(e))
+    PyValueError::new_err(e.to_string())
 }
 
-/// The message of a [`CenterError`] as Python sees it.
-///
-/// Node ids cross as the `int` handles a view carries (`view.handle`), never
-/// as the Rust debug form `NodeId(3v1)`. Every variant is matched by name, so
-/// a new variant is a compile error here rather than a silent fallback.
-pub(crate) fn center_error_message(e: CenterError) -> String {
-    match e {
-        CenterError::Empty => "center of an empty node set".to_owned(),
-        CenterError::NotFound { node } => {
-            format!("node {} is not in this graph", u64::from(node))
-        }
-        CenterError::BadPosition { node } => format!(
-            "node {} has a missing or non-finite '{}'/'{}'/'{}'",
-            u64::from(node),
-            keys::X,
-            keys::Y,
-            keys::Z
-        ),
-        CenterError::BadMass { node } => format!(
-            "node {} has a missing, negative or non-finite '{}'",
-            u64::from(node),
-            keys::MASS
-        ),
-        CenterError::ZeroMass => "total mass is not positive and finite".to_owned(),
-    }
-}
-
-/// Render a [`LinkError`] as a Python `ValueError`, through
-/// [`link_error_message`].
+/// Render a [`LinkError`] as a Python `ValueError`; the core's message
+/// already shows port and atom ids as `int` handles.
 fn link_error_to_pyerr(e: LinkError) -> PyErr {
-    PyValueError::new_err(link_error_message(e))
-}
-
-/// The message of a [`LinkError`] as Python sees it.
-///
-/// Port and atom ids cross as the `int` handles a view carries, never as
-/// `RelationId(..)` / `NodeId(..)`. Every variant is matched by name, with no
-/// catch-all arm.
-pub(crate) fn link_error_message(e: LinkError) -> String {
-    let port = u64::from;
-    let atom = u64::from;
-    match e {
-        LinkError::Port(inner) => format!("port does not read back: {inner}"),
-        LinkError::StalePort { port: p } => format!(
-            "port {} is stale: its anchor–handle bond no longer exists",
-            port(p)
-        ),
-        LinkError::Incompatible { a, b } => {
-            format!("ports {} and {} are not compatible", port(a), port(b))
-        }
-        LinkError::SameAnchor { a, b } => format!(
-            "ports {} and {} share one anchor; a bond cannot join an atom to itself",
-            port(a),
-            port(b)
-        ),
-        LinkError::AlreadyBonded { a, b } => {
-            format!("anchors {} and {} are already bonded", atom(a), atom(b))
-        }
-        LinkError::BranchReachesAnchor { port: p } => {
-            format!("port {}'s handle branch reaches its own anchor", port(p))
-        }
-        LinkError::BranchesOverlap => "the two ports' handle branches overlap".to_owned(),
-        LinkError::OneSidedCharge { anchor } => format!(
-            "charge is present on only part of anchor {} and its handle branch",
-            atom(anchor)
-        ),
-        LinkError::Graph(inner) => format!("graph refused a read: {inner}"),
-    }
+    PyValueError::new_err(e.to_string())
 }
 
 // ---------------------------------------------------------------------------

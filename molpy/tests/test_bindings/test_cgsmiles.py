@@ -396,3 +396,17 @@ def test_to_coarsegrain_crosses_as_a_coarse_grain() -> None:
     assert type(cg) is mp.core.CoarseGrain
     assert cg.n_beads == 4
     assert cg.n_bonds == 3
+
+
+def test_to_assembly_graph_returns_explicit_connections() -> None:
+    cg = mp.io.cgsmiles.read_cgsmiles("{[#A]=[#A]}.{#A=[$]CCC[$]}").to_assembly_graph()
+    assert isinstance(cg, mp.CoarseGrain)
+    assert cg.n_beads == 2
+    assert cg.n_bonds == 2
+    assert list(cg.bonds["src_port"]) == [0, 1]
+    assert list(cg.bonds["dst_port"]) == [0, 1]
+
+
+def test_to_assembly_graph_base_only_maps_error() -> None:
+    with pytest.raises(ValueError, match="base-only"):
+        mp.io.cgsmiles.read_cgsmiles("{[#A][#A]}").to_assembly_graph()

@@ -1,9 +1,9 @@
 # AGENTS.md — molpy
 
 The single instruction file for every coding agent in this repository (Claude
-Code reads it natively; Codex and others read it by name). Evolving decisions
-live in `.claude/NOTES.md`; stable ones are promoted here. Specs live in
-`.claude/specs/`, indexed by `.claude/specs/INDEX.md`.
+Code reads it natively; Codex and others read it by name). The repository
+carries no `.claude/` tree: stable decisions live here, and the operator's
+agent skills and agents live in the mol plugin, outside the repository.
 
 ## What this is
 
@@ -31,9 +31,9 @@ maturin reads `molpy/Cargo.toml`, and `molpy.version` re-exports
 
 **Releases** are cut from `master` of MolCrafts/molpy, the project
 repository (MolCrafts/molrs is retired). 0.20.0 is the first release of the
-unified project and precedes the downstream migration (see
-`.claude/specs/molpy-unification.md`). Push no `v*` tag, and push nothing,
-without the operator confirming the target remote and branch.
+unified project and precedes the downstream migration. Push no `v*` tag,
+and push nothing, without the operator confirming the target remote and
+branch.
 
 **ABI.** The minor line is the ABI contract. Capsule names
 (`molrs.FrameRef/<major.minor>+<fingerprint>`, …) are defined only in
@@ -206,12 +206,6 @@ uses rustdoc with runnable examples. Figures come from real runs
 points.
 
 ## Workflow
-
-Project skills in `.claude/skills/` (prefix `mp-`): `mp-spec`, `mp-impl`,
-`mp-fix`, `mp-refactor`, `mp-debug`, `mp-review` (+ single-axis `mp-arch`,
-`mp-science`, `mp-perf`, `mp-bindings`, `mp-test`), `mp-docs`, `mp-note`.
-Agents in `.claude/agents/`: `mp-architect`, `mp-science`, `mp-perf`,
-`mp-bindings`, `mp-tester`, `mp-documenter`.
 
 Git: PRs target `dev`; feature branches stay local and are deleted after
 merge; the fork keeps only `master`/`dev`/`nightly`.

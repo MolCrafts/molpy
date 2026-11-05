@@ -170,6 +170,7 @@ columns! {
     BOND_TYPE: "bond_type", Uint, Scalar, NotAQuantity, "Chemical bond class: 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic. Orthogonal to `bond_number`: an aromatic bond is `bond_type = 4` carrying a `bond_number` of 1 or 2.";
     CHAIN: "chain", Str, Scalar, NotAQuantity, "Chain label (PDB chain identifier, mmCIF label_asym_id). A label, not an identifier: every `*_id` key is a u64.";
     CHARGE: "charge", Float, Scalar, Of(Charge), "Partial charge.";
+    DST_PORT: "dst_port", Uint, Scalar, NotAQuantity, "Zero-based template port row of a CG assembly bond's second endpoint; paired with src_port.";
     ELEMENT: "element", Str, Scalar, NotAQuantity, "IUPAC element symbol (e.g. \"C\").";
     EXCLUDE_14: "exclude_14", DType::Bool, Scalar, NotAQuantity, "Whether this torsion's 1-4 non-bonded term is suppressed (AMBER negative 3rd pointer)";
     FORMAL_CHARGE: "formal_charge", I64, Scalar, NotAQuantity, "Integer formal charge, in units of the elementary charge.";
@@ -202,6 +203,7 @@ columns! {
     REACT_ID: "react_id", Uint, Scalar, NotAQuantity, "Identifier pairing an atom of a LAMMPS `fix bond/react` pre-reaction template with the same atom of the post-reaction one.";
     RES_ID: "res_id", Uint, Scalar, NotAQuantity, "Residue identifier. Unsigned like every other id in the vocabulary; a file with negative residue numbers is renumbered at the reader boundary, not accommodated by the schema.";
     RES_NAME: "res_name", Str, Scalar, NotAQuantity, "Residue name (e.g. \"ALA\").";
+    SRC_PORT: "src_port", Uint, Scalar, NotAQuantity, "Zero-based template port row of a CG assembly bond's first endpoint; paired with dst_port.";
     STEREO: "stereo", Str, Scalar, NotAQuantity, "Stereo marker. On an atom: tetrahedral chirality `\"CW\"` / `\"CCW\"`, clockwise or anticlockwise seen from the first substituent of the reference order (bond neighbors in bond order; one implicit hydrogen, `h_count` 1 with three neighbors, is placed first). `\"unspecified\"` is perception's empty label. On a bond: `\"E\"` / `\"Z\"` / `\"either\"` is the double-bond geometry of the highest-Z substituent on each end (opposite sides are E). `\"up\"` / `\"down\"` is a slash that is not that geometry — a ring digit, or a cumulene end — and is `/` / `\\` from the bond's first endpoint toward its second. They are not two spellings of one fact.";
     STYLE: "style", Str, Scalar, NotAQuantity, "Force-field style of a relation row, picking among styles of one category that hold the row's `type` (hybrid styles).";
     TYPE: "type", Str, Scalar, NotAQuantity, "Force-field type label. Always a String: a label is what survives a round trip through a force field. Numeric ordinals live in `type_id`.";

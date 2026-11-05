@@ -94,3 +94,140 @@ class TestWriteMol2:
         np.testing.assert_allclose(back["atoms"]["charge"], frame["atoms"]["charge"])
         assert back["bonds"]["atomi"].tolist() == frame["bonds"]["atomi"].tolist()
         assert back["bonds"]["atomj"].tolist() == frame["bonds"]["atomj"].tolist()
+
+    def test_element_only_frame_writes_bare_symbols_as_the_atom_types(self, tmp_path):
+        """SYBYL allows a bare element symbol as the atom type, and the reader
+        maps it back to ``element``: a frame with ``element`` but no ``type``
+        is written as ``C`` / ``H`` (never a guessed ``C.ar``) and round-trips."""
+        frame = _benzene_frame()
+        out = tmp_path / "benzene.mol2"
+        mp.io.write_mol2(out, frame)
+        back = _read(out)
+        assert _elements(back) == ["C"] * 6 + ["H"] * 6
+        assert list(back["atoms"]["type"]) == ["C"] * 6 + ["H"] * 6
+        assert list(back["bonds"]["bond_type"]) == [4] * 6 + [1] * 6
+        assert back["bonds"]["atomi"].tolist() == frame["bonds"]["atomi"].tolist()
+        assert back["bonds"]["atomj"].tolist() == frame["bonds"]["atomj"].tolist()
+
+    def test_frame_with_neither_type_nor_element_is_refused(self, tmp_path):
+        """Nothing spells the atom type without ``type``, ``element`` or
+        ``atomic_number``: the write is refused, not padded."""
+        frame = _benzene_frame()
+        frame["atoms"]["name"] = np.array(
+            [f"C{i}" for i in range(1, 7)] + [f"H{i}" for i in range(1, 7)]
+        )
+        del frame["atoms"]["element"]
+        with pytest.raises(ValueError, match="no string 'type' column"):
+            mp.io.write_mol2(tmp_path / "out.mol2", frame)
+
+
+def _benzene_frame() -> mp.Frame:
+    """Benzene stated by geometry and ``element`` alone: six ring carbons,
+    six hydrogens, aromatic C-C and single C-H bonds, no ``type`` or ``name``."""
+    angles = np.deg2rad(np.arange(6) * 60.0)
+    ring = np.arange(6, dtype=np.uint64)
+    frame = mp.Frame()
+    frame["atoms"] = {
+        "element": np.array(["C"] * 6 + ["H"] * 6),
+        "x": np.concatenate([1.39 * np.cos(angles), 2.47 * np.cos(angles)]),
+        "y": np.concatenate([1.39 * np.sin(angles), 2.47 * np.sin(angles)]),
+        "z": np.zeros(12),
+    }
+    frame["bonds"] = {
+        "atomi": np.concatenate([ring, ring]),
+        "atomj": np.concatenate([(ring + 1) % 6, ring + 6]),
+        "bond_type": np.array([4] * 6 + [1] * 6, dtype=np.uint64),
+        "bond_number": np.array([0] * 6 + [1] * 6, dtype=np.uint64),
+    }
+    return frame
+
+
+def _mol2_text(atoms: list[tuple[str, str]]) -> str:
+    """A one-molecule MOL2 of ``(name, type)`` atoms on a line, no bonds."""
+    rows = "".join(
+        f"{i + 1} {name} {float(i)} 0.0 0.0 {atype} 1 MOL 0.0\n"
+        for i, (name, atype) in enumerate(atoms)
+    )
+    return (
+        f"@<TRIPOS>MOLECULE\nM\n{len(atoms)} 0 0 0 0\nSMALL\nNO_CHARGES\n"
+        f"@<TRIPOS>ATOM\n{rows}"
+    )
+
+
+def _elements(frame: mp.Frame) -> list[str | None]:
+    atoms = frame["atoms"]
+    valid = atoms.validity("element")
+    values = list(atoms["element"])
+    if valid is None:
+        return values
+    return [v if ok else None for v, ok in zip(values, valid)]
+
+
+class TestMol2Elements:
+    """MOL2 has no element field: the reader derives ``element`` from a SYBYL
+    type, else from the atom name, and leaves an unspelled row null."""
+
+    def test_gaff_typed_elements_come_from_the_names(self, tmp_path):
+        path = tmp_path / "gaff.mol2"
+        path.write_text(
+            _mol2_text(
+                [("C1", "c3"), ("C2", "ca"), ("H3", "hc"), ("Br12", "br"), ("O5", "oh")]
+            ),
+            encoding="utf-8",
+        )
+        assert _elements(_read(path)) == ["C", "C", "H", "Br", "O"]
+
+    def test_sybyl_typed_elements_come_from_the_types(self, tmp_path):
+        path = tmp_path / "sybyl.mol2"
+        path.write_text(
+            _mol2_text(
+                [
+                    ("CA", "C.3"),
+                    ("X", "C.ar"),
+                    ("OXT", "O.3"),
+                    ("HO", "H"),
+                    ("BR", "Br"),
+                ]
+            ),
+            encoding="utf-8",
+        )
+        assert _elements(_read(path)) == ["C", "C", "O", "H", "Br"]
+
+    def test_ambiguous_rows_are_null_not_guessed(self, tmp_path):
+        path = tmp_path / "amber.mol2"
+        path.write_text(_mol2_text([("CA", "CT"), ("C2", "c3")]), encoding="utf-8")
+        assert _elements(_read(path)) == [None, "C"]
+
+    def test_fixture_elements(self, mol2_dir):
+        assert _elements(_read(mol2_dir / "ethane.mol2")) == ["C", "C"] + ["H"] * 6
+        assert _elements(_read(mol2_dir / "li.mol2")) == ["Li"]
+
+    def test_round_trip_keeps_elements(self, mol2_dir, tmp_path):
+        frame = _read(mol2_dir / "ethane.mol2")
+        out = tmp_path / "out.mol2"
+        mp.io.write_mol2(out, frame)
+        assert _elements(_read(out)) == _elements(frame)
+
+
+def test_force_field_bond_type_names_do_not_replace_the_bond_order(
+    tmp_path: Path,
+) -> None:
+    """A typed frame carries GAFF bond type names (``ca-ca``) in ``bonds.type``.
+    They say nothing about the order, so the BOND records still get the SYBYL
+    order from ``bond_type`` / ``bond_number`` and read back aromatic/double."""
+    text = (
+        "@<TRIPOS>MOLECULE\nX\n4 3 1 0 0\nSMALL\nNO_CHARGES\n\n@<TRIPOS>ATOM\n"
+        "1 C1 0.0 0.0 0.0 ca 1 X\n2 C2 1.4 0.0 0.0 ca 1 X\n"
+        "3 C3 2.8 0.0 0.0 c 1 X\n4 O1 4.0 0.0 0.0 o 1 X\n"
+        "@<TRIPOS>BOND\n1 1 2 ar\n2 2 3 1\n3 3 4 2\n"
+    )
+    source = tmp_path / "in.mol2"
+    source.write_text(text, encoding="utf-8")
+    frame = mp.io.read_mol2(source)
+    frame["bonds"]["type"] = np.array(["ca-ca", "ca-c", "c-o"])
+    out = tmp_path / "out.mol2"
+    mp.io.write_mol2(out, frame)
+    rows = out.read_text(encoding="utf-8").split("@<TRIPOS>BOND\n", 1)[1].split()
+    assert rows[3::4] == ["ar", "1", "2"]
+    back = mp.io.read_mol2(out)
+    assert list(back["bonds"]["bond_type"]) == [4, 1, 2]

@@ -64,14 +64,11 @@ pub struct SmartsTarget<'m> {
     /// perceived on the first `^<n>` a pattern asks.
     hybridization: std::sync::OnceLock<Vec<crate::perceive::Hybridization>>,
     /// External "current label" map for the `%LABEL` context predicate.
-    /// Borrowed from the caller; empty for the label-free match path.
-    labels: &'m HashMap<NodeId, String>,
+    /// Empty for the label-free match path; an iterative typifier rewrites it
+    /// between rounds over the one perceived target
+    /// ([`labels_mut`](Self::labels_mut)).
+    labels: HashMap<NodeId, String>,
 }
-
-/// Shared empty label map for the label-free match path, so
-/// [`SmartsTarget::new`] can borrow a `&'static HashMap` without allocating.
-static EMPTY_LABELS: std::sync::LazyLock<HashMap<NodeId, String>> =
-    std::sync::LazyLock::new(HashMap::new);
 
 impl<'m> SmartsTarget<'m> {
     /// Build the match target for `mol` (runs ring perception once), with **no**
@@ -136,15 +133,31 @@ impl<'m> SmartsTarget<'m> {
             implicit_h,
             ring_bond_count,
             hybridization: std::sync::OnceLock::new(),
-            labels: &EMPTY_LABELS,
+            labels: HashMap::new(),
         }
     }
 
     /// Use `labels` as the external label map for `%LABEL` context
     /// predicates: `labels[atom] == "L"` makes `[...;%L]` match `atom`.
-    pub fn with_labels(mut self, labels: &'m HashMap<NodeId, String>) -> Self {
-        self.labels = labels;
+    pub fn with_labels(mut self, labels: &HashMap<NodeId, String>) -> Self {
+        self.labels = labels.clone();
         self
+    }
+
+    /// The external label map, for a caller that relabels between rounds of
+    /// matching instead of perceiving the molecule again.
+    pub(crate) fn labels_mut(&mut self) -> &mut HashMap<NodeId, String> {
+        &mut self.labels
+    }
+
+    /// The external label map, as the target ends.
+    pub(crate) fn into_labels(self) -> HashMap<NodeId, String> {
+        self.labels
+    }
+
+    /// The atomic number of atom `id`.
+    pub(crate) fn atomic_number(&self, id: NodeId) -> Option<u8> {
+        self.atomic_number.get(&id).copied()
     }
 
     /// Whether atom `id` has atomic number `z`.
@@ -399,6 +412,40 @@ impl AtomTest {
     /// Collect every [`AtomPredicate::HasContextLabel`] label appearing in this
     /// query tree (does not descend into recursive `$(...)` subpatterns — those
     /// are handled by the owning [`QueryGraph`]).
+    /// The atomic numbers an atom must have to pass this test, or `None`
+    /// when the test does not confine the element. A conservative bound: an
+    /// atom outside it cannot pass, an atom inside it may not. A recursive
+    /// `$(...)` is rooted at the same atom, so its root confines it too.
+    pub(crate) fn atomic_numbers(
+        &self,
+        recursives: &[super::compile::QueryGraph],
+    ) -> Option<Vec<u8>> {
+        match self {
+            AtomTest::Prim(
+                AtomPredicate::AliphaticElement(z)
+                | AtomPredicate::AromaticElement(z)
+                | AtomPredicate::AtomicNum(z),
+            ) => Some(vec![*z]),
+            AtomTest::Prim(_) | AtomTest::Not(_) => None,
+            AtomTest::Recursive(i) => recursives.get(*i)?.root_atomic_numbers(),
+            AtomTest::And(items) => items
+                .iter()
+                .filter_map(|q| q.atomic_numbers(recursives))
+                .reduce(|a, b| a.into_iter().filter(|z| b.contains(z)).collect()),
+            AtomTest::Or(items) => {
+                let mut all = Vec::new();
+                for q in items {
+                    for z in q.atomic_numbers(recursives)? {
+                        if !all.contains(&z) {
+                            all.push(z);
+                        }
+                    }
+                }
+                Some(all)
+            }
+        }
+    }
+
     pub fn collect_context_labels(&self, out: &mut Vec<String>) {
         match self {
             AtomTest::Prim(AtomPredicate::HasContextLabel(l)) => out.push(l.clone()),

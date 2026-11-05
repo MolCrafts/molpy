@@ -103,6 +103,10 @@ cd molpy/examples
 python topology/01_linear.py
 ```
 
+`pbix_deterministic.py` in the same directory takes the site graph further: a
+crosslinked anion-exchange network with explicit `src_port` / `dst_port` connections
+and counterions (see [Assembly](../user-guide/02_assembly.md)).
+
 Minimal linear chain, ten EO units:
 
 ```python

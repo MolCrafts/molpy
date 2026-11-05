@@ -89,6 +89,7 @@ mod link;
 mod molgraph;
 mod molgraph_geometry;
 mod port;
+pub(crate) mod stereo;
 mod topology;
 
 // Space.
@@ -132,6 +133,7 @@ pub use entity_table::{EntityCell, EntityColumn, EntityDtype, EntityTable, Valid
 pub use extract::{ExtractedBall, InducedSubgraph};
 pub use graph::Graph;
 pub(crate) use graph::GraphAccess;
+pub(crate) use link::{BatchConflict, BatchPair, LinkRequest, PortPlan, batch_conflicts};
 pub use link::{LinkError, LinkManyError};
 pub use molgraph::{KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
 pub use molgraph_geometry::CenterError;

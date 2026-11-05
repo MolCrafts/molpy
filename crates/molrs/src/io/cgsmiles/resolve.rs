@@ -1107,6 +1107,7 @@ mod tests {
     /// beside its bracket.
     fn descriptor(kind: DescriptorKind, label: &str, order: Option<BondKind>) -> BondingDescriptor {
         BondingDescriptor {
+            span: crate::line_notation::ast::Span::new(0, 0),
             kind,
             label: label.to_owned(),
             order,

@@ -67,7 +67,8 @@ pub fn smarts_text(ir: &SmilesIr) -> Result<String, SmilesError> {
 ///
 /// # Errors
 ///
-/// Returns [`SmilesErrorKind::Emit`] for an empty IR,
+/// Returns [`SmilesErrorKind::Emit`] for an empty IR or a descriptor-bearing
+/// chiral anchor whose substituent order this writer cannot preserve,
 /// [`SmilesErrorKind::InvalidDescriptorOrder`] for a descriptor order outside
 /// `Single`, `Double`, `Triple` and `Quadruple` (no parser produces one, but a
 /// hand-built IR can carry it), and
@@ -142,6 +143,21 @@ fn emit_rnum(out: &mut String, rnum: u16) {
 }
 
 fn emit_atom(out: &mut String, node: &AtomNode, dialect: Dialect) -> Result<(), SmilesError> {
+    if matches!(dialect, Dialect::FragmentSmiles)
+        && !node.descriptors.is_empty()
+        && matches!(
+            node.spec,
+            AtomSpec::Bracket {
+                chirality: Some(_),
+                ..
+            }
+        )
+    {
+        return Err(SmilesError::new(
+            SmilesErrorKind::Emit("writing a descriptor-anchor stereocentre requires preserving its substituent order".to_owned()),
+            node.span, "", dialect.notation(),
+        ));
+    }
     match &node.spec {
         AtomSpec::Organic { symbol, aromatic } => {
             if *aromatic {
@@ -627,6 +643,14 @@ mod tests {
             .unwrap_or_else(|e| panic!("parse_fragment_smiles({input:?}) failed: {e}"))
     }
 
+    // Source spans change under equivalent spellings; chemistry does not.
+    fn descriptor_chemistry(ir: &SmilesIr) -> Vec<(DescriptorKind, String, Option<BondKind>)> {
+        descriptors(ir)
+            .into_iter()
+            .map(|d| (d.kind, d.label, d.order))
+            .collect()
+    }
+
     #[test]
     fn write_fragment_smiles_round_trips_descriptors() {
         // The text is not preserved, the IR is: re-parsing the written string
@@ -634,7 +658,16 @@ mod tests {
         let ir = fragment("[$]COC[$]");
         let written = fragment_smiles_text(&ir).unwrap();
         let reparsed = fragment(&written);
-        assert_eq!(descriptors(&reparsed), descriptors(&ir));
+        assert_eq!(descriptor_chemistry(&reparsed), descriptor_chemistry(&ir));
+    }
+
+    #[test]
+    fn fragment_writer_refuses_to_reorder_a_descriptor_anchor_stereocentre() {
+        let ir = fragment("[C@H](F)([>])Cl");
+        let err = fragment_smiles_text(&ir).unwrap_err();
+        assert!(
+            matches!(err.kind, SmilesErrorKind::Emit(ref message) if message.contains("substituent order"))
+        );
     }
 
     #[test]
@@ -713,6 +746,7 @@ mod tests {
         // rather than emit `C:[$]`, text its own parser rejects.
         let mut ir = fragment("C");
         ir.components[0].head.descriptors.push(BondingDescriptor {
+            span: crate::line_notation::ast::Span::new(0, 0),
             kind: DescriptorKind::Symmetric,
             label: String::new(),
             order: Some(BondKind::Aromatic),
@@ -731,16 +765,19 @@ mod tests {
         // write silently rewrites the IR into `order: None`.
         let ir = fragment("CC-[$]");
         assert_eq!(
-            descriptors(&ir),
-            vec![BondingDescriptor {
-                kind: DescriptorKind::Symmetric,
-                label: String::new(),
-                order: Some(BondKind::Single),
-            }],
+            descriptor_chemistry(&ir),
+            vec![(
+                DescriptorKind::Symmetric,
+                String::new(),
+                Some(BondKind::Single)
+            )],
         );
         let written = fragment_smiles_text(&ir).unwrap();
         assert_eq!(written, "CC-[$]");
-        assert_eq!(descriptors(&fragment(&written)), descriptors(&ir));
+        assert_eq!(
+            descriptor_chemistry(&fragment(&written)),
+            descriptor_chemistry(&ir)
+        );
     }
 
     #[test]

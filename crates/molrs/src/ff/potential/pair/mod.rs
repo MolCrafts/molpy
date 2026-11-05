@@ -116,52 +116,68 @@ pub(crate) fn atom_type_index(frame: &Frame) -> Result<(Vec<u32>, Vec<String>), 
     Ok((type_id, labels))
 }
 
-/// Split a per-pair fold into fixed chunks, run in parallel when that is
-/// worth it, with a result that does not depend on the thread count.
+/// Most groups a fold is split into: each holds a force buffer of its own.
+const MAX_CHUNKS: usize = 64;
+/// Fewest pairs a group is worth: below it the buffer costs more than the
+/// rows it folds.
+const MIN_CHUNK: usize = 4_096;
+/// Most bytes the groups' force buffers hold together.
+const BUFFER_BUDGET: usize = 256 << 20;
+
+/// How many groups a fold of `n_pairs` rows into `out_len` force components
+/// is split into — decided by nothing but those two numbers, because the
+/// grouping of a floating-point sum is part of its answer.
+///
+/// One group when the table is small, or when merging a buffer (`out_len`
+/// adds) would cost about what folding its rows does; otherwise as many
+/// groups of at least [`MIN_CHUNK`] rows as fit [`MAX_CHUNKS`] and
+/// [`BUFFER_BUDGET`].
+fn chunk_count(n_pairs: usize, out_len: usize) -> usize {
+    if n_pairs < 2 * MIN_CHUNK || n_pairs < 3 * out_len {
+        return 1;
+    }
+    let by_memory = BUFFER_BUDGET / (out_len.max(1) * std::mem::size_of::<F>());
+    (n_pairs / MIN_CHUNK).min(MAX_CHUNKS).min(by_memory).max(1)
+}
+
+/// Split a per-pair fold into a fixed set of groups, run in parallel when
+/// that is worth it, with a result that does not depend on the thread count.
 ///
 /// `run(acc, rows)` folds one contiguous range of pairs into `acc`.
 ///
-/// # Why the chunk *size* is fixed, and why the serial path chunks too
+/// # Why the grouping is fixed, and why the serial path groups too
 ///
 /// Floating-point addition is not associative, so the answer depends on how
 /// the pairs are grouped. Grouping by "one chunk per thread" makes it depend
 /// on the thread count — which is what the first version of this did, and the
-/// test caught it between one thread and two. The grouping here is a fixed
-/// number of pairs per chunk, decided by nothing but `n_pairs`, and the
-/// partials are merged in chunk order. The serial path walks the same chunks
+/// test caught it between one thread and two. The grouping here is decided
+/// by nothing but the table and buffer sizes ([`chunk_count`]), each group
+/// folds into a zeroed buffer of its own, and every force component sums the
+/// groups' partials in group order. The serial path walks the same groups
 /// and merges them the same way; it has to, or running on one thread would
 /// give a different number from running on four.
 ///
-/// A scatter needs one accumulator per chunk, and below the threshold those
-/// cost more to allocate and merge than the fold costs to run — so a small
-/// table stays serial and touches no pool.
+/// The group count is bounded ([`MAX_CHUNKS`], [`BUFFER_BUDGET`]), so the
+/// buffers held at once are too: a group per few thousand pairs would hold
+/// one `3·N` buffer per few thousand pairs — gigabytes for a large system.
 pub(crate) fn fold_chunks<R>(out: &mut [F], n_pairs: usize, run: R) -> (F, molrs::core::Virial)
 where
     R: Fn(&mut [F], std::ops::Range<usize>) -> (F, molrs::core::Virial) + Sync,
 {
     use molrs::core::Virial;
-    /// Pairs per chunk. Fixed, because it decides the grouping of a
-    /// floating-point sum and so is part of the answer.
-    const CHUNK: usize = 4_096;
-    // Splitting costs one accumulator per chunk, and merging one costs
-    // `out.len()` adds — a number that has nothing to do with how many pairs
-    // there are, so a table can be big enough to want splitting and still lose
-    // to the merge. Both are properties of the configuration and not of the
-    // machine, so the grouping stays the same however many threads run.
-    let split = n_pairs >= CHUNK && n_pairs >= 3 * out.len();
-    let nchunks = if split { n_pairs.div_ceil(CHUNK) } else { 1 };
-    let bounds = |c: usize| (c * CHUNK)..((c + 1) * CHUNK).min(n_pairs);
-
-    // One chunk is the whole fold, and both paths run it straight into `out`.
-    // Small tables therefore pay nothing at all for any of this.
+    let nchunks = chunk_count(n_pairs, out.len());
+    // One group is the whole fold, and both paths run it straight into
+    // `out`. Small tables therefore pay nothing at all for any of this.
     if nchunks == 1 {
         return run(out, 0..n_pairs);
     }
+    let len = n_pairs.div_ceil(nchunks);
+    let bounds = |c: usize| (c * len).min(n_pairs)..((c + 1) * len).min(n_pairs);
 
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
-        if nchunks > 1 && rayon::current_num_threads() > 1 {
+        if rayon::current_num_threads() > 1 {
             let parts: Vec<(Vec<F>, F, Virial)> = (0..nchunks)
                 .into_par_iter()
                 .map(|c| {
@@ -172,23 +188,30 @@ where
                 .collect();
             let mut energy = 0.0;
             let mut virial = Virial::ZERO;
-            for (local, e, w) in &parts {
+            for (_, e, w) in &parts {
                 energy += e;
-                for k in 0..6 {
-                    virial.components[k] += w.components[k];
-                }
-                for (dst, v) in out.iter_mut().zip(local) {
-                    *dst += v;
-                }
+                virial += *w;
             }
+            // Each component sums the partials in group order, whichever
+            // thread takes its block.
+            const BLOCK: usize = 4_096;
+            out.par_chunks_mut(BLOCK).enumerate().for_each(|(b, dst)| {
+                let at = b * BLOCK;
+                let n = dst.len();
+                for (local, _, _) in &parts {
+                    for (d, v) in dst.iter_mut().zip(&local[at..at + n]) {
+                        *d += v;
+                    }
+                }
+            });
             return (energy, virial);
         }
     }
 
-    // Serial, over the same chunks and merged the same way — including the
-    // per-chunk buffer, which is not an optimisation here but a requirement:
-    // a chunk that accumulated straight into `out` would add its terms to
-    // whatever was already there, where a parallel chunk sums them from zero
+    // Serial, over the same groups and merged the same way — including the
+    // per-group buffer, which is not an optimisation here but a requirement:
+    // a group that accumulated straight into `out` would add its terms to
+    // whatever was already there, where a parallel group sums them from zero
     // first. Those are different sums, and one thread would disagree with four.
     let mut local = vec![0.0; out.len()];
     let mut energy = 0.0;
@@ -197,9 +220,7 @@ where
         local.fill(0.0);
         let (e, w) = run(&mut local, bounds(c));
         energy += e;
-        for k in 0..6 {
-            virial.components[k] += w.components[k];
-        }
+        virial += w;
         for (dst, v) in out.iter_mut().zip(&local) {
             *dst += v;
         }
@@ -393,6 +414,74 @@ pub(crate) mod fixtures {
                 x.to_bits(),
                 y.to_bits(),
                 "{label}: force component {c}: {x} vs {y}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A fold whose rows each add `1/(k+1)` to every force component: the
+    /// sum depends on how the rows are grouped, so grouping that moved with
+    /// the thread count would show.
+    fn fold_counting(n_pairs: usize, n_out: usize, groups: &AtomicUsize) -> (F, Vec<F>) {
+        let mut out = vec![0.0; n_out];
+        let (e, _) = fold_chunks(&mut out, n_pairs, |local, rows| {
+            groups.fetch_add(1, Ordering::Relaxed);
+            let mut e = 0.0;
+            for k in rows {
+                let v = 1.0 / (k as F + 1.0);
+                e += v;
+                for f in local.iter_mut() {
+                    *f += v;
+                }
+            }
+            (e, Virial::ZERO)
+        });
+        (e, out)
+    }
+
+    /// A table of a million pairs is folded in at most 64 groups — one
+    /// force buffer each — however many threads run, and the answer is the
+    /// same bit for bit on one thread and on several.
+    #[test]
+    fn a_large_table_folds_in_a_bounded_number_of_groups() {
+        let n_pairs = 1_000_000;
+        let run = |threads: usize| {
+            let groups = AtomicUsize::new(0);
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            let (e, out) = pool.install(|| fold_counting(n_pairs, 6, &groups));
+            (e, out, groups.into_inner())
+        };
+        let (e1, f1, g1) = run(1);
+        assert!(g1 > 1, "the table is split");
+        assert!(g1 <= 64, "{g1} groups, each with its own force buffer");
+        for threads in [2, 4, 8] {
+            let (e, f, g) = run(threads);
+            assert_eq!(g, g1, "{threads} threads: the grouping");
+            assert_eq!(e.to_bits(), e1.to_bits(), "{threads} threads: energy");
+            for (a, b) in f.iter().zip(&f1) {
+                assert_eq!(a.to_bits(), b.to_bits(), "{threads} threads: forces");
+            }
+        }
+    }
+
+    /// The groups' force buffers together stay within a fixed budget: a
+    /// system of a million atoms gets fewer groups than a small one.
+    #[test]
+    fn the_group_buffers_stay_within_their_budget() {
+        for n_out in [3, 3_000, 300_000, 3_000_000, 30_000_000] {
+            let n = chunk_count(100_000_000, n_out);
+            assert!((1..=64).contains(&n), "{n_out}: {n} groups");
+            assert!(
+                n == 1 || n * n_out * std::mem::size_of::<F>() <= 256 << 20,
+                "{n_out}: {n} buffers of {n_out}"
             );
         }
     }

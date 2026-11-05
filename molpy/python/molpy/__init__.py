@@ -9,6 +9,7 @@ the root holds three kinds of name and nothing else:
   splitters), :mod:`molpy.io` (every file reader and writer, with one
   submodule per format that owns classes), :mod:`molpy.ff`,
   :mod:`molpy.perceive`, :mod:`molpy.optimize`, :mod:`molpy.conformer`,
+  :mod:`molpy.depict`,
   :mod:`molpy.builder`, :mod:`molpy.compute`, :mod:`molpy.md`,
   :mod:`molpy.op` and :mod:`molpy.stream`; and molpy's own
   :mod:`molpy.engine`, :mod:`molpy.tool`, :mod:`molpy.config` and
@@ -55,6 +56,7 @@ if typing.TYPE_CHECKING:
         config,
         conformer,
         core,
+        depict,
         engine,
         ff,
         io,
@@ -78,6 +80,7 @@ _LAZY_SUBMODULES = frozenset(
         "config",
         "conformer",
         "core",
+        "depict",
         "resources",
         "engine",
         "ff",
@@ -133,6 +136,7 @@ __all__ = [
     "config",
     "conformer",
     "core",
+    "depict",
     "resources",
     "engine",
     "ff",

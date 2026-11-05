@@ -4,15 +4,13 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::core::NeighborKinds;
+use crate::core::stereo::{priority_substituent, tetrahedral_reference};
 use crate::io::smiles::bond_stereo;
-use crate::io::smiles::chirality::{
-    chirality_in, implicit_hydrogens, opensmiles_order, reference_order,
-};
+use crate::io::smiles::chirality::{chirality_in, implicit_hydrogens, opensmiles_order};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use crate::line_notation::ast::*;
 use crate::line_notation::atom_keys::{H_COUNT, IS_AROMATIC, ISOTOPE, STEREO, WILDCARD_Z};
 use crate::line_notation::canonical_element_symbol;
-use crate::perceive::priority_substituent;
 use molrs::core::Atomistic;
 use molrs::core::BondOrder;
 use molrs::core::Element;
@@ -127,7 +125,9 @@ pub struct FragmentIr {
 /// to the same IR. Descriptors are written in the canonical trailing form
 /// (`C=[$]CC`); see the fragment writer for the conventions. Formatting fails
 /// for an IR no fragment parser produces (an empty one, a SMARTS query atom,
-/// a descriptor order outside single … quadruple).
+/// a descriptor order outside single … quadruple), or for a descriptor-bearing
+/// chiral anchor: canonical trailing descriptors cannot preserve its written
+/// substituent order. Reading and assembly support that stereochemistry.
 ///
 /// ```
 /// use molrs::io::smiles::SmilesIr;
@@ -179,6 +179,10 @@ impl FragmentIr {
     /// descriptor creates neither an atom nor a bond here. Filling open sites — by
     /// pairing them with another fragment's, or by capping them with hydrogen — is
     /// a later step that reads this map.
+    /// A declared stereocentre at a descriptor anchor retains its clock sense
+    /// against the real bond neighbors followed by the descriptor-map slots;
+    /// one declared implicit H precedes that reference. Capping appends those
+    /// slots in order before the graph is used as a complete molecule.
     ///
     /// Descriptors are passed through, not re-checked: the parser validated every
     /// descriptor at its single construction site, so a hand-built IR carrying a
@@ -233,15 +237,18 @@ struct PendingRing {
 /// A ring digit is [`HeavySlot::Ring`] until the closure bonds the partner;
 /// the partner then replaces that slot in place, so a reused ring number is
 /// a new slot.
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum HeavySlot {
     Atom(NodeId),
     Ring(u16),
+    Descriptor(usize),
+    Hydrogen,
 }
 
 /// A bracket `@` / `@@` whose OpenSMILES neighbor order is still being walked.
 struct ChiralSite {
     written: Chirality,
-    slots: Vec<HeavySlot>,
+    slots: Vec<(HeavySlot, usize)>,
     has_from: bool,
     span: Span,
 }
@@ -395,7 +402,7 @@ impl<'a> Builder<'a> {
                     // The tail is flat: rings and branches while `current` is
                     // this atom belong to it, and the next bonded atom is its
                     // chain continuation.
-                    self.note_heavy(current, HeavySlot::Atom(atom_id));
+                    self.note_heavy(current, HeavySlot::Atom(atom_id), atom.span.start);
                     self.note_from(atom_id, current);
                     current = atom_id;
                 }
@@ -403,13 +410,13 @@ impl<'a> Builder<'a> {
                     // Branch: build sub-chain rooted at `current`.
                     let branch_head = self
                         .build_chain(chain, Some((current, bond_query_to_kind(bond.as_ref())?)))?;
-                    self.note_heavy(current, HeavySlot::Atom(branch_head));
+                    self.note_heavy(current, HeavySlot::Atom(branch_head), chain.head.span.start);
                     // `current` does NOT change — branches don't advance the main chain.
                 }
                 ChainElement::RingClosure { bond, rnum, span } => {
                     // The digit's place in the written order, before the bond
                     // exists: the partner replaces this slot when the ring closes.
-                    self.note_heavy(current, HeavySlot::Ring(*rnum));
+                    self.note_heavy(current, HeavySlot::Ring(*rnum), span.start);
                     self.handle_ring_closure(
                         current,
                         *rnum,
@@ -534,6 +541,18 @@ impl<'a> Builder<'a> {
         }
 
         if self.collect_descriptors {
+            for (index, descriptor) in node.descriptors.iter().enumerate() {
+                self.note_heavy(
+                    id,
+                    HeavySlot::Descriptor(self.descriptors.len() + index),
+                    descriptor.span.start,
+                );
+                if descriptor.span.start < node.span.start
+                    && let Some(site) = self.chiral.get_mut(&id)
+                {
+                    site.has_from = true;
+                }
+            }
             self.descriptors
                 .extend(node.descriptors.iter().map(|desc| (id, desc.clone())));
         }
@@ -668,15 +687,15 @@ impl<'a> Builder<'a> {
             return;
         }
         site.has_from = true;
-        site.slots.insert(0, HeavySlot::Atom(from));
+        site.slots.insert(0, (HeavySlot::Atom(from), 0));
     }
 
     /// Append one written heavy neighbor. No-op when `id` carries no `@`.
-    fn note_heavy(&mut self, id: NodeId, slot: HeavySlot) {
+    fn note_heavy(&mut self, id: NodeId, slot: HeavySlot, position: usize) {
         let Some(site) = self.chiral.get_mut(&id) else {
             return;
         };
-        site.slots.push(slot);
+        site.slots.push((slot, position));
     }
 
     /// Replace the first still-open digit `rnum` on `id` with `partner`.
@@ -684,7 +703,7 @@ impl<'a> Builder<'a> {
         let Some(site) = self.chiral.get_mut(&id) else {
             return;
         };
-        for slot in &mut site.slots {
+        for (slot, _) in &mut site.slots {
             if let HeavySlot::Ring(open) = slot
                 && *open == rnum
             {
@@ -702,6 +721,21 @@ impl<'a> Builder<'a> {
         let sites = std::mem::take(&mut self.chiral);
         for (id, site) in sites {
             let Some(stored) = self.reference_chirality(id, &site) else {
+                if site
+                    .slots
+                    .iter()
+                    .any(|(slot, _)| matches!(slot, HeavySlot::Descriptor(_)))
+                {
+                    return Err(SmilesError::new(
+                        SmilesErrorKind::Build(
+                            "declared descriptor-anchor chirality needs four substituents"
+                                .to_owned(),
+                        ),
+                        site.span,
+                        "",
+                        Notation::Smiles,
+                    ));
+                }
                 continue;
             };
             let label = match stored {
@@ -716,16 +750,49 @@ impl<'a> Builder<'a> {
     }
 
     fn reference_chirality(&self, id: NodeId, site: &ChiralSite) -> Option<Chirality> {
+        if site
+            .slots
+            .iter()
+            .any(|(slot, _)| matches!(slot, HeavySlot::Descriptor(_)))
+        {
+            let mut written = site.slots.clone();
+            written.sort_by_key(|(_, position)| *position);
+            let mut written: Vec<_> = written.into_iter().map(|(slot, _)| slot).collect();
+            let mut reference: Vec<_> = self
+                .mol
+                .neighbors(id, NeighborKinds::BONDS)
+                .map(|(neighbor, _)| HeavySlot::Atom(neighbor))
+                .collect();
+            reference.extend(
+                self.descriptors
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (anchor, _))| *anchor == id)
+                    .map(|(index, _)| HeavySlot::Descriptor(index)),
+            );
+            let h = implicit_hydrogens(&self.mol, id);
+            if h == 1 {
+                written.insert(usize::from(site.has_from), HeavySlot::Hydrogen);
+                reference.insert(0, HeavySlot::Hydrogen);
+            }
+            let (Ok(written), Ok(reference)) = (
+                <[HeavySlot; 4]>::try_from(written),
+                <[HeavySlot; 4]>::try_from(reference),
+            ) else {
+                return None;
+            };
+            return chirality_in(site.written, &written, &reference);
+        }
         let mut heavy = Vec::with_capacity(site.slots.len());
-        for slot in &site.slots {
+        for (slot, _) in &site.slots {
             match slot {
                 HeavySlot::Atom(atom) => heavy.push(*atom),
-                HeavySlot::Ring(_) => return None,
+                HeavySlot::Ring(_) | HeavySlot::Descriptor(_) | HeavySlot::Hydrogen => return None,
             }
         }
         let h = implicit_hydrogens(&self.mol, id);
         let written_order = opensmiles_order(site.has_from, &heavy, h)?;
-        let reference = reference_order(&self.mol, id)?;
+        let reference = tetrahedral_reference(&self.mol, id)?;
         chirality_in(site.written, &written_order, &reference)
     }
 

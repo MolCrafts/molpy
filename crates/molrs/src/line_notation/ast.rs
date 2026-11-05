@@ -335,6 +335,9 @@ pub enum BondQuery {
 /// DOI: 10.1021/acscentsci.9b00476
 #[derive(Debug, Clone, PartialEq)]
 pub struct BondingDescriptor {
+    /// Written bracket range. Its position relative to branches and ring
+    /// digits determines the substituent order at a declared stereocentre.
+    pub span: Span,
     /// Which operator was written, and hence which descriptors it may pair with.
     pub kind: DescriptorKind,
     /// Label distinguishing descriptor classes of the same kind, `""` when the

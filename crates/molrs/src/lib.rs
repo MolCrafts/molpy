@@ -1,8 +1,8 @@
 //! # molrs
 //!
 //! Unified molecular simulation toolkit. A single crate whose sub-systems are
-//! modules. Four are always compiled — `op`, `core`, `perceive` and
-//! `optimize` (whose force-field optimizers need `ff`) — and the rest are
+//! modules. Five are always compiled — `op`, `core`, `perceive`, `depict`
+//! and `optimize` (whose force-field optimizers need `ff`) — and the rest are
 //! feature-gated: `builder`, `io`, `compute`, `ff`, `md`, `smiles`,
 //! `conformer`, and `stream`.
 //!
@@ -104,6 +104,10 @@ pub mod compute;
 
 #[cfg(feature = "ff")]
 pub mod ff;
+
+// 2D depiction: drawing coordinates for a molecular graph. Always compiled
+// (core + perceive only), so every binding — molwasm included — has it.
+pub mod depict;
 
 // Geometry optimization; always compiled (its module docs say what needs `ff`).
 pub mod optimize;

@@ -132,10 +132,16 @@ mod tests {
             .copied()
             .collect();
         assert_eq!(z, [6, 6, 8]);
-        assert!(
-            !atoms.contains_key("element"),
-            "SMILES writes atomic_number, not element symbols"
-        );
+        // An Atomistic frame states the species both ways: the symbols are
+        // written from the atomic numbers, so the two always agree.
+        let symbols: Vec<String> = atoms
+            .get("element")
+            .and_then(|c| c.get::<String>())
+            .expect("element is a string column written from atomic_number")
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(symbols, ["C", "C", "O"]);
         assert!(!atoms.contains_key("x"), "SMILES carries no coordinates");
         let bonds = frame.get("bonds").unwrap();
         for key in ["atomi", "atomj", "bond_type", "bond_number"] {

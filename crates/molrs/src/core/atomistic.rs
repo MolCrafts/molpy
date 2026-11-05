@@ -1116,6 +1116,17 @@ impl Atomistic {
         self.graph.link(a, b)
     }
 
+    /// Atomically join a batch of ports with the core's shared chemistry and
+    /// stereochemical substitution rules, each new bond classed as its
+    /// request says.
+    #[cfg(feature = "smiles")]
+    pub(crate) fn link_many(
+        &mut self,
+        requests: &[crate::core::LinkRequest],
+    ) -> Result<Vec<RelationId>, crate::core::LinkManyError> {
+        self.graph.link_many(requests)
+    }
+
     /// Propagate each [`keys::FRAG_ID`] to the unlabelled degree-1 atoms
     /// bonded to a labelled one; returns how many atoms were labelled. See
     /// [`MolGraph::inherit_frag_ids`].
@@ -1168,6 +1179,27 @@ impl Atomistic {
     /// impropers blocks, and one block per other non-empty relation kind,
     /// `drudes` or `virtual_sites` say, named by the kind).
     ///
+    /// # Species
+    ///
+    /// Every atom of an `Atomistic` carries [`keys::ATOMIC_NUMBER`], so the
+    /// `atoms` block always states both spellings of the species: the
+    /// `atomic_number` column and the [`keys::ELEMENT`] symbol column derived
+    /// from it ([`Element::fill_symbols`](crate::core::Element::fill_symbols)).
+    /// The symbols are written from the numbers on every export, replacing an
+    /// `element` property the atoms may carry, so the two columns cannot
+    /// disagree, and a symbol-spelling writer (PDB, XYZ, CIF) takes the frame
+    /// as it comes.
+    ///
+    /// # Model defaults
+    ///
+    /// Two atom keys have one exact meaning when an atom does not carry them:
+    /// no [`keys::FORMAL_CHARGE`] is a formal charge of 0 (what
+    /// [`Props::formal_charge`] reads) and no [`keys::IS_AROMATIC`] is not
+    /// aromatic. A line notation states them only on the atoms that need them
+    /// (`[N+]`, `c`), so where some atoms carry the key the column is written
+    /// dense with that value rather than null on the rest. Keys whose absence
+    /// says "not stated" ([`keys::H_COUNT`], a declared count) stay nullable.
+    ///
     /// # Errors
     ///
     /// [`MolRsError::Validation`] when an atom or relation property
@@ -1176,7 +1208,13 @@ impl Atomistic {
     /// any value under a key the graph has no column for, so a string written
     /// under `"x"` is legal in the graph and only refused here.
     pub fn to_frame(&self) -> Result<Frame, MolRsError> {
-        self.graph.to_frame()
+        let mut frame = self.graph.to_frame()?;
+        if let Some(atoms) = frame.get_mut("atoms") {
+            fill_null_cells(atoms, keys::FORMAL_CHARGE, 0_i64)?;
+            fill_null_cells(atoms, keys::IS_AROMATIC, false)?;
+            crate::core::Element::fill_symbols(&mut frame)?;
+        }
+        Ok(frame)
     }
 
     /// Build from a [`Frame`], registering the standard kinds first so bond /
@@ -1544,6 +1582,28 @@ fn require_atomic_number(atom: &Props, what: &str) -> Result<(), MolRsError> {
         "{what} has no valid '{}' (0..=118, 0 = wildcard){hint}",
         keys::ATOMIC_NUMBER
     )))
+}
+
+/// Replace the null cells of column `key` by `value` and drop its validity
+/// mask; a column that is absent, or has no null cell, is left as it is.
+fn fill_null_cells<T>(atoms: &mut crate::core::Block, key: &str, value: T) -> Result<(), MolRsError>
+where
+    T: crate::core::block::BlockDtype + Clone,
+{
+    let Some(mask) = atoms.validity(key).map(<[bool]>::to_vec) else {
+        return Ok(());
+    };
+    let Some(column) = atoms.get(key).and_then(|c| c.get::<T>()) else {
+        return Ok(());
+    };
+    let dense: Vec<T> = column
+        .iter()
+        .zip(&mask)
+        .map(|(v, &held)| if held { v.clone() } else { value.clone() })
+        .collect();
+    atoms
+        .insert(key, ndarray::Array1::from_vec(dense).into_dyn(), None)
+        .map_err(|e| MolRsError::validation(e.to_string()))
 }
 
 #[cfg(test)]
@@ -2282,6 +2342,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `to_frame` states the species as symbols beside the numbers, written
+    /// from the numbers: a stale `element` property is replaced, never kept.
+    #[test]
+    fn to_frame_writes_element_symbols_from_atomic_numbers() {
+        let mut mol = Atomistic::new();
+        let o = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
+        let h = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H, keys::ELEMENT => "Xx" })
+            .unwrap();
+        mol.add_bond(o, h, props! {}).unwrap();
+
+        let frame = mol.to_frame().unwrap();
+        let symbols: Vec<String> = frame["atoms"]
+            .get(keys::ELEMENT)
+            .and_then(|c| c.get::<String>())
+            .expect("a string element column")
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(symbols, ["O", "H"]);
+    }
+
+    /// An ion read from SMILES states its charge on one atom only; the frame
+    /// states the model's 0 on the rest instead of a null cell.
+    #[test]
+    fn to_frame_writes_formal_charge_and_aromaticity_dense() {
+        let mut mol = Atomistic::new();
+        let n = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::N, keys::FORMAL_CHARGE => 1 as I })
+            .unwrap();
+        let c = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C, keys::IS_AROMATIC => true })
+            .unwrap();
+        mol.add_bond(n, c, props! {}).unwrap();
+
+        let frame = mol.to_frame().unwrap();
+        let atoms = &frame["atoms"];
+        assert_eq!(atoms.validity(keys::FORMAL_CHARGE), None);
+        assert_eq!(atoms.validity(keys::IS_AROMATIC), None);
+        let charges: Vec<i64> = atoms
+            .get(keys::FORMAL_CHARGE)
+            .and_then(|c| c.get::<i64>())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(charges, [1, 0]);
+        let aromatic: Vec<bool> = atoms
+            .get(keys::IS_AROMATIC)
+            .and_then(|c| c.get::<bool>())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(aromatic, [false, true]);
     }
 
     /// A graph relation names every endpoint: a row with a null endpoint (a

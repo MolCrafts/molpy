@@ -1,13 +1,14 @@
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
-
-use slotmap::Key;
+use std::hash::Hash;
 
 use crate::core::MolGraph;
 use crate::core::MolRsError;
 use crate::core::Port;
 use crate::core::keys;
+use crate::core::stereo::AlkeneStereo;
+use crate::core::{BondNumber, BondOrder};
 use crate::core::{NodeId, RelationId};
 
 /// Why [`MolGraph::link`] refused to join two ports.
@@ -61,7 +62,15 @@ pub enum LinkError {
         /// The anchor of the offending port.
         anchor: NodeId,
     },
-    /// The graph refused a read during validation.
+    /// The requested bond class is not one the ports' order accepts
+    /// ([`BondNumber::accepts_class`]).
+    ClassContradictsPorts {
+        a: RelationId,
+        b: RelationId,
+        kind: BondOrder,
+        number: BondNumber,
+    },
+    /// The graph or a stereochemical reference was refused during validation.
     Graph(MolRsError),
 }
 
@@ -71,25 +80,45 @@ impl fmt::Display for LinkError {
             Self::Port(e) => write!(f, "port does not read back: {e}"),
             Self::StalePort { port } => write!(
                 f,
-                "port {port:?} is stale: its anchor–handle bond no longer exists"
+                "port {} is stale: its anchor–handle bond no longer exists",
+                u64::from(*port)
             ),
-            Self::Incompatible { a, b } => {
-                write!(f, "ports {a:?} and {b:?} are not compatible")
-            }
+            Self::Incompatible { a, b } => write!(
+                f,
+                "ports {} and {} are not compatible",
+                u64::from(*a),
+                u64::from(*b)
+            ),
             Self::SameAnchor { a, b } => write!(
                 f,
-                "ports {a:?} and {b:?} share one anchor; a bond cannot join an atom to itself"
+                "ports {} and {} share one anchor; a bond cannot join an atom to itself",
+                u64::from(*a),
+                u64::from(*b)
             ),
-            Self::AlreadyBonded { a, b } => {
-                write!(f, "anchors {a:?} and {b:?} are already bonded")
-            }
-            Self::BranchReachesAnchor { port } => {
-                write!(f, "port {port:?}'s handle branch reaches its own anchor")
-            }
+            Self::AlreadyBonded { a, b } => write!(
+                f,
+                "anchors {} and {} are already bonded",
+                u64::from(*a),
+                u64::from(*b)
+            ),
+            Self::BranchReachesAnchor { port } => write!(
+                f,
+                "port {}'s handle branch reaches its own anchor",
+                u64::from(*port)
+            ),
             Self::BranchesOverlap => write!(f, "the two ports' handle branches overlap"),
             Self::OneSidedCharge { anchor } => write!(
                 f,
-                "charge is present on only part of anchor {anchor:?} and its handle branch"
+                "charge is present on only part of anchor {} and its handle branch",
+                u64::from(*anchor)
+            ),
+            Self::ClassContradictsPorts { a, b, kind, number } => write!(
+                f,
+                "the requested bond class (type {}, number {}) contradicts ports {} and {}",
+                kind.code(),
+                number.code(),
+                u64::from(*a),
+                u64::from(*b)
             ),
             Self::Graph(e) => write!(f, "graph refused a read: {e}"),
         }
@@ -145,6 +174,9 @@ pub enum LinkManyError {
         /// Index of the higher pair.
         second: usize,
     },
+    /// The graph refused a read, or a stereochemical reference that belongs
+    /// to no one pair (an `E` / `Z` bond elsewhere in the molecule).
+    Graph(MolRsError),
 }
 
 impl fmt::Display for LinkManyError {
@@ -158,7 +190,7 @@ impl fmt::Display for LinkManyError {
             } => write!(
                 f,
                 "port {} appears in pairs {first} and {second}",
-                port.data().as_ffi()
+                u64::from(*port)
             ),
             Self::DuplicateBond { first, second } => {
                 write!(f, "pairs {first} and {second} join the same two anchors")
@@ -168,6 +200,7 @@ impl fmt::Display for LinkManyError {
                 "the leaving groups of pair {first} and pair {second} overlap, or one \
                  holds the other pair's anchor"
             ),
+            Self::Graph(e) => write!(f, "graph refused the batch: {e}"),
         }
     }
 }
@@ -176,9 +209,127 @@ impl std::error::Error for LinkManyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Pair { source, .. } => Some(source),
+            Self::Graph(e) => Some(e),
             _ => None,
         }
     }
+}
+
+/// One pair of a batch join: two ports and the class their new bond takes.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LinkRequest {
+    pub(crate) a: RelationId,
+    pub(crate) b: RelationId,
+    /// The bond class to stamp; `None` takes the ports' own order and the
+    /// class it implies ([`BondNumber::implied_type`]). A stated class must
+    /// be one the ports' order accepts ([`BondNumber::accepts_class`]).
+    pub(crate) class: Option<(BondOrder, BondNumber)>,
+}
+
+/// One port read for a join: the port and its leaving group.
+pub(crate) struct PortPlan {
+    pub(crate) id: RelationId,
+    pub(crate) port: Port,
+    pub(crate) branch: BTreeSet<NodeId>,
+}
+
+impl PortPlan {
+    /// The leaving group must not reach its own anchor (a handle on a ring
+    /// with it): removing it would remove the anchor.
+    pub(crate) fn check_branch(&self) -> Result<(), LinkError> {
+        if self.branch.contains(&self.port.anchor) {
+            return Err(LinkError::BranchReachesAnchor { port: self.id });
+        }
+        Ok(())
+    }
+}
+
+/// One pair of a batch join, in whatever identity vocabulary the caller has:
+/// port and node handles of one graph, or instance-qualified template ports
+/// and atoms before any copy exists.
+pub(crate) struct BatchPair<P, A> {
+    /// The two ports.
+    pub(crate) ports: [P; 2],
+    /// Their anchors, in port order.
+    pub(crate) anchors: [A; 2],
+    /// Their leaving groups, in port order.
+    pub(crate) branches: [Vec<A>; 2],
+}
+
+/// A conflict between two pairs of one batch; `first < second` index the
+/// batch.
+pub(crate) enum BatchConflict<P> {
+    /// One port appears in two pairs.
+    PortReused {
+        port: P,
+        first: usize,
+        second: usize,
+    },
+    /// Two pairs join the same two anchors.
+    DuplicateBond { first: usize, second: usize },
+    /// A leaving group of one pair shares an atom with a leaving group of
+    /// another pair, or holds another pair's anchor.
+    BranchesOverlap { first: usize, second: usize },
+}
+
+/// The checks a batch join makes *between* its pairs; each pair alone is
+/// checked by [`MolGraph::port_plan`] and [`MolGraph::check_pair`]. One rule
+/// set serves the join itself and a planner that validates a batch on
+/// template identities before copying anything. A pair's own two leaving
+/// groups are disjoint and hold neither of its anchors (`check_pair`), so an
+/// owner found here is always another pair.
+pub(crate) fn batch_conflicts<P: Copy + Eq + Hash, A: Copy + Ord + Hash>(
+    pairs: &[BatchPair<P, A>],
+) -> Result<(), BatchConflict<P>> {
+    let mut port_owner: HashMap<P, usize> = HashMap::with_capacity(2 * pairs.len());
+    for (second, pair) in pairs.iter().enumerate() {
+        for port in pair.ports {
+            if let Some(&first) = port_owner.get(&port) {
+                return Err(BatchConflict::PortReused {
+                    port,
+                    first,
+                    second,
+                });
+            }
+            port_owner.insert(port, second);
+        }
+    }
+    let mut couple_owner: HashMap<(A, A), usize> = HashMap::with_capacity(pairs.len());
+    for (second, pair) in pairs.iter().enumerate() {
+        let [x, y] = pair.anchors;
+        match couple_owner.entry((x.min(y), x.max(y))) {
+            Entry::Occupied(owner) => {
+                return Err(BatchConflict::DuplicateBond {
+                    first: *owner.get(),
+                    second,
+                });
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(second);
+            }
+        }
+    }
+    let overlap = |j: usize, k: usize| BatchConflict::BranchesOverlap {
+        first: j.min(k),
+        second: j.max(k),
+    };
+    let mut doomed_owner: HashMap<A, usize> = HashMap::new();
+    for (k, pair) in pairs.iter().enumerate() {
+        for &atom in pair.branches.iter().flatten() {
+            if let Some(&j) = doomed_owner.get(&atom) {
+                return Err(overlap(j, k));
+            }
+            doomed_owner.insert(atom, k);
+        }
+    }
+    for (k, pair) in pairs.iter().enumerate() {
+        for anchor in pair.anchors {
+            if let Some(&j) = doomed_owner.get(&anchor) {
+                return Err(overlap(j, k));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Everything one validated pair writes: both ports, both leaving groups
@@ -191,6 +342,8 @@ struct LinkPlan {
     branch_b: BTreeSet<NodeId>,
     fold_a: Option<f64>,
     fold_b: Option<f64>,
+    direction: Option<&'static str>,
+    class: (BondOrder, BondNumber),
 }
 
 impl LinkPlan {
@@ -218,7 +371,11 @@ impl MolGraph {
     ///    [`LinkError::BranchesOverlap`];
     /// 8. charge on only part of `{anchor} ∪ branch` →
     ///    [`LinkError::OneSidedCharge`] (an atom without `charge` counts as
-    ///    absent; a side with no charge at all is fine and writes nothing).
+    ///    absent; a side with no charge at all is fine and writes nothing);
+    /// 9. conflicting departing bond directions, or a departing E/Z bond
+    ///    whose removed endpoint has no substituent mapping → [`LinkError::Graph`];
+    /// 10. a declared tetrahedral anchor without four distinct substituents,
+    ///     or a surviving E/Z bond with an invalid reference → [`LinkError::Graph`].
     ///
     /// A port's **branch** is its [`leaving_group`](Self::leaving_group). The
     /// write folds each branch's charge (e) onto its anchor,
@@ -229,9 +386,17 @@ impl MolGraph {
     /// and stamped on the new bond. Total charge
     /// is conserved; per-`frag_id` charge only under the labelling condition
     /// below.
+    /// A declared tetrahedral configuration keeps the incoming anchor in the
+    /// departing handle's stereochemical slot. Its stored clock sense is
+    /// restated for the new bond-neighbor order.
+    /// Surviving E/Z bonds retain their geometry when a substitution or an
+    /// atom-row move changes the highest-Z, earliest-row reference. A
+    /// departing `up` / `down` bond transfers its direction to the replacement
+    /// bond in that bond's endpoint order.
     ///
-    /// Several pairs are joined in one pass by the crate-internal batch
-    /// `MolGraph::link_many`, which applies these checks to every pair.
+    /// `link` is the one-pair case of the crate-internal batch
+    /// `MolGraph::link_many`, which applies these checks to every pair and
+    /// may also stamp a stated bond class on the new bond.
     ///
     /// # Errors
     ///
@@ -322,20 +487,19 @@ impl MolGraph {
     /// 7 (2017), doi:10.1016/j.softx.2016.12.002); AMBER's `prepgen` spreads it
     /// instead, which molrs does not offer.
     pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
-        let plan = self.plan_link(a, b)?;
-
-        const VALIDATED: &str = "validated before the first write";
-        for (anchor, fold) in plan.folds() {
-            self.fold_charge(anchor, fold);
-        }
-        let doomed: Vec<NodeId> = plan
-            .branch_a
-            .iter()
-            .chain(&plan.branch_b)
-            .copied()
-            .collect();
-        self.del_nodes(&doomed).expect(VALIDATED);
-        Ok(self.bond_anchors(&plan))
+        let request = LinkRequest { a, b, class: None };
+        let mut bonds =
+            self.link_many(std::slice::from_ref(&request))
+                .map_err(|error| match error {
+                    LinkManyError::Pair { source, .. } => source,
+                    LinkManyError::Graph(error) => LinkError::Graph(error),
+                    LinkManyError::PortReused { .. }
+                    | LinkManyError::DuplicateBond { .. }
+                    | LinkManyError::BranchesOverlap { .. } => {
+                        unreachable!("one pair has no other pair to conflict with")
+                    }
+                })?;
+        Ok(bonds.pop().expect("one request makes one bond"))
     }
 
     /// Join every pair of `pairs` in one pass and return the new anchor–anchor
@@ -343,7 +507,8 @@ impl MolGraph {
     ///
     /// Each pair `(p, r)` is joined by the rule of [`link`](Self::link): the
     /// two leaving groups are removed, each one's charge (e) folds onto its
-    /// own anchor, and the anchors are bonded, classed from the port order.
+    /// own anchor, and the anchors are bonded, classed as the request says
+    /// ([`LinkRequest::class`]) or from the port order.
     /// An anchor named by several pairs receives the folds in pair order,
     /// `q_a' = q_a + Σ_k Σ_{i∈D_k} q_i`.
     ///
@@ -353,12 +518,17 @@ impl MolGraph {
     /// unchanged. In this order:
     ///
     /// 1. each pair alone, in pair order, by every check of
-    ///    [`link`](Self::link) → [`LinkManyError::Pair`];
+    ///    [`link`](Self::link), plus a stated class the ports' order does not
+    ///    accept ([`LinkError::ClassContradictsPorts`]) → [`LinkManyError::Pair`];
     /// 2. a port named by two pairs → [`LinkManyError::PortReused`];
     /// 3. two pairs on one unordered anchor couple →
     ///    [`LinkManyError::DuplicateBond`];
     /// 4. a leaving group of one pair meeting a leaving group or an anchor of
-    ///    another pair → [`LinkManyError::BranchesOverlap`].
+    ///    another pair → [`LinkManyError::BranchesOverlap`];
+    /// 5. a declared tetrahedral anchor without four distinct substituents,
+    ///    or a surviving E/Z bond with an invalid reference at a pair's
+    ///    anchor → [`LinkManyError::Pair`] with [`LinkError::Graph`]; such a
+    ///    bond at no pair's anchor → [`LinkManyError::Graph`].
     ///
     /// An empty slice is `Ok(vec![])`.
     ///
@@ -390,87 +560,70 @@ impl MolGraph {
     ///
     /// As [`link`](Self::link): a write that fails after validation is a
     /// broken invariant of this type.
-    #[cfg_attr(
-        not(any(test, feature = "builder")),
-        expect(
-            dead_code,
-            reason = "its only caller, builder::Assembler, compiles with the builder feature"
-        )
-    )]
     pub(crate) fn link_many(
         &mut self,
-        pairs: &[(RelationId, RelationId)],
+        requests: &[LinkRequest],
     ) -> Result<Vec<RelationId>, LinkManyError> {
         // ---- 1. each pair alone ----
-        let plans = pairs
+        let plans = requests
             .iter()
             .enumerate()
-            .map(|(pair, &(a, b))| {
-                self.plan_link(a, b)
+            .map(|(pair, request)| {
+                self.plan_link(request)
                     .map_err(|source| LinkManyError::Pair { pair, source })
             })
             .collect::<Result<Vec<LinkPlan>, LinkManyError>>()?;
 
-        // ---- 2. a port in two pairs ----
-        let mut port_owner: HashMap<RelationId, usize> = HashMap::with_capacity(2 * pairs.len());
-        for (second, &(a, b)) in pairs.iter().enumerate() {
-            for port in [a, b] {
-                if let Some(&first) = port_owner.get(&port) {
-                    return Err(LinkManyError::PortReused {
-                        port,
-                        first,
-                        second,
-                    });
-                }
-                port_owner.insert(port, second);
+        // ---- 2. between pairs: ports, anchor couples, leaving groups ----
+        let batch: Vec<BatchPair<RelationId, NodeId>> = requests
+            .iter()
+            .zip(&plans)
+            .map(|(request, plan)| BatchPair {
+                ports: [request.a, request.b],
+                anchors: [plan.a.anchor, plan.b.anchor],
+                branches: [
+                    plan.branch_a.iter().copied().collect(),
+                    plan.branch_b.iter().copied().collect(),
+                ],
+            })
+            .collect();
+        batch_conflicts(&batch).map_err(|conflict| match conflict {
+            BatchConflict::PortReused {
+                port,
+                first,
+                second,
+            } => LinkManyError::PortReused {
+                port,
+                first,
+                second,
+            },
+            BatchConflict::DuplicateBond { first, second } => {
+                LinkManyError::DuplicateBond { first, second }
             }
-        }
-
-        // ---- 3. two pairs on one anchor couple ----
-        let mut couple_owner: HashMap<(NodeId, NodeId), usize> =
-            HashMap::with_capacity(plans.len());
-        for (second, plan) in plans.iter().enumerate() {
-            let (x, y) = (plan.a.anchor, plan.b.anchor);
-            match couple_owner.entry((x.min(y), x.max(y))) {
-                Entry::Occupied(owner) => {
-                    return Err(LinkManyError::DuplicateBond {
-                        first: *owner.get(),
-                        second,
-                    });
-                }
-                Entry::Vacant(slot) => {
-                    slot.insert(second);
-                }
+            BatchConflict::BranchesOverlap { first, second } => {
+                LinkManyError::BranchesOverlap { first, second }
             }
-        }
-
-        // ---- 4. leaving groups against other pairs' leaving groups and anchors ----
-        let overlap = |j: usize, k: usize| LinkManyError::BranchesOverlap {
-            first: j.min(k),
-            second: j.max(k),
-        };
+        })?;
         // `doomed` lists the removal set in pair order, so the rows
         // `del_nodes` swaps are the same on every run.
-        let mut doomed: Vec<NodeId> = Vec::new();
-        let mut doomed_owner: HashMap<NodeId, usize> = HashMap::new();
-        for (k, plan) in plans.iter().enumerate() {
-            for &atom in plan.branch_a.iter().chain(&plan.branch_b) {
-                // `plan_link` keeps a pair's own two groups disjoint, so an
-                // owner is always another pair.
-                if let Some(&j) = doomed_owner.get(&atom) {
-                    return Err(overlap(j, k));
-                }
-                doomed_owner.insert(atom, k);
-                doomed.push(atom);
-            }
-        }
-        for (k, plan) in plans.iter().enumerate() {
-            for anchor in [plan.a.anchor, plan.b.anchor] {
-                if let Some(&j) = doomed_owner.get(&anchor) {
-                    return Err(overlap(j, k));
-                }
-            }
-        }
+        let doomed: Vec<NodeId> = plans
+            .iter()
+            .flat_map(|plan| plan.branch_a.iter().chain(&plan.branch_b))
+            .copied()
+            .collect();
+
+        let stereo = self
+            .linked_stereo(&plans)
+            .map_err(|(pair, source)| LinkManyError::Pair { pair, source })?;
+        let alkenes = self
+            .linked_alkene_stereo(&plans)
+            .map_err(|(pair, error)| match pair {
+                Some(pair) => LinkManyError::Pair {
+                    pair,
+                    source: LinkError::Graph(error),
+                },
+                None => LinkManyError::Graph(error),
+            })?;
 
         // ---- write ----
         const VALIDATED: &str = "validated before the first write";
@@ -480,47 +633,204 @@ impl MolGraph {
             }
         }
         self.del_nodes(&doomed).expect(VALIDATED);
-        Ok(plans.iter().map(|plan| self.bond_anchors(plan)).collect())
+        let bonds = plans.iter().map(|plan| self.bond_anchors(plan)).collect();
+        for (anchor, label) in stereo {
+            self.set_node(anchor, keys::STEREO, label).expect(VALIDATED);
+        }
+        self.restore_alkene_stereo(&alkenes);
+        Ok(bonds)
+    }
+
+    /// Save every surviving E/Z reference: even an unrelated atom-row swap
+    /// can change the earliest-row tie-break between equal-Z substituents.
+    /// An error names the pair whose anchor the alkene has, or none when the
+    /// alkene belongs to no pair.
+    fn linked_alkene_stereo(
+        &self,
+        plans: &[LinkPlan],
+    ) -> Result<Vec<AlkeneStereo>, (Option<usize>, MolRsError)> {
+        if plans.is_empty() {
+            return Ok(Vec::new());
+        }
+        let doomed: HashSet<NodeId> = plans
+            .iter()
+            .flat_map(|plan| plan.branch_a.iter().chain(&plan.branch_b))
+            .copied()
+            .collect();
+        let mut replacement = HashMap::new();
+        let mut owner = HashMap::new();
+        for (pair, plan) in plans.iter().enumerate() {
+            replacement.insert((plan.a.anchor, plan.a.handle), plan.b.anchor);
+            replacement.insert((plan.b.anchor, plan.b.handle), plan.a.anchor);
+            owner.entry(plan.a.anchor).or_insert(pair);
+            owner.entry(plan.b.anchor).or_insert(pair);
+        }
+        let mut result = AlkeneStereo::capture(self, &doomed).map_err(|error| (None, error))?;
+        for alkene in &mut result {
+            let pair = alkene.ends.iter().find_map(|end| owner.get(end)).copied();
+            alkene
+                .substitute(self, &replacement)
+                .map_err(|error| (pair, error))?;
+        }
+        Ok(result)
+    }
+
+    fn restore_alkene_stereo(&mut self, alkenes: &[AlkeneStereo]) {
+        if alkenes.is_empty() {
+            return;
+        }
+        let bonds = self.bonds_kind().expect("a surviving alkene has bonds");
+        for alkene in alkenes {
+            let label = alkene
+                .label_after(self)
+                .expect("substitution preserves a validated alkene's substituents");
+            self.set_relation_prop(bonds, alkene.bond, keys::STEREO, label)
+                .expect("a surviving alkene has a string stereo column");
+        }
+    }
+
+    /// Restate tetrahedral labels after substituting each handle in its old
+    /// stereochemical slot. Surviving adjacency entries keep their order;
+    /// new bonds follow them in pair order. Relation-table swap removal does
+    /// not reorder adjacency, so unrelated centers need no label change.
+    fn linked_stereo(
+        &self,
+        plans: &[LinkPlan],
+    ) -> Result<Vec<(NodeId, &'static str)>, (usize, LinkError)> {
+        let mut sites = Vec::<(NodeId, usize, Vec<NodeId>)>::new();
+        let mut site_index = HashMap::new();
+        for (pair, plan) in plans.iter().enumerate() {
+            for port in [&plan.a, &plan.b] {
+                let index = *site_index.entry(port.anchor).or_insert_with(|| {
+                    sites.push((port.anchor, pair, Vec::new()));
+                    sites.len() - 1
+                });
+                sites[index].2.push(port.handle);
+            }
+        }
+        let mut updates = Vec::new();
+        for (anchor, pair, handles) in sites {
+            let Some((clockwise, neighbors)) = self
+                .tetrahedral_neighbors(anchor)
+                .map_err(|error| (pair, LinkError::Graph(error)))?
+            else {
+                continue;
+            };
+            let replaced: Vec<usize> = handles
+                .iter()
+                .map(|handle| {
+                    neighbors
+                        .iter()
+                        .position(|neighbor| neighbor == handle)
+                        .expect("a validated port's handle is a bond neighbor")
+                })
+                .collect();
+            let permutation: Vec<usize> = (0..neighbors.len())
+                .filter(|index| !replaced.contains(index))
+                .chain(replaced.iter().copied())
+                .collect();
+            // An implicit hydrogen stays first in both reference orders;
+            // omitting that fixed entry leaves the permutation parity intact.
+            updates.push((
+                anchor,
+                super::stereo::permuted_label(clockwise, &permutation),
+            ));
+        }
+        Ok(updates)
     }
 
     /// Validate joining port `a` to port `b` without writing anything, in the
     /// refusal order [`link`](Self::link) documents.
-    fn plan_link(&self, a: RelationId, b: RelationId) -> Result<LinkPlan, LinkError> {
-        let pa = self.get_port(a).map_err(LinkError::Port)?;
-        let pb = self.get_port(b).map_err(LinkError::Port)?;
+    /// Read port `id` and its leaving group. Refuses a port that does not
+    /// read back ([`LinkError::Port`]) and one whose anchor–handle bond is
+    /// gone ([`LinkError::StalePort`]).
+    pub(crate) fn port_plan(&self, id: RelationId) -> Result<PortPlan, LinkError> {
+        let port = self.get_port(id).map_err(LinkError::Port)?;
         // `leaving_group`'s only error is a missing anchor–handle bond.
-        let branch_a = self
-            .leaving_group(&pa)
-            .map_err(|_| LinkError::StalePort { port: a })?;
-        let branch_b = self
-            .leaving_group(&pb)
-            .map_err(|_| LinkError::StalePort { port: b })?;
-        if !pa.accepts(&pb) {
-            return Err(LinkError::Incompatible { a, b });
+        let branch = self
+            .leaving_group(&port)
+            .map_err(|_| LinkError::StalePort { port: id })?;
+        Ok(PortPlan { id, port, branch })
+    }
+
+    /// Two read ports as one pair, in [`link`](Self::link)'s order:
+    /// compatible, distinct anchors not already bonded, neither leaving group
+    /// reaching its own anchor, and the two groups disjoint and holding
+    /// neither anchor.
+    pub(crate) fn check_pair(&self, a: &PortPlan, b: &PortPlan) -> Result<(), LinkError> {
+        if !a.port.accepts(&b.port) {
+            return Err(LinkError::Incompatible { a: a.id, b: b.id });
         }
-        if pa.anchor == pb.anchor {
-            return Err(LinkError::SameAnchor { a, b });
+        if a.port.anchor == b.port.anchor {
+            return Err(LinkError::SameAnchor { a: a.id, b: b.id });
         }
-        if self.is_bonded(pa.anchor, pb.anchor) {
+        if self.is_bonded(a.port.anchor, b.port.anchor) {
             return Err(LinkError::AlreadyBonded {
-                a: pa.anchor,
-                b: pb.anchor,
+                a: a.port.anchor,
+                b: b.port.anchor,
             });
         }
-        if branch_a.contains(&pa.anchor) {
-            return Err(LinkError::BranchReachesAnchor { port: a });
-        }
-        if branch_b.contains(&pb.anchor) {
-            return Err(LinkError::BranchReachesAnchor { port: b });
-        }
-        if !branch_a.is_disjoint(&branch_b)
-            || branch_a.contains(&pb.anchor)
-            || branch_b.contains(&pa.anchor)
+        a.check_branch()?;
+        b.check_branch()?;
+        if !a.branch.is_disjoint(&b.branch)
+            || a.branch.contains(&b.port.anchor)
+            || b.branch.contains(&a.port.anchor)
         {
             return Err(LinkError::BranchesOverlap);
         }
+        Ok(())
+    }
+
+    fn plan_link(&self, request: &LinkRequest) -> Result<LinkPlan, LinkError> {
+        let LinkRequest { a, b, class } = *request;
+        let pa = self.port_plan(a)?;
+        let pb = self.port_plan(b)?;
+        self.check_pair(&pa, &pb)?;
+        let class = match class {
+            None => (pa.port.order.implied_type(), pa.port.order),
+            Some((kind, number)) if pa.port.order.accepts_class(kind, number) => (kind, number),
+            Some((kind, number)) => {
+                return Err(LinkError::ClassContradictsPorts { a, b, kind, number });
+            }
+        };
+        let PortPlan {
+            port: pa,
+            branch: branch_a,
+            ..
+        } = pa;
+        let PortPlan {
+            port: pb,
+            branch: branch_b,
+            ..
+        } = pb;
         let fold_a = self.folded_charge(&pa, &branch_a)?;
         let fold_b = self.folded_charge(&pb, &branch_b)?;
+        let direction_from_anchor = |port: &Port| -> Result<Option<bool>, LinkError> {
+            let kind = self.bonds_kind().expect("a validated port has bonds");
+            let bond = self
+                .bond_between(port.anchor, port.handle)
+                .expect("the port's anchor-handle bond was validated");
+            let relation = self.get_relation(kind, bond).map_err(LinkError::Graph)?;
+            let up = match relation.props.get_str(keys::STEREO) {
+                Some("up") => true,
+                Some("down") => false,
+                Some("E" | "Z") => {
+                    return Err(LinkError::Graph(MolRsError::validation(
+                        "a departing E/Z bond has no substituent mapping for its removed endpoint",
+                    )));
+                }
+                _ => return Ok(None),
+            };
+            Ok(Some(up ^ (relation.nodes[0] != port.anchor)))
+        };
+        let from_a = direction_from_anchor(&pa)?;
+        let toward_b = direction_from_anchor(&pb)?.map(|up| !up);
+        if from_a.zip(toward_b).is_some_and(|(a, b)| a != b) {
+            return Err(LinkError::Graph(MolRsError::validation(
+                "the departing bond directions conflict on the replacement bond",
+            )));
+        }
+        let direction = from_a.or(toward_b).map(|up| if up { "up" } else { "down" });
         Ok(LinkPlan {
             a: pa,
             b: pb,
@@ -528,6 +838,8 @@ impl MolGraph {
             branch_b,
             fold_a,
             fold_b,
+            direction,
+            class,
         })
     }
 
@@ -576,16 +888,18 @@ impl MolGraph {
         }
     }
 
-    /// Bond a validated plan's two anchors, classed from the port order.
+    /// Bond a validated plan's two anchors with the class it planned.
     fn bond_anchors(&mut self, plan: &LinkPlan) -> RelationId {
         const VALIDATED: &str = "validated before the first write";
-        self.add_classed_bond(
-            plan.a.anchor,
-            plan.b.anchor,
-            plan.a.order.implied_type(),
-            plan.a.order,
-        )
-        .expect(VALIDATED)
+        let bond = self
+            .add_classed_bond(plan.a.anchor, plan.b.anchor, plan.class.0, plan.class.1)
+            .expect(VALIDATED);
+        if let Some(direction) = plan.direction {
+            let kind = self.bonds_kind().expect(VALIDATED);
+            self.set_relation_prop(kind, bond, keys::STEREO, direction)
+                .expect(VALIDATED);
+        }
+        bond
     }
 }
 
@@ -1327,13 +1641,22 @@ mod tests {
         }
     }
 
+    /// The batch of `pairs`, each classed from its ports.
+    fn requests(pairs: &[(RelationId, RelationId)]) -> Vec<super::LinkRequest> {
+        use super::LinkRequest;
+        pairs
+            .iter()
+            .map(|&(a, b)| LinkRequest { a, b, class: None })
+            .collect()
+    }
+
     /// Run a batch that must be refused, assert the world is unchanged (row
     /// order included), and return the refusal.
     fn refuse_many(world: &mut Atomistic, pairs: &[(RelationId, RelationId)]) -> LinkManyError {
         let before = snapshot(world);
         let err = world
             .graph_mut()
-            .link_many(pairs)
+            .link_many(&requests(pairs))
             .expect_err("this batch must be refused");
         assert_eq!(
             snapshot(world),
@@ -1352,7 +1675,7 @@ mod tests {
 
         let bonds = world
             .graph_mut()
-            .link_many(&pairs)
+            .link_many(&requests(&pairs))
             .expect("three chain pairs link");
         for &(a, b) in &pairs {
             looped.link(a, b).expect("each chain pair links in turn");
@@ -1419,7 +1742,7 @@ mod tests {
 
         world
             .graph_mut()
-            .link_many(&[(pa1, pb1), (pa2, pb2)])
+            .link_many(&requests(&[(pa1, pb1), (pa2, pb2)]))
             .expect("two pairs on one anchor link in one batch");
 
         assert_eq!(charge(&world, a), -0.25, "C3: -0.5 + 0.125 + 0.125");
@@ -1593,7 +1916,7 @@ mod tests {
 
         world
             .graph_mut()
-            .link_many(&chain_pairs(&units))
+            .link_many(&requests(&chain_pairs(&units)))
             .expect("two chain pairs link");
 
         assert_eq!(world.n_ports(), 2, "only the two end ports remain");
@@ -1609,5 +1932,418 @@ mod tests {
         ] {
             assert!(world.get_atom(inner).is_err(), "inner H is removed");
         }
+    }
+
+    /// A hand-written tetrahedron; the leaving hydrogen occupies a chosen
+    /// neighbor slot, and the incoming nitrogen replaces that substituent.
+    fn stereo_unit(
+        world: &mut Atomistic,
+        handle_slot: usize,
+        implicit_h: bool,
+    ) -> (NodeId, RelationId, RelationId) {
+        let center = atom(world, Element::C, None, 0);
+        world.set_atom(center, keys::STEREO, "CW").unwrap();
+        if implicit_h {
+            world.set_atom(center, keys::H_COUNT, 1).unwrap();
+        }
+        let elements = [Element::F, Element::Cl, Element::Br];
+        let n_neighbors = if implicit_h { 3 } else { 4 };
+        let mut leaving = None;
+        let mut next = 0;
+        for slot in 0..n_neighbors {
+            let element = if slot == handle_slot {
+                Element::H
+            } else {
+                let element = elements[next];
+                next += 1;
+                element
+            };
+            let neighbor = atom(world, element, None, 0);
+            world.add_bond(center, neighbor, props! {}).unwrap();
+            if slot == handle_slot {
+                leaving = Some(neighbor);
+            }
+        }
+        let port = world
+            .add_port(
+                center,
+                leaving.unwrap(),
+                PortKind::Left,
+                "p",
+                BondNumber::Single,
+            )
+            .unwrap();
+        let (_, _, partner) = h_unit(world, Element::N, None, None, PortKind::Right, 1);
+        (center, port, partner)
+    }
+
+    #[test]
+    fn link_preserves_tetrahedral_substitution_in_every_neighbor_slot() {
+        for implicit_h in [false, true] {
+            let n_neighbors = if implicit_h { 3 } else { 4 };
+            for slot in 0..n_neighbors {
+                let mut world = Atomistic::new();
+                let (center, port, partner) = stereo_unit(&mut world, slot, implicit_h);
+                let mut batch = world.clone();
+                world.link(port, partner).unwrap();
+                batch
+                    .graph_mut()
+                    .link_many(&requests(&[(port, partner)]))
+                    .unwrap();
+                // Moving the replaced substituent to the final slot crosses
+                // exactly n_neighbors - 1 - slot other substituents.
+                let expected = if (n_neighbors - 1 - slot).is_multiple_of(2) {
+                    "CW"
+                } else {
+                    "CCW"
+                };
+                assert_eq!(
+                    world.get_atom(center).unwrap().get_str(keys::STEREO),
+                    Some(expected),
+                    "implicit_h={implicit_h}, replaced slot={slot}"
+                );
+                assert_eq!(
+                    batch.get_atom(center).unwrap().get_str(keys::STEREO),
+                    Some(expected)
+                );
+            }
+        }
+    }
+
+    /// An `E` / `Z` label the batch cannot interpret belongs to no pair, so
+    /// the refusal is the batch's, not pair 0's.
+    #[test]
+    fn an_uninterpretable_alkene_elsewhere_refuses_the_batch_not_a_pair() {
+        let mut world = Atomistic::new();
+        let (_, _, left) = h_unit(&mut world, Element::C, None, None, PortKind::Left, 0);
+        let (_, _, right) = h_unit(&mut world, Element::N, None, None, PortKind::Right, 1);
+        let a = atom(&mut world, Element::C, None, 2);
+        let b = atom(&mut world, Element::C, None, 2);
+        world
+            .add_bond(a, b, props! { keys::STEREO => "E" })
+            .unwrap();
+        let batch = world
+            .clone()
+            .graph_mut()
+            .link_many(&requests(&[(left, right)]))
+            .unwrap_err();
+        assert!(matches!(batch, LinkManyError::Graph(_)), "{batch}");
+        assert!(
+            batch.to_string().contains("requires a double bond"),
+            "{batch}"
+        );
+        let single = world.link(left, right).unwrap_err();
+        assert!(matches!(single, LinkError::Graph(_)), "{single}");
+    }
+
+    #[test]
+    fn link_many_preserves_two_substitutions_on_one_tetrahedral_center() {
+        let mut world = Atomistic::new();
+        let center = atom(&mut world, Element::C, None, 0);
+        world.set_atom(center, keys::STEREO, "CCW").unwrap();
+        let mut ports = Vec::new();
+        for element in [Element::H, Element::F, Element::H, Element::Cl] {
+            let neighbor = atom(&mut world, element, None, 0);
+            world.add_bond(center, neighbor, props! {}).unwrap();
+            if element == Element::H {
+                ports.push(
+                    world
+                        .add_port(center, neighbor, PortKind::Left, "p", BondNumber::Single)
+                        .unwrap(),
+                );
+            }
+        }
+        let (_, _, nitrogen) = h_unit(&mut world, Element::N, None, None, PortKind::Right, 1);
+        let (_, _, bromine) = h_unit(&mut world, Element::Br, None, None, PortKind::Right, 2);
+        let mut reversed = world.clone();
+        world
+            .graph_mut()
+            .link_many(&requests(&[(ports[0], nitrogen), (ports[1], bromine)]))
+            .unwrap();
+        // [N,F,Br,Cl] becomes [F,Cl,N,Br]: three inversions, so flip once.
+        assert_eq!(
+            world.get_atom(center).unwrap().get_str(keys::STEREO),
+            Some("CW")
+        );
+        reversed
+            .graph_mut()
+            .link_many(&requests(&[(ports[1], bromine), (ports[0], nitrogen)]))
+            .unwrap();
+        // Reversing the two appended bonds adds one transposition.
+        assert_eq!(
+            reversed.get_atom(center).unwrap().get_str(keys::STEREO),
+            Some("CCW")
+        );
+    }
+
+    #[test]
+    fn link_keeps_an_unrelated_stereocenter_across_bond_row_moves_and_copies() {
+        let mut world = Atomistic::new();
+        let (_, first, second) = stereo_unit(&mut world, 0, false);
+        let other = atom(&mut world, Element::C, None, 2);
+        world.set_atom(other, keys::STEREO, "CCW").unwrap();
+        let mut neighbors = Vec::new();
+        for element in [Element::H, Element::F, Element::Cl, Element::Br] {
+            let neighbor = atom(&mut world, element, None, 2);
+            world.add_bond(other, neighbor, props! {}).unwrap();
+            neighbors.push(neighbor);
+        }
+        let last = world.bond_ids().last().unwrap();
+        let old_row = world.bond_ids().position(|id| id == last).unwrap();
+        world.link(first, second).unwrap();
+        assert_ne!(world.bond_ids().position(|id| id == last).unwrap(), old_row);
+        assert_eq!(
+            world.get_atom(other).unwrap().get_str(keys::STEREO),
+            Some("CCW")
+        );
+        assert_eq!(
+            world
+                .neighbors(other, crate::core::NeighborKinds::BONDS)
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            neighbors
+        );
+
+        let restored = Atomistic::from_frame(&world.to_frame().unwrap()).unwrap();
+        let restored_center = restored
+            .atoms()
+            .find(|(_, atom)| {
+                atom.get_int(keys::FRAG_ID) == Some(2) && atom.get_str(keys::STEREO).is_some()
+            })
+            .map(|(id, _)| id)
+            .unwrap();
+        let neighbor_elements: Vec<u8> = restored
+            .neighbors(restored_center, crate::core::NeighborKinds::BONDS)
+            .map(|(id, _)| restored.get_atom(id).unwrap().atomic_number().unwrap())
+            .collect();
+        let inversions: usize = neighbor_elements
+            .iter()
+            .enumerate()
+            .map(|(i, z)| {
+                neighbor_elements[i + 1..]
+                    .iter()
+                    .filter(|other| *other < z)
+                    .count()
+            })
+            .sum();
+        // The original [H,F,Cl,Br] reference is increasing in atomic number.
+        let expected = if inversions.is_multiple_of(2) {
+            "CCW"
+        } else {
+            "CW"
+        };
+        assert_eq!(
+            restored
+                .get_atom(restored_center)
+                .unwrap()
+                .get_str(keys::STEREO),
+            Some(expected)
+        );
+
+        let mut copied = Atomistic::new();
+        let ids = copied
+            .replicate(&world, &[crate::op::Rigid::IDENTITY], &[0])
+            .unwrap();
+        let center_row = world.atom_ids().position(|id| id == other).unwrap();
+        let copied_center = ids[center_row];
+        assert_eq!(
+            copied
+                .get_atom(copied_center)
+                .unwrap()
+                .get_str(keys::STEREO),
+            Some(expected)
+        );
+        assert_eq!(
+            copied
+                .neighbors(copied_center, crate::core::NeighborKinds::BONDS)
+                .map(|(id, _)| copied.get_atom(id).unwrap().atomic_number().unwrap())
+                .collect::<Vec<_>>(),
+            neighbor_elements
+        );
+        // Copying re-expresses the marker but never edits the source.
+        assert_eq!(
+            world.get_atom(other).unwrap().get_str(keys::STEREO),
+            Some("CCW")
+        );
+    }
+
+    #[test]
+    fn link_refuses_malformed_tetrahedral_stereo_before_mutation() {
+        let mut world = Atomistic::new();
+        let (center, port, partner) = stereo_unit(&mut world, 0, false);
+        world.set_atom(center, keys::H_COUNT, 1).unwrap();
+        let before = world.atoms().collect::<Vec<_>>();
+        assert!(matches!(
+            refuse(&mut world, port, partner),
+            LinkError::Graph(_)
+        ));
+        assert_eq!(world.atoms().collect::<Vec<_>>(), before);
+        assert!(matches!(
+            refuse_many(&mut world, &[(port, partner)]),
+            LinkManyError::Pair {
+                pair: 0,
+                source: LinkError::Graph(_)
+            }
+        ));
+        assert_eq!(world.atoms().collect::<Vec<_>>(), before);
+    }
+
+    #[test]
+    fn link_preserves_alkene_geometry_when_substitution_changes_priority() {
+        let mut world = Atomistic::new();
+        let left = atom(&mut world, Element::C, None, 0);
+        let right = atom(&mut world, Element::C, None, 0);
+        let double = world
+            .add_bond(
+                left,
+                right,
+                props! {
+                    keys::BOND_TYPE => crate::core::BondOrder::Double,
+                    keys::BOND_NUMBER => BondNumber::Double,
+                    keys::STEREO => "E",
+                },
+            )
+            .unwrap();
+        let mut ports = Vec::new();
+        for center in [left, right] {
+            let fluorine = atom(&mut world, Element::F, None, 0);
+            let hydrogen = atom(&mut world, Element::H, None, 0);
+            world.add_bond(center, fluorine, props! {}).unwrap();
+            world.add_bond(center, hydrogen, props! {}).unwrap();
+            ports.push(
+                world
+                    .add_port(center, hydrogen, PortKind::Left, "p", BondNumber::Single)
+                    .unwrap(),
+            );
+        }
+        let (_, _, bromine) = h_unit(&mut world, Element::Br, None, None, PortKind::Right, 1);
+        let (_, _, chlorine) = h_unit(&mut world, Element::Cl, None, None, PortKind::Right, 2);
+        let mut generic = crate::core::MolGraph::new();
+        let map = generic.merge(world.graph().clone()).unwrap();
+        let fluorine = world
+            .neighbors(left, crate::core::NeighborKinds::BONDS)
+            .map(|(id, _)| id)
+            .find(|&id| world.get_atom(id).unwrap().atomic_number() == Some(9))
+            .unwrap();
+        generic
+            .clear_node(map[&fluorine], keys::ATOMIC_NUMBER)
+            .unwrap();
+        let p = world.get_port(ports[0]).unwrap();
+        let q = world.get_port(bromine).unwrap();
+        let gp = generic.port_on(map[&p.anchor], map[&p.handle]).unwrap();
+        let gq = generic.port_on(map[&q.anchor], map[&q.handle]).unwrap();
+        let before = generic.nodes().collect::<Vec<_>>();
+        assert!(matches!(generic.link(gp, gq), Err(LinkError::Graph(_))));
+        assert_eq!(generic.nodes().collect::<Vec<_>>(), before);
+        let mut batch = world.clone();
+        world.link(ports[0], bromine).unwrap();
+        // Originally F/F are opposite. Br replaces the H opposite the first
+        // F, so the new highest-Z pair Br/F must be on the same side.
+        assert_eq!(
+            world.get_bond(double).unwrap().props.get_str(keys::STEREO),
+            Some("Z")
+        );
+        world.link(ports[1], chlorine).unwrap();
+        assert_eq!(
+            world.get_bond(double).unwrap().props.get_str(keys::STEREO),
+            Some("E")
+        );
+        batch
+            .graph_mut()
+            .link_many(&requests(&[(ports[0], bromine), (ports[1], chlorine)]))
+            .unwrap();
+        assert_eq!(
+            batch.get_bond(double).unwrap().props.get_str(keys::STEREO),
+            Some("E")
+        );
+    }
+
+    #[test]
+    fn link_transfers_a_departing_bonds_direction_to_the_replacement() {
+        let mut world = Atomistic::new();
+        let (a, ha, pa) = h_unit(&mut world, Element::C, None, None, PortKind::Left, 0);
+        let (b, hb, pb) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 1);
+        let departing = world.graph().bond_between(a, ha).unwrap();
+        world.set_bond(departing, keys::STEREO, "up").unwrap();
+        let mut reversed = world.clone();
+        let mut conflicting = world.clone();
+        let replacement = world.link(pa, pb).unwrap();
+        assert_eq!(
+            world
+                .get_bond(replacement)
+                .unwrap()
+                .props
+                .get_str(keys::STEREO),
+            Some("up")
+        );
+        let backward = reversed.link(pb, pa).unwrap();
+        assert_eq!(
+            reversed
+                .get_bond(backward)
+                .unwrap()
+                .props
+                .get_str(keys::STEREO),
+            Some("down")
+        );
+        let other_departing = conflicting.graph().bond_between(b, hb).unwrap();
+        conflicting
+            .set_bond(other_departing, keys::STEREO, "up")
+            .unwrap();
+        assert!(matches!(
+            refuse(&mut conflicting, pa, pb),
+            LinkError::Graph(_)
+        ));
+        assert!(matches!(
+            refuse_many(&mut conflicting, &[(pa, pb)]),
+            LinkManyError::Pair {
+                pair: 0,
+                source: LinkError::Graph(_)
+            }
+        ));
+    }
+
+    #[test]
+    fn link_rebases_an_unrelated_alkenes_equal_element_row_tie() {
+        let mut world = Atomistic::new();
+        let (_, _, pa) = h_unit(&mut world, Element::C, None, None, PortKind::Left, 0);
+        let (_, _, pb) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 1);
+        let left = atom(&mut world, Element::C, None, 2);
+        let right = atom(&mut world, Element::C, None, 2);
+        let first = atom(&mut world, Element::C, None, 2);
+        let fluorine = atom(&mut world, Element::F, None, 2);
+        let hydrogen = atom(&mut world, Element::H, None, 2);
+        let oxygen = atom(&mut world, Element::O, None, 2);
+        let last = atom(&mut world, Element::C, None, 2);
+        let double = world
+            .add_bond(
+                left,
+                right,
+                props! {
+                    keys::BOND_TYPE => crate::core::BondOrder::Double,
+                    keys::BOND_NUMBER => BondNumber::Double,
+                    keys::STEREO => "E",
+                },
+            )
+            .unwrap();
+        for (a, b) in [
+            (left, first),
+            (left, last),
+            (right, fluorine),
+            (right, hydrogen),
+            (last, oxygen),
+        ] {
+            world.add_bond(a, b, props! {}).unwrap();
+        }
+        world.link(pa, pb).unwrap();
+        // The last carbon fills the first deleted H row and wins the tie
+        // over the first carbon. Their alkene-side slots are opposite.
+        assert!(
+            world.atom_ids().position(|id| id == last)
+                < world.atom_ids().position(|id| id == first)
+        );
+        assert_eq!(
+            world.get_bond(double).unwrap().props.get_str(keys::STEREO),
+            Some("Z")
+        );
     }
 }

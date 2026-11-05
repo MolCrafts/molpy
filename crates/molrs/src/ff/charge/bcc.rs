@@ -527,7 +527,14 @@ mod tests {
     /// exactly like the hand-built one: the typing path reads Z, never a symbol.
     #[test]
     fn a_frame_carrying_only_atomic_numbers_is_typed_and_corrected() {
-        let frame = methane().to_frame().expect("methane converts");
+        // `to_frame` states symbols beside the numbers; drop them so the
+        // frame spells its species as Z alone, as an engine frame does.
+        let mut frame = methane().to_frame().expect("methane converts");
+        frame
+            .get_mut("atoms")
+            .expect("an atoms block")
+            .remove(keys::ELEMENT)
+            .expect("to_frame writes element symbols");
         let atoms = frame.get("atoms").expect("an atoms block");
         assert!(atoms.contains_key(keys::ATOMIC_NUMBER));
         assert!(
