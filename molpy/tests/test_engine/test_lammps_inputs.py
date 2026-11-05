@@ -23,7 +23,7 @@ def water_ff() -> mp.ff.forcefield.ForceField:
     hw = atoms.def_type("HW", mass=1.008)
     na = atoms.def_type("NA", mass=22.99)
     ff.def_style("bond", "harmonic").def_type("OW-HW", ow, hw, k=900.0, r0=0.9572)
-    pairs = ff.def_style("pair", "lj/cut", {"cutoff": 10.0})
+    pairs = ff.def_style("pair", "lj/cut", {"cutoff": 10.0, "mixing": "arithmetic"})
     pairs.def_type("OW", ow, epsilon=0.1521, sigma=3.1507)
     pairs.def_type("HW", hw, epsilon=0.046, sigma=0.4)
     pairs.def_type("NA", na, epsilon=0.13, sigma=2.35)
@@ -139,9 +139,9 @@ class TestAtomStyleAndUnits:
         ff = mp.ff.forcefield.ForceField("lj", units="real")
         ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
         ar = ff.def_style("atom", "full").def_type("AR", mass=39.948)
-        ff.def_style("pair", "lj/cut", {"cutoff": 8.5}).def_type(
-            "AR", ar, epsilon=0.238, sigma=3.405
-        )
+        ff.def_style(
+            "pair", "lj/cut", {"cutoff": 8.5, "mixing": "arithmetic"}
+        ).def_type("AR", ar, epsilon=0.238, sigma=3.405)
         frame = mp.Frame(
             blocks={
                 "atoms": {

@@ -42,11 +42,14 @@ impl PyPca {
     }
 
     #[pyo3(signature = (*, features))]
-    fn compute<'py>(&self, features: &Bound<'py, PyAny>) -> Result<PyPcaResult> {
+    fn compute<'py>(&self, py: Python<'py>, features: &Bound<'py, PyAny>) -> Result<PyPcaResult> {
         let features = args::FeatureArg::extract(features)?;
-        let out = self.inner.compute(PcaInput {
-            features: features.features(),
-        })?;
+        let out = {
+            let input = PcaInput {
+                features: features.features(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

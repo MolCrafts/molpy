@@ -633,13 +633,18 @@ def test_a_pair_style_by_expression_mixes_per_parameter(registered) -> None:
             ir.ParamSpec("epsilon", "E", mix=("lj_epsilon", "sigma")),
             ir.ParamSpec("sigma", "L", mix=("lj_sigma", "epsilon")),
         ],
-        style_params=[ir.ParamSpec("cutoff", "L")],
+        style_params=[
+            ir.ParamSpec("cutoff", "L"),
+            ir.ParamSpec("mixing", kind="text", choices=["arithmetic", "geometric"]),
+        ],
         expression=LJ_SMOOTH,
     )
     registered.append(("pair", "lj/smooth/linear/x"))
     rows = {"A": {"epsilon": 0.8, "sigma": 1.0}, "B": {"epsilon": 1.3, "sigma": 1.2}}
     frame = pair_frame()
-    e, f = energy_forces(pair_ff("lj/smooth/linear/x", rows), frame)
+    e, f = energy_forces(
+        pair_ff("lj/smooth/linear/x", rows, mixing="arithmetic"), frame
+    )
 
     def lj(r, eps, sig):
         return 4 * eps * ((sig / r) ** 12 - (sig / r) ** 6)

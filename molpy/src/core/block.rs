@@ -26,7 +26,7 @@ use molrs::op::{F, I, Idx};
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};
 use num_complex::Complex;
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayDyn, PyArrayMethods};
 use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyIterator, PyList, PySlice, PyTuple};
@@ -1117,10 +1117,11 @@ impl PyBlock {
             return Err(crate::error::dtype_reject(key, array));
         }
 
-        // Matched-dtype, C-contiguous numpy arrays get forged into a
-        // foreign-backed Column (zero memcpy). When the layout forbids
-        // forging, the same numpy array is copied into a Rust-owned column.
-        // Integer widths are preserved: i64 stays i64. A float column is
+        // A numpy array of a stored dtype is copied into a core-owned
+        // column: the core never holds a reference into numpy's buffer, which
+        // numpy may write or free behind it. Reading back is zero-copy (a
+        // view over the core's reference-counted buffer). Integer widths are
+        // preserved: i64 stays i64. A float column is
         // always stored as `F` (f64), so a narrow float **array handed in
         // here** is widened to f64 — that is input normalization at the
         // boundary, the same thing the trajectory readers do for a
@@ -1133,28 +1134,25 @@ impl PyBlock {
             let promoted = array.call_method1("astype", ("float64",))?;
             return self.insert_any(key, &promoted, validity);
         }
-        macro_rules! try_exact {
-            ($t:ty, $holder:expr) => {
-                if let Ok(pyarr) = array.cast::<PyArrayDyn<$t>>() {
-                    if let Some(col) = try_forge_foreign_column(pyarr, $holder) {
-                        return self.insert_column(key, col, validity);
-                    }
-                    return self.insert_column(key, column_from_py(array)?, validity);
-                }
-            };
+        macro_rules! stored {
+            ($($t:ty),*) => { false $(|| array.cast::<PyArrayDyn<$t>>().is_ok())* };
         }
-        try_exact!(F, Column::from);
-        try_exact!(I, Column::from);
-        try_exact!(i64, Column::from);
-        try_exact!(i16, Column::from);
-        try_exact!(i8, Column::from);
-        try_exact!(Idx, Column::from);
-        try_exact!(u32, Column::from);
-        try_exact!(u16, Column::from);
-        try_exact!(u8, Column::from);
-        try_exact!(bool, Column::from);
-        try_exact!(Complex<f64>, Column::from);
-        try_exact!(Complex<f32>, Column::from);
+        if stored!(
+            F,
+            I,
+            i64,
+            i16,
+            i8,
+            Idx,
+            u32,
+            u16,
+            u8,
+            bool,
+            Complex<f64>,
+            Complex<f32>
+        ) {
+            return self.insert_column(key, column_from_py(array)?, validity);
+        }
 
         if let Ok(strings) = array.extract::<Vec<String>>() {
             return self.insert_array::<String>(key, Array1::from(strings).into_dyn(), validity);
@@ -1183,8 +1181,7 @@ impl PyBlock {
     ///
     /// Parallel to [`insert_array`](Self::insert_array), which takes an
     /// `ArrayD<T>` and wraps it into a Rust-owned Column. Use this when the
-    /// caller already holds a Column (typically a foreign-backed one from
-    /// [`try_forge_foreign_column`]).
+    /// caller already holds a Column.
     ///
     /// A `validity` mask is checked against the column's rows before anything
     /// is installed, so a refused mask leaves the block unchanged.
@@ -1427,69 +1424,6 @@ pub(crate) fn column_from_py(value: &Bound<'_, PyAny>) -> PyResult<Column> {
     Err(PyTypeError::new_err(
         "values must have a supported numeric, bool, complex or string dtype",
     ))
-}
-
-/// Forge a foreign-backed [`Column`] from a numpy array without copying its
-/// buffer.
-///
-/// Returns `Some(col)` when the numpy array is safe to alias:
-///
-///   * rank >= 1 (Block rejects rank-0 anyway),
-///   * C-contiguous (row-major — `ArrayD::from_shape_vec` assumes this),
-///   * non-empty (degenerate zero-length arrays are cheaper to copy).
-///
-/// Returns `None` otherwise. Callers decide how to recover — typically by
-/// copying the array through [`PyBlock::insert_array`].
-///
-/// The forged Column holds a `ColumnArray::from_foreign` over numpy's
-/// buffer, pinned alive by a `Py<PyArrayDyn<T>>` keeper. Mutations are
-/// visible in both directions; Rust-side mutation via `as_*_mut` triggers
-/// copy-on-write inside the column array.
-fn try_forge_foreign_column<T>(
-    pyarr: &Bound<'_, PyArrayDyn<T>>,
-    wrap: fn(ColumnArray<T>) -> Column,
-) -> Option<Column>
-where
-    T: numpy::Element + BlockDtype + Clone,
-{
-    if pyarr.ndim() == 0 || !pyarr.is_c_contiguous() {
-        return None;
-    }
-
-    let shape: Vec<usize> = pyarr.shape().to_vec();
-    let total: usize = shape.iter().product();
-    if total == 0 {
-        return None;
-    }
-
-    let ptr = pyarr.data();
-    // SAFETY:
-    //   * `ptr` points to `total` elements of `T` owned by numpy; the buffer
-    //     stays alive through the `keeper` refcount stored on the column array.
-    //   * `cap == len == total`, so ndarray never calls realloc/reserve on
-    //     the forged Vec.
-    //   * `ColumnArray::from_foreign` wraps the inner ArrayD in ManuallyDrop,
-    //     suppressing the forged Vec's Drop. Only the keeper's Drop runs,
-    //     which decrefs numpy and lets numpy free the buffer through its own
-    //     allocator.
-    let forged = unsafe {
-        let vec = Vec::from_raw_parts(ptr, total, total);
-        match ArrayD::from_shape_vec(IxDyn(&shape), vec) {
-            Ok(arr) => arr,
-            Err(_) => {
-                // Can't happen (len == product(shape) by construction), but
-                // if it did, leak the Vec rather than double-free: the numpy
-                // keeper would still release the memory on drop, and a Vec
-                // drop here would run Rust's allocator over foreign memory.
-                std::mem::forget(Vec::from_raw_parts(ptr, total, total));
-                return None;
-            }
-        }
-    };
-    let keeper: Py<PyArrayDyn<T>> = pyarr.clone().unbind();
-    // SAFETY: keeper pins numpy's buffer for the column array's lifetime.
-    let holder = unsafe { ColumnArray::from_foreign(forged, keeper) };
-    Some(wrap(holder))
 }
 
 // ---------------------------------------------------------------------------

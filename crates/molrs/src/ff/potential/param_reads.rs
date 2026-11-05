@@ -49,18 +49,6 @@ pub(crate) fn style_num(style: &str, params: &Params, key: &str) -> Result<F, Ir
         .ok_or_else(|| missing(style, "", key))
 }
 
-/// The text style param `key` of `style`.
-pub(crate) fn style_text<'p>(
-    style: &str,
-    params: &'p Params,
-    key: &str,
-) -> Result<&'p str, IrError> {
-    params
-        .get(key)
-        .and_then(|v| v.as_text())
-        .ok_or_else(|| missing(style, "", key))
-}
-
 /// The `cutoff` of a pair style, as LAMMPS truncates every pair style: a
 /// pair prices only at `r < cutoff`, at both compile doors.
 ///

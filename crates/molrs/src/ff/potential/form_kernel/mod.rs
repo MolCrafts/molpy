@@ -360,11 +360,13 @@ impl TermParams {
                     self.style_nums.push((p.name.to_string(), v));
                 }
                 ParamKind::Text { .. } => {
-                    let v = style
-                        .get(&p.name)
-                        .and_then(|v| v.as_text())
-                        .ok_or_else(missing)?;
-                    self.style_texts.push((p.name.to_string(), v.to_owned()));
+                    // A text param with no default (`mixing`) is stated or
+                    // absent; its reader refuses the absence where it needs it.
+                    match style.get(&p.name).and_then(|v| v.as_text()) {
+                        Some(v) => self.style_texts.push((p.name.to_string(), v.to_owned())),
+                        None if p.default.is_none() => {}
+                        None => return Err(missing()),
+                    }
                 }
                 ParamKind::Array { .. } => {
                     return Err(IrError::Malformed {

@@ -79,10 +79,13 @@ impl PyPairPresence {
     }
 
     #[pyo3(signature = (*, frames))]
-    fn compute(&self, frames: Vec<Bound<'_, PyAny>>) -> Result<Option<PyPresence>> {
+    fn compute(&self, py: Python<'_>, frames: Vec<Bound<'_, PyAny>>) -> Result<Option<PyPresence>> {
         let frames = PairSourceArg::extract_all(&frames)?;
         let frames = args::sources(&frames)?;
-        let out = self.inner.compute(PairPresenceInput { frames: &frames })?;
+        let out = {
+            let input = PairPresenceInput { frames: &frames };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.map(PyPresence::from))
     }
 }
@@ -140,14 +143,18 @@ impl PyVanHove {
     #[pyo3(signature = (*, positions, boxes))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: ArrayArg3<'_, f64>,
         boxes: Vec<PyRef<'_, PyBox>>,
     ) -> Result<PyVanHoveResult> {
         let boxes = args::boxes(&boxes);
-        let out = self.inner.compute(VanHoveInput {
-            positions: positions.as_array(),
-            boxes: &boxes,
-        })?;
+        let out = {
+            let input = VanHoveInput {
+                positions: positions.as_array(),
+                boxes: &boxes,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

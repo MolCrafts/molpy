@@ -33,11 +33,6 @@ pub enum CombiningRule {
 }
 
 impl CombiningRule {
-    /// The rule an `lj/cut` style that declares no `mixing` is evaluated
-    /// under: Lorentz-Berthelot, the AMBER-family rule. Every reader whose
-    /// format has a rule states it (AMBER prmtop: `arithmetic`).
-    pub(crate) const UNDECLARED: CombiningRule = CombiningRule::Arithmetic;
-
     /// The canonical spelling, the one [`CombiningRule::parse`] maps back to `self`.
     pub(crate) fn name(self) -> &'static str {
         COMBINING_RULES[self as usize]
@@ -116,12 +111,6 @@ mod tests {
         for m in ALL {
             assert_eq!(CombiningRule::parse(m.name()), Ok(m), "{m:?}");
         }
-    }
-
-    /// An `lj/cut` style that declares no rule is evaluated Lorentz-Berthelot.
-    #[test]
-    fn undeclared_rule_is_arithmetic() {
-        assert_eq!(CombiningRule::UNDECLARED, CombiningRule::Arithmetic);
     }
 
     /// The refusal names the rule and lists the choices without a run of

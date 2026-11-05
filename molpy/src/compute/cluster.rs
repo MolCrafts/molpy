@@ -59,6 +59,7 @@ impl PyCluster {
     #[pyo3(signature = (*, pairs, merge = None))]
     fn compute<'py>(
         &self,
+        py: Python<'py>,
         pairs: PyRef<'py, PyNeighbors>,
         merge: Option<Bound<'py, PyAny>>,
     ) -> Result<PyClusterResult> {
@@ -66,10 +67,13 @@ impl PyCluster {
             .as_ref()
             .map(args::PartitionArg::extract)
             .transpose()?;
-        let out = self.inner.compute(ClusterInput {
-            pairs: &pairs.inner,
-            merge: merge.as_ref().map(args::PartitionArg::partition),
-        })?;
+        let out = {
+            let input = ClusterInput {
+                pairs: &pairs.inner,
+                merge: merge.as_ref().map(args::PartitionArg::partition),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

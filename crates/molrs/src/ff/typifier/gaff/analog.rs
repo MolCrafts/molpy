@@ -111,27 +111,27 @@ impl Analogs {
         let mut search = Search {
             parmchk,
             empirical,
-            bonds: table
-                .bonds
-                .iter()
-                .map(|r| BondRow {
-                    names: [table.name_of(r.i), table.name_of(r.j)],
-                    k: r.force_constant,
-                    r0: r.length,
-                })
-                .collect(),
-            angles: table
-                .angles
-                .iter()
-                .map(|r| AngleRow {
-                    names: [table.name_of(r.i), table.name_of(r.j), table.name_of(r.k)],
-                    k: r.force_constant,
-                    theta0: r.angle_deg,
-                })
-                .collect(),
+            bonds: Vec::new(),
+            angles: Vec::new(),
+            bond_first: HashMap::new(),
+            angle_first: HashMap::new(),
             table_bonds: table.bonds.len(),
             table_angles: table.angles.len(),
         };
+        for r in table.bonds {
+            search.push_bond(BondRow {
+                names: [table.name_of(r.i), table.name_of(r.j)],
+                k: r.force_constant,
+                r0: r.length,
+            });
+        }
+        for r in table.angles {
+            search.push_angle(AngleRow {
+                names: [table.name_of(r.i), table.name_of(r.j), table.name_of(r.k)],
+                k: r.force_constant,
+                theta0: r.angle_deg,
+            });
+        }
         let mut out = Self {
             bonds: HashMap::new(),
             angles: HashMap::new(),
@@ -148,7 +148,7 @@ impl Analogs {
                 let (k, r0) = found
                     .as_ref()
                     .map_or((0.0, 0.0), |(row, _)| (row.k, row.r0));
-                search.bonds.push(BondRow { names: name, k, r0 });
+                search.push_bond(BondRow { names: name, k, r0 });
                 if let Some((row, provenance)) = found {
                     out.bonds.insert(
                         name,
@@ -177,7 +177,7 @@ impl Analogs {
                     let (kk, theta0) = found
                         .as_ref()
                         .map_or((0.0, 0.0), |(row, _)| (row.k, row.theta0));
-                    search.angles.push(AngleRow {
+                    search.push_angle(AngleRow {
                         names: name,
                         k: kk,
                         theta0,
@@ -218,6 +218,9 @@ struct Search<'a> {
     /// The table's rows, then every row estimated since.
     bonds: Vec<BondRow>,
     angles: Vec<AngleRow>,
+    /// Each bond / angle name, read either way, and the first row it names.
+    bond_first: HashMap<[&'static str; 2], usize>,
+    angle_first: HashMap<[&'static str; 3], usize>,
     /// How many of `bonds` / `angles` are the table's.
     table_bonds: usize,
     table_angles: usize,
@@ -228,18 +231,30 @@ impl Search<'_> {
         &self.parmchk.weights
     }
 
+    fn push_bond(&mut self, row: BondRow) {
+        let at = self.bonds.len();
+        let [a, b] = row.names;
+        self.bond_first.entry([a, b]).or_insert(at);
+        self.bond_first.entry([b, a]).or_insert(at);
+        self.bonds.push(row);
+    }
+
+    fn push_angle(&mut self, row: AngleRow) {
+        let at = self.angles.len();
+        let [a, b, c] = row.names;
+        self.angle_first.entry([a, b, c]).or_insert(at);
+        self.angle_first.entry([c, b, a]).or_insert(at);
+        self.angles.push(row);
+    }
+
     /// The first of the first `n` bond rows named `a-b` either way.
-    fn find_bond(&self, [a, b]: [&str; 2], n: usize) -> Option<usize> {
-        self.bonds[..n]
-            .iter()
-            .position(|r| r.names == [a, b] || r.names == [b, a])
+    fn find_bond(&self, names: [&'static str; 2], n: usize) -> Option<usize> {
+        self.bond_first.get(&names).copied().filter(|&at| at < n)
     }
 
     /// The first of the first `n` angle rows named `a-b-c` either way.
-    fn find_angle(&self, [a, b, c]: [&str; 3], n: usize) -> Option<usize> {
-        self.angles[..n]
-            .iter()
-            .position(|r| r.names == [a, b, c] || r.names == [c, b, a])
+    fn find_angle(&self, names: [&'static str; 3], n: usize) -> Option<usize> {
+        self.angle_first.get(&names).copied().filter(|&at| at < n)
     }
 
     fn equivalents(&self, ty: &'static str) -> Vec<&'static str> {
@@ -389,7 +404,7 @@ impl Search<'_> {
     /// `empangle`: the empirical angle of types `t1-t2-t3` with the elements
     /// `z1`, `z2`, `z3`, from the `t1-t2-t1` and `t3-t2-t3` rows and the
     /// `t1-t2`, `t2-t3` bond rows known so far, or `None` where one is missing.
-    fn empangle(&self, [t1, t2, t3]: [&str; 3], z: [Option<u8>; 3]) -> Option<(f64, f64)> {
+    fn empangle(&self, [t1, t2, t3]: [&'static str; 3], z: [Option<u8>; 3]) -> Option<(f64, f64)> {
         let all = self.angles.len();
         let a1 = self.find_angle([t1, t2, t1], all)?;
         let a2 = self.find_angle([t3, t2, t3], all)?;
@@ -397,7 +412,7 @@ impl Search<'_> {
         if theta0 <= 0.0 {
             return None;
         }
-        let length = |a: &str, b: &str| {
+        let length = |a: &'static str, b: &'static str| {
             self.find_bond([a, b], self.bonds.len())
                 .map_or(0.0, |at| self.bonds[at].r0)
         };

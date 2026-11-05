@@ -67,10 +67,17 @@ impl PyStaticStructureFactorDebye {
     }
 
     #[pyo3(signature = (*, positions))]
-    fn compute(&self, positions: ArrayArg2<'_, f64>) -> Result<PyStaticStructureFactorDebyeResult> {
-        let out = self.inner.compute(StaticStructureFactorDebyeInput {
-            positions: positions.as_array(),
-        })?;
+    fn compute(
+        &self,
+        py: Python<'_>,
+        positions: ArrayArg2<'_, f64>,
+    ) -> Result<PyStaticStructureFactorDebyeResult> {
+        let out = {
+            let input = StaticStructureFactorDebyeInput {
+                positions: positions.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -124,13 +131,17 @@ impl PyStaticStructureFactorDirect {
     #[pyo3(signature = (*, positions, simbox = None))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: ArrayArg2<'_, f64>,
         simbox: Option<PyRef<'_, PyBox>>,
     ) -> Result<PyStaticStructureFactorDirectResult> {
-        let out = self.inner.compute(StaticStructureFactorDirectInput {
-            positions: positions.as_array(),
-            simbox: simbox.as_ref().map(|simbox| &simbox.inner),
-        })?;
+        let out = {
+            let input = StaticStructureFactorDirectInput {
+                positions: positions.as_array(),
+                simbox: simbox.as_ref().map(|simbox| &simbox.inner),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -175,13 +186,17 @@ impl PyDiffractionPattern {
     #[pyo3(signature = (*, positions, simbox))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: ArrayArg2<'_, f64>,
         simbox: PyRef<'_, PyBox>,
     ) -> Result<PyDiffractionPatternResult> {
-        let out = self.inner.compute(DiffractionPatternInput {
-            positions: positions.as_array(),
-            simbox: &simbox.inner,
-        })?;
+        let out = {
+            let input = DiffractionPatternInput {
+                positions: positions.as_array(),
+                simbox: &simbox.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

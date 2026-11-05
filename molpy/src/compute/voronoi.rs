@@ -117,15 +117,19 @@ impl PyRadicalVoronoi {
     #[pyo3(signature = (*, positions, simbox, radii))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: ArrayArg2<'_, f64>,
         simbox: PyRef<'_, PyBox>,
         radii: ArrayArg1<'_, f64>,
     ) -> Result<PyVoronoiCells> {
-        let out = self.inner.compute(RadicalVoronoiInput {
-            positions: positions.as_array(),
-            simbox: &simbox.inner,
-            radii: radii.as_array(),
-        })?;
+        let out = {
+            let input = RadicalVoronoiInput {
+                positions: positions.as_array(),
+                simbox: &simbox.inner,
+                radii: radii.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -164,6 +168,7 @@ impl PyVoronoiIntegration {
     #[pyo3(signature = (*, positions, radii, nuclear_charges, partition, simbox, grid, density))]
     fn compute<'py>(
         &self,
+        py: Python<'py>,
         positions: ArrayArg2<'py, f64>,
         radii: ArrayArg1<'py, f64>,
         nuclear_charges: ArrayArg1<'py, f64>,
@@ -173,15 +178,18 @@ impl PyVoronoiIntegration {
         density: ArrayArg3<'py, f64>,
     ) -> Result<PyMolecularMoments> {
         let partition = args::PartitionArg::extract(partition)?;
-        let out = self.inner.compute(VoronoiIntegrationInput {
-            positions: positions.as_array(),
-            radii: radii.as_array(),
-            nuclear_charges: nuclear_charges.as_array(),
-            partition: partition.partition(),
-            simbox: &simbox.inner,
-            grid: &grid.inner,
-            density: density.as_array(),
-        })?;
+        let out = {
+            let input = VoronoiIntegrationInput {
+                positions: positions.as_array(),
+                radii: radii.as_array(),
+                nuclear_charges: nuclear_charges.as_array(),
+                partition: partition.partition(),
+                simbox: &simbox.inner,
+                grid: &grid.inner,
+                density: density.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -211,14 +219,18 @@ impl PyVoronoiDomainAnalysis {
     #[pyo3(signature = (*, cells, partition))]
     fn compute<'py>(
         &self,
+        py: Python<'py>,
         cells: PyRef<'py, PyVoronoiCells>,
         partition: &Bound<'py, PyAny>,
     ) -> Result<PyVoronoiDomainResult> {
         let partition = args::PartitionArg::extract(partition)?;
-        let out = self.inner.compute(VoronoiDomainInput {
-            cells: &cells.inner,
-            partition: partition.partition(),
-        })?;
+        let out = {
+            let input = VoronoiDomainInput {
+                cells: &cells.inner,
+                partition: partition.partition(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -248,15 +260,19 @@ impl PyVoronoiVoidAnalysis {
     #[pyo3(signature = (*, cells, is_void, box_volume))]
     fn compute(
         &self,
+        py: Python<'_>,
         cells: PyRef<'_, PyVoronoiCells>,
         is_void: Vec<bool>,
         box_volume: f64,
     ) -> Result<PyVoronoiVoidResult> {
-        let out = self.inner.compute(VoronoiVoidInput {
-            cells: &cells.inner,
-            is_void: &is_void,
-            box_volume,
-        })?;
+        let out = {
+            let input = VoronoiVoidInput {
+                cells: &cells.inner,
+                is_void: &is_void,
+                box_volume,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -294,10 +310,13 @@ impl PyFiniteFieldPolarizability {
         plus: PyRef<'py, PyMolecularMoments>,
         minus: PyRef<'py, PyMolecularMoments>,
     ) -> Result<Bound<'py, PyArray2<f64>>> {
-        let out = self.inner.compute(FiniteFieldPolarizabilityInput {
-            plus: &plus.inner,
-            minus: &minus.inner,
-        })?;
+        let out = {
+            let input = FiniteFieldPolarizabilityInput {
+                plus: &plus.inner,
+                minus: &minus.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into_pyarray(py))
     }
 }

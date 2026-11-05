@@ -51,11 +51,18 @@ impl PyKmeans {
     }
 
     #[pyo3(signature = (*, features))]
-    fn compute<'py>(&self, features: &Bound<'py, PyAny>) -> Result<PyKmeansResult> {
+    fn compute<'py>(
+        &self,
+        py: Python<'py>,
+        features: &Bound<'py, PyAny>,
+    ) -> Result<PyKmeansResult> {
         let features = args::FeatureArg::extract(features)?;
-        let out = self.inner.compute(KmeansInput {
-            features: features.features(),
-        })?;
+        let out = {
+            let input = KmeansInput {
+                features: features.features(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

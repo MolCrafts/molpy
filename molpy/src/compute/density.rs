@@ -96,16 +96,20 @@ impl PyCorrelationFunction {
     #[pyo3(signature = (*, pairs, values_a, values_b))]
     fn compute(
         &self,
+        py: Python<'_>,
         pairs: &Bound<'_, PyAny>,
         values_a: ArrayArg1<'_, f64>,
         values_b: ArrayArg1<'_, f64>,
     ) -> Result<PyCorrelationFunctionResult> {
         let pairs = PairSourceArg::extract(pairs)?;
-        let out = self.inner.compute(CorrelationFunctionInput {
-            pairs: pairs.source()?,
-            values_a: values_a.as_array(),
-            values_b: values_b.as_array(),
-        })?;
+        let out = {
+            let input = CorrelationFunctionInput {
+                pairs: pairs.source()?,
+                values_a: values_a.as_array(),
+                values_b: values_b.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -140,11 +144,14 @@ impl PyLocalDensity {
     }
 
     #[pyo3(signature = (*, pairs))]
-    fn compute(&self, pairs: &Bound<'_, PyAny>) -> Result<PyLocalDensityResult> {
+    fn compute(&self, py: Python<'_>, pairs: &Bound<'_, PyAny>) -> Result<PyLocalDensityResult> {
         let pairs = PairSourceArg::extract(pairs)?;
-        let out = self.inner.compute(LocalDensityInput {
-            pairs: pairs.source()?,
-        })?;
+        let out = {
+            let input = LocalDensityInput {
+                pairs: pairs.source()?,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -190,13 +197,17 @@ impl PyGaussianDensity {
     #[pyo3(signature = (*, positions, simbox))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: ArrayArg2<'_, f64>,
         simbox: PyRef<'_, PyBox>,
     ) -> Result<PyGaussianDensityResult> {
-        let out = self.inner.compute(GaussianDensityInput {
-            positions: positions.as_array(),
-            simbox: &simbox.inner,
-        })?;
+        let out = {
+            let input = GaussianDensityInput {
+                positions: positions.as_array(),
+                simbox: &simbox.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -229,13 +240,17 @@ impl PySphereVoxelization {
     #[pyo3(signature = (*, positions, simbox))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: ArrayArg2<'_, f64>,
         simbox: PyRef<'_, PyBox>,
     ) -> Result<PySphereVoxelizationResult> {
-        let out = self.inner.compute(SphereVoxelizationInput {
-            positions: positions.as_array(),
-            simbox: &simbox.inner,
-        })?;
+        let out = {
+            let input = SphereVoxelizationInput {
+                positions: positions.as_array(),
+                simbox: &simbox.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -285,6 +300,7 @@ impl PySpatialDistribution {
     ))]
     fn compute(
         &self,
+        py: Python<'_>,
         positions: Vec<ArrayArg2<'_, f64>>,
         simbox: Option<Vec<Option<PyRef<'_, PyBox>>>>,
         reference: Vec<Vec<usize>>,
@@ -319,7 +335,7 @@ impl PySpatialDistribution {
                 orientation: orientation[t].as_deref(),
             })
             .collect();
-        Ok(self.inner.compute(&frames)?.into())
+        Ok(py.detach(|| self.inner.compute(&frames))?.into())
     }
 }
 

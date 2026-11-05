@@ -60,24 +60,40 @@ pub(super) fn canonical(types: [&str; 4]) -> [&str; 4] {
     [a, b, c, d]
 }
 
-/// The rows of `table` whose names are `names` read either way, first first.
-fn find(rows: &[Row], names: [&str; 4]) -> Option<usize> {
-    rows.iter().position(|row| {
-        let n = &row.names;
-        (0..4).all(|i| n[i] == names[i]) || (0..4).all(|i| n[3 - i] == names[i])
-    })
+/// Torsion rows, indexed by name: the first row each name, read either way,
+/// belongs to.
+#[derive(Debug, Clone, Default)]
+struct Rows {
+    rows: Vec<Row>,
+    first: HashMap<[&'static str; 4], usize>,
 }
 
-fn table_rows(table: ParmTable) -> Vec<Row> {
-    table
-        .dihedrals
-        .iter()
-        .enumerate()
-        .map(|(first, row)| Row {
-            names: [row.i, row.j, row.k, row.l].map(|slot| slot.map_or(X, |ty| table.name_of(ty))),
-            first,
-        })
-        .collect()
+impl Rows {
+    /// The table's rows, in table order.
+    fn of(table: ParmTable) -> Self {
+        let mut rows = Self::default();
+        for (first, row) in table.dihedrals.iter().enumerate() {
+            rows.push(Row {
+                names: [row.i, row.j, row.k, row.l]
+                    .map(|slot| slot.map_or(X, |ty| table.name_of(ty))),
+                first,
+            });
+        }
+        rows
+    }
+
+    fn push(&mut self, row: Row) {
+        let at = self.rows.len();
+        let [a, b, c, d] = row.names;
+        self.first.entry([a, b, c, d]).or_insert(at);
+        self.first.entry([d, c, b, a]).or_insert(at);
+        self.rows.push(row);
+    }
+
+    /// The table index of the first row named `names` either way.
+    fn find(&self, names: [&'static str; 4]) -> Option<usize> {
+        self.first.get(&names).map(|&at| self.rows[at].first)
+    }
 }
 
 /// The cosine terms of the torsion whose first row is `first`.
@@ -96,7 +112,7 @@ fn chain(table: ParmTable, first: usize) -> Vec<&'static ParmDihedralRow> {
 /// table's wildcard rows.
 pub(super) struct Torsions {
     table: ParmTable,
-    rows: Vec<Row>,
+    rows: Rows,
     estimates: HashMap<[&'static str; 4], TorsionEstimate>,
 }
 
@@ -119,7 +135,7 @@ impl Torsions {
         let types: Vec<&'static str> = order.iter().map(|a| type_of[a]).collect();
         let search = Search {
             parmchk,
-            rows: table_rows(table),
+            rows: Rows::of(table),
         };
         let mut known = search.rows.clone();
         let mut estimates = HashMap::new();
@@ -131,7 +147,7 @@ impl Torsions {
                     for &l in bonded[k].iter().filter(|&&l| l != j) {
                         let quartet = [types[i], types[j], types[k], types[l]];
                         let name = canonical(quartet);
-                        if find(&known, name).is_some() {
+                        if known.find(name).is_some() {
                             continue;
                         }
                         // `None`: the wildcard row covers it, or nothing does
@@ -169,8 +185,14 @@ impl Torsions {
     }
 
     /// The wildcard row `X-b-c-X` (either way), as its rows.
-    pub(super) fn general(&self, b: &str, c: &str) -> Option<Vec<&'static ParmDihedralRow>> {
-        find(&self.rows, [X, b, c, X]).map(|m| chain(self.table, self.rows[m].first))
+    pub(super) fn general(
+        &self,
+        b: &'static str,
+        c: &'static str,
+    ) -> Option<Vec<&'static ParmDihedralRow>> {
+        self.rows
+            .find([X, b, c, X])
+            .map(|first| chain(self.table, first))
     }
 }
 
@@ -178,7 +200,7 @@ impl Torsions {
 struct Search<'a> {
     parmchk: &'a ParmchkTable,
     /// The table's rows (not the ones estimated since).
-    rows: Vec<Row>,
+    rows: Rows,
 }
 
 impl Search<'_> {
@@ -250,13 +272,17 @@ impl Search<'_> {
     }
 
     fn label(&self, first: usize) -> String {
-        self.rows[first].names.join("-")
+        self.rows.rows[first].names.join("-")
     }
 
     /// Steps 2–6 of `chk_torsion` for the torsion `quartet` (molecule order),
     /// canonically `names`: the first row of the torsion it copies, and how.
     /// `None` when step 3 covers it (no estimate) or nothing does.
-    fn run(&self, quartet: [&'static str; 4], names: [&str; 4]) -> Option<(usize, Provenance)> {
+    fn run(
+        &self,
+        quartet: [&'static str; 4],
+        names: [&'static str; 4],
+    ) -> Option<(usize, Provenance)> {
         let w = &self.parmchk.weights;
         let [ti, tj, tk, tl] = quartet;
         let rows = &self.rows;
@@ -275,8 +301,7 @@ impl Search<'_> {
                         if m == 0 && n == 0 && p == 0 && q == 0 {
                             continue;
                         }
-                        if let Some(at) = find(rows, [e7, e5, e6, e8]) {
-                            let first = rows[at].first;
+                        if let Some(first) = rows.find([e7, e5, e6, e8]) {
                             return Some((first, Provenance::analogy(0.0, self.label(first))));
                         }
                     }
@@ -285,7 +310,7 @@ impl Search<'_> {
         }
 
         // Step 3: the wildcard row of the canonical inner pair covers it.
-        if find(rows, [X, names[1], names[2], X]).is_some() {
+        if rows.find([X, names[1], names[2], X]).is_some() {
             return None;
         }
 
@@ -296,8 +321,8 @@ impl Search<'_> {
                 if n == 0 && p == 0 {
                     continue;
                 }
-                if let Some(at) = find(rows, [X, e6, e7, X]) {
-                    found = Some(rows[at].first);
+                if let Some(first) = rows.find([X, e6, e7, X]) {
+                    found = Some(first);
                 }
             }
         }
@@ -337,8 +362,8 @@ impl Search<'_> {
                         if best.is_some_and(|(_, b)| score >= b) {
                             continue;
                         }
-                        if let Some(at) = find(rows, [c1.0, c2.0, c3.0, c4.0]) {
-                            best = Some((rows[at].first, score));
+                        if let Some(first) = rows.find([c1.0, c2.0, c3.0, c4.0]) {
+                            best = Some((first, score));
                         }
                     }
                 }
@@ -364,8 +389,8 @@ impl Search<'_> {
                 if best.is_some_and(|(_, b)| score >= b) {
                     continue;
                 }
-                if let Some(at) = find(rows, [X, c2.0, c3.0, X]) {
-                    best = Some((rows[at].first, score));
+                if let Some(first) = rows.find([X, c2.0, c3.0, X]) {
+                    best = Some((first, score));
                 }
             }
         }

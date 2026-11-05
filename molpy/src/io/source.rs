@@ -80,14 +80,33 @@ impl PySource<'_> {
 
     /// Run the core door `read` on this source; a failure on a file names
     /// the file (an OS error does not), keeping the error's kind.
-    pub(crate) fn read<'s, T>(
+    ///
+    /// The read is native work and runs without the GIL, so other Python
+    /// threads run meanwhile: the source is a path, or the bytes of a
+    /// `bytes` or `Text`, which nothing can change.
+    pub(crate) fn read<'s, T: Send>(
         &'s self,
-        read: impl FnOnce(Source<'s>) -> std::io::Result<T>,
+        read: impl FnOnce(Source<'s>) -> std::io::Result<T> + Send,
     ) -> std::io::Result<T> {
-        read(self.source()).map_err(|e| match self {
+        let source = self.source();
+        Python::attach(|py| py.detach(|| read(source))).map_err(|e| self.name(e))
+    }
+
+    /// Open a lazy reader on this source (`open` reads at most a header, so
+    /// it keeps the GIL); a failure on a file names the file.
+    pub(crate) fn open<'s, T>(
+        &'s self,
+        open: impl FnOnce(Source<'s>) -> std::io::Result<T>,
+    ) -> std::io::Result<T> {
+        open(self.source()).map_err(|e| self.name(e))
+    }
+
+    /// `e`, naming the file when this source is one.
+    fn name(&self, e: std::io::Error) -> std::io::Error {
+        match self {
             PySource::Path(path) => named(path, e),
             _ => e,
-        })
+        }
     }
 }
 
@@ -207,16 +226,22 @@ impl PySink<'_> {
     /// Run `write` on the core sink this names, mapping its error with `err`.
     /// A bytearray then holds what `write` left in its buffer — as
     /// `Sink::Buffer`, cleared and then written, even when `write` fails.
-    pub(crate) fn put<E>(
+    ///
+    /// The write runs without the GIL (into a file, or a buffer of its own
+    /// that is copied into the bytearray after), so other Python threads run
+    /// meanwhile.
+    pub(crate) fn put<E: Send>(
         &self,
-        write: impl FnOnce(Sink<'_>) -> Result<(), E>,
+        write: impl FnOnce(Sink<'_>) -> Result<(), E> + Send,
         err: impl FnOnce(E) -> PyErr,
     ) -> PyResult<()> {
         match self {
-            PySink::Path(path) => write(Sink::Path(path)).map_err(err),
+            PySink::Path(path) => {
+                Python::attach(|py| py.detach(|| write(Sink::Path(path)))).map_err(err)
+            }
             PySink::Buffer(buffer) => {
                 let mut bytes = Vec::new();
-                let written = write(Sink::Buffer(&mut bytes));
+                let written = buffer.py().detach(|| write(Sink::Buffer(&mut bytes)));
                 replace_all(buffer, &bytes)?;
                 written.map_err(err)
             }

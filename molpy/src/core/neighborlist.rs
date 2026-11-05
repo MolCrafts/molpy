@@ -358,6 +358,28 @@ impl PyNeighborList {
     fn get_mut(&mut self) -> PyResult<&mut RsNeighborList> {
         self.inner.as_mut().ok_or_else(engine_moved_err)
     }
+
+    /// Run `index` (a build or an update) over `points` without the GIL, and
+    /// keep the points the pickled state replays — into the buffer already
+    /// held when the shape is unchanged, so a per-step update allocates
+    /// nothing.
+    fn index(
+        &mut self,
+        py: Python<'_>,
+        points: ndarray::ArrayView2<'_, f64>,
+        index: impl FnOnce(&mut RsNeighborList, ndarray::ArrayView2<'_, f64>) + Send,
+    ) -> PyResult<()> {
+        let engine = self.inner.as_mut().ok_or_else(engine_moved_err)?;
+        let kept = &mut self.points;
+        py.detach(|| {
+            index(engine, points);
+            match kept {
+                Some(held) if held.dim() == points.dim() => held.assign(&points),
+                _ => *kept = Some(points.to_owned()),
+            }
+        });
+        Ok(())
+    }
 }
 
 #[pymethods]
@@ -404,11 +426,13 @@ impl PyNeighborList {
     /// ------
     /// ValueError
     ///     If ``points`` does not have shape ``(N, 3)``.
-    fn build(&mut self, points: ArrayArg2<'_, f64>, r#box: &PyBox) -> PyResult<()> {
+    fn build(&mut self, py: Python<'_>, points: ArrayArg2<'_, f64>, r#box: &PyBox) -> PyResult<()> {
         check_points(&points, "points")?;
-        self.get_mut()?.build(points.as_array(), &r#box.inner);
-        self.points = Some(points.as_array().to_owned());
-        self.simbox = Some(r#box.inner.clone());
+        let simbox = r#box.inner.clone();
+        self.index(py, points.as_array(), |engine, view| {
+            engine.build(view, &simbox)
+        })?;
+        self.simbox = Some(simbox);
         Ok(())
     }
 
@@ -430,7 +454,7 @@ impl PyNeighborList {
     ///     If ``points`` does not have shape ``(N, 3)``, or if no ``build`` has
     ///     run yet — the box is then unknown, and guessing one would fold
     ///     minimum images against a box the caller never named.
-    fn update(&mut self, points: ArrayArg2<'_, f64>) -> PyResult<()> {
+    fn update(&mut self, py: Python<'_>, points: ArrayArg2<'_, f64>) -> PyResult<()> {
         check_points(&points, "points")?;
         let engine = self.get_mut()?;
         // The core panics on an update before a build (the box is unknown);
@@ -442,9 +466,7 @@ impl PyNeighborList {
                  call build(points, box) first",
             ));
         }
-        engine.update(points.as_array());
-        self.points = Some(points.as_array().to_owned());
-        Ok(())
+        self.index(py, points.as_array(), |engine, view| engine.update(view))
     }
 
     /// Materialize the pairs into a :class:`Neighbors` table.
@@ -517,10 +539,11 @@ impl PyNeighborList {
     /// Replay a pickled build: ``state`` is ``(points, box)`` or ``None``.
     fn __setstate__(
         &mut self,
+        py: Python<'_>,
         state: Option<(ArrayArg2<'_, f64>, PyRef<'_, PyBox>)>,
     ) -> PyResult<()> {
         if let Some((points, r#box)) = state {
-            self.build(points, &r#box)?;
+            self.build(py, points, &r#box)?;
         }
         Ok(())
     }

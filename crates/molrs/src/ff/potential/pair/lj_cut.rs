@@ -684,4 +684,80 @@ mod tests {
         let (c, t) = ab_energies(&[]);
         assert!((c - want).abs() < 1e-12 && (t - want).abs() < 1e-12);
     }
+
+    /// An `lj/cut` prices an unlike pair with no cross row by the force
+    /// field's mixing rule, and engines disagree on the default (LAMMPS mixes
+    /// `lj/cut` geometrically, AMBER arithmetically): such a pair under a
+    /// style that states none is refused by name at both doors, rather than
+    /// priced under a rule the force field never chose. A stated rule, or a
+    /// cross row for the pair, compiles.
+    #[test]
+    fn an_unlike_pair_without_a_mixing_rule_is_refused() {
+        let field = |mixing: Option<&str>, cross: bool| {
+            let mut ff = ForceField::new("t");
+            ff.set_special_bonds(SpecialBonds::EXCLUDE_12_13);
+            let mut style = Params::from_iter([("cutoff", 6.0)]);
+            if let Some(rule) = mixing {
+                style.set("mixing", rule);
+            }
+            let s = ff.def_style("pair", "lj/cut", style).unwrap();
+            s.def_type(
+                "A",
+                &["A"],
+                Params::from_iter([("epsilon", 0.3), ("sigma", 3.4)]),
+            )
+            .unwrap();
+            s.def_type(
+                "B",
+                &["B"],
+                Params::from_iter([("epsilon", 0.5), ("sigma", 3.0)]),
+            )
+            .unwrap();
+            if cross {
+                s.def_type(
+                    "A-B",
+                    &["A", "B"],
+                    Params::from_iter([("epsilon", 0.4), ("sigma", 3.2)]),
+                )
+                .unwrap();
+            }
+            ff
+        };
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "type",
+                Array1::from_vec(vec!["A".to_owned(), "B".to_owned()]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        for (k, key) in ["x", "y", "z"].into_iter().enumerate() {
+            atoms
+                .insert(
+                    key,
+                    Array1::from_vec(vec![0.0, [4.0, 0.0, 0.0][k]]).into_dyn(),
+                    None,
+                )
+                .unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+
+        let undeclared = field(None, false);
+        let typed = PotentialCompiler::new(&undeclared)
+            .compile_typed(&frame)
+            .unwrap_err()
+            .to_string();
+        assert!(typed.contains("mixing"), "{typed}");
+        let compiled = PotentialCompiler::new(&undeclared)
+            .compile(&frame)
+            .unwrap_err()
+            .to_string();
+        assert!(compiled.contains("mixing"), "{compiled}");
+
+        for ff in [field(Some("geometric"), false), field(None, true)] {
+            PotentialCompiler::new(&ff).compile_typed(&frame).unwrap();
+            PotentialCompiler::new(&ff).compile(&frame).unwrap();
+        }
+    }
 }

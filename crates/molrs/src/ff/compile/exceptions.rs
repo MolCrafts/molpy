@@ -37,8 +37,8 @@ pub(crate) struct Exceptions {
 /// The van-der-Waals style a 1-4 pair's Lennard-Jones parameters come from.
 pub(crate) enum Vdw<'f> {
     None,
-    LjCut(HashMap<String, Params>, CombiningRule),
-    Charmm(HashMap<String, Params>, CombiningRule),
+    LjCut(HashMap<String, Params>, Option<CombiningRule>),
+    Charmm(HashMap<String, Params>, Option<CombiningRule>),
     /// A van-der-Waals style with no LJ 12-6 form (`buck`, `morse`, Mie
     /// `lj/cut`, …).
     Other(&'f str),
@@ -162,7 +162,7 @@ pub(crate) fn plan(
         // `epsilon14` 1-4 pair), else the style's own. A field with no
         // Lennard-Jones style prices none of the LJ cells: they belong to a
         // style it does not have.
-        let base = |mixing: CombiningRule, charmm: bool| -> Result<(F, F), String> {
+        let base = |mixing: Option<CombiningRule>, charmm: bool| -> Result<(F, F), String> {
             let (a, b) = atom_type_pair(types, i, j)?;
             if charmm {
                 let (regular, one_four) =
@@ -433,6 +433,7 @@ mod tests {
     fn lj_charmm(one_four: Option<&str>) -> ForceField {
         let mut ff = ForceField::new("x");
         let mut sp = Params::from_iter([("inner", 8.0), ("cutoff", 10.0)]);
+        sp.set("mixing", "arithmetic");
         if let Some(v) = one_four {
             sp.set(ONE_FOUR, v);
         }
