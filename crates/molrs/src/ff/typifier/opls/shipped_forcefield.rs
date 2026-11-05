@@ -859,4 +859,62 @@ mod tests {
         m.hydrogens(c5, 1, "opls_546");
         m.assert_typed();
     }
+
+    /// Drug-sized molecules — atenolol, 5-MeO-DMT, ibuprofen, read from
+    /// SMILES and given explicit hydrogens — type atom for atom as the
+    /// shipped rules typed them (`-`: no rule types the atom), so a change
+    /// to how the rules are searched cannot move an assignment.
+    #[test]
+    fn drug_sized_molecules_type_as_the_rules_typed_them() {
+        let golden: [(&str, &[&str]); 3] = [
+            (
+                "CC(C)NCC(O)COc1ccc(CC(N)=O)cc1",
+                &[
+                    "opls_135", "-", "opls_135", "opls_901", "-", "opls_158", "opls_154",
+                    "opls_182", "opls_180", "opls_145", "opls_145", "opls_145", "opls_145",
+                    "opls_149", "opls_235", "opls_237", "opls_236", "opls_145", "opls_145",
+                    "opls_140", "opls_140", "opls_140", "opls_140", "opls_140", "opls_140",
+                    "opls_140", "opls_910", "opls_140", "opls_140", "opls_140", "opls_155",
+                    "opls_185", "opls_185", "opls_146", "opls_146", "opls_140", "opls_140",
+                    "opls_240", "opls_240", "opls_146", "opls_146",
+                ],
+            ),
+            (
+                "COc1ccc2[nH]cc(CCN(C)C)c2c1",
+                &[
+                    "opls_181", "opls_180", "-", "-", "-", "opls_543", "opls_542", "opls_543",
+                    "opls_544", "opls_136", "-", "-", "-", "-", "opls_544", "-", "opls_185",
+                    "opls_185", "opls_185", "-", "-", "opls_545", "opls_546", "opls_140",
+                    "opls_140", "opls_140", "opls_140", "opls_140", "opls_140", "opls_140",
+                    "opls_140", "opls_140", "opls_140", "-",
+                ],
+            ),
+            (
+                "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+                &[
+                    "opls_135", "opls_137", "opls_135", "opls_149", "opls_145", "opls_145",
+                    "opls_145", "opls_145", "opls_145", "opls_145", "opls_137", "opls_135",
+                    "opls_267", "opls_269", "opls_268", "opls_140", "opls_140", "opls_140",
+                    "opls_140", "opls_140", "opls_140", "opls_140", "opls_140", "opls_140",
+                    "opls_146", "opls_146", "opls_146", "opls_146", "opls_140", "opls_140",
+                    "opls_140", "opls_140", "opls_270",
+                ],
+            ),
+        ];
+        for (smiles, want) in golden {
+            let mol = crate::io::smiles::SmilesIr::parse(smiles)
+                .unwrap()
+                .to_atomistic()
+                .unwrap();
+            let mol = crate::perceive::add_hydrogens(&mol).unwrap();
+            let typed = Typing::new(OplsAaTypifier::oplsaa().with_strict(false))
+                .typify(&mol)
+                .unwrap();
+            let got: Vec<String> = typed
+                .atoms()
+                .map(|(_, a)| a.get_str("type").unwrap_or("-").to_owned())
+                .collect();
+            assert_eq!(got, want, "{smiles}");
+        }
+    }
 }

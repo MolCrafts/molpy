@@ -63,6 +63,12 @@ impl QueryGraph {
         out
     }
 
+    /// The atomic numbers query atom 0 can match, or `None` when its test
+    /// does not confine the element (see [`AtomTest::atomic_numbers`]).
+    pub fn root_atomic_numbers(&self) -> Option<Vec<u8>> {
+        self.atoms.first()?.query.atomic_numbers(&self.recursives)
+    }
+
     /// See [`super::SmartsPattern::ring_primitives`].
     pub fn ring_primitives(&self) -> Vec<super::RingPrimitive> {
         let mut out = Vec::new();

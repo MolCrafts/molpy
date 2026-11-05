@@ -85,6 +85,7 @@ use crate::core::NodeId;
 use compile::QueryGraph;
 
 pub use environment::{EnvironmentOptions, NeighborStyle};
+pub(crate) use predicate::SmartsTarget;
 pub use reaction::{Reaction, ReactionBatch};
 
 /// Ring-related SMARTS atom primitives found in a compiled pattern.
@@ -194,6 +195,19 @@ impl SmartsPattern {
         root: Option<NodeId>,
     ) -> Vec<SmartsMatch> {
         matcher::find_in_target(&self.graph, target, root, None)
+    }
+
+    /// Whether some embedding maps query atom 0 to `atom` in `target`. The
+    /// search stops at the first.
+    pub(crate) fn matches_at(&self, target: &predicate::SmartsTarget<'_>, atom: NodeId) -> bool {
+        !matcher::find_in_target(&self.graph, target, Some(atom), Some(1)).is_empty()
+    }
+
+    /// The atomic numbers query atom 0 can match, or `None` when the pattern
+    /// does not confine its root's element. An atom outside the set matches
+    /// at no root; one inside it may.
+    pub(crate) fn root_atomic_numbers(&self) -> Option<Vec<u8>> {
+        self.graph.root_atomic_numbers()
     }
 
     /// Whether at least one match exists.

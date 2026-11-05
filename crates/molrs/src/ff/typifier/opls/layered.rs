@@ -32,7 +32,7 @@
 use std::collections::{HashMap, HashSet};
 
 use molrs::core::{Atomistic, NodeId};
-use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
+use molrs::perceive::smarts::{SmartsPattern, SmartsTarget};
 
 use super::dependency::OplsDependencyAnalyzer;
 use super::typing_metadata::OplsTypingMetadata;
@@ -51,6 +51,8 @@ struct RankedDef {
     specificity: usize,
     /// Stable definition order (index after sorting type names).
     order: usize,
+    /// The atomic numbers the pattern's root can match; `None`: any.
+    roots: Option<Vec<u8>>,
 }
 
 impl RankedDef {
@@ -181,6 +183,7 @@ impl LayeredTypingEngine {
                 format!("OPLS type {name:?}: failed to parse SMARTS def {def:?}: {e}")
             })?;
             let specificity = pattern.n_query_atoms();
+            let roots = pattern.root_atomic_numbers();
             let level = analyzer.level(name).unwrap_or(0);
             if level >= by_level.len() {
                 by_level.resize_with(level + 1, Vec::new);
@@ -191,6 +194,7 @@ impl LayeredTypingEngine {
                 priority: row.priority.unwrap_or(0),
                 specificity,
                 order,
+                roots,
             });
         }
 
@@ -207,56 +211,59 @@ impl LayeredTypingEngine {
     /// is threaded into each level's SMARTS matching as the context-label map,
     /// so `%opls_NNN` defs see the prior levels' results. A level whose defs lie
     /// in a circular-dependency group is resolved by fixed-point iteration.
+    ///
+    /// The molecule is perceived once (rings, hydrogen counts, aromaticity
+    /// read): every level matches against the one target, its label map the
+    /// assignment so far.
     pub fn assign(&self, mol: &Atomistic) -> HashMap<NodeId, String> {
-        let mut assignments: HashMap<NodeId, String> = HashMap::new();
+        let mut target = SmartsTarget::new(mol);
+        let mut by_element: HashMap<u8, Vec<NodeId>> = HashMap::new();
+        let mut atoms: Vec<NodeId> = Vec::with_capacity(mol.n_atoms());
+        for (id, _) in mol.atoms() {
+            atoms.push(id);
+            if let Some(z) = target.atomic_number(id) {
+                by_element.entry(z).or_default().push(id);
+            }
+        }
+        let roots = Roots {
+            atoms: &atoms,
+            by_element: &by_element,
+        };
         for level in 0..self.by_level.len() {
             let defs = &self.by_level[level];
             if defs.is_empty() {
                 continue;
             }
             let is_circular = defs.iter().any(|d| self.analyzer.is_circular(&d.name));
-            assignments = if is_circular {
-                self.resolve_circular(defs, mol, assignments)
+            if is_circular {
+                self.resolve_circular(defs, &roots, &mut target);
             } else {
-                self.resolve_level(defs, mol, assignments)
-            };
+                self.resolve_level(defs, &roots, &mut target);
+            }
         }
-        assignments
+        target.into_labels()
     }
 
     /// Resolve a single (non-circular) level: match every def at this level
-    /// against `mol` under the `current` label context, pick each atom's winner
-    /// among this level's candidates, then merge — the winner replaces the
-    /// atom's current type unless the current type dominates it.
-    fn resolve_level(
-        &self,
-        defs: &[RankedDef],
-        mol: &Atomistic,
-        current: HashMap<NodeId, String>,
-    ) -> HashMap<NodeId, String> {
-        // Candidate defs per atom, each def at most once.
+    /// against the target under its current label context, pick each atom's
+    /// winner among this level's candidates, then merge into the labels — the
+    /// winner replaces the atom's current type unless the current type
+    /// dominates it.
+    ///
+    /// Only a match's root is read, so a def is searched at each atom its
+    /// root can be (by element), and stops at the first embedding there.
+    fn resolve_level(&self, defs: &[RankedDef], roots: &Roots<'_>, target: &mut SmartsTarget<'_>) {
+        // Candidate defs per atom, each def at most once, in def order.
         let mut candidates: HashMap<NodeId, Vec<usize>> = HashMap::new();
         for (k, d) in defs.iter().enumerate() {
-            for m in d.pattern.find(
-                mol,
-                MatchOptions {
-                    labels: Some(&current),
-                    root: None,
-                    limit: None,
-                },
-            ) {
-                // Target atom is the root (query atom 0), per RDKit convention.
-                let Some(&target) = m.atoms.first() else {
-                    continue;
-                };
-                let entry = candidates.entry(target).or_default();
-                if !entry.contains(&k) {
-                    entry.push(k);
+            for atom in roots.of(d) {
+                if d.pattern.matches_at(target, atom) {
+                    candidates.entry(atom).or_default().push(k);
                 }
             }
         }
 
-        let mut result = current;
+        let result = target.labels_mut();
         for (atom, cands) in candidates {
             let winner = cands
                 .iter()
@@ -277,7 +284,6 @@ impl LayeredTypingEngine {
                 result.insert(atom, winner.name.clone());
             }
         }
-        result
     }
 
     /// Resolve a circular-dependency level by fixed-point iteration: repeatedly
@@ -288,24 +294,45 @@ impl LayeredTypingEngine {
     fn resolve_circular(
         &self,
         defs: &[RankedDef],
-        mol: &Atomistic,
-        current: HashMap<NodeId, String>,
-    ) -> HashMap<NodeId, String> {
-        let mut assignments = current;
+        roots: &Roots<'_>,
+        target: &mut SmartsTarget<'_>,
+    ) {
         for _ in 0..MAX_CIRCULAR_ITERATIONS {
-            let prev = assignments.clone();
-            assignments = self.resolve_level(defs, mol, assignments);
-            if assignments == prev {
+            let prev = target.labels_mut().clone();
+            self.resolve_level(defs, roots, target);
+            if *target.labels_mut() == prev {
                 break;
             }
         }
-        assignments
     }
 
     /// Access the underlying dependency analyzer (levels / circular groups).
     #[cfg(test)]
     pub fn analyzer(&self) -> &OplsDependencyAnalyzer {
         &self.analyzer
+    }
+}
+
+/// The atoms of one molecule a def's root can be: all of them, and by
+/// atomic number.
+struct Roots<'a> {
+    atoms: &'a [NodeId],
+    by_element: &'a HashMap<u8, Vec<NodeId>>,
+}
+
+impl Roots<'_> {
+    /// The atoms `def`'s root can match: those of its root elements, or
+    /// every atom when the pattern does not confine its root.
+    fn of<'s>(&'s self, def: &'s RankedDef) -> Box<dyn Iterator<Item = NodeId> + 's> {
+        match &def.roots {
+            None => Box::new(self.atoms.iter().copied()),
+            Some(zs) => Box::new(
+                zs.iter()
+                    .filter_map(|z| self.by_element.get(z))
+                    .flatten()
+                    .copied(),
+            ),
+        }
     }
 }
 

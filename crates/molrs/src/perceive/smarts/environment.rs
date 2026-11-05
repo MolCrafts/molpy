@@ -31,7 +31,12 @@ pub(crate) fn environment_ir(
         return Err(emit_err("center atom not in molecule"));
     }
 
-    let rings = perceive_rings(mol);
+    // Ring perception is the costly step, and only the ring primitives read
+    // it: a pattern that states none never perceives.
+    let rings = Rings {
+        mol,
+        set: std::cell::OnceCell::new(),
+    };
 
     // BFS ball of radius reach
     let mut depth: HashMap<NodeId, u32> = HashMap::new();
@@ -64,6 +69,18 @@ pub(crate) fn environment_ir(
         components: vec![chain],
         span: Span::new(0, 0),
     })
+}
+
+/// The molecule's rings, perceived on first read.
+struct Rings<'m> {
+    mol: &'m Atomistic,
+    set: std::cell::OnceCell<crate::perceive::RingSet>,
+}
+
+impl Rings<'_> {
+    fn get(&self) -> &crate::perceive::RingSet {
+        self.set.get_or_init(|| perceive_rings(self.mol))
+    }
 }
 
 fn emit_err(msg: impl Into<String>) -> SmilesError {
@@ -121,7 +138,7 @@ fn center_query(
     mol: &Atomistic,
     id: NodeId,
     opts: &EnvironmentOptions,
-    rings: &crate::perceive::RingSet,
+    rings: &Rings<'_>,
 ) -> Result<AtomQuery, SmilesError> {
     let mut prims: Vec<AtomQuery> = Vec::new();
 
@@ -153,6 +170,7 @@ fn center_query(
     }
 
     if opts.include_ring_membership {
+        let rings = rings.get();
         if rings.is_atom_in_ring(id) {
             let n = rings.n_atom_rings(id) as u8;
             prims.push(AtomQuery::Primitive(AtomPrimitive::RingMembership(Some(
@@ -164,7 +182,7 @@ fn center_query(
     }
 
     if opts.include_ring_size
-        && let Some(sz) = rings.smallest_ring_containing_atom(id)
+        && let Some(sz) = rings.get().smallest_ring_containing_atom(id)
     {
         prims.push(AtomQuery::Primitive(AtomPrimitive::RingSize(sz as u8)));
     }
@@ -253,7 +271,7 @@ fn build_chain_env(
     center: NodeId,
     depth: &HashMap<NodeId, u32>,
     opts: &EnvironmentOptions,
-    rings: &crate::perceive::RingSet,
+    rings: &Rings<'_>,
 ) -> Result<Chain, SmilesError> {
     fn rec(
         mol: &Atomistic,
@@ -261,7 +279,7 @@ fn build_chain_env(
         parent: Option<NodeId>,
         depth: &HashMap<NodeId, u32>,
         opts: &EnvironmentOptions,
-        rings: &crate::perceive::RingSet,
+        rings: &Rings<'_>,
         is_center: bool,
     ) -> Result<Chain, SmilesError> {
         let q = if is_center {
@@ -309,7 +327,7 @@ fn build_recursive_env(
     center: NodeId,
     depth: &HashMap<NodeId, u32>,
     opts: &EnvironmentOptions,
-    rings: &crate::perceive::RingSet,
+    rings: &Rings<'_>,
 ) -> Result<Chain, SmilesError> {
     // Centre with LowAnd of primitives + Recursive fragments for each neighbour path
     let mut prims: Vec<AtomQuery> = match center_query(mol, center, opts, rings)? {
