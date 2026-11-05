@@ -96,6 +96,18 @@ class TestZeroCopy:
         v = b["x"]
         assert v.base is not None  # Arc-backed window, not a defensive copy
 
+    def test_a_column_is_its_own_buffer_not_the_inserted_arrays(self):
+        # The core owns every column buffer: one inserted from numpy is
+        # copied in, so a later write to that array is not a write the core
+        # sees behind a shared reference.
+        for dtype in (np.float64, np.int64, np.uint64, np.int32, np.bool_):
+            src = np.ones(4, dtype=dtype)
+            b = mp.core.Block()
+            b.insert("payload", src)
+            src[0] = 0
+            assert not np.shares_memory(src, b["payload"]), dtype
+            assert b["payload"][0] == 1, dtype
+
 
 # --- ac-006: empty supported-dtype column stores ----------------------------
 
