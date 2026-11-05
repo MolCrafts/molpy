@@ -63,7 +63,9 @@ def _runs_beside_python(work) -> None:
     if elapsed < 0.05:
         # A machine fast enough to finish inside OS scheduling noise cannot
         # tell a held GIL from a released one; that is not a failure.
-        pytest.skip(f"native call took {elapsed * 1e3:.1f} ms: too fast to measure here")
+        pytest.skip(
+            f"native call took {elapsed * 1e3:.1f} ms: too fast to measure here"
+        )
     assert longest_stall < 0.5 * elapsed, (longest_stall, elapsed)
 
 
