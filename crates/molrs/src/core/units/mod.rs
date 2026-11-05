@@ -51,6 +51,7 @@ mod parse;
 mod preset;
 mod quantity;
 mod registry;
+mod style;
 mod unit;
 
 pub use dimension::Dimension;
@@ -62,4 +63,5 @@ pub use preset::{
 };
 pub use quantity::Quantity;
 pub use registry::{UnitDef, UnitRegistry};
+pub use style::{UnitConstants, UnitStyle};
 pub use unit::Unit;

@@ -38,6 +38,11 @@ pub enum UnitsError {
         /// The conflicting name.
         name: String,
     },
+    /// A name that is no LAMMPS `units` style.
+    UnknownStyle {
+        /// The refused name.
+        name: String,
+    },
 }
 
 impl fmt::Display for UnitsError {
@@ -54,6 +59,11 @@ impl fmt::Display for UnitsError {
                 write!(f, "failed to parse '{}': {}", expr, message)
             }
             UnitsError::Redefinition { name } => write!(f, "unit already defined: {}", name),
+            UnitsError::UnknownStyle { name } => write!(
+                f,
+                "unknown LAMMPS units style '{name}' (lj, real, metal, si, cgs, electron, \
+                 micro, nano)"
+            ),
         }
     }
 }
@@ -92,6 +102,13 @@ mod tests {
                     name: "smoot".to_string(),
                 },
                 "unit already defined: smoot",
+            ),
+            (
+                UnitsError::UnknownStyle {
+                    name: "openmm".to_string(),
+                },
+                "unknown LAMMPS units style 'openmm' (lj, real, metal, si, cgs, electron, \
+                 micro, nano)",
             ),
         ];
         for (err, expected) in cases {
