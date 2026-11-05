@@ -19,9 +19,11 @@ const FORCEFIELDREF_CAPSULE_PREFIX: &str = "molrs.ForceFieldRef";
 const REGIONREF_CAPSULE_PREFIX: &str = "molrs.RegionRef";
 
 /// Size and alignment of every type a handle exchange dereferences: the
-/// handles themselves and what they point at, down to the arena lock. A change
-/// to any of them fails `tests::layout_matches_the_snapshot` (the `ffi` gate)
-/// and changes [`build_fingerprint`].
+/// handles themselves and what they point at, down to the arena lock, and
+/// what a consumer reaches and drops through a frame — its blocks' columns,
+/// their storage and its meta values. A change to any of them fails
+/// `tests::layout_matches_the_snapshot` (the `ffi` gate) and changes
+/// [`build_fingerprint`].
 pub fn layout() -> Vec<(&'static str, usize, usize)> {
     use std::mem::{align_of, size_of};
     let out = vec![
@@ -67,6 +69,24 @@ pub fn layout() -> Vec<(&'static str, usize, usize)> {
             "SimBox",
             size_of::<molrs::core::SimBox>(),
             align_of::<molrs::core::SimBox>(),
+        ),
+        // Behind the blocks' maps: a consumer that frees a producer's frame
+        // frees these with its own build's layout. A column array's size does
+        // not depend on its element type, so one stands for all.
+        (
+            "Column",
+            size_of::<molrs::core::Column>(),
+            align_of::<molrs::core::Column>(),
+        ),
+        (
+            "ColumnArray",
+            size_of::<molrs::core::ColumnArray<molrs::op::F>>(),
+            align_of::<molrs::core::ColumnArray<molrs::op::F>>(),
+        ),
+        (
+            "MetaValue",
+            size_of::<molrs::core::MetaValue>(),
+            align_of::<molrs::core::MetaValue>(),
         ),
     ];
     #[cfg(feature = "ff")]
@@ -162,6 +182,9 @@ mod tests {
         ("Frame", 1224, 8),
         ("Block", 328, 8),
         ("SimBox", 1080, 8),
+        ("Column", 16, 8),
+        ("ColumnArray", 112, 8),
+        ("MetaValue", 80, 8),
         ("ForceFieldRef", 8, 8),
         ("ForceField", 136, 8),
     ];
@@ -175,6 +198,37 @@ mod tests {
             "an FFI-crossing layout changed: {:?}",
             layout()
         );
+    }
+
+    /// A frame crosses as a handle, but the consumer drops what it reaches:
+    /// every block's columns and their storage, and the meta values. Their
+    /// layouts are part of the contract — a build whose column storage
+    /// differs (an `Option<Box<dyn Any>>` keeper more, or less) passed the
+    /// capsule check and freed a producer's columns with the wrong layout.
+    #[test]
+    fn the_layout_reaches_what_dropping_a_frame_walks() {
+        use std::mem::{align_of, size_of};
+        let reached = [
+            (
+                "Column",
+                size_of::<molrs::core::Column>(),
+                align_of::<molrs::core::Column>(),
+            ),
+            (
+                "ColumnArray",
+                size_of::<molrs::core::ColumnArray<molrs::op::F>>(),
+                align_of::<molrs::core::ColumnArray<molrs::op::F>>(),
+            ),
+            (
+                "MetaValue",
+                size_of::<molrs::core::MetaValue>(),
+                align_of::<molrs::core::MetaValue>(),
+            ),
+        ];
+        let layout = layout();
+        for entry in reached {
+            assert!(layout.contains(&entry), "{entry:?} is not in {layout:?}");
+        }
     }
 
     #[test]
