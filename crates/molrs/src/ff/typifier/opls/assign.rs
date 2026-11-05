@@ -76,12 +76,12 @@ fn end_score(pattern: &str, atom_type: &str, atom_class: Option<&str>) -> Option
 /// returns `None` only if *both* orientations have a non-matching end.
 ///
 /// `atoms` is `[(type, class), ...]`, the same length as `pattern`.
-fn sequence_score(pattern: &[&str], atoms: &[(&str, Option<&str>)]) -> Option<i64> {
+fn sequence_score<P: AsRef<str>>(pattern: &[P], atoms: &[(&str, Option<&str>)]) -> Option<i64> {
     debug_assert_eq!(pattern.len(), atoms.len());
     let score_in = |order: &mut dyn Iterator<Item = &(&str, Option<&str>)>| -> Option<i64> {
         let mut total = 0;
         for (pat, (at_type, at_class)) in pattern.iter().zip(order) {
-            total += end_score(pat, at_type, *at_class)?;
+            total += end_score(pat.as_ref(), at_type, *at_class)?;
         }
         Some(total)
     };
@@ -197,19 +197,19 @@ impl CandidateTables {
     }
 
     /// Pick the best-ranked candidate for `atoms` from `table`. Highest
-    /// `(score, layer)` wins; `None` if no candidate matches.
-    fn best<'a>(table: &'a [Candidate], atoms: &[(&str, Option<&str>)]) -> Option<&'a Candidate> {
+    /// `(score, layer)` wins, the earlier on a tie; `None` if no candidate
+    /// matches.
+    fn best(table: &[Candidate], atoms: &[(&str, Option<&str>)]) -> Option<usize> {
         let mut best_key: Option<(i64, u32)> = None;
-        let mut best: Option<&'a Candidate> = None;
-        for cand in table {
-            let pat: Vec<&str> = cand.pattern.iter().map(String::as_str).collect();
-            let Some(score) = sequence_score(&pat, atoms) else {
+        let mut best: Option<usize> = None;
+        for (k, cand) in table.iter().enumerate() {
+            let Some(score) = sequence_score(&cand.pattern, atoms) else {
                 continue;
             };
             let key = (score, cand.layer);
             if best_key.is_none_or(|cur| key > cur) {
                 best_key = Some(key);
-                best = Some(cand);
+                best = Some(k);
             }
         }
         best
@@ -218,29 +218,46 @@ impl CandidateTables {
     /// The annotations of one bonded term with endpoint atoms `ends`, matched
     /// against `table`.
     ///
+    /// The winner depends only on the endpoints' types, read either way, so
+    /// it is ranked once per such tuple and kept in `ranked`: a molecule has
+    /// few distinct tuples and many terms, and a table thousands of rows.
+    ///
     /// A match is `type` → [`Annotation::Type`] named by the winning
     /// candidate, with its endpoint pattern and params. A term with an
     /// untyped endpoint, or that no candidate covers, follows `policy`: [`NoMatch::Skip`] gives it no annotation, [`NoMatch::Error`]
     /// is an `Err`.
-    #[allow(clippy::too_many_arguments)]
-    fn annotate(
+    fn annotate<'t>(
         &self,
         graph: &Atomistic,
-        types: &HashMap<NodeId, String>,
+        types: &'t HashMap<NodeId, String>,
         ends: &[NodeId],
         table: &[Candidate],
+        ranked: &mut HashMap<Vec<&'t str>, Option<usize>>,
         policy: NoMatch,
     ) -> Result<Vec<(String, Annotation)>, String> {
-        let Some(names) = ends
+        let Some(mut names) = ends
             .iter()
-            .map(|id| types.get(id).cloned())
-            .collect::<Option<Vec<String>>>()
+            .map(|id| types.get(id).map(String::as_str))
+            .collect::<Option<Vec<&'t str>>>()
         else {
             untyped_endpoint(graph, types, ends, policy)?;
             return Ok(Vec::new());
         };
-        let atoms: Vec<(&str, Option<&str>)> = names.iter().map(|t| self.atom_of(t)).collect();
-        if let Some(cand) = Self::best(table, &atoms) {
+        // Canonical orientation: a term scores alike read either way.
+        if names.iter().rev().lt(names.iter()) {
+            names.reverse();
+        }
+        let won = match ranked.get(&names) {
+            Some(&won) => won,
+            None => {
+                let atoms: Vec<(&str, Option<&str>)> =
+                    names.iter().map(|t| self.atom_of(t)).collect();
+                let won = Self::best(table, &atoms);
+                ranked.insert(names.clone(), won);
+                won
+            }
+        };
+        if let Some(cand) = won.map(|k| &table[k]) {
             return Ok(vec![(
                 "type".to_owned(),
                 Annotation::Type {
@@ -321,6 +338,7 @@ pub(crate) fn typify_bonded_with(
     policy: NoMatch,
 ) -> Result<TypeAssignment, String> {
     let mut m = TypeAssignment::default();
+    let mut ranked = HashMap::new();
 
     // --- bonds (already present from the input topology) ---
     let bonds: Vec<[NodeId; 2]> = graph
@@ -329,7 +347,7 @@ pub(crate) fn typify_bonded_with(
         .collect();
     *m.link_mut(BONDS) = bonds
         .iter()
-        .map(|ends| tables.annotate(graph, types, ends, &tables.bonds, policy))
+        .map(|ends| tables.annotate(graph, types, ends, &tables.bonds, &mut ranked, policy))
         .collect::<Result<_, _>>()?;
 
     // --- enumerate angles + dihedrals from the bond graph (clear existing) ---
@@ -343,7 +361,7 @@ pub(crate) fn typify_bonded_with(
         .collect();
     *m.link_mut(ANGLES) = angles
         .iter()
-        .map(|ends| tables.annotate(graph, types, ends, &tables.angles, policy))
+        .map(|ends| tables.annotate(graph, types, ends, &tables.angles, &mut ranked, policy))
         .collect::<Result<_, _>>()?;
 
     let dihedrals: Vec<[NodeId; 4]> = graph
@@ -352,7 +370,7 @@ pub(crate) fn typify_bonded_with(
         .collect();
     *m.link_mut(DIHEDRALS) = dihedrals
         .iter()
-        .map(|ends| tables.annotate(graph, types, ends, &tables.dihedrals, policy))
+        .map(|ends| tables.annotate(graph, types, ends, &tables.dihedrals, &mut ranked, policy))
         .collect::<Result<_, _>>()?;
 
     Ok(m)
@@ -474,7 +492,7 @@ mod tests {
         // CT-HC (score 2) must beat the wildcard X-HC (score 0+1=1).
         let table = vec![cand(&["", "HC"], 0, 1.0), cand(&["CT", "HC"], 0, 2.0)];
         let atoms = [("opls_135", Some("CT")), ("opls_140", Some("HC"))];
-        let best = CandidateTables::best(&table, &atoms).expect("a match");
+        let best = &table[CandidateTables::best(&table, &atoms).expect("a match")];
         assert_eq!(
             best.params.get("k").and_then(|v| v.as_num()),
             Some(2.0),
@@ -488,7 +506,7 @@ mod tests {
         // (CL&P/CL&Pol) wins the tie.
         let table = vec![cand(&["CT", "HC"], 0, 1.0), cand(&["CT", "HC"], 2, 9.0)];
         let atoms = [("opls_135", Some("CT")), ("opls_140", Some("HC"))];
-        let best = CandidateTables::best(&table, &atoms).expect("a match");
+        let best = &table[CandidateTables::best(&table, &atoms).expect("a match")];
         assert_eq!(
             best.params.get("k").and_then(|v| v.as_num()),
             Some(9.0),
