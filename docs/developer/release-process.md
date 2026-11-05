@@ -2,9 +2,9 @@
 
 Releases are cut from `master` of MolCrafts/molpy, the project repository;
 MolCrafts/molrs is retired. 0.20.0 is the first release of the unified
-project, and the downstream repositories move to it after that release
-(the repository's `.claude/specs/molpy-unification.md`, link 04). The last
-releases before it were 0.19.0 (`v0.19.0`) of the two former repositories.
+project, and the downstream repositories move to it after that release. The
+last releases before it were 0.19.0 (`v0.19.0`) of the two former
+repositories.
 
 One version and one tag cover the whole project.
 
