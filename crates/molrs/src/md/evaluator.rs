@@ -5,7 +5,7 @@
 //! placed around one atom across any periodic face ([`BondedImages`]). Plain
 //! kernels read the coordinates alone.
 
-use molrs::core::{Frame, Virial};
+use molrs::core::{Frame, UnitStyle, Virial};
 use molrs::ff::potential::{
     Accumulator, ForceTerm, IndexedTerms, PairDriven, Potential, SpecialWeights,
 };
@@ -21,9 +21,13 @@ use super::scratch::Scratch;
 /// One or more potential terms mounted as a single `force` component.
 ///
 /// Each term adds into the forces and `meta["energy"]` that the pre-force
-/// clear left at zero.
+/// clear left at zero. The kernels' parameters are taken in the run's units
+/// style; a force field's compiled kernels state theirs with
+/// [`with_units`](Self::with_units), and the run then refuses another style.
 pub struct FfEvaluator {
     members: Vec<(ForceTerm, SpecialWeights)>,
+    /// The units style the parameters were written in, when stated.
+    units: Option<UnitStyle>,
     factors: Vec<F>,
     /// Pair and plain forces on the atoms.
     buf: Vec<F>,
@@ -60,12 +64,22 @@ impl FfEvaluator {
     pub fn from_members(members: Vec<(ForceTerm, SpecialWeights)>) -> Self {
         Self {
             members,
+            units: None,
             factors: Vec::new(),
             buf: Vec::new(),
             rows: Vec::new(),
             explicit: Vec::new(),
             images: BondedImages::default(),
         }
+    }
+
+    /// State the units style the kernels' parameters are in — a force
+    /// field's declared `units`. [`MD::build`](crate::md::MD::build) refuses
+    /// a run in any other style.
+    #[must_use]
+    pub fn with_units(mut self, units: UnitStyle) -> Self {
+        self.units = Some(units);
+        self
     }
 
     pub(crate) fn flags(&self) -> Flags {
@@ -81,7 +95,6 @@ impl FfEvaluator {
             kind: Kind::Evaluator,
             consumes_neighbors,
             frozen_pairs,
-            dt: None,
         }
     }
 }
@@ -93,6 +106,17 @@ impl Component for FfEvaluator {
 
     fn default_bindings(&self) -> Vec<(Phase, i32)> {
         vec![(Phase::Force, 0)]
+    }
+
+    fn build(&mut self, _frame: &mut Frame, units: UnitStyle, _dt: F) -> Result<(), MdError> {
+        match self.units {
+            Some(declared) if declared != units => Err(MdError::UnitsMismatch {
+                what: "the evaluator's force field".into(),
+                declared: declared.name().to_owned(),
+                run: units,
+            }),
+            _ => Ok(()),
+        }
     }
 
     fn launch(
@@ -194,7 +218,7 @@ mod tests {
     use super::super::neighbor_list::Neighbor;
     use super::*;
     use molrs::core::NeighborList;
-    use molrs::core::{Block, Cell, MetaValue, SimBox, UnitPreset};
+    use molrs::core::{Block, Cell, MetaValue, SimBox};
     use molrs::ff::compile::ExplicitTerms;
     use molrs::ff::ir::Params;
     use molrs::ff::potential::pair::PairLjCut;
@@ -235,7 +259,7 @@ mod tests {
     ) -> (F, ndarray::Array2<F>, Option<[F; 6]>) {
         let mut scratch = Scratch::new();
         if let Some(neighbor) = neighbor {
-            neighbor.build(frame, &UnitPreset::real()).unwrap();
+            neighbor.build(frame, UnitStyle::Real, 1.0).unwrap();
             neighbor
                 .launch(Phase::Neighbor, frame, &mut scratch)
                 .unwrap();
@@ -345,11 +369,10 @@ mod tests {
     #[test]
     fn a_rescaled_cell_is_followed() {
         let lj = || FfEvaluator::pair(PairLjCut::new(0.3, 3.4, 3.0, 12, 6, false, false).unwrap());
-        let units = UnitPreset::real();
         let pos = array![[1.0, 5.0, 5.0], [8.5, 5.0, 5.0]];
         let mut state = frame(&pos, cubic(10.0, true));
         let mut mounted = neighbor(3.5, 0.5);
-        mounted.build(&mut state, &units).unwrap();
+        mounted.build(&mut state, UnitStyle::Real, 1.0).unwrap();
         let mut scratch = Scratch::new();
         mounted
             .launch(Phase::Neighbor, &mut state, &mut scratch)
@@ -378,5 +401,25 @@ mod tests {
             (followed - expected).abs() <= 1e-12 * expected.abs(),
             "{followed} vs {expected}"
         );
+    }
+
+    /// Kernels stated in `metal` cannot run in `real`; stated in the run's
+    /// style, or not stated at all, they build.
+    #[test]
+    fn a_force_field_in_another_style_is_refused() {
+        let lj = || FfEvaluator::pair(PairLjCut::new(0.3, 3.4, 3.0, 12, 6, false, false).unwrap());
+        let mut state = frame(&array![[1.0, 5.0, 5.0]], cubic(10.0, true));
+        let err = lj()
+            .with_units(UnitStyle::Metal)
+            .build(&mut state, UnitStyle::Real, 1.0)
+            .unwrap_err();
+        assert!(
+            matches!(&err, MdError::UnitsMismatch { declared, run: UnitStyle::Real, .. } if declared == "metal"),
+            "{err}"
+        );
+        lj().with_units(UnitStyle::Real)
+            .build(&mut state, UnitStyle::Real, 1.0)
+            .unwrap();
+        lj().build(&mut state, UnitStyle::Real, 1.0).unwrap();
     }
 }

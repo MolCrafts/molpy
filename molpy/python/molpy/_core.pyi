@@ -6931,7 +6931,7 @@ class PairLjCut:
         ones)."""
 
 # ---------------------------------------------------------------------------
-# molpy.md — in-process MD (mirrors molpy/src/md.rs).
+# molpy.md — in-process MD (mirrors molpy/src/md/mod.rs).
 # Submodule stubbed as a class namespace, following the `keys` precedent.
 # ---------------------------------------------------------------------------
 
@@ -6939,7 +6939,9 @@ class md:
     """The ``_core.md`` submodule (``molpy.md``).
 
     :class:`MD` walks the LAMMPS phase list. Potentials stay in
-    ``molpy.ff.potential``. A run is in the unit preset ``MD`` is built with.
+    ``molpy.ff.potential``. A run is in the LAMMPS units style ``MD`` is
+    built with (default ``"lj"``); every input is in it and nothing is
+    converted.
     """
 
     class Phase:
@@ -6957,47 +6959,48 @@ class md:
         end_of_step: Self
 
     class VelocityVerlet:
-        """NVE velocity Verlet. ``dt`` only, in the run's time unit; the frame
-        carries mass and state."""
+        """NVE velocity Verlet (LAMMPS ``fix nve``). It steps by the run's
+        timestep; the frame carries mass and state."""
 
-        def __init__(self, dt: float) -> None: ...
-        @property
-        def dt(self) -> float: ...
+        def __init__(self) -> None: ...
 
     class FixLangevin:
         """LAMMPS ``fix langevin`` at one temperature, at ``post_force``.
-        ``temperature`` is in the run's temperature unit, ``damp`` and ``dt``
-        in its time unit; Boltzmann's constant comes from the run's units."""
+        ``temperature`` is in the run's temperature unit and ``damp`` in its
+        time unit; the timestep and Boltzmann's constant are the run's."""
 
-        def __init__(
-            self, temperature: float, damp: float, dt: float, *, seed: int
-        ) -> None: ...
+        def __init__(self, temperature: float, damp: float, *, seed: int) -> None: ...
         @property
         def temperature(self) -> float: ...
-        @property
-        def dt(self) -> float: ...
 
     class BerendsenBarostat:
-        """Isotropic Berendsen pressure coupling at ``end_of_step``:
-        ``μ³ = 1 − (dt/tau)(pressure − P)/bulk_modulus``. ``pressure`` and
-        ``bulk_modulus`` in the run's pressure unit, ``tau`` and ``dt`` in its
-        time unit."""
+        """Isotropic Berendsen pressure coupling (LAMMPS ``fix press/berendsen
+        iso``) at ``end_of_step``: ``μ³ = 1 − (dt/tau)(pressure − P)/bulk_modulus``,
+        the cell scaled about its centre. ``pressure`` and ``bulk_modulus`` in
+        the run's pressure unit, ``tau`` in its time unit."""
 
         def __init__(
-            self, pressure: float, tau: float, bulk_modulus: float, dt: float
+            self, pressure: float, tau: float, bulk_modulus: float
         ) -> None: ...
         @property
         def pressure(self) -> float: ...
-        @property
-        def dt(self) -> float: ...
 
     class MD:
-        """Phase driver in one unit system. :meth:`run` writes the frame it
-        is given."""
+        """Phase driver in one LAMMPS units style. :meth:`run` writes the
+        frame it is given."""
 
-        def __init__(self, units: str | UnitPreset) -> None:
-            """``units`` is the run's preset (``"real"``, ``"metal"``, …):
-            ``dt`` in its time unit, masses, energies and forces in its units."""
+        def __init__(self, *, units: str = "lj") -> None:
+            """``units`` is the run's LAMMPS units style. Masses, lengths,
+            the timestep, energies, forces, temperatures and pressures are all
+            in it; a potential, force field or frame stating another style is
+            refused. The timestep starts at the style's LAMMPS default."""
+        @property
+        def units(self) -> str: ...
+        @property
+        def timestep(self) -> float:
+            """The timestep, in the style's time unit."""
+        def set_timestep(self, dt: float) -> None:
+            """LAMMPS ``timestep dt``, in the style's time unit."""
         @property
         def step(self) -> int:
             """The step index of the last force evaluation; it counts across
@@ -7010,29 +7013,31 @@ class md:
         def set_barostat(self, barostat: "md.BerendsenBarostat") -> None:
             """Mount ``barostat``; every force provider must give a virial,
             and ``meta["pressure"]`` is written each step."""
-        def set_neighbor(self, list: NeighborList, *, skin: float = 0.0) -> None:
+        def set_neighbor(self, list: NeighborList, *, skin: float) -> None:
             """Mount ``list`` (moved in) as the run's neighbour list; pairs
             within ``list.cutoff - skin`` reach the pair kernels."""
         def set_evaluator(
             self,
             potential: PairLjCut | Potentials | WeightedTerms | Any,
             *,
-            skin: float = 0.0,
+            skin: float | None = None,
         ) -> None:
             """Mount the run's evaluator: native kernels, or a Python
             :class:`molpy.ff.potential.Potential` (``skin`` is its own
-            neighbour search's margin)."""
+            neighbour search's margin; ``None`` is the style's LAMMPS
+            default)."""
         def run(self, frame: Frame, n_steps: int) -> None: ...
 
     class MaxwellBoltzmann:
-        """Velocity distribution at ``temperature`` in ``units`` (optionally
-        COM-free): velocities in the preset's velocity unit."""
+        """Velocities at exactly ``temperature`` in LAMMPS units style
+        ``units`` (LAMMPS ``velocity create … dist gaussian``; optionally
+        COM-free), in the style's velocity unit."""
 
         def __init__(
             self,
             temperature: float,
             *,
-            units: str | UnitPreset,
+            units: str = "lj",
             seed: int = 0,
             remove_com: bool = True,
         ) -> None: ...
@@ -7042,6 +7047,8 @@ class md:
         def seed(self) -> int: ...
         @property
         def remove_com(self) -> bool: ...
+        @property
+        def units(self) -> str: ...
         def velocities(self, pos: ArrayF, mass: ArrayF) -> ArrayF: ...
 
 class ir:

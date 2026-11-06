@@ -27,12 +27,25 @@ at any step.
 
 ## Units
 
-A run is in one unit system, the preset `MD` is built with. `dt` is in that
-preset's time unit — femtoseconds in `real`, picoseconds in `metal` — exactly as
-in LAMMPS. Masses, energies, forces, temperatures and pressures are in its
-units too. The driver applies the preset's conversion constants (`ftm2v`,
-`mvv2e`, k_B) itself, so `VelocityVerlet(2.0)` in `real` is a 2 fs step,
-whatever the energy unit.
+A run is in one LAMMPS units style, chosen when `MD` is built:
+`MD(units="real")`. The styles are LAMMPS's eight — `lj` (the default, as in
+LAMMPS), `real`, `metal`, `si`, `cgs`, `electron`, `micro` and `nano` — and they
+mean exactly what the LAMMPS `units` command makes them mean. Every input is
+in the run's style: masses, positions and velocities on the frame, the
+timestep, force-field parameters, temperatures, pressures and damping times.
+The driver applies the style's conversion constants (`ftm2v`, `mvv2e`, `boltz`,
+`nktv2p`) with LAMMPS's own values, so a step in `real` is the step LAMMPS
+takes in `real`.
+
+Nothing is converted between styles. A Python potential declares the style of
+the numbers it returns (`units = "metal"`), a force field its `units`, and a
+frame read from a LAMMPS data file the style its title states; if any of them
+is not the run's style, the run refuses to start and names both.
+
+The timestep belongs to the run, as LAMMPS's `timestep` does, and starts at the
+style's LAMMPS default: 0.005 τ in `lj`, 1 fs in `real`, 0.001 ps in `metal`.
+`set_timestep` changes it; the integrator, thermostat and barostat all step by
+it.
 
 ## A Lennard-Jones liquid at constant temperature
 
@@ -64,33 +77,36 @@ def argon(n_side=6, spacing=3.8):
 
 
 frame = argon()
-units = mp.core.UnitPreset("real")
-velocities = mp.md.MaxwellBoltzmann(120.0, units=units, seed=1).velocities(
+velocities = mp.md.MaxwellBoltzmann(120.0, units="real", seed=1).velocities(
     np.asarray(frame["atoms"]["x", "y", "z"]), np.asarray(frame["atoms"]["mass"])
 )
 frame["atoms"]["vx", "vy", "vz"] = np.ascontiguousarray(velocities)
 
-sim = mp.md.MD(units)
-sim.set_integrator(mp.md.VelocityVerlet(2.0))  # fs
+sim = mp.md.MD(units="real")
+sim.set_timestep(2.0)  # fs
+sim.set_integrator(mp.md.VelocityVerlet())
 sim.set_neighbor(mp.core.NeighborList(9.5), skin=1.0)  # pairs within 8.5 Å reach the kernel
 sim.set_evaluator(mp.ff.potential.PairLjCut(0.238, 3.405, 8.5))  # kcal/mol, Å
-sim.set_thermostat(mp.md.FixLangevin(120.0, 200.0, 2.0, seed=7))  # K, fs, fs
+sim.set_thermostat(mp.md.FixLangevin(120.0, 200.0, seed=7))  # K, fs
 sim.run(frame, 200)
 
 print(sim.step, frame.meta["energy"], frame.meta["kinetic"])
 ```
 
-`MaxwellBoltzmann` draws velocities at a temperature (the preset's temperature
-unit), in the preset's velocity unit, and removes the centre-of-mass motion. `FixLangevin` adds a drag and a
+`MaxwellBoltzmann` sets velocities as LAMMPS `velocity all create` does: it
+draws them in the style's velocity unit, removes the centre-of-mass motion, and
+scales them so the temperature — counted over `3N − 3` degrees of freedom, as
+LAMMPS `compute temp` counts it — is exactly the one asked for. `FixLangevin` adds a drag and a
 random force at `post_force`. Its noise is keyed by the run's step and each
 atom's id, so a run is reproducible from its seed. `sim.step` counts across
 calls to `run`: two runs of 100 steps are one run of 200.
 
 ## Pressure
 
-`BerendsenBarostat` rescales the cell and the positions at the end of each
-step, by `μ³ = 1 − (dt/τ)(P₀ − P)/B`, toward a target pressure `P₀` (atm in
-`real`). It reads the step's virial, so every force provider must supply one;
+`BerendsenBarostat` rescales the cell and the positions about the cell's
+centre at the end of each step, by `μ³ = 1 − (dt/τ)(P₀ − P)/B`, toward a target
+pressure `P₀` (atm in `real`), as LAMMPS `fix press/berendsen iso` does. The
+pressure is LAMMPS's, `(2K + tr W)/(3V)` times the style's `nktv2p`. It reads the step's virial, so every force provider must supply one;
 a pair kernel always does. The instantaneous pressure is written to
 `frame.meta["pressure"]`. `B` is the system's bulk modulus: the volume relaxes
 with a time of about `τ·B_coupling/B_system`, so an overestimate only slows the
@@ -98,7 +114,7 @@ coupling down. Berendsen coupling relaxes the volume but does not sample the
 isothermal–isobaric ensemble: use it to equilibrate a density.
 
 ```python
-sim.set_barostat(mp.md.BerendsenBarostat(1.0, 1000.0, 1.0e3, 2.0))  # atm, fs, atm, fs
+sim.set_barostat(mp.md.BerendsenBarostat(1.0, 1000.0, 1.0e3))  # atm, fs, atm
 volume = frame.box.volume()
 sim.run(frame, 100)
 print(frame.meta["pressure"], frame.box.volume() / volume)
@@ -132,12 +148,13 @@ record = bytearray()
 mp.io.write_mrec(record, frame=frame, meta={"step": sim.step})
 
 stored = mp.io.mrec.MrecFile(bytes(record))
-restart = mp.md.MD("real")
-restart.set_integrator(mp.md.VelocityVerlet(2.0))
+restart = mp.md.MD(units="real")
+restart.set_timestep(2.0)
+restart.set_integrator(mp.md.VelocityVerlet())
 restart.set_neighbor(mp.core.NeighborList(9.5), skin=1.0)
 restart.set_evaluator(mp.ff.potential.PairLjCut(0.238, 3.405, 8.5))
-restart.set_thermostat(mp.md.FixLangevin(120.0, 200.0, 2.0, seed=7))
-restart.set_barostat(mp.md.BerendsenBarostat(1.0, 1000.0, 1.0e3, 2.0))
+restart.set_thermostat(mp.md.FixLangevin(120.0, 200.0, seed=7))
+restart.set_barostat(mp.md.BerendsenBarostat(1.0, 1000.0, 1.0e3))
 restart.resume(stored.meta()["step"])
 resumed = stored.frame()
 restart.run(resumed, 50)
@@ -158,8 +175,9 @@ total energy: the zero of a potential is arbitrary, and a ratio to `E₀` can
 hide a drift of meV per atom.
 
 ```python
-nve = mp.md.MD("real")
-nve.set_integrator(mp.md.VelocityVerlet(2.0))
+nve = mp.md.MD(units="real")
+nve.set_timestep(2.0)
+nve.set_integrator(mp.md.VelocityVerlet())
 nve.set_neighbor(mp.core.NeighborList(9.5), skin=1.0)
 nve.set_evaluator(mp.ff.potential.PairLjCut(0.238, 3.405, 8.5))
 
@@ -177,8 +195,8 @@ print(result.drift, result.rms)  # kcal/mol per atom per fs, kcal/mol per atom
 
 A neural network, or any program that turns positions into forces by itself,
 is a Python **potential**: an object satisfying `mp.ff.potential.Potential`.
-It declares the units it returns and the cutoff of its own neighbour search,
-and implements two methods:
+It declares the LAMMPS units style it works in (which must be the run's) and
+the cutoff of its own neighbour search, and implements two methods:
 
 - `bind(frame, skin)` is called once before the first evaluation, and again
   after any change to the run. It reads what it needs from the frame (species,
@@ -191,7 +209,8 @@ and implements two methods:
   written the positions into the buffer. The potential writes the forces (and
   the virial) into theirs in place, and returns the energy.
 
-`set_evaluator` mounts it, with `skin` the margin of its own neighbour search.
+`set_evaluator` mounts it, with `skin` the margin of its own neighbour search
+(left out, the style's LAMMPS default: 2 Å in `real` and `metal`).
 The driver owns the neighbour-list cadence. `rebuild` is true when the list the
 potential built at `cutoff + skin` may be stale, and `box` is the cell when it
 changed since the last call. Raise from `compute` to stop the run: the
@@ -219,8 +238,8 @@ class Springs:
         return 0.5 * self.k * float((d * d).sum())
 
 
-tethered = mp.md.MD("real")
-tethered.set_integrator(mp.md.VelocityVerlet(1.0))
+tethered = mp.md.MD(units="real")
+tethered.set_integrator(mp.md.VelocityVerlet())  # the default 1 fs
 tethered.set_evaluator(Springs(k=2.0))
 tethered.run(argon(), 50)
 ```

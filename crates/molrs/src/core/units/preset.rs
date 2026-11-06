@@ -449,22 +449,6 @@ impl UnitPreset {
         UnitRegistry::global().factor(&from, self.pressure())
     }
 
-    /// The factor that reads `other`'s `dimension` unit in this preset's:
-    /// eV → kcal/mol is `real.factor_from(&metal, PresetDim::Energy)`.
-    ///
-    /// # Errors
-    ///
-    /// [`UnitsError`] when the two units do not convert.
-    pub fn factor_from(&self, other: &UnitPreset, dimension: PresetDim) -> Result<F, UnitsError> {
-        let key = dimension.name();
-        let unit = |p: &UnitPreset| {
-            p.unit(key)
-                .expect("a preset defines every dimension")
-                .to_owned()
-        };
-        UnitRegistry::global().factor(&unit(other), &unit(self))
-    }
-
     pub fn mass(&self) -> &str {
         self.unit("mass").expect("preset defines mass")
     }

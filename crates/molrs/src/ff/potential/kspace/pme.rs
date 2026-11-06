@@ -2037,7 +2037,7 @@ mod tests {
     #[test]
     fn a_barostat_couples_a_pme_system() {
         use crate::md::{BerendsenBarostat, FfEvaluator, MD, VelocityVerlet};
-        use molrs::core::{MetaValue, NeighborList, UnitPreset};
+        use molrs::core::{MetaValue, NeighborList, UnitStyle};
         let mut frame = ions(10.0);
         let atoms = frame.get_mut(ATOMS).unwrap();
         for key in ["vx", "vy", "vz"] {
@@ -2051,14 +2051,13 @@ mod tests {
         let members = PotentialCompiler::new(&field(SpecialBonds::EXCLUDE_12_13))
             .compile_typed(&frame)
             .unwrap();
-        let mut md = MD::new(UnitPreset::real()).unwrap();
-        md.set_integrator(VelocityVerlet::new(1.0).unwrap())
-            .unwrap();
+        let mut md = MD::new(UnitStyle::Real);
+        md.set_integrator(VelocityVerlet::default()).unwrap();
         md.set_neighbor(NeighborList::new(4.9).unwrap(), 0.4)
             .unwrap();
         md.set_evaluator(FfEvaluator::from_members(members))
             .unwrap();
-        md.set_barostat(BerendsenBarostat::new(1.0, 100.0, 4.5e4, 1.0).unwrap())
+        md.set_barostat(BerendsenBarostat::new(1.0, 100.0, 4.5e4).unwrap())
             .unwrap();
         md.run(&mut frame, 5).unwrap();
         let volume = frame.simbox.as_ref().unwrap().volume();

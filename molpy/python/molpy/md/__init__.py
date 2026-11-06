@@ -6,19 +6,24 @@ The pieces are mounted on it. A potential is not an integrator argument::
     from molpy import md
     from molpy.ff.potential import PairLjCut
 
-    sim = md.MD("real")
-    sim.set_integrator(md.VelocityVerlet(10.0))
+    sim = md.MD(units="real")
+    sim.set_timestep(2.0)
+    sim.set_integrator(md.VelocityVerlet())
     sim.set_neighbor(mp.core.NeighborList(7.3), skin=0.5)
     sim.set_evaluator(PairLjCut(0.238, 3.405, 6.8))
     sim.run(frame, 1000)
 
-A run is in one unit system, the preset ``MD`` is constructed with. ``dt``
-is in its time unit (fs in ``real``, ps in ``metal``), as in LAMMPS. Masses,
-energies and forces are in its units too. The neighbour list is the one
+A run is in one LAMMPS units style, given when ``MD`` is constructed
+(``units="lj"`` by default, as in LAMMPS), and means what LAMMPS ``units``
+means: the same constants, and the same default timestep (1 fs in ``real``,
+0.001 ps in ``metal``). Every input is in it — masses, positions, the
+timestep, force-field parameters, temperatures and pressures — and nothing
+is converted: a potential, force field or frame stating another style is
+refused. The neighbour list is the one
 :class:`molpy.core.NeighborList`: it knows only its cutoff, and the frame box
 supplies the periodicity. ``run`` writes the same frame: coordinates,
 velocities, forces, image flags, ``meta["energy"]`` and ``meta["kinetic"]``.
-``dt`` lives on the integrator; mass and velocities live on the frame. A
+The timestep lives on the run; mass and velocities live on the frame. A
 potential of your own, such as a neural network, is a
 :class:`molpy.ff.potential.Potential` mounted with :meth:`MD.set_evaluator`.
 """

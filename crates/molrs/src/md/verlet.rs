@@ -4,40 +4,34 @@
 //! them binds the phase that already sits there (`post_force` for a Langevin
 //! force, `post_integrate` for a hook after the drift).
 
-use molrs::core::Frame;
+use molrs::core::{Frame, UnitStyle};
 use molrs::op::F;
 
 use super::columns::{self, read_force, read_images, read_mass, read_pos, read_vel};
-use super::component::{Component, Integrator, TimestepProvider};
+use super::component::{Component, Integrator};
 use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
-use molrs::core::UnitPreset;
 
-/// NVE velocity Verlet.
+/// NVE velocity Verlet, LAMMPS `fix nve`.
 ///
 /// `initial_integrate`: `v += ½ Δt f/m · ftm2v`, `x += Δt v`, then wrap into
 /// the cell when the frame has a box.
 /// `final_integrate`: `v += ½ Δt f/m · ftm2v`.
-#[derive(Clone, Copy, Debug)]
+///
+/// `Δt` is the run's timestep ([`MD::set_timestep`](crate::md::MD::set_timestep))
+/// and `ftm2v` its units style's ([`UnitConstants::ftm2v`](molrs::core::UnitConstants)),
+/// both read at `build`. Mass, positions and velocities are frame columns.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct VelocityVerlet {
-    dt: F,
-    /// The run's force·time/mass → velocity factor, set at `build`.
-    ftm2v: Option<F>,
+    /// `(Δt, ftm2v)` of the run, set at `build`.
+    step: Option<(F, F)>,
 }
 
 impl VelocityVerlet {
-    /// `dt` in the run's time unit. Mass, positions, and
-    /// velocities are read from the frame at launch, not stored here.
-    pub fn new(dt: F) -> Result<Self, MdError> {
-        if !dt.is_finite() || dt <= 0.0 {
-            return Err(MdError::Invalid(format!("dt must be > 0, got {dt}")));
-        }
-        Ok(Self { dt, ftm2v: None })
-    }
-
-    /// `v += scale · f/m`, `scale = ½ Δt · ftm2v`.
-    fn kick(frame: &mut Frame, scale: F) -> Result<(), MdError> {
+    /// `v += dtfm · f` with `dtfm = dtf / m`, `dtf = ½ Δt · ftm2v`, in the
+    /// order LAMMPS `FixNVE::initial_integrate` rounds it.
+    fn kick(frame: &mut Frame, dtf: F) -> Result<(), MdError> {
         let force = read_force(frame)?;
         let mass = read_mass(frame)?;
         let mut vel = read_vel(frame)?;
@@ -50,9 +44,9 @@ impl VelocityVerlet {
             )));
         }
         for i in 0..vel.nrows() {
-            let inv_m = 1.0 / mass[i];
+            let dtfm = dtf / mass[i];
             for axis in 0..3 {
-                vel[[i, axis]] += scale * force[[i, axis]] * inv_m;
+                vel[[i, axis]] += dtfm * force[[i, axis]];
             }
         }
         columns::write_vel(frame, &vel)
@@ -86,12 +80,6 @@ impl VelocityVerlet {
     }
 }
 
-impl TimestepProvider for VelocityVerlet {
-    fn dt(&self) -> F {
-        self.dt
-    }
-}
-
 impl Component for VelocityVerlet {
     fn name(&self) -> &str {
         "velocity_verlet"
@@ -101,8 +89,8 @@ impl Component for VelocityVerlet {
         vec![(Phase::InitialIntegrate, 0), (Phase::FinalIntegrate, 0)]
     }
 
-    fn build(&mut self, _frame: &mut Frame, units: &UnitPreset) -> Result<(), MdError> {
-        self.ftm2v = Some(units.ftm2v()?);
+    fn build(&mut self, _frame: &mut Frame, units: UnitStyle, dt: F) -> Result<(), MdError> {
+        self.step = Some((dt, units.constants().ftm2v));
         Ok(())
     }
 
@@ -112,14 +100,14 @@ impl Component for VelocityVerlet {
         frame: &mut Frame,
         _scratch: &mut Scratch,
     ) -> Result<(), MdError> {
-        let ftm2v = self
-            .ftm2v
+        let (dt, ftm2v) = self
+            .step
             .ok_or_else(|| MdError::Invalid("velocity_verlet was launched before build".into()))?;
-        let half = 0.5 * self.dt * ftm2v;
+        let half = 0.5 * dt * ftm2v;
         match phase {
             Phase::InitialIntegrate => {
                 Self::kick(frame, half)?;
-                Self::drift_and_wrap(frame, self.dt)?;
+                Self::drift_and_wrap(frame, dt)?;
             }
             Phase::FinalIntegrate => Self::kick(frame, half)?,
             _ => {}

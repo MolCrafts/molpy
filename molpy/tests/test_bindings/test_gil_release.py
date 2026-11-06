@@ -99,8 +99,9 @@ def test_a_native_md_run_lets_other_python_threads_run() -> None:
     frame.box = mp.core.Box(mp.core.Cell.lengths([n_side * spacing] * 3))
 
     def run() -> None:  # an MD stays on the thread that made it
-        sim = mp.md.MD("real")
-        sim.set_integrator(mp.md.VelocityVerlet(0.001))
+        sim = mp.md.MD(units="real")
+        sim.set_timestep(0.001)
+        sim.set_integrator(mp.md.VelocityVerlet())
         sim.set_neighbor(mp.core.NeighborList(3.0), skin=0.5)
         sim.set_evaluator(mp.ff.potential.PairLjCut(1.0, 1.0, 2.5))
         sim.run(frame, 200)

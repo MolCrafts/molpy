@@ -74,8 +74,9 @@ def _pair(x1: float = 0.8) -> mp.core.Frame:
 
 
 def _md(potential, units: str = "real") -> mp.md.MD:
-    sim = mp.md.MD(units)
-    sim.set_integrator(mp.md.VelocityVerlet(0.5))
+    sim = mp.md.MD(units=units)
+    sim.set_timestep(0.5)
+    sim.set_integrator(mp.md.VelocityVerlet())
     sim.set_evaluator(potential, skin=0.5)
     return sim
 
@@ -128,7 +129,7 @@ def test_bind_once_across_runs_and_again_after_a_setter():
     sim.run(frame, 2)
     sim.run(frame, 2)
     assert calc.binds == 1
-    sim.set_integrator(mp.md.VelocityVerlet(0.5))
+    sim.set_integrator(mp.md.VelocityVerlet())
     sim.run(frame, 1)
     assert calc.binds == 2
 
@@ -155,14 +156,36 @@ def test_rebuild_and_box_arrive_when_they_change():
     assert [c[2] for c in calc.calls] == [True, False, False, True]
 
 
-def test_a_metal_potential_is_converted_into_a_real_run():
+def test_a_metal_potential_in_a_real_run_is_refused():
     class MetalBond(Bond):
         units = "metal"
 
-    frame = _pair(0.8)
-    _md(MetalBond()).run(frame, 0)
-    ev_in_kcal_per_mol = 23.060_548
-    assert frame.meta["energy"] == pytest.approx(16.0 * ev_in_kcal_per_mol, rel=1e-6)
+    with pytest.raises(ValueError, match="'metal'.*'real'"):
+        _md(MetalBond()).run(_pair(0.8), 0)
+
+
+def test_a_potential_units_that_is_no_lammps_style_is_refused():
+    class OpenmmBond(Bond):
+        units = "openmm"
+
+    with pytest.raises(mp.core.UnitsError, match="openmm"):
+        _md(OpenmmBond())
+
+
+def test_without_a_skin_the_potential_builds_at_the_style_default():
+    skins = []
+
+    class Recording(Bond):
+        def bind(self, frame, skin):
+            skins.append(skin)
+            return super().bind(frame, skin)
+
+    sim = mp.md.MD(units="real")
+    sim.set_integrator(mp.md.VelocityVerlet())
+    sim.set_evaluator(Recording())
+    sim.run(_pair(1.2), 0)
+    # LAMMPS `units real` sets `neighbor 2.0 bin`.
+    assert skins == [2.0]
 
 
 @pytest.mark.parametrize(
@@ -203,7 +226,7 @@ def test_a_potential_without_units_is_refused():
         def compute(self, step, rebuild, box): ...
 
     with pytest.raises(TypeError, match="units"):
-        mp.md.MD("real").set_evaluator(Undeclared())
+        mp.md.MD(units="real").set_evaluator(Undeclared())
 
 
 def test_an_object_without_the_protocol_is_refused():
@@ -212,12 +235,12 @@ def test_an_object_without_the_protocol_is_refused():
             return 0.0, np.zeros_like(pos)
 
     with pytest.raises(TypeError, match="bind"):
-        mp.md.MD("real").set_evaluator(Evaluate())
+        mp.md.MD(units="real").set_evaluator(Evaluate())
 
 
 def test_a_skin_is_refused_for_native_kernels():
     with pytest.raises(ValueError, match="set_neighbor"):
-        mp.md.MD("real").set_evaluator(
+        mp.md.MD(units="real").set_evaluator(
             mp.ff.potential.PairLjCut(0.238, 3.405, 8.5), skin=1.0
         )
 
@@ -229,8 +252,9 @@ def test_a_compiled_potentials_of_native_kernels_is_accepted():
     holder.push(
         mp.ff.ExplicitTerms("bond", "harmonic", [[0, 1]], k=100.0, r0=1.0).compile()
     )
-    sim = mp.md.MD("real")
-    sim.set_integrator(mp.md.VelocityVerlet(0.5))
+    sim = mp.md.MD(units="real")
+    sim.set_timestep(0.5)
+    sim.set_integrator(mp.md.VelocityVerlet())
     sim.set_neighbor(mp.core.NeighborList(3.0), skin=0.5)
     sim.set_evaluator(holder)
     frame = _pair(0.8)
@@ -286,7 +310,7 @@ def test_a_python_potential_inside_potentials_is_refused_by_md():
     holder = mp.ff.potential.Potentials()
     holder.push(Bond())
     with pytest.raises(TypeError, match="itself"):
-        mp.md.MD("real").set_evaluator(holder)
+        mp.md.MD(units="real").set_evaluator(holder)
 
 
 def test_set_evaluator_replaces_the_python_potential():
@@ -301,7 +325,7 @@ def test_set_evaluator_replaces_the_python_potential():
 def test_a_barostat_rescales_the_cell_and_hands_it_to_the_potential():
     calc = Bond()
     sim = _md(calc)
-    sim.set_barostat(mp.md.BerendsenBarostat(1.0, 500.0, 2.2e4, 0.5))
+    sim.set_barostat(mp.md.BerendsenBarostat(1.0, 500.0, 2.2e4))
     frame = _pair(0.8)
     before = frame.box.volume()
     sim.run(frame, 3)
@@ -319,6 +343,6 @@ def test_a_barostat_without_a_virial_is_refused():
             return positions, forces
 
     sim = _md(NoVirial())
-    sim.set_barostat(mp.md.BerendsenBarostat(1.0, 500.0, 2.2e4, 0.5))
+    sim.set_barostat(mp.md.BerendsenBarostat(1.0, 500.0, 2.2e4))
     with pytest.raises(ValueError, match="virial"):
         sim.run(_pair(0.8), 1)

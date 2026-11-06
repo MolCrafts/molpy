@@ -7,20 +7,22 @@
 //! ```
 //!
 //! (Berendsen et al., J. Chem. Phys. 81, 3684 (1984); LAMMPS
-//! `fix press/berendsen` takes the bulk modulus `B = 1/β`). `P` is the
-//! instantaneous pressure `(2K + tr W) / (3V)` from the step's synchronous
-//! velocities `v(t+Δt)` and virial `W(x(t+Δt))`. The cell is scaled about its
-//! origin, `H' = μH` and `x' = o + μ(x − o)`, so fractional coordinates and
+//! `fix press/berendsen iso`, which takes the bulk modulus `B = 1/β`). `P` is
+//! the instantaneous pressure `(2K + tr W) / (3V) · nktv2p` from the step's
+//! synchronous velocities `v(t+Δt)` and virial `W(x(t+Δt))`, as LAMMPS
+//! `compute pressure` forms it (`dof · boltz · T` is `2K`). The cell is scaled
+//! about its centre `c`, as `FixPressBerendsen::remap` scales `boxlo` and
+//! `boxhi`: `H' = μH` and `x' = c + μ(x − c)`, so fractional coordinates and
 //! image flags are unchanged. Velocities are not scaled.
 //!
 //! The rescale does not conserve any energy; it relaxes the volume toward
 //! `P₀`. It is the equilibration coupling, not an NPT ensemble.
 
-use molrs::core::{Frame, MetaValue, UnitPreset};
-use molrs::op::{F, Fnx3};
+use molrs::core::{Cell, Frame, MetaValue, SimBox, UnitStyle};
+use molrs::op::F;
 
 use super::columns::{self, VIRIAL, read_pos};
-use super::component::{Barostat, Component, TimestepProvider};
+use super::component::{Barostat, Component};
 use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
@@ -34,27 +36,27 @@ pub struct BerendsenBarostat {
     pressure: F,
     tau: F,
     bulk_modulus: F,
-    dt: F,
-    /// The run's energy/length³ → pressure factor, set at `build`.
-    nktv2p: Option<F>,
+    /// `(Δt, nktv2p)` of the run, set at `build`.
+    step: Option<(F, F)>,
 }
 
 impl BerendsenBarostat {
-    /// Couple to `pressure` (the run's pressure unit) with relaxation time
-    /// `tau` and the system's `bulk_modulus` (pressure unit), at the
-    /// integrator's `dt`.
+    /// Couple to `pressure` (the run style's pressure unit) with relaxation
+    /// time `tau` (its time unit, LAMMPS `Pdamp`) and the system's
+    /// `bulk_modulus` (pressure unit, LAMMPS `modulus`), at the run's
+    /// timestep.
     ///
     /// # Errors
     ///
     /// [`MdError::Invalid`] for a non-finite `pressure` or a non-positive
-    /// `tau`, `bulk_modulus` or `dt`.
-    pub fn new(pressure: F, tau: F, bulk_modulus: F, dt: F) -> Result<Self, MdError> {
+    /// `tau` or `bulk_modulus`.
+    pub fn new(pressure: F, tau: F, bulk_modulus: F) -> Result<Self, MdError> {
         if !pressure.is_finite() {
             return Err(MdError::Invalid(format!(
                 "pressure must be finite, got {pressure}"
             )));
         }
-        for (name, value) in [("tau", tau), ("bulk_modulus", bulk_modulus), ("dt", dt)] {
+        for (name, value) in [("tau", tau), ("bulk_modulus", bulk_modulus)] {
             if !(value.is_finite() && value > 0.0) {
                 return Err(MdError::Invalid(format!("{name} must be > 0, got {value}")));
             }
@@ -63,20 +65,13 @@ impl BerendsenBarostat {
             pressure,
             tau,
             bulk_modulus,
-            dt,
-            nktv2p: None,
+            step: None,
         })
     }
 
     /// The target pressure.
     pub fn pressure(&self) -> F {
         self.pressure
-    }
-}
-
-impl TimestepProvider for BerendsenBarostat {
-    fn dt(&self) -> F {
-        self.dt
     }
 }
 
@@ -89,7 +84,7 @@ impl Component for BerendsenBarostat {
         vec![(Phase::EndOfStep, 0)]
     }
 
-    fn build(&mut self, frame: &mut Frame, units: &UnitPreset) -> Result<(), MdError> {
+    fn build(&mut self, frame: &mut Frame, units: UnitStyle, dt: F) -> Result<(), MdError> {
         let Some(simbox) = frame.simbox.as_ref().filter(|b| b.is_cell_defined()) else {
             return Err(MdError::Invalid(
                 "press_berendsen scales the cell, and the frame has none".into(),
@@ -102,7 +97,7 @@ impl Component for BerendsenBarostat {
                 simbox.pbc()
             )));
         }
-        self.nktv2p = Some(units.nktv2p()?);
+        self.step = Some((dt, units.constants().nktv2p));
         Ok(())
     }
 
@@ -115,8 +110,8 @@ impl Component for BerendsenBarostat {
         if phase != Phase::EndOfStep {
             return Ok(());
         }
-        let nktv2p = self
-            .nktv2p
+        let (dt, nktv2p) = self
+            .step
             .ok_or_else(|| MdError::Invalid("press_berendsen was launched before build".into()))?;
         let Some(MetaValue::F64x6(w)) = frame.meta.get(VIRIAL).cloned() else {
             return Err(MdError::Invalid(
@@ -136,7 +131,7 @@ impl Component for BerendsenBarostat {
         })?;
         let volume = simbox.volume();
         let pressure = (2.0 * kinetic + w[0] + w[1] + w[2]) / (3.0 * volume) * nktv2p;
-        let mu3 = 1.0 - self.dt / self.tau * (self.pressure - pressure) / self.bulk_modulus;
+        let mu3 = 1.0 - dt / self.tau * (self.pressure - pressure) / self.bulk_modulus;
         if !(mu3.is_finite() && mu3 > 0.0) {
             return Err(MdError::Invalid(format!(
                 "press_berendsen: the volume factor μ³ = {mu3} is not positive at pressure \
@@ -144,15 +139,22 @@ impl Component for BerendsenBarostat {
                  bulk_modulus)"
             )));
         }
-        let mu = mu3.cbrt();
+        // LAMMPS: pow(…, 1.0 / 3.0).
+        let mu = mu3.powf(1.0 / 3.0);
         let origin = simbox.origin();
-        let scaled = simbox
-            .transformed(&(Fnx3::eye(3) * mu))
-            .map_err(|e| MdError::Invalid(format!("press_berendsen: {e}")))?;
+        let h = simbox.matrix();
+        let centre: [F; 3] =
+            std::array::from_fn(|k| origin[k] + 0.5 * (h[k][0] + h[k][1] + h[k][2]));
+        let scaled = SimBox::new(
+            Cell::Matrix(h.map(|row| row.map(|x| x * mu))),
+            std::array::from_fn(|k| (origin[k] - centre[k]) * mu + centre[k]),
+            simbox.pbc(),
+        )
+        .map_err(|e| MdError::Invalid(format!("press_berendsen: {e}")))?;
         let mut pos = read_pos(frame)?;
         for mut row in pos.rows_mut() {
             for axis in 0..3 {
-                row[axis] = origin[axis] + mu * (row[axis] - origin[axis]);
+                row[axis] = centre[axis] + mu * (row[axis] - centre[axis]);
             }
         }
         columns::write_pos(frame, &pos)?;
@@ -194,17 +196,18 @@ mod tests {
     }
 
     fn couple(frame: &mut Frame, barostat: &mut BerendsenBarostat) -> Result<(), MdError> {
-        barostat.build(frame, &UnitPreset::si())?;
+        barostat.build(frame, UnitStyle::Si, 1.0)?;
         barostat.launch(Phase::EndOfStep, frame, &mut Scratch::new())
     }
 
     /// Ideal gas: K = 300, W = 0, V = 1000, so P = 0.2. With P₀ = 0,
     /// B = 2 (β = 0.5) and Δt/τ = 0.1, μ³ = 1 + 0.1·0.2/2 = 1.01:
-    /// V' = 1010, L' = 10.033223, and x = 3 maps to −5 + 8μ = 3.026578.
+    /// V' = 1010, L' = 10.033223. The cube's centre (0, 0, 0) stays put, so
+    /// the origin moves to −5μ = −5.016612 and x = 3 maps to 3μ = 3.009967.
     #[test]
     fn an_ideal_gas_expands_by_the_hand_factor() {
         let mut frame = state(&[3.0], 300.0, 0.0);
-        let mut barostat = BerendsenBarostat::new(0.0, 10.0, 2.0, 1.0).unwrap();
+        let mut barostat = BerendsenBarostat::new(0.0, 10.0, 2.0).unwrap();
         couple(&mut frame, &mut barostat).unwrap();
         let simbox = frame.simbox.as_ref().unwrap();
         assert!(
@@ -213,9 +216,11 @@ mod tests {
             simbox.volume()
         );
         assert!((simbox.lengths()[0] - 10.033_223).abs() < 1e-6);
-        assert_eq!(simbox.origin(), [-5.0; 3]);
+        for o in simbox.origin() {
+            assert!((o + 5.016_612).abs() < 1e-6, "{o}");
+        }
         let x = read_pos(&frame).unwrap()[[0, 0]];
-        assert!((x - 3.026_578).abs() < 1e-6, "{x}");
+        assert!((x - 3.009_967).abs() < 1e-6, "{x}");
         assert!((columns::meta_f64(&frame, PRESSURE) - 0.2).abs() < 1e-12);
     }
 
@@ -224,7 +229,7 @@ mod tests {
     #[test]
     fn a_compressed_bond_pushes_the_cell_out() {
         let mut frame = state(&[0.2, 0.8], 0.0, 48.0);
-        let mut barostat = BerendsenBarostat::new(0.0, 2.0, 1.0, 1.0).unwrap();
+        let mut barostat = BerendsenBarostat::new(0.0, 2.0, 1.0).unwrap();
         couple(&mut frame, &mut barostat).unwrap();
         let volume = frame.simbox.as_ref().unwrap().volume();
         assert!((volume - 1008.0).abs() < 1e-9, "{volume}");
@@ -237,7 +242,7 @@ mod tests {
             Some(SimBox::new(Cell::Lengths([10.0; 3]), [-5.0; 3], [true, true, false]).unwrap());
         let err = couple(
             &mut frame,
-            &mut BerendsenBarostat::new(0.0, 10.0, 2.0, 1.0).unwrap(),
+            &mut BerendsenBarostat::new(0.0, 10.0, 2.0).unwrap(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("periodic"), "{err}");
@@ -249,7 +254,7 @@ mod tests {
         frame.meta.remove(VIRIAL);
         let err = couple(
             &mut frame,
-            &mut BerendsenBarostat::new(0.0, 10.0, 2.0, 1.0).unwrap(),
+            &mut BerendsenBarostat::new(0.0, 10.0, 2.0).unwrap(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("virial"), "{err}");
@@ -261,7 +266,7 @@ mod tests {
         let mut frame = state(&[0.0], 300.0, 0.0);
         let err = couple(
             &mut frame,
-            &mut BerendsenBarostat::new(30.0, 10.0, 1.0, 1.0).unwrap(),
+            &mut BerendsenBarostat::new(30.0, 10.0, 1.0).unwrap(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("μ³"), "{err}");
