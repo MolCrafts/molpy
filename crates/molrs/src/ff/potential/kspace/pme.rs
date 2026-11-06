@@ -1877,7 +1877,13 @@ mod tests {
     }
 
     /// One pass of each loop prices what the two passes (energy, then
-    /// gradient) priced, bit for bit, at both settings of the direct loop.
+    /// gradient) priced, at both settings of the direct loop.
+    ///
+    /// On one machine the two are bit-identical (checked against the two-pass
+    /// code of the parent commit). The table below was taken on another
+    /// machine, and the FFT's SIMD path and `libm` are each CPU's own, so
+    /// across machines the forces agree to a few ulp, not bit for bit: the
+    /// comparison allows `1e-12` relative to the largest component.
     #[test]
     fn one_pass_prices_what_two_passes_priced() {
         let (params, charges, h, special, coords) = triclinic_case();
@@ -1927,11 +1933,16 @@ mod tests {
                 ],
             ),
         ];
+        const REL: F = 1e-12;
         for (pme, energy, forces) in golden {
             let (e, f) = pme.energy_forces_at(&coords);
-            assert_eq!(e.to_bits(), energy.to_bits(), "energy {e} vs {energy}");
+            assert!(
+                (e - energy).abs() <= REL * energy.abs(),
+                "energy {e} vs {energy}"
+            );
+            let scale = forces.iter().fold(0.0 as F, |m, v| m.max(v.abs()));
             for (k, (g, w)) in f.iter().zip(&forces).enumerate() {
-                assert_eq!(g.to_bits(), w.to_bits(), "force {k}: {g} vs {w}");
+                assert!((g - w).abs() <= REL * scale, "force {k}: {g} vs {w}");
             }
         }
     }
@@ -2034,6 +2045,7 @@ mod tests {
 
     /// Berendsen pressure coupling runs with PME: the step has a virial,
     /// the cell follows the pressure, and the energy stays finite.
+    #[cfg(feature = "md")]
     #[test]
     fn a_barostat_couples_a_pme_system() {
         use crate::md::{BerendsenBarostat, FfEvaluator, MD, VelocityVerlet};
