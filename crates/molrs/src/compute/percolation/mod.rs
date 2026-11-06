@@ -98,7 +98,7 @@ impl Lattice {
                         v = v.map(|x| -x);
                     }
                     self.rows.push(v);
-                    self.rows.sort_by_key(|row| pivot(row));
+                    self.rows.sort_by_key(pivot);
                     return;
                 }
                 Some(k) => {
