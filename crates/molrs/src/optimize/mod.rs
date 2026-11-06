@@ -146,19 +146,20 @@ pub struct LbfgsSettings {
     pub max_step: F,
     /// Correction pairs kept in the L-BFGS history.
     pub memory: usize,
-    /// LAMMPS `etol`: stop when the relative energy change between successive
-    /// iterations falls below it. `0` disables it.
+    /// Stop when the relative energy change between successive iterations
+    /// falls below it (the test LAMMPS's `etol` makes). `0` disables it.
     pub etol: F,
-    /// LAMMPS `ftol`: stop when the 2-norm of the global force vector falls
-    /// to it (energy / Å). `0` disables it.
+    /// Stop when the 2-norm of the global force vector falls to it
+    /// (energy / Å). `0` disables it.
     pub ftol: F,
-    /// LAMMPS `maxeval`: most force/energy evaluations.
+    /// Most force/energy evaluations.
     pub max_evals: usize,
 }
 
 impl LbfgsSettings {
     /// `fmax = 0.05`, `max_steps = 500`, `max_step = 0.2`, `memory = 8`; the
-    /// LAMMPS criteria off (`etol = ftol = 0`, unbounded `max_evals`).
+    /// energy-change and force-norm criteria off (`etol = ftol = 0`),
+    /// unbounded `max_evals`.
     pub const DEFAULT: Self = Self {
         fmax: 0.05,
         max_steps: 500,
@@ -167,19 +168,6 @@ impl LbfgsSettings {
         etol: 0.0,
         ftol: 0.0,
         max_evals: usize::MAX,
-    };
-
-    /// LAMMPS's `minimize 1.0e-4 1.0e-6 100 1000` (the documented example):
-    /// relative energy change `etol = 1e-4`, global force norm `ftol = 1e-6`,
-    /// 100 iterations, 1000 evaluations; no per-atom `fmax` criterion.
-    pub const LAMMPS: Self = Self {
-        fmax: 0.0,
-        max_steps: 100,
-        max_step: 0.2,
-        memory: 8,
-        etol: 1.0e-4,
-        ftol: 1.0e-6,
-        max_evals: 1000,
     };
 
     #[cfg(feature = "ff")]

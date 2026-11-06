@@ -427,42 +427,34 @@ mod tests {
         assert_eq!(r.n_steps, 0);
     }
 
-    fn lammps(settings: LbfgsSettings) -> Lbfgs<Arc<HarmonicBond>> {
+    fn bond(settings: LbfgsSettings) -> Lbfgs<Arc<HarmonicBond>> {
         Lbfgs::new(Arc::new(HarmonicBond { k: 100.0, r0: 1.0 }), settings)
     }
 
     #[test]
-    fn lammps_settings_are_the_documented_example() {
-        let s = LbfgsSettings::LAMMPS;
-        assert_eq!(
-            (s.etol, s.ftol, s.max_steps, s.max_evals),
-            (1e-4, 1e-6, 100, 1000)
-        );
-        assert_eq!(s.fmax, 0.0, "no per-atom criterion beside LAMMPS's own");
-    }
-
-    #[test]
-    fn the_energy_change_stops_a_lammps_run() {
+    fn the_energy_change_stops_a_run() {
         let settings = LbfgsSettings {
             etol: 1e-2,
             ftol: 0.0,
-            ..LbfgsSettings::LAMMPS
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
         };
         let mut coords = vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0];
-        let report = lammps(settings).minimize_coords(&mut coords).unwrap();
+        let report = bond(settings).minimize_coords(&mut coords).unwrap();
         assert_eq!(report.stop_reason, StopReason::EnergyChange, "{report:?}");
         assert!(report.converged);
     }
 
     #[test]
-    fn the_global_force_norm_stops_a_lammps_run() {
+    fn the_global_force_norm_stops_a_run() {
         let settings = LbfgsSettings {
             etol: 0.0,
             ftol: 1e-3,
-            ..LbfgsSettings::LAMMPS
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
         };
         let mut coords = vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0];
-        let report = lammps(settings).minimize_coords(&mut coords).unwrap();
+        let report = bond(settings).minimize_coords(&mut coords).unwrap();
         assert_eq!(report.stop_reason, StopReason::ForceNorm, "{report:?}");
         // Two atoms, equal and opposite forces: the norm is sqrt(2) * fmax.
         assert!(report.final_fmax * 2f64.sqrt() <= 1e-3 + 1e-12);
@@ -474,10 +466,11 @@ mod tests {
             etol: 0.0,
             ftol: 0.0,
             max_steps: 1,
-            ..LbfgsSettings::LAMMPS
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
         };
         let mut coords = vec![0.0, 0.0, 0.0, 3.0, 0.0, 0.0];
-        let report = lammps(tight).minimize_coords(&mut coords).unwrap();
+        let report = bond(tight).minimize_coords(&mut coords).unwrap();
         assert_eq!(report.stop_reason, StopReason::MaxIterations);
         assert!(!report.converged);
 
@@ -485,10 +478,11 @@ mod tests {
             etol: 0.0,
             ftol: 0.0,
             max_evals: 2,
-            ..LbfgsSettings::LAMMPS
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
         };
         let mut coords = vec![0.0, 0.0, 0.0, 3.0, 0.0, 0.0];
-        let report = lammps(evals).minimize_coords(&mut coords).unwrap();
+        let report = bond(evals).minimize_coords(&mut coords).unwrap();
         assert_eq!(report.stop_reason, StopReason::MaxEvaluations);
         assert!(!report.converged && report.n_evals >= 2);
     }
@@ -497,10 +491,11 @@ mod tests {
     fn a_zero_iteration_run_reads_the_start() {
         let settings = LbfgsSettings {
             max_steps: 0,
-            ..LbfgsSettings::LAMMPS
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
         };
         let mut coords = vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0];
-        let report = lammps(settings).minimize_coords(&mut coords).unwrap();
+        let report = bond(settings).minimize_coords(&mut coords).unwrap();
         assert_eq!((report.n_steps, report.n_evals), (0, 1));
         assert_eq!(coords[3], 1.5);
         assert!((report.final_fmax - 50.0).abs() < 1e-9);

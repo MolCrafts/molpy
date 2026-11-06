@@ -117,7 +117,6 @@ impl From<OptimizationReport> for PyOptimizationReport {
 /// --------
 /// >>> pots = molpy.ff.PotentialCompiler(ff).compile(frame)
 /// >>> opt = molpy.optimize.Lbfgs(pots, fmax=0.05, max_steps=500)
-/// >>> opt = molpy.optimize.Lbfgs.lammps(pots)        # minimize 1e-4 1e-6 100 1000
 /// >>> report = opt.minimize(frame)                  # frame relaxed in place
 /// >>> report = opt.minimize_coords(coords)          # (N, 3), in place
 #[pyclass(module = "molpy.optimize", name = "Lbfgs", subclass)]
@@ -191,18 +190,6 @@ impl PyLbfgs {
                 ftol,
                 max_evals: max_evals.unwrap_or(usize::MAX),
             },
-        }
-    }
-
-    /// LAMMPS's ``minimize 1.0e-4 1.0e-6 100 1000`` (the documented example):
-    /// stop on a relative energy change below ``etol``, a global force norm at
-    /// ``ftol`` (kcal/mol/angstrom), 100 iterations or 1000 evaluations,
-    /// whichever comes first. No per-atom ``fmax`` criterion.
-    #[staticmethod]
-    fn lammps(potentials: Py<PyPotentials>) -> Self {
-        Self {
-            potentials,
-            settings: LbfgsSettings::LAMMPS,
         }
     }
 

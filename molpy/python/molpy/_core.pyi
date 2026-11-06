@@ -4608,12 +4608,8 @@ class Lbfgs:
         max_evals: int | None = ...,
     ) -> Self:
         """Defaults: ``fmax=0.05``, ``max_steps=500``, ``max_step=0.2``,
-        ``memory=8``; LAMMPS ``etol``/``ftol`` off (``0``), ``max_evals``
+        ``memory=8``; ``etol``/``ftol`` off (``0``), ``max_evals``
         unbounded. The first criterion met stops the run."""
-    @staticmethod
-    def lammps(potentials: Potentials) -> Lbfgs:
-        """LAMMPS ``minimize 1.0e-4 1.0e-6 100 1000``: ``etol=1e-4``,
-        ``ftol=1e-6``, ``max_steps=100``, ``max_evals=1000``, no ``fmax``."""
     def minimize(self, frame: Frame) -> OptimizationReport:
         """Relax ``frame``'s atoms in place; a bool ``atoms.free`` column marks
         the movable atoms (fixed ones still enter every evaluation)."""
