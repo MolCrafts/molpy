@@ -39,8 +39,9 @@ branch.
 wire/protocol version, no handshake. Capsule names
 (`molrs.FrameRef/<fingerprint>`, …) are defined only in
 `crates/molrs-ffi/src/abi.rs`; the fingerprint hashes the compiler and the
-handle layout, so builds that may disagree on a layout refuse each other's
-capsules. A layout change fails the `ffi` gate's snapshot test
+layout of the handles and of what a consumer reaches and drops through them
+(frame, blocks, columns and their storage, meta values), so builds that may
+disagree on a layout refuse each other's capsules. A layout change fails the `ffi` gate's snapshot test
 (`abi::tests::layout_matches_the_snapshot`): update the snapshot with it.
 A binding never hands out a view into storage the core may reallocate: a
 column crosses the seam as a copy, or over a reference-counted column array
