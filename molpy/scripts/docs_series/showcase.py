@@ -52,13 +52,23 @@ ASPIRIN = "CC(=O)Oc1ccccc1C(=O)O"
 
 #: Rock salt: lattice constant (Å) and the generators of Fm-3m.
 NACL_A = 5.64
-FM3M = ["x+1/2,y+1/2,z", "x+1/2,y,z+1/2", "-x,-y,z", "-x,y,-z", "z,x,y", "y,x,-z", "-x,-y,-z"]
+FM3M = [
+    "x+1/2,y+1/2,z",
+    "x+1/2,y,z+1/2",
+    "-x,-y,z",
+    "-x,y,-z",
+    "z,x,y",
+    "y,x,-z",
+    "-x,-y,-z",
+]
 
 
 def _library() -> dict[str, mp.Atomistic]:
     conformer = mp.conformer.Conformer(seed=SEED)
     return {
-        name: conformer.generate(mp.io.smiles.read_smiles_fragment(body).to_template())[0]
+        name: conformer.generate(mp.io.smiles.read_smiles_fragment(body).to_template())[
+            0
+        ]
         for name, body in UNITS.items()
     }
 

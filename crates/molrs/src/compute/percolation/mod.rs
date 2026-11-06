@@ -55,6 +55,7 @@ pub struct PercolationInput<'a> {
 
 /// The components of a network and how each one percolates.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PercolationResult {
     /// Component of every atom, numbered in order of their lowest atom.
     pub component_idx: Array1<i64>,
