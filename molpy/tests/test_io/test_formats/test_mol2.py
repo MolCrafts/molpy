@@ -164,10 +164,10 @@ def _elements(frame: mp.Frame) -> list[str | None]:
 
 
 class TestMol2Elements:
-    """MOL2 has no element field: the reader derives ``element`` from a SYBYL
-    type, else from the atom name, and leaves an unspelled row null."""
+    """MOL2 has no element field. Only a SYBYL atom type states one; a
+    force-field type states none, and the atom name is a label, never read."""
 
-    def test_gaff_typed_elements_come_from_the_names(self, tmp_path):
+    def test_a_gaff_typed_file_states_no_elements(self, tmp_path):
         path = tmp_path / "gaff.mol2"
         path.write_text(
             _mol2_text(
@@ -175,7 +175,7 @@ class TestMol2Elements:
             ),
             encoding="utf-8",
         )
-        assert _elements(_read(path)) == ["C", "C", "H", "Br", "O"]
+        assert "element" not in _read(path)["atoms"]
 
     def test_sybyl_typed_elements_come_from_the_types(self, tmp_path):
         path = tmp_path / "sybyl.mol2"
@@ -193,20 +193,26 @@ class TestMol2Elements:
         )
         assert _elements(_read(path)) == ["C", "C", "O", "H", "Br"]
 
-    def test_ambiguous_rows_are_null_not_guessed(self, tmp_path):
-        path = tmp_path / "amber.mol2"
-        path.write_text(_mol2_text([("CA", "CT"), ("C2", "c3")]), encoding="utf-8")
-        assert _elements(_read(path)) == [None, "C"]
+    def test_rows_without_a_sybyl_type_are_null(self, tmp_path):
+        path = tmp_path / "mixed.mol2"
+        path.write_text(
+            _mol2_text([("CA", "CT"), ("C2", "c3"), ("X", "C.ar")]), encoding="utf-8"
+        )
+        assert _elements(_read(path)) == [None, None, "C"]
 
-    def test_fixture_elements(self, mol2_dir):
-        assert _elements(_read(mol2_dir / "ethane.mol2")) == ["C", "C"] + ["H"] * 6
-        assert _elements(_read(mol2_dir / "li.mol2")) == ["Li"]
+    def test_force_field_typed_fixtures_state_no_elements(self, mol2_dir):
+        assert "element" not in _read(mol2_dir / "ethane.mol2")["atoms"]
+        assert "element" not in _read(mol2_dir / "li.mol2")["atoms"]
 
-    def test_round_trip_keeps_elements(self, mol2_dir, tmp_path):
-        frame = _read(mol2_dir / "ethane.mol2")
+    def test_round_trip_keeps_elements(self, tmp_path):
+        source = tmp_path / "sybyl.mol2"
+        source.write_text(
+            _mol2_text([("A", "C.ar"), ("B", "Br"), ("C", "H")]), encoding="utf-8"
+        )
+        frame = _read(source)
         out = tmp_path / "out.mol2"
         mp.io.write_mol2(out, frame)
-        assert _elements(_read(out)) == _elements(frame)
+        assert _elements(_read(out)) == _elements(frame) == ["C", "Br", "H"]
 
 
 def test_force_field_bond_type_names_do_not_replace_the_bond_order(
