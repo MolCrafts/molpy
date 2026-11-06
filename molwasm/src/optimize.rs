@@ -73,6 +73,7 @@ impl Lbfgs {
                 max_step: positive("maxStep", max_step, defaults.max_step)?,
                 memory,
                 max_steps: defaults.max_steps,
+                ..defaults
             },
         })
     }
@@ -145,10 +146,16 @@ pub struct OptimizationReport {
 
 #[wasm_bindgen(js_class = OptimizationReport)]
 impl OptimizationReport {
-    /// Whether `fmax` convergence was reached within the step budget.
+    /// Whether a tolerance stopped the run, not a budget or a stuck line search.
     #[wasm_bindgen(getter)]
     pub fn converged(&self) -> bool {
         self.inner.converged
+    }
+    /// Which criterion stopped the run (`gradient`, `energy_change`,
+    /// `force_norm`, `max_iterations`, `max_evaluations`, `line_search`, `empty`).
+    #[wasm_bindgen(getter, js_name = stopReason)]
+    pub fn stop_reason(&self) -> String {
+        self.inner.stop_reason.as_str().to_string()
     }
     /// Outer iterations performed.
     #[wasm_bindgen(getter, js_name = nSteps)]

@@ -38,10 +38,15 @@ pub(crate) use lbfgs::minimize_lbfgs_rms;
 /// returns, the geometry optimizer and the conformer stages alike.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OptimizationReport {
-    /// Whether the convergence criterion was met within the step budget.
+    /// Whether a tolerance stopped the run (`fmax`, `etol` or `ftol`), not a
+    /// budget (`max_steps`, `max_evals`) or a stuck line search.
     pub converged: bool,
+    /// Which criterion stopped the run.
+    pub stop_reason: StopReason,
     /// Number of outer iterations performed.
     pub n_steps: usize,
+    /// Force/energy evaluations, line-search trials included.
+    pub n_evals: usize,
     /// Potential energy at the returned point, in the potential's energy unit
     /// (kcal/mol for the force fields molrs ships).
     pub final_energy: F,
@@ -55,10 +60,18 @@ impl OptimizationReport {
     /// The report of a minimization that stopped at `energy` with gradient
     /// `grad` (= −forces, flat `3·n_atoms`).
     #[cfg(feature = "ff")]
-    pub(crate) fn from_gradient(converged: bool, n_steps: usize, energy: F, grad: &[F]) -> Self {
+    pub(crate) fn from_gradient(
+        stop_reason: StopReason,
+        n_steps: usize,
+        n_evals: usize,
+        energy: F,
+        grad: &[F],
+    ) -> Self {
         Self {
-            converged,
+            converged: stop_reason.converged(),
+            stop_reason,
             n_steps,
+            n_evals,
             final_energy: energy,
             final_fmax: lbfgs::fmax_from_grad(grad),
             final_grad_rms: lbfgs::grad_rms(grad),
@@ -69,11 +82,55 @@ impl OptimizationReport {
     #[cfg(any(feature = "ff", test))]
     pub(crate) const EMPTY: Self = Self {
         converged: true,
+        stop_reason: StopReason::Empty,
         n_steps: 0,
+        n_evals: 0,
         final_energy: 0.0,
         final_fmax: 0.0,
         final_grad_rms: 0.0,
     };
+}
+
+/// Which criterion ended a minimization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopReason {
+    /// The largest per-atom force (or the RMS gradient) fell below its tolerance.
+    Gradient,
+    /// The 2-norm of the global force vector fell to `ftol` (LAMMPS `ftol`).
+    ForceNorm,
+    /// The relative energy change fell below `etol` (LAMMPS `etol`).
+    EnergyChange,
+    /// `max_steps` outer iterations ran (LAMMPS `maxiter`).
+    MaxIterations,
+    /// `max_evals` force/energy evaluations ran (LAMMPS `maxeval`).
+    MaxEvaluations,
+    /// No step lowered the energy: the line search is stuck.
+    LineSearch,
+    /// Nothing to move.
+    Empty,
+}
+
+impl StopReason {
+    /// A tolerance was met (or there was nothing to do).
+    pub const fn converged(self) -> bool {
+        matches!(
+            self,
+            Self::Gradient | Self::ForceNorm | Self::EnergyChange | Self::Empty
+        )
+    }
+
+    /// The lower-snake name the bindings report.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Gradient => "gradient",
+            Self::ForceNorm => "force_norm",
+            Self::EnergyChange => "energy_change",
+            Self::MaxIterations => "max_iterations",
+            Self::MaxEvaluations => "max_evaluations",
+            Self::LineSearch => "line_search",
+            Self::Empty => "empty",
+        }
+    }
 }
 
 /// The knobs of an L-BFGS geometry minimization, and their one set of
@@ -89,16 +146,50 @@ pub struct LbfgsSettings {
     pub max_step: F,
     /// Correction pairs kept in the L-BFGS history.
     pub memory: usize,
+    /// LAMMPS `etol`: stop when the relative energy change between successive
+    /// iterations falls below it. `0` disables it.
+    pub etol: F,
+    /// LAMMPS `ftol`: stop when the 2-norm of the global force vector falls
+    /// to it (energy / Å). `0` disables it.
+    pub ftol: F,
+    /// LAMMPS `maxeval`: most force/energy evaluations.
+    pub max_evals: usize,
 }
 
 impl LbfgsSettings {
-    /// `fmax = 0.05`, `max_steps = 500`, `max_step = 0.2`, `memory = 8`.
+    /// `fmax = 0.05`, `max_steps = 500`, `max_step = 0.2`, `memory = 8`; the
+    /// LAMMPS criteria off (`etol = ftol = 0`, unbounded `max_evals`).
     pub const DEFAULT: Self = Self {
         fmax: 0.05,
         max_steps: 500,
         max_step: 0.2,
         memory: 8,
+        etol: 0.0,
+        ftol: 0.0,
+        max_evals: usize::MAX,
     };
+
+    /// LAMMPS's `minimize 1.0e-4 1.0e-6 100 1000` (the documented example):
+    /// relative energy change `etol = 1e-4`, global force norm `ftol = 1e-6`,
+    /// 100 iterations, 1000 evaluations; no per-atom `fmax` criterion.
+    pub const LAMMPS: Self = Self {
+        fmax: 0.0,
+        max_steps: 100,
+        max_step: 0.2,
+        memory: 8,
+        etol: 1.0e-4,
+        ftol: 1.0e-6,
+        max_evals: 1000,
+    };
+
+    #[cfg(feature = "ff")]
+    pub(crate) fn limits(&self) -> lbfgs::Limits {
+        lbfgs::Limits {
+            etol: self.etol,
+            ftol: self.ftol,
+            max_evals: self.max_evals,
+        }
+    }
 }
 
 impl Default for LbfgsSettings {
