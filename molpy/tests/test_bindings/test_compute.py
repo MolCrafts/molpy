@@ -107,6 +107,7 @@ REQUIRED: dict[str, dict[str, object]] = {
     },
     # groups and features
     "Cluster": {},
+    "Percolation": {},
     "CenterOfMass": {},
     "GyrationTensor": {},
     "InertiaTensor": {},

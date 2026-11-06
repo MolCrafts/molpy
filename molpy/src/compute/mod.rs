@@ -43,6 +43,7 @@ mod hbond;
 mod kinetic;
 mod kmeans;
 mod order;
+mod percolation;
 mod pmft;
 mod rdf;
 mod shape;
@@ -71,6 +72,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     environment::register(m)?;
     pmft::register(m)?;
     cluster::register(m)?;
+    percolation::register(m)?;
     shape::register(m)?;
     decomposition::register(m)?;
     kmeans::register(m)?;

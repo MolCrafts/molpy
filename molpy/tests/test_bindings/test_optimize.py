@@ -158,18 +158,6 @@ def _mmff_ethoxybenzene() -> tuple[object, object]:
     return mp.ff.PotentialCompiler(typifier.forcefield()).compile(frame), frame
 
 
-def test_lammps_is_the_documented_minimize_example() -> None:
-    potentials, frame = _mmff_ethoxybenzene()
-    report = mp.optimize.Lbfgs.lammps(potentials).minimize(frame)
-    assert report.stop_reason in {
-        "energy_change",
-        "force_norm",
-        "max_iterations",
-        "max_evaluations",
-    }
-    assert report.n_steps <= 100 and report.n_evals <= 1000 + 40
-
-
 def test_a_budget_stop_is_not_convergence() -> None:
     potentials, frame = _mmff_ethoxybenzene()
     report = mp.optimize.Lbfgs(potentials, fmax=0.0, max_steps=1).minimize(frame)

@@ -185,6 +185,7 @@ fn bound_specs() -> Vec<(&'static str, molrs::compute::ComputeSpec)> {
         PmftXyt,
         PmftXyz,
         Cluster,
+        Percolation,
         CenterOfMass,
         GyrationTensor,
         InertiaTensor,
@@ -405,6 +406,7 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
     holds_spec_defaults(ok(PmftXyz::new(3.0, 3.0, 3.0, 4, 4, 4)), &[]);
 
     holds_spec_defaults(ok(Cluster::new(None)), &[]);
+    holds_spec_defaults(Percolation::new(), &[]);
     holds_spec_defaults(CenterOfMass::new(), &[]);
     holds_spec_defaults(GyrationTensor::new(), &[]);
     holds_spec_defaults(InertiaTensor::new(), &[]);

@@ -4608,12 +4608,8 @@ class Lbfgs:
         max_evals: int | None = ...,
     ) -> Self:
         """Defaults: ``fmax=0.05``, ``max_steps=500``, ``max_step=0.2``,
-        ``memory=8``; LAMMPS ``etol``/``ftol`` off (``0``), ``max_evals``
+        ``memory=8``; ``etol``/``ftol`` off (``0``), ``max_evals``
         unbounded. The first criterion met stops the run."""
-    @staticmethod
-    def lammps(potentials: Potentials) -> Lbfgs:
-        """LAMMPS ``minimize 1.0e-4 1.0e-6 100 1000``: ``etol=1e-4``,
-        ``ftol=1e-6``, ``max_steps=100``, ``max_evals=1000``, no ``fmax``."""
     def minimize(self, frame: Frame) -> OptimizationReport:
         """Relax ``frame``'s atoms in place; a bool ``atoms.free`` column marks
         the movable atoms (fixed ones still enter every evaluation)."""
@@ -5092,6 +5088,34 @@ class ClusterResult:
     @property
     def n_clusters(self) -> int: ...
     def sizes(self) -> list[tuple[int, int]]: ...
+
+@final
+class Percolation:
+    """Percolation of a bonded network in a periodic cell (Livraghi et al. 2021)."""
+    def __new__(cls) -> Self: ...
+    def compute(
+        self, *, positions: npt.ArrayLike, simbox: Box, bonds: Sequence[Sequence[int]]
+    ) -> PercolationResult: ...
+    @staticmethod
+    def spec() -> ComputeSpec: ...
+    def tunables(self) -> list[tuple[str, Any]]: ...
+
+@final
+class PercolationResult:
+    """How a bonded network percolates (``molrs::compute::PercolationResult``)."""
+    @property
+    def component_idx(self) -> npt.NDArray[np.int64]: ...
+    @property
+    def n_components(self) -> int: ...
+    @property
+    def component_sizes(self) -> list[int]: ...
+    @property
+    def percolation_dims(self) -> list[int]: ...
+    @property
+    def translations(self) -> list[list[tuple[int, int, int]]]: ...
+    @property
+    def unwrap_images(self) -> npt.NDArray[np.int64]: ...
+    def max_dim(self) -> int: ...
 
 @final
 class CombinedDistribution:

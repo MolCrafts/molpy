@@ -11,7 +11,7 @@ use crate::compute::{
     EnergyDrift, EnvironmentMatch, GaussianDensity, GreenKuboSpectrum, GyrationTensor, HBonds,
     Hexatic, InertiaTensor, InternalCoordinate, KineticEnergy, Kmeans, KramersKronig, LinearFit,
     LocalBondProjection, LocalDensity, LocalDescriptors, Msd, Nematic, OnsagerCorrelation,
-    PairPresence, Pca, Plateau, Pmft, PolarizabilityParts, R12, RamanSpectrum, Rdf,
+    PairPresence, Pca, Percolation, Plateau, Pmft, PolarizabilityParts, R12, RamanSpectrum, Rdf,
     ReorientationAcf, RotationalAutocorrelation, RouteAgreement, SolidLiquid, SpatialDistribution,
     Spectrum, SphereVoxelization, StaticDielectric, StaticStructureFactorDebye,
     StaticStructureFactorDirect, Steinhardt, Survival, Unwrap, Vacf, VanHove, Xy, Xyt, Xyz,
@@ -86,6 +86,7 @@ static ALL: LazyLock<Vec<ComputeSpec>> = LazyLock::new(|| {
         Pmft::<Xyz>::spec(),
         // groups and features
         Cluster::spec(),
+        Percolation::spec(),
         CenterOfMass::spec(),
         GyrationTensor::spec(),
         InertiaTensor::spec(),

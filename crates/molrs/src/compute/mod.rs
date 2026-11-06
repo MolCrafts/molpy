@@ -373,6 +373,7 @@ mod kinetic;
 mod kmeans;
 mod named_enum;
 mod order;
+mod percolation;
 mod pmft;
 mod rdf;
 pub(crate) mod require;
@@ -437,6 +438,7 @@ pub use order::{
     NematicResult, QlmTable, SolidLiquid, SolidLiquidInput, SolidLiquidResult, Steinhardt,
     SteinhardtInput, SteinhardtResult,
 };
+pub use percolation::{Percolation, PercolationInput, PercolationResult};
 pub use pmft::{PairCoordinate, Pmft, PmftInput, PmftResult, R12, Xy, Xyt, Xyz};
 pub use rdf::{Rdf, RdfAccumulator, RdfResult};
 /// Crate-internal: the input guards every neighbor-consuming kernel calls

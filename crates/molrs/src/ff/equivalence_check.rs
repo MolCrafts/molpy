@@ -72,7 +72,8 @@ pub(crate) const TERMS: [&str; 8] = [
 ];
 
 /// The engines, by the name the pinned table uses: the three writers' and
-/// the source's own.
+/// the source's own. Only the record round trip (`zarr`) walks them all.
+#[cfg(feature = "zarr")]
 pub(crate) const ENGINES: [&str; 4] = ["native", "lammps", "openmm", "gromacs"];
 
 /// A cutoff past every pair (Å), and CHARMM's switch past them too: every

@@ -109,14 +109,17 @@ pub fn layout() -> Vec<(&'static str, usize, usize)> {
     out
 }
 
-/// This build's handle-layout fingerprint, 16 hex digits: FNV-1a over the
-/// `rustc` that compiled it and [`layout`]. Two builds exchange handles only
-/// when their fingerprints agree — same compiler, same layout — because the
-/// layout is the compiler's choice as much as the source's.
+/// This build's handle fingerprint, 16 hex digits: FNV-1a over the `rustc`
+/// that compiled it, a digest of the molrs and molrs-ffi sources it embeds,
+/// and [`layout`]. Two builds exchange handles only when their fingerprints
+/// agree — same compiler, same source, same layout — so a consumer statically
+/// linked against an older molrs is refused cleanly until it is rebuilt.
 pub fn build_fingerprint() -> &'static str {
     static FINGERPRINT: OnceLock<String> = OnceLock::new();
     FINGERPRINT.get_or_init(|| {
         let mut text = String::from(env!("MOLRS_FFI_RUSTC"));
+        text.push_str(";source:");
+        text.push_str(env!("MOLRS_FFI_SOURCE"));
         for (name, size, align) in layout() {
             text.push_str(&format!(";{name}:{size}:{align}"));
         }
