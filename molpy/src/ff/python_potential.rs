@@ -15,7 +15,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use molrs::core::{Block, Frame, SimBox, UnitPreset, Virial};
+use molrs::core::{Block, Frame, SimBox, UnitStyle, Virial};
 use molrs::ff::potential::{Accumulator, Potential};
 use molrs::op::F;
 use ndarray::Array1;
@@ -26,7 +26,6 @@ use pyo3::prelude::*;
 use super::potential::ErrSlot;
 use crate::core::frame::PyFrame;
 use crate::core::simbox::PyBox;
-use crate::core::units::preset_arg;
 
 /// The buffers a potential handed over at ``bind``.
 struct Buffers {
@@ -41,7 +40,7 @@ struct Buffers {
 pub(crate) struct PythonPotential {
     obj: Py<PyAny>,
     name: String,
-    units: UnitPreset,
+    units: UnitStyle,
     cutoff: Option<F>,
     buffers: Option<Buffers>,
 }
@@ -62,9 +61,18 @@ impl PythonPotential {
         }
         let declared = obj.getattr("units").map_err(|_| {
             PyTypeError::new_err(
-                "a potential declares the units it returns: set a `units` attribute \
-                 (a preset name such as \"metal\", or a molpy.core.UnitPreset)",
+                "a potential declares the units it takes and returns: set a `units` \
+                 attribute naming a LAMMPS units style such as \"metal\"",
             )
+        })?;
+        let declared: String = declared.extract().map_err(|_| {
+            PyTypeError::new_err(format!(
+                "potential.units names a LAMMPS units style (\"real\", \"metal\", …), got {}",
+                declared
+                    .get_type()
+                    .name()
+                    .map_or_else(|_| "<unknown>".to_string(), |n| n.to_string())
+            ))
         })?;
         let cutoff = obj.getattr("cutoff").map_err(|_| {
             PyTypeError::new_err(
@@ -85,7 +93,7 @@ impl PythonPotential {
         Ok(Self {
             obj: obj.clone().unbind(),
             name: obj.get_type().qualname()?.to_string(),
-            units: preset_arg(&declared)?,
+            units: declared.parse().map_err(crate::error::units_error)?,
             cutoff,
             buffers: None,
         })
@@ -95,8 +103,8 @@ impl PythonPotential {
         &self.name
     }
 
-    pub(crate) fn units(&self) -> &UnitPreset {
-        &self.units
+    pub(crate) fn units(&self) -> UnitStyle {
+        self.units
     }
 
     pub(crate) fn cutoff(&self) -> Option<F> {

@@ -5,13 +5,12 @@
 //! a probe that every implementor would have to answer belongs on the kind
 //! that is actually scanned.
 
-use molrs::core::Frame;
+use molrs::core::{Frame, UnitStyle};
 use molrs::op::F;
 
 use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
-use molrs::core::UnitPreset;
 
 /// One scheduled body. `launch` runs once per bound phase per step.
 ///
@@ -26,10 +25,11 @@ pub trait Component: Send {
     /// `on(phase).add` ignores this and uses the caller's phase and order.
     fn default_bindings(&self) -> Vec<(Phase, i32)>;
 
-    /// One-time setup against the frame the run will step, in the run's
-    /// `units`. Default: nothing.
-    fn build(&mut self, frame: &mut Frame, units: &UnitPreset) -> Result<(), MdError> {
-        let _ = (frame, units);
+    /// One-time setup against the frame the run will step: the run is in
+    /// LAMMPS units style `units` and steps by `dt` in its time unit.
+    /// Default: nothing.
+    fn build(&mut self, frame: &mut Frame, units: UnitStyle, dt: F) -> Result<(), MdError> {
+        let _ = (frame, units, dt);
         Ok(())
     }
 
@@ -43,21 +43,15 @@ pub trait Component: Send {
     ) -> Result<(), MdError>;
 }
 
-/// Provides the timestep other components must agree with.
-pub trait TimestepProvider {
-    /// Δt in the run's time unit: fs in `real`, ps in `metal`.
-    fn dt(&self) -> F;
-}
-
-/// Advances positions and velocities. Binds `initial_integrate` and
-/// `final_integrate`. Does not evaluate a potential.
-pub trait Integrator: Component + TimestepProvider {}
+/// Advances positions and velocities by the run's timestep. Binds
+/// `initial_integrate` and `final_integrate`. Does not evaluate a potential.
+pub trait Integrator: Component {}
 
 /// Modifies the force or the velocities to control temperature.
-pub trait Thermostat: Component + TimestepProvider {}
+pub trait Thermostat: Component {}
 
 /// Rescales the cell and the positions to control pressure.
-pub trait Barostat: Component + TimestepProvider {}
+pub trait Barostat: Component {}
 
 /// What the driver recorded at registration, so a later scan does not need
 /// the concrete type.
@@ -66,7 +60,6 @@ pub(crate) struct Flags {
     pub kind: Kind,
     pub consumes_neighbors: bool,
     pub frozen_pairs: bool,
-    pub dt: Option<F>,
 }
 
 impl Default for Flags {
@@ -75,7 +68,6 @@ impl Default for Flags {
             kind: Kind::Other,
             consumes_neighbors: false,
             frozen_pairs: false,
-            dt: None,
         }
     }
 }

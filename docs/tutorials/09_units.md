@@ -48,6 +48,13 @@ print(length.to(u.nanometer))  # 0.3 nanometer
 | `micro` / `nano` | micro- and nano-scale presets. |
 | `openmm` | nm, ps, kJ/mol, amu, e — OpenMM's native units (not a LAMMPS `units` style). |
 
+A preset named after a LAMMPS style carries that style's constants exactly as
+LAMMPS sets them in `units`: `boltzmann()` is LAMMPS's `boltz` (0.0019872067
+kcal/(mol·K) in `real`, not the CODATA value 0.00198720426) and `coulomb()` its
+`qqr2e` (332.06371). The same literals drive `mp.md`, so a run in `real` uses
+the very numbers a LAMMPS run in `real` does. `openmm`, and a preset you
+register yourself, derive their factors from their unit names instead.
+
 ## Defining your own preset
 
 Register a custom convention once, then reuse it by name. A preset names one

@@ -1,4 +1,5 @@
-//! Maxwell-Boltzmann velocity distribution. Not a hook — draw only.
+//! Maxwell-Boltzmann velocities at an exact temperature, LAMMPS
+//! `velocity all create T seed`. Not a hook — draw only.
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 use rand::SeedableRng;
@@ -9,34 +10,42 @@ use crate::op::standard_normal;
 use molrs::op::{F, Fnx3};
 
 use super::error::MdError;
-use molrs::core::UnitPreset;
+use molrs::core::UnitStyle;
 
-/// Maxwell-Boltzmann velocity distribution at a temperature, in a run's units.
+/// Velocities at a temperature, in a LAMMPS units style, as
+/// `velocity all create T seed` sets them.
 ///
-/// Each component is drawn with standard deviation `sqrt(k_B T / (m · mvv2e))`:
-/// velocities in the preset's velocity unit for masses in its mass unit.
+/// Each component is drawn from a normal of standard deviation
+/// `sqrt(boltz T / (m · mvv2e))` (velocities in the style's velocity unit for
+/// masses in its mass unit), the centre-of-mass velocity is removed
+/// (LAMMPS `mom yes`, the default; [`keep_com`](Self::keep_com) is
+/// `mom no`), and the velocities are then scaled so the temperature is `T`
+/// exactly, as `Velocity::create` rescales them. The temperature is LAMMPS
+/// `compute temp`'s: `Σ m v² · mvv2e / (dof · boltz)` with `dof = 3N − 3`
+/// (`extra_dof` = the dimension, removed whether or not the momentum is).
+/// LAMMPS draws uniform components by default (`dist uniform`); the
+/// distribution here is LAMMPS's `dist gaussian`.
 ///
 /// ```ignore
-/// let vel = MaxwellBoltzmann::new(300.0, &molrs::core::UnitPreset::real(), 0)?
+/// let vel = MaxwellBoltzmann::new(300.0, molrs::core::UnitStyle::Real, 1)?
 ///     .velocities(pos.view(), mass.view())?;
 /// ```
 pub struct MaxwellBoltzmann {
     temperature: F,
-    /// `k_B T / mvv2e`: the variance times the mass.
-    kt_over_mvv2e: F,
+    units: UnitStyle,
     seed: u64,
     remove_com: bool,
 }
 
 impl MaxwellBoltzmann {
-    /// Draw at `temperature` (the preset's temperature unit); the COM
+    /// Draw at `temperature` (the style's temperature unit); the COM
     /// velocity is removed after the draw ([`keep_com`](Self::keep_com) opts
     /// out).
     ///
     /// # Errors
     ///
     /// [`MdError::Invalid`] for a temperature that is not strictly positive.
-    pub fn new(temperature: F, units: &UnitPreset, seed: u64) -> Result<Self, MdError> {
+    pub fn new(temperature: F, units: UnitStyle, seed: u64) -> Result<Self, MdError> {
         if !temperature.is_finite() || temperature <= 0.0 {
             return Err(MdError::Invalid(
                 "MaxwellBoltzmann temperature must be strictly positive".into(),
@@ -44,7 +53,7 @@ impl MaxwellBoltzmann {
         }
         Ok(Self {
             temperature,
-            kt_over_mvv2e: units.boltzmann() * temperature / units.mvv2e()?,
+            units,
             seed,
             remove_com: true,
         })
@@ -72,7 +81,18 @@ impl MaxwellBoltzmann {
         self.remove_com
     }
 
-    /// Draw `(N, 3)` velocities at [`Self::temperature`].
+    /// The units style the velocities are drawn in.
+    pub fn units(&self) -> UnitStyle {
+        self.units
+    }
+
+    /// Draw `(N, 3)` velocities at exactly [`Self::temperature`].
+    ///
+    /// # Errors
+    ///
+    /// [`MdError::Invalid`] for positions that are not `(N, 3)`, masses of
+    /// another length or not strictly positive, or fewer than two atoms
+    /// (`3N − 3` degrees of freedom leave a single atom no temperature).
     pub fn velocities(
         &self,
         pos: ArrayView2<'_, F>,
@@ -94,10 +114,17 @@ impl MaxwellBoltzmann {
         if mass.iter().any(|&m| !m.is_finite() || m <= 0.0) {
             return Err(MdError::Invalid("mass must be strictly positive".into()));
         }
+        if n < 2 {
+            return Err(MdError::Invalid(format!(
+                "MaxwellBoltzmann needs at least two atoms: the temperature counts 3N - 3 \
+                 degrees of freedom, none for {n}"
+            )));
+        }
+        let c = self.units.constants();
         let mut rng = StdRng::seed_from_u64(self.seed);
         let mut vel = Array2::<F>::zeros((n, 3));
         Zip::from(vel.rows_mut()).and(mass).for_each(|mut row, &m| {
-            let scale = (self.kt_over_mvv2e / m).sqrt();
+            let scale = (c.boltz * self.temperature / (m * c.mvv2e)).sqrt();
             for x in row.iter_mut() {
                 *x = standard_normal(&mut rng) * scale;
             }
@@ -106,6 +133,19 @@ impl MaxwellBoltzmann {
             let com = Self::com_velocity(vel.view(), mass)?;
             Zip::from(vel.rows_mut()).for_each(|mut v| v -= &com);
         }
+        // LAMMPS `Velocity::rescale(t, t_desired)`: v *= sqrt(t_desired / t),
+        // with `t` from `ComputeTemp::compute_scalar`.
+        let dof = (3 * n - 3) as F;
+        let mvv: F = Zip::from(vel.rows())
+            .and(mass)
+            .fold(0.0, |acc, v, &m| acc + m * v.dot(&v));
+        let t = mvv * c.mvv2e / (dof * c.boltz);
+        if t == 0.0 {
+            return Err(MdError::Invalid(
+                "MaxwellBoltzmann drew a zero temperature and cannot rescale it".into(),
+            ));
+        }
+        vel *= (self.temperature / t).sqrt();
         Ok(vel)
     }
 
@@ -130,10 +170,19 @@ mod tests {
     use ndarray::{Array1, Array2};
 
     use super::*;
-    use molrs::core::UnitPreset;
 
-    fn real() -> UnitPreset {
-        UnitPreset::real()
+    const REAL: UnitStyle = UnitStyle::Real;
+
+    /// LAMMPS `compute temp` of `vel`: `Σ m v² · mvv2e / ((3N − 3) boltz)`.
+    fn temperature(vel: &Fnx3, mass: &Array1<F>, units: UnitStyle) -> F {
+        let c = units.constants();
+        let mvv: F = vel
+            .rows()
+            .into_iter()
+            .zip(mass)
+            .map(|(v, m)| m * v.dot(&v))
+            .sum();
+        mvv * c.mvv2e / ((3 * mass.len() - 3) as F * c.boltz)
     }
 
     #[test]
@@ -141,7 +190,7 @@ mod tests {
         let pos = Array2::zeros((8, 3));
         let mass = Array1::from_elem(8, 1.0);
         let draw = || {
-            MaxwellBoltzmann::new(300.0, &real(), 7)
+            MaxwellBoltzmann::new(300.0, REAL, 7)
                 .unwrap()
                 .velocities(pos.view(), mass.view())
                 .unwrap()
@@ -153,7 +202,7 @@ mod tests {
     fn remove_com_leaves_zero_com() {
         let pos = Array2::zeros((6, 3));
         let mass = Array1::from_elem(6, 2.0);
-        let vel = MaxwellBoltzmann::new(200.0, &real(), 1)
+        let vel = MaxwellBoltzmann::new(200.0, REAL, 1)
             .unwrap()
             .velocities(pos.view(), mass.view())
             .unwrap();
@@ -165,7 +214,7 @@ mod tests {
     fn keep_com_leaves_the_drawn_com() {
         let pos = Array2::zeros((6, 3));
         let mass = Array1::from_elem(6, 2.0);
-        let mb = MaxwellBoltzmann::new(200.0, &real(), 1).unwrap().keep_com();
+        let mb = MaxwellBoltzmann::new(200.0, REAL, 1).unwrap().keep_com();
         assert!(!mb.remove_com());
         let vel = mb.velocities(pos.view(), mass.view()).unwrap();
         let com = MaxwellBoltzmann::com_velocity(vel.view(), mass.view()).unwrap();
@@ -174,7 +223,39 @@ mod tests {
 
     #[test]
     fn rejects_a_nonpositive_temperature() {
-        assert!(MaxwellBoltzmann::new(0.0, &real(), 0).is_err());
+        assert!(MaxwellBoltzmann::new(0.0, REAL, 0).is_err());
+    }
+
+    /// The draw is rescaled to the temperature exactly, in every style, with
+    /// the COM removed or kept: LAMMPS `velocity create` at `mom yes` and
+    /// `mom no`.
+    #[test]
+    fn the_temperature_is_exact_in_every_style() {
+        let pos = Array2::zeros((5, 3));
+        let mass = Array1::from(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        for units in UnitStyle::ALL {
+            for keep in [false, true] {
+                let mut mb = MaxwellBoltzmann::new(250.0, units, 4).unwrap();
+                if keep {
+                    mb = mb.keep_com();
+                }
+                let vel = mb.velocities(pos.view(), mass.view()).unwrap();
+                let t = temperature(&vel, &mass, units);
+                assert!((t / 250.0 - 1.0).abs() < 1e-14, "{units} keep={keep}: {t}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_single_atom_has_no_temperature_to_set() {
+        let err = MaxwellBoltzmann::new(300.0, REAL, 1)
+            .unwrap()
+            .velocities(
+                Array2::zeros((1, 3)).view(),
+                Array1::from_elem(1, 1.0).view(),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("3N - 3"), "{err}");
     }
 
     /// Carbon at 300 K in `real`: σ = sqrt(R·300 K / (12 g/mol)) = 455.9 m/s
@@ -185,7 +266,7 @@ mod tests {
         let n = 20_000;
         let pos = Array2::zeros((n, 3));
         let mass = Array1::from_elem(n, 12.0);
-        let vel = MaxwellBoltzmann::new(300.0, &real(), 3)
+        let vel = MaxwellBoltzmann::new(300.0, REAL, 3)
             .unwrap()
             .keep_com()
             .velocities(pos.view(), mass.view())
@@ -202,7 +283,7 @@ mod tests {
     fn mass_length_must_match() {
         let pos = Array2::zeros((4, 3));
         let mass = Array1::from_elem(3, 1.0);
-        let err = MaxwellBoltzmann::new(100.0, &real(), 0)
+        let err = MaxwellBoltzmann::new(100.0, REAL, 0)
             .unwrap()
             .velocities(pos.view(), mass.view())
             .unwrap_err();

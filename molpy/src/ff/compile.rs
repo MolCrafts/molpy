@@ -167,7 +167,7 @@ impl PyExplicitTerms {
         crate::ff::style_registry::clear_kernel_err();
         let pots = self.inner.compile().map_err(ir::compile_err)?;
         crate::ff::style_registry::take_kernel_err()?;
-        Ok(PyPotentials::of(pots))
+        Ok(PyPotentials::of(pots, None))
     }
 }
 
@@ -323,7 +323,10 @@ impl PyPotentialCompiler {
             .with_frame(|core| PotentialCompiler::new(&self.ff).compile(core))?
             .map_err(ir::compile_err)?;
         crate::ff::style_registry::take_kernel_err()?;
-        Ok(PyPotentials::of(potentials))
+        Ok(PyPotentials::of(
+            potentials,
+            self.ff.units().map(str::to_owned),
+        ))
     }
 
     /// Build the kernels for a **neighbour-driven** evaluation, with the
@@ -366,6 +369,7 @@ impl PyPotentialCompiler {
         crate::ff::style_registry::take_kernel_err()?;
         Ok(PyWeightedTerms {
             members: Some(members),
+            units: self.ff.units().map(str::to_owned),
         })
     }
 

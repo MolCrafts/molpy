@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use molrs::core::{GhostError, SkinError, UnitsError};
+use molrs::core::{GhostError, SkinError, UnitStyle, UnitsError};
 
 /// Failures on the MD surface: construction, binding, and policy guards.
 #[derive(Debug)]
@@ -23,6 +23,16 @@ pub enum MdError {
         /// What the potential raised.
         source: super::PotentialError,
     },
+    /// An input states a units style other than the run's. Nothing is
+    /// converted between styles, so the run refuses it.
+    UnitsMismatch {
+        /// What declared the style (`potential Springs`, `the frame`, …).
+        what: String,
+        /// The style it declares, as it spells it.
+        declared: String,
+        /// The run's style.
+        run: UnitStyle,
+    },
 }
 
 impl fmt::Display for MdError {
@@ -32,6 +42,16 @@ impl fmt::Display for MdError {
             Self::Potential { name, step, source } => {
                 write!(f, "potential {name} failed at step {step}: {source}")
             }
+            Self::UnitsMismatch {
+                what,
+                declared,
+                run,
+            } => write!(
+                f,
+                "{what} is in units '{declared}' and the run is in units '{run}'; MD converts \
+                 nothing between units styles, so give it inputs in '{run}' or run in \
+                 '{declared}'"
+            ),
         }
     }
 }

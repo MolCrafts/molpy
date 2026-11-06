@@ -4,7 +4,7 @@
 
 use ndarray::ArrayView2;
 
-use molrs::core::{Frame, NeighborList, NeighborPolicy, VerletSkin};
+use molrs::core::{Frame, NeighborList, NeighborPolicy, UnitStyle, VerletSkin};
 use molrs::op::F;
 
 use super::columns::read_pos;
@@ -12,7 +12,6 @@ use super::component::Component;
 use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
-use molrs::core::UnitPreset;
 
 /// Where the list lives between builds: handed in, or wrapped for the cell
 /// of the last build.
@@ -62,7 +61,7 @@ impl Component for Neighbor {
         vec![(Phase::Neighbor, -10)]
     }
 
-    fn build(&mut self, frame: &mut Frame, _units: &UnitPreset) -> Result<(), MdError> {
+    fn build(&mut self, frame: &mut Frame, _units: UnitStyle, _dt: F) -> Result<(), MdError> {
         let pos = read_pos(frame)?;
         let simbox = frame
             .simbox

@@ -151,8 +151,9 @@ class LennardJonesMd:
             "mass": self._masses,
         }
         self.frame.box = self.box
-        self._md = mp.md.MD("real")
-        self._md.set_integrator(mp.md.VelocityVerlet(timestep))
+        self._md = mp.md.MD(units="real")
+        self._md.set_timestep(timestep)
+        self._md.set_integrator(mp.md.VelocityVerlet())
         self._md.set_neighbor(mp.core.NeighborList(lj.cutoff + SKIN), skin=SKIN)
         self._md.set_evaluator(PairLjCut(lj.epsilon, lj.sigma, lj.cutoff))
         self._dof = 3 * n_atoms - NVE_REMOVED_DOF

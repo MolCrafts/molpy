@@ -162,9 +162,9 @@ pub use math::{
 #[cfg(feature = "compute")]
 pub(crate) use math::{FOUR_PI, FOUR_THIRDS_PI};
 pub use units::{
-    Dimension, PresetDim, Quantity, Unit, UnitDef, UnitFactor, UnitPreset, UnitPresetRegistry,
-    UnitRegistry, UnitsError, lookup_unit_preset, register_unit_preset, replace_unit_preset,
-    unit_preset_names,
+    Dimension, PresetDim, Quantity, Unit, UnitConstants, UnitDef, UnitFactor, UnitPreset,
+    UnitPresetRegistry, UnitRegistry, UnitStyle, UnitsError, lookup_unit_preset,
+    register_unit_preset, replace_unit_preset, unit_preset_names,
 };
 
 #[cfg(test)]
