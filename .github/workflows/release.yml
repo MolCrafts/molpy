@@ -45,7 +45,7 @@ jobs:
     permissions:
       contents: read
     name: release
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@01317cbc43f961ab14c35d51d48c081a1acfe815
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@f5d3606fab87fc162271c94219dbdc5201dd1aab
 
   guard:
     name: release / guard
@@ -120,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@f5d3606fab87fc162271c94219dbdc5201dd1aab
       - name: The crate ships the repository's LICENSE
         run: |
           cmp LICENSE crates/molrs/LICENSE
@@ -137,7 +137,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@f5d3606fab87fc162271c94219dbdc5201dd1aab
       - name: The crate ships the repository's LICENSE
         run: |
           cmp LICENSE crates/molrs/LICENSE
@@ -172,7 +172,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@f5d3606fab87fc162271c94219dbdc5201dd1aab
         with:
           cache: release-wasm
       - uses: ./.github/actions/setup-wasm
@@ -239,10 +239,10 @@ jobs:
           - { os: windows-latest, target: "", artifact: windows, manylinux: auto }
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@f5d3606fab87fc162271c94219dbdc5201dd1aab
         with:
           python-version: "3.14"
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@f5d3606fab87fc162271c94219dbdc5201dd1aab
         with:
           cache: release-py-${{ matrix.artifact }}
       - uses: PyO3/maturin-action@v1
@@ -268,14 +268,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@f5d3606fab87fc162271c94219dbdc5201dd1aab
         with:
           python-version: "3.14"
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@f5d3606fab87fc162271c94219dbdc5201dd1aab
         with:
           targets: wasm32-unknown-emscripten
           cache: release-py-pyodide
-      - uses: pypa/cibuildwheel@v4.3.4
+      - uses: pypa/cibuildwheel@v4.3.5
         env:
           CIBW_PLATFORM: pyodide
           CIBW_BUILD: cp314-pyodide_wasm32
@@ -331,7 +331,7 @@ jobs:
           - { os: windows-latest, target: "", artifact: windows-x64 }
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@f5d3606fab87fc162271c94219dbdc5201dd1aab
         with:
           targets: ${{ matrix.target }}
           cache: release-capi-${{ matrix.artifact }}
