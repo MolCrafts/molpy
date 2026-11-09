@@ -156,7 +156,10 @@ pub trait Typifier {
     fn source_forcefield(&self) -> &ForceField;
 }
 
-impl Typifier for Box<dyn Typifier + Send + Sync> {
+/// A shared typifier is a typifier: one value chosen at run time can type in
+/// a [`Typing`] and, through the same handle, perceive types elsewhere (the
+/// builder's junction stage).
+impl Typifier for std::sync::Arc<dyn Typifier + Send + Sync> {
     fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, TypingError> {
         (**self).assign(graph)
     }
@@ -1829,13 +1832,13 @@ mod tests {
         assert_same_definitions(typing.forcefield(), &before);
     }
 
-    /// `Box<dyn Typifier + Send + Sync>` is itself a `Typifier`, so one
+    /// `Arc<dyn Typifier + Send + Sync>` is itself a `Typifier`, so one
     /// `Typing` type can hold any typifier chosen at run time.
     #[test]
-    fn boxed_dyn_typifier_is_a_typifier() {
-        let boxed: Box<dyn Typifier + Send + Sync> =
-            Box::new(ScriptedTypifier::new(library(), vec![ct_match(12.011)]));
-        let mut typing: Typing<Box<dyn Typifier + Send + Sync>> = Typing::new(boxed);
+    fn shared_dyn_typifier_is_a_typifier() {
+        let shared: std::sync::Arc<dyn Typifier + Send + Sync> =
+            std::sync::Arc::new(ScriptedTypifier::new(library(), vec![ct_match(12.011)]));
+        let mut typing: Typing<std::sync::Arc<dyn Typifier + Send + Sync>> = Typing::new(shared);
 
         typing.typify(&pair2()).unwrap();
 

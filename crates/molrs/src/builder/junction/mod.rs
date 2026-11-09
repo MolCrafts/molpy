@@ -13,7 +13,8 @@
 //!   them, so their types stay right. [`Retype::Patch`] writes the types the
 //!   caller declared for each linked anchor's copy, and nothing else: an
 //!   atom's old parameters are not scrubbed — the parameter assignment that
-//!   follows a retype overwrites them.
+//!   follows a retype overwrites them. [`Retype::Perceive`] runs a typifier
+//!   over the whole graph and writes the types it changes.
 //! - **Graph-derived terms.** The angles, dihedrals and 1-2/1-3/1-4 pair rows
 //!   of every kind the graph already carries are made to agree with the new
 //!   bond graph. A link only adds bonds, so every existing angle and dihedral
@@ -39,11 +40,15 @@ use crate::core::schema::block_names::PAIRS;
 use crate::core::{Atomistic, Junction, MolRsError, NodeId, RelationId};
 
 mod patch;
+#[cfg(feature = "ff")]
+mod perceive;
 
 pub use patch::{Patch, Retyped};
+#[cfg(feature = "ff")]
+pub use perceive::Perceive;
 
 /// How the atom types of a linked graph follow its new bonds.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default)]
 pub enum Retype {
     /// Change no atom type: the templates were typed in the chemical
     /// environment the product gives them (an in-chain residue, a monomer
@@ -53,6 +58,9 @@ pub enum Retype {
     /// Change the types the caller declared for each linked anchor: see
     /// [`Patch`].
     Patch(Patch),
+    /// Perceive every atom's type again with a typifier: see [`Perceive`].
+    #[cfg(feature = "ff")]
+    Perceive(Perceive),
 }
 
 /// What [`update_junctions`] did.
@@ -125,6 +133,17 @@ pub enum JunctionError {
         /// The two types.
         types: [String; 2],
     },
+    /// The perceiving typifier refused the graph.
+    #[cfg(feature = "ff")]
+    Perception(crate::ff::typifier::TypingError),
+    /// The perceiving typifier gave atom `atom` no type, or (`atom` `None`)
+    /// did not keep the graph's atoms.
+    Untyped {
+        /// The atom without a type.
+        atom: Option<NodeId>,
+        /// What went wrong.
+        detail: &'static str,
+    },
     /// The graph refused an edit.
     Graph(MolRsError),
 }
@@ -168,6 +187,12 @@ impl fmt::Display for JunctionError {
                 types[0],
                 types[1]
             ),
+            #[cfg(feature = "ff")]
+            Self::Perception(error) => write!(f, "the typifier refused the graph: {error}"),
+            Self::Untyped { atom, detail } => match atom {
+                Some(atom) => write!(f, "atom {}: {detail}", u64::from(*atom)),
+                None => write!(f, "{detail}"),
+            },
             Self::Graph(error) => write!(f, "{error}"),
         }
     }
@@ -177,7 +202,10 @@ impl std::error::Error for JunctionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Graph(error) => Some(error),
+            #[cfg(feature = "ff")]
+            Self::Perception(error) => Some(error),
             Self::NotABond { .. }
+            | Self::Untyped { .. }
             | Self::NoProvenance { .. }
             | Self::PatchedAtomMissing { .. }
             | Self::AmbiguousCopy { .. }
@@ -226,6 +254,11 @@ pub fn update_junctions(
         Retype::Keep => Vec::new(),
         Retype::Patch(patch) => {
             let writes = patch.plan(world, junctions)?;
+            patch::apply(world, writes)?
+        }
+        #[cfg(feature = "ff")]
+        Retype::Perceive(perceive) => {
+            let writes = perceive.plan(world)?;
             patch::apply(world, writes)?
         }
     };

@@ -426,3 +426,105 @@ fn a_copy_claimed_twice_is_ambiguous() {
         "{err}"
     );
 }
+
+// ---- Retype::Perceive ----
+
+#[cfg(feature = "ff")]
+mod perceive {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::ff::typifier::{AtdParameterSet, AtdTypifier, ElementTypifier};
+
+    fn perceive(typifier: impl crate::ff::typifier::Typifier + Send + Sync + 'static) -> Retype {
+        Retype::Perceive(Perceive::new(Arc::new(typifier)))
+    }
+
+    #[test]
+    fn perceive_writes_the_types_the_typifier_gives_and_only_the_changed_ones() {
+        let (mut world, units, junctions) = linked_chain();
+        let retype = perceive(ElementTypifier::new());
+
+        let report = update_junctions(&mut world, &junctions, &retype).unwrap();
+
+        assert_eq!(type_of(&world, units[1].atoms[0]), "C");
+        assert_eq!(type_of(&world, units[1].atoms[4]), "O");
+        assert_eq!(
+            report.retyped.len(),
+            world.n_atoms(),
+            "every type was a stale label"
+        );
+        let again = update_junctions(&mut world, &junctions, &retype).unwrap();
+        assert!(again.retyped.is_empty());
+    }
+
+    /// Methanol's O–H hydrogen is a port: linked to a methyl, the hydroxyl
+    /// oxygen of the template (GAFF `oh`) is an ether oxygen (`os`).
+    #[test]
+    fn a_hydroxyl_linked_to_a_methyl_is_perceived_an_ether_oxygen() {
+        let mut world = Atomistic::new();
+        let c1 = carbon(&mut world);
+        let o = world
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O, keys::TYPE => "oh" })
+            .unwrap();
+        bond(&mut world, c1, o);
+        for _ in 0..3 {
+            hydrogen_on(&mut world, c1);
+        }
+        let ho = hydrogen_on(&mut world, o);
+        let c2 = carbon(&mut world);
+        let hs: Vec<NodeId> = (0..4).map(|_| hydrogen_on(&mut world, c2)).collect();
+        let on_o = world
+            .add_port(o, ho, PortKind::Right, "", BondNumber::Single)
+            .unwrap();
+        let on_c = world
+            .add_port(c2, hs[0], PortKind::Left, "", BondNumber::Single)
+            .unwrap();
+        let junction = world.link(on_o, on_c).unwrap();
+
+        let report = update_junctions(
+            &mut world,
+            &[junction],
+            &perceive(AtdTypifier::new(AtdParameterSet::Gff)),
+        )
+        .unwrap();
+
+        assert_eq!(type_of(&world, o), "os");
+        let oxygen = report.retyped.iter().find(|r| r.atom == o).unwrap();
+        assert_eq!(oxygen.from.as_deref(), Some("oh"));
+    }
+
+    #[test]
+    fn a_graph_the_typifier_refuses_is_left_untouched() {
+        let (mut world, _, junctions) = linked_chain();
+        world
+            .add_atom(props! { keys::ATOMIC_NUMBER => 0_u8 })
+            .unwrap();
+        let before: Vec<Option<String>> = world
+            .atom_ids()
+            .map(|id| {
+                world
+                    .get_atom(id)
+                    .unwrap()
+                    .get_str(keys::TYPE)
+                    .map(str::to_owned)
+            })
+            .collect();
+
+        let err = update_junctions(&mut world, &junctions, &perceive(ElementTypifier::new()))
+            .unwrap_err();
+
+        assert!(matches!(err, JunctionError::Perception(_)), "{err}");
+        let after: Vec<Option<String>> = world
+            .atom_ids()
+            .map(|id| {
+                world
+                    .get_atom(id)
+                    .unwrap()
+                    .get_str(keys::TYPE)
+                    .map(str::to_owned)
+            })
+            .collect();
+        assert_eq!(after, before);
+    }
+}

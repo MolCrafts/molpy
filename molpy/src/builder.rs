@@ -13,7 +13,8 @@ use molrs::builder::{
     AssembleError, Assembler, AxisOrienter, GrowthPlacer, Orienter, Placer, SitePlacer,
 };
 use molrs::builder::{
-    CarbonTubeBuilder, Coarsener, GrapheneBuilder, JunctionReport, Patch, Retype, TubeExtent,
+    CarbonTubeBuilder, Coarsener, GrapheneBuilder, JunctionReport, Patch, Perceive, Retype,
+    TubeExtent,
 };
 use molrs::core::{Atomistic, CoarseGrain, Graph, MolGraph, NodeId};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -24,6 +25,7 @@ use crate::core::frame::PyFrame;
 use crate::core::graph_views::{Leaf, PyRefs};
 use crate::core::molgraph::{PyAtomistic, PyCoarseGrain, PyJunction, PyMolGraph};
 use crate::core::simbox::PyBox;
+use crate::ff::typifier::PyTypifier;
 
 /// Exact single-wall carbon nanotube builder.
 #[pyclass(module = "molpy.builder", name = "CarbonTubeBuilder", subclass)]
@@ -313,10 +315,11 @@ impl PyAxisOrienter {
 /// orienter : AxisOrienter, optional
 ///     Turns each copy about its centroid before it is placed; needs
 ///     site positions.
-/// retype : Patch, optional
+/// retype : Patch | Perceive, optional
 ///     For an ``Atomistic`` library: how atom types follow the junctions.
 ///     ``None`` keeps every type; a ``Patch`` writes the types it declares
-///     for each linked anchor's copy. Either way the junction stage brings
+///     for each linked anchor's copy; a ``Perceive`` the types its typifier
+///     perceives over the whole world. Either way the junction stage brings
 ///     the world's angles, dihedrals and pair rows up to the new bonds.
 ///
 /// Raises
@@ -415,7 +418,7 @@ impl PyAssembler {
         library: &Bound<'_, PyMapping>,
         placer: &Bound<'_, PyAny>,
         orienter: Option<&Bound<'_, PyAxisOrienter>>,
-        retype: Option<PyRef<'_, PyPatch>>,
+        retype: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let placer = PlacerKind::of(placer)?;
         let orienter = orienter.is_some();
@@ -441,7 +444,7 @@ impl PyAssembler {
             };
             AnyAssembler::Atomistic(
                 assembler(templates(&library, copy, "Atomistic")?, placer, orienter)
-                    .with_retype(retype_of(retype.as_deref())),
+                    .with_retype(retype_of(retype)?),
             )
         } else if retype.is_some() {
             return Err(PyTypeError::new_err(
@@ -740,9 +743,53 @@ impl PyPatch {
 /// One retyped atom as Python sees it: the atom, its type before and after.
 type RetypedRow<'py> = (Bound<'py, PyAny>, Option<String>, String);
 
-/// The core policy: `None` keeps every type.
-fn retype_of(patch: Option<&PyPatch>) -> Retype {
-    patch.map_or(Retype::Keep, |p| Retype::Patch(p.inner.clone()))
+/// Atom types perceived again over the whole linked graph by a native
+/// typifier (``molrs::builder::Perceive``).
+///
+/// ``Perceive(typifier)``: the typifier's ``assign`` runs on a copy of the
+/// world; only each atom's ``type`` is read and written back where it
+/// changes. Its bonded terms, parameters and output force field are not used —
+/// the parameter assignment that follows overwrites what the old types left.
+///
+/// Raises
+/// ------
+/// TypeError
+///     If ``typifier`` is not a native typifier (``AtdTypifier``,
+///     ``OplsAaTypifier``, ``Mmff94Typifier``, ``ElementTypifier``, …): a
+///     Python subclass's ``assign`` cannot run while the GIL is released.
+#[pyclass(module = "molpy.builder", name = "Perceive", frozen)]
+pub(crate) struct PyPerceive {
+    inner: Perceive,
+}
+
+#[pymethods]
+impl PyPerceive {
+    #[new]
+    fn new(typifier: &Bound<'_, PyTypifier>) -> PyResult<Self> {
+        let shared = typifier.try_borrow()?.shared().ok_or_else(|| {
+            PyTypeError::new_err("Perceive needs a native typifier, not a Python subclass")
+        })?;
+        Ok(Self {
+            inner: Perceive::new(shared),
+        })
+    }
+}
+
+/// The core policy of a ``retype=`` argument: ``None`` keeps every type.
+fn retype_of(retype: Option<&Bound<'_, PyAny>>) -> PyResult<Retype> {
+    let Some(retype) = retype else {
+        return Ok(Retype::Keep);
+    };
+    if let Ok(patch) = retype.cast::<PyPatch>() {
+        return Ok(Retype::Patch(patch.get().inner.clone()));
+    }
+    if let Ok(perceive) = retype.cast::<PyPerceive>() {
+        return Ok(Retype::Perceive(perceive.get().inner.clone()));
+    }
+    Err(PyTypeError::new_err(format!(
+        "retype must be a Patch or a Perceive, not {}",
+        retype.get_type().name()?
+    )))
 }
 
 /// What a junction stage did (``molrs::builder::JunctionReport``), as views
@@ -839,9 +886,10 @@ impl PyJunctionReport {
 /// world : Atomistic
 /// junctions : list[Junction]
 ///     What ``world.link`` returned, one per call.
-/// retype : Patch, optional
+/// retype : Patch | Perceive, optional
 ///     ``None`` changes no atom type; a ``Patch`` writes the types it
-///     declares for each linked anchor's copy.
+///     declares for each linked anchor's copy; a ``Perceive`` the types its
+///     typifier perceives over the whole world.
 ///
 /// Returns
 /// -------
@@ -851,15 +899,16 @@ impl PyJunctionReport {
 /// ------
 /// ValueError
 ///     If a junction was made on another graph, its bond is no longer a live
-///     bond between its anchors, or the patch cannot be applied (an anchor
+///     bond between its anchors, the patch cannot be applied (an anchor
 ///     without provenance, a patched atom gone or claimed by two copies, two
-///     types for one atom); nothing is written then.
+///     types for one atom), or the typifier refuses the world or leaves an
+///     atom untyped; nothing is written then.
 #[pyfunction(name = "update_junctions")]
 #[pyo3(signature = (world, junctions, *, retype=None))]
 fn py_update_junctions(
     world: &Bound<'_, PyAtomistic>,
     junctions: Vec<PyRef<'_, PyJunction>>,
-    retype: Option<PyRef<'_, PyPatch>>,
+    retype: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyJunctionReport> {
     if let Some(k) = junctions
         .iter()
@@ -870,7 +919,7 @@ fn py_update_junctions(
         )));
     }
     let core: Vec<molrs::core::Junction> = junctions.iter().map(|j| j.inner).collect();
-    let retype = retype_of(retype.as_deref());
+    let retype = retype_of(retype)?;
     let report =
         molrs::builder::update_junctions(world.try_borrow_mut()?.core_mut(), &core, &retype)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -889,6 +938,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAssembler>()?;
     m.add_class::<PyJunctionReport>()?;
     m.add_class::<PyPatch>()?;
+    m.add_class::<PyPerceive>()?;
     m.add_function(wrap_pyfunction!(py_update_junctions, m)?)?;
     m.add_class::<PyCoarsener>()?;
     crate::polymer::register(m)?;

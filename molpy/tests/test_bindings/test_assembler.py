@@ -431,3 +431,31 @@ def _assembler_with(library: dict, retype: mp.builder.Patch) -> mp.builder.Assem
     return mp.builder.Assembler(
         library, mp.builder.SitePlacer(), mp.builder.AxisOrienter(), retype=retype
     )
+
+
+def test_perceive_retypes_the_whole_world() -> None:
+    template = _monomer()
+    for atom in template.atoms:
+        atom["type"] = "stale"
+    retype = mp.builder.Perceive(mp.ff.typifier.ElementTypifier())
+    world, report = _assembler_with({"M": template}, retype).assemble_with_report(
+        _sites(["M", "M"])
+    )
+
+    assert {atom["type"] for atom in world.atoms} == {"C", "H"}
+    assert len(report.retyped) == world.n_atoms
+    assert all(before == "stale" for _, before, _ in report.retyped)
+
+
+def test_perceive_needs_a_native_typifier() -> None:
+    class Mine(mp.ff.typifier.Typifier):
+        def assign(self, graph):
+            raise NotImplementedError
+
+    with pytest.raises(TypeError, match="native"):
+        mp.builder.Perceive(Mine())
+
+
+def test_retype_must_be_a_patch_or_a_perceive() -> None:
+    with pytest.raises(TypeError, match="Patch or a Perceive"):
+        _assembler_with({"M": _monomer()}, "keep")

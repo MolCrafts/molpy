@@ -4308,7 +4308,7 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
         placer: SitePlacer | GrowthPlacer,
         orienter: AxisOrienter | None = None,
         *,
-        retype: Patch | None = None,
+        retype: Patch | Perceive | None = None,
     ) -> Assembler[G]: ...
     def assemble(self, sites: CoarseGrain) -> G:
         """Place and join one copy per site; return the world, of the
@@ -4338,7 +4338,10 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
         """
 
 def update_junctions(
-    world: Atomistic, junctions: Sequence[Junction], *, retype: Patch | None = None
+    world: Atomistic,
+    junctions: Sequence[Junction],
+    *,
+    retype: Patch | Perceive | None = None,
 ) -> JunctionReport:
     """Bring ``world``'s atom types (by ``retype``; ``None`` keeps them) and
     its angles, dihedrals and pair rows (the kinds it carries) up to the bonds
@@ -4353,6 +4356,20 @@ def update_junctions(
         patched atom gone or claimed twice, two types for one atom); nothing
         is written then.
     """
+
+@final
+class Perceive:
+    """Atom types perceived again over the whole linked world by a native
+    typifier: only each atom's ``type`` is read from its ``assign`` and
+    written back where it changes.
+
+    Raises
+    ------
+    TypeError
+        ``typifier`` is a Python subclass, not a native typifier.
+    """
+
+    def __new__(cls, typifier: Typifier[Atomistic]) -> Self: ...
 
 @final
 class Patch:

@@ -38,6 +38,8 @@ pub use carbon_tube::{CarbonTubeBuilder, CarbonTubeError, TubeExtent};
 pub use coarsen::{CoarsenError, Coarsener};
 pub use graphene::{GrapheneBuilder, GrapheneError};
 pub use growth_strategy::{FccLattice, GrowthStrategy, OffLattice};
+#[cfg(feature = "ff")]
+pub use junction::Perceive;
 pub use junction::{
     JunctionError, JunctionReport, Patch, Retype, Retyped, Settle, update_junctions,
 };
