@@ -12,7 +12,7 @@ sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}").to_co
 ring = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
 ```
 
-The growth placer lays the ring out as an open chain, so the closing bond starts at whatever distance its two ends grew apart; minimise before use.
+The growth placer grows the ring from both ends, and the unit that closes it is placed by one rigid fit to both of its neighbours. Six rigid EO units cannot close a ring exactly: this fit misses its bond targets by about 0.66 Å root mean square, and a minimisation closes the rest. `GrowthPlacer(max_fit_rmsd=...)` turns a fit that misses by more into an error, for a structure whose geometry must close. Minimise before use.
 
 **Check:** 6 units, 42 atoms, 42 bonds (one ring), no open port.
 

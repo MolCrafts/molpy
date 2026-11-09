@@ -487,3 +487,99 @@ def test_a_local_perception_changes_only_atoms_near_the_anchors() -> None:
     )
     assert {atom["type"] for atom in world.atoms} == {"C", "H"}
     assert len(report.retyped) == 4
+
+
+def _straight_unit() -> mp.core.Atomistic:
+    """C0 (`<` with H0 at -x) and C1 (`>` with H1 at +x) on the x axis."""
+    unit = mp.core.Atomistic()
+    c0 = unit.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0, mass=12.011)
+    c1 = unit.add_atom(atomic_number=6, x=1.54, y=0.0, z=0.0, mass=12.011)
+    h0 = unit.add_atom(atomic_number=1, x=-1.09, y=0.0, z=0.0, mass=1.008)
+    h1 = unit.add_atom(atomic_number=1, x=2.63, y=0.0, z=0.0, mass=1.008)
+    unit.add_bond(c0, c1)
+    unit.add_bond(c0, h0)
+    unit.add_bond(c1, h1)
+    unit.add_port(c0, h0, "<")
+    unit.add_port(c1, h1, ">")
+    return unit
+
+
+def _periodic_ring(n: int) -> mp.core.CoarseGrain:
+    """``n`` units, each `>` (port 1) joined to the next one's `<` (port 0),
+    the last closing onto the first through the +x face."""
+    first = list(range(n))
+    second = [(k + 1) % n for k in range(n)]
+    image = [0] * (n - 1) + [1]
+    frame = mp.core.Frame(
+        {
+            "atoms": {"type": np.array(["U"] * n)},
+            "bonds": {
+                "atomi": np.array(first),
+                "atomj": np.array(second),
+                "src_port": np.array([1] * n),
+                "dst_port": np.array([0] * n),
+                "ix": np.array(image),
+                "iy": np.zeros(n, dtype=np.int64),
+                "iz": np.zeros(n, dtype=np.int64),
+            },
+        }
+    )
+    return mp.core.CoarseGrain.from_frame(frame)
+
+
+def _period() -> float:
+    """How far one unit advances along x as it grows, measured on an open
+    two-unit chain: the distance between the two copies' C0."""
+    frame = mp.core.Frame(
+        {
+            "atoms": {"type": np.array(["U", "U"])},
+            "bonds": {
+                "atomi": np.array([0]),
+                "atomj": np.array([1]),
+                "src_port": np.array([1]),
+                "dst_port": np.array([0]),
+            },
+        }
+    )
+    chain = mp.builder.Assembler(
+        {"U": _straight_unit()}, mp.builder.GrowthPlacer()
+    ).assemble(mp.core.CoarseGrain.from_frame(frame))
+    starts = [atom for atom in chain.atoms if atom["template_atom"] == 0]
+    return abs(starts[1]["x"] - starts[0]["x"])
+
+
+def test_a_ring_closed_through_the_cell_percolates() -> None:
+    n = 5
+    cell = mp.Box.ortho([n * _period(), 20.0, 20.0])
+    world = mp.builder.Assembler(
+        {"U": _straight_unit()},
+        mp.builder.GrowthPlacer(max_fit_rmsd=1e-6),
+        cell=cell,
+    ).assemble(_periodic_ring(n))
+    frame = world.to_frame()
+    bonds = np.column_stack([frame["bonds"]["atomi"], frame["bonds"]["atomj"]])
+    out = mp.compute.Percolation().compute(
+        positions=world.coords, simbox=cell, bonds=bonds.tolist()
+    )
+    assert out.percolation_dims == [1]
+    assert out.translations == [[(1, 0, 0)]]
+
+
+def test_a_closure_beyond_the_misfit_is_a_value_error() -> None:
+    n = 5
+    cell = mp.Box.ortho([n * _period() + 1.0, 20.0, 20.0])
+    assembler = mp.builder.Assembler(
+        {"U": _straight_unit()}, mp.builder.GrowthPlacer(max_fit_rmsd=0.1), cell=cell
+    )
+    with pytest.raises(ValueError, match="rms"):
+        assembler.assemble(_periodic_ring(n))
+    # Without a tolerance the best fit is taken and left to a minimisation.
+    best_effort = mp.builder.Assembler(
+        {"U": _straight_unit()}, mp.builder.GrowthPlacer(), cell=cell
+    ).assemble(_periodic_ring(n))
+    assert best_effort.n_ports == 0
+
+
+def test_a_negative_tolerance_is_a_value_error() -> None:
+    with pytest.raises(ValueError):
+        mp.builder.GrowthPlacer(max_fit_rmsd=-1.0)

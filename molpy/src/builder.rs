@@ -16,7 +16,7 @@ use molrs::builder::{
     CarbonTubeBuilder, Coarsener, GrapheneBuilder, JunctionReport, Patch, Perceive, Retype,
     TubeExtent,
 };
-use molrs::core::{Atomistic, CoarseGrain, Graph, MolGraph, NodeId};
+use molrs::core::{Atomistic, CoarseGrain, Graph, MolGraph, NodeId, SimBox};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
@@ -250,19 +250,54 @@ impl PySitePlacer {
 /// the anchor of its port toward its parent points back along the parent's
 /// leaving bond, one covalent bond length (the two anchors' covalent radii)
 /// from the parent's anchor. Needs no site positions; bond angles and
-/// overlaps are left to a later minimisation. Takes no arguments.
+/// overlaps are left to a later minimisation.
+///
+/// A site with more than one bond to sites placed before it — a ladder, a
+/// ring, crosslink or periodic closure, a bridge between two placed sites —
+/// is placed by one rigid least-squares fit closing them all: the best
+/// geometry a rigid copy gives. A rigid copy cannot always close them, and a
+/// later minimisation relaxes what the fit leaves; when the geometry must
+/// close, ``max_fit_rmsd`` refuses a fit that misses its targets by more.
+///
+/// Parameters
+/// ----------
+/// max_fit_rmsd : float, optional
+///     The misfit allowed (Å, root mean square). ``None`` accepts every fit.
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``max_fit_rmsd`` is negative or not finite.
 #[pyclass(module = "molpy.builder", name = "GrowthPlacer", frozen)]
-pub struct PyGrowthPlacer;
+pub struct PyGrowthPlacer {
+    inner: GrowthPlacer,
+}
 
 #[pymethods]
 impl PyGrowthPlacer {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (*, max_fit_rmsd=None))]
+    fn new(max_fit_rmsd: Option<f64>) -> PyResult<Self> {
+        let inner = match max_fit_rmsd {
+            Some(max) => GrowthPlacer::new()
+                .with_max_fit_rmsd(max)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+            None => GrowthPlacer::new(),
+        };
+        Ok(Self { inner })
+    }
+
+    /// The misfit a several-bond fit may have (Å); ``None`` accepts any.
+    #[getter]
+    fn max_fit_rmsd(&self) -> Option<f64> {
+        self.inner.max_fit_rmsd()
     }
 
     fn __repr__(&self) -> String {
-        "GrowthPlacer()".to_owned()
+        match self.inner.max_fit_rmsd() {
+            Some(max) => format!("GrowthPlacer(max_fit_rmsd={max})"),
+            None => "GrowthPlacer()".to_owned(),
+        }
     }
 }
 
@@ -315,6 +350,11 @@ impl PyAxisOrienter {
 /// orienter : AxisOrienter, optional
 ///     Turns each copy about its centroid before it is placed; needs
 ///     site positions.
+/// cell : Box, optional
+///     The periodic cell a site bond's image is counted in. A site bond with
+///     ``ix`` / ``iy`` / ``iz`` joins its second site in the image
+///     ``H · (ix, iy, iz)`` away, so a chain or network closes through the
+///     cell's faces; such a bond without a cell is refused.
 /// retype : Patch | Perceive, optional
 ///     For an ``Atomistic`` library: how atom types follow the junctions.
 ///     ``None`` keeps every type; a ``Patch`` writes the types it declares
@@ -356,15 +396,15 @@ enum AnyAssembler {
 #[derive(Clone, Copy)]
 enum PlacerKind {
     Site,
-    Growth,
+    Growth(GrowthPlacer),
 }
 
 impl PlacerKind {
     fn of(placer: &Bound<'_, PyAny>) -> PyResult<Self> {
         if placer.cast::<PySitePlacer>().is_ok() {
             Ok(Self::Site)
-        } else if placer.cast::<PyGrowthPlacer>().is_ok() {
-            Ok(Self::Growth)
+        } else if let Ok(growth) = placer.cast::<PyGrowthPlacer>() {
+            Ok(Self::Growth(growth.get().inner))
         } else {
             Err(PyTypeError::new_err(format!(
                 "placer must be a SitePlacer or a GrowthPlacer, not {}",
@@ -376,7 +416,7 @@ impl PlacerKind {
     fn build<G: Graph>(self) -> Box<dyn Placer<G>> {
         match self {
             Self::Site => Box::new(SitePlacer::new()),
-            Self::Growth => Box::new(GrowthPlacer::new()),
+            Self::Growth(placer) => Box::new(placer),
         }
     }
 }
@@ -405,21 +445,28 @@ fn assembler<G: Graph>(
     library: HashMap<String, G>,
     placer: PlacerKind,
     orienter: bool,
+    cell: Option<&SimBox>,
 ) -> Assembler<G> {
     let orienter = orienter.then(|| Box::new(AxisOrienter::new()) as Box<dyn Orienter<G>>);
-    Assembler::new(library, placer.build(), orienter)
+    let assembler = Assembler::new(library, placer.build(), orienter);
+    match cell {
+        Some(cell) => assembler.with_cell(cell.clone()),
+        None => assembler,
+    }
 }
 
 #[pymethods]
 impl PyAssembler {
     #[new]
-    #[pyo3(signature = (library, placer, orienter=None, *, retype=None))]
+    #[pyo3(signature = (library, placer, orienter=None, *, retype=None, cell=None))]
     fn new(
         library: &Bound<'_, PyMapping>,
         placer: &Bound<'_, PyAny>,
         orienter: Option<&Bound<'_, PyAxisOrienter>>,
         retype: Option<&Bound<'_, PyAny>>,
+        cell: Option<PyRef<'_, PyBox>>,
     ) -> PyResult<Self> {
+        let cell = cell.as_ref().map(|b| &b.inner);
         let placer = PlacerKind::of(placer)?;
         let orienter = orienter.is_some();
         let library: Vec<(String, Bound<'_, PyAny>)> = library
@@ -443,8 +490,13 @@ impl PyAssembler {
                 )
             };
             AnyAssembler::Atomistic(
-                assembler(templates(&library, copy, "Atomistic")?, placer, orienter)
-                    .with_retype(retype_of(retype)?),
+                assembler(
+                    templates(&library, copy, "Atomistic")?,
+                    placer,
+                    orienter,
+                    cell,
+                )
+                .with_retype(retype_of(retype)?),
             )
         } else if retype.is_some() {
             return Err(PyTypeError::new_err(
@@ -464,6 +516,7 @@ impl PyAssembler {
                 templates(&library, copy, "CoarseGrain")?,
                 placer,
                 orienter,
+                cell,
             ))
         } else if first.cast::<PyMolGraph>().is_ok() {
             let copy = |value: &Bound<'_, PyAny>| {
@@ -479,6 +532,7 @@ impl PyAssembler {
                 templates(&library, copy, "MolGraph")?,
                 placer,
                 orienter,
+                cell,
             ))
         } else {
             return Err(PyTypeError::new_err(format!(

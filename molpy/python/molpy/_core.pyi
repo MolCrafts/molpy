@@ -4241,7 +4241,19 @@ class GrowthPlacer:
     Takes no arguments.
     """
 
-    def __init__(self) -> None: ...
+    def __new__(cls, *, max_fit_rmsd: float | None = None) -> Self:
+        """A site closing several bonds at once (a ladder, a ring, crosslink
+        or periodic closure, a bridge) takes the best rigid fit to all of
+        them; ``max_fit_rmsd`` (Å) refuses a fit that misses by more, and
+        ``None`` accepts every fit.
+
+        Raises
+        ------
+        ValueError
+            ``max_fit_rmsd`` negative or not finite.
+        """
+    @property
+    def max_fit_rmsd(self) -> float | None: ...
 
 @final
 class AxisOrienter:
@@ -4309,6 +4321,7 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
         orienter: AxisOrienter | None = None,
         *,
         retype: Patch | Perceive | None = None,
+        cell: Box | None = None,
     ) -> Assembler[G]: ...
     def assemble(self, sites: CoarseGrain) -> G:
         """Place and join one copy per site; return the world, of the
