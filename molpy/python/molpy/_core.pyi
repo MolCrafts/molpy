@@ -1182,7 +1182,8 @@ class Element:
 
     Not constructed directly: look one up with :meth:`by_symbol` or
     :meth:`by_number`. The frame-level species conversions are the explicit
-    static steps :meth:`fill_atomic_numbers` / :meth:`fill_symbols`.
+    static steps :meth:`fill_atomic_numbers` / :meth:`fill_symbols`, and
+    :meth:`fill_masses` writes the standard masses.
     """
 
     @staticmethod
@@ -1226,6 +1227,17 @@ class Element:
         ValueError
             no ``atoms`` block, no unsigned ``atomic_number`` column, or a
             number outside ``0..=118`` (names the row).
+        """
+    @staticmethod
+    def fill_masses(frame: Frame) -> None:
+        """Write ``atoms.mass`` (amu) from ``atoms.atomic_number``, in place:
+        each atom's standard atomic mass; an existing ``mass`` is replaced.
+
+        Raises
+        ------
+        ValueError
+            no ``atoms`` block, no unsigned ``atomic_number`` column, or the
+            wildcard 0 / a number outside ``1..=118`` (names the row).
         """
     @property
     def z(self) -> int: ...
@@ -1699,6 +1711,28 @@ class Atomistic:
     ) -> None: ...
     def center(self, nodes: Iterable[Atom]) -> ArrayF:
         """Mass-weighted centre (Å) of ``nodes``, a float64 ``(3,)`` array."""
+    @property
+    def coords(self) -> ArrayF:
+        """Every atom's position, ``(N, 3)`` float64 (Å), in atom row order
+        (a copy). Assigning an ``(N, 3)`` array writes every atom's
+        ``x`` / ``y`` / ``z``.
+
+        Raises
+        ------
+        ValueError
+            reading, an atom without ``x``, ``y`` or ``z``; assigning, an
+            array that is not ``(N, 3)`` (nothing is written).
+        """
+    @coords.setter
+    def coords(self, value: npt.ArrayLike) -> None: ...
+    def formula(self) -> str:
+        """Molecular formula in Hill order (``"C2H6O"``, ``"H2O"``).
+
+        Raises
+        ------
+        ValueError
+            an atom is the wildcard (atomic number 0).
+        """
     # --- composition ---
     def replicate(
         self,
@@ -1864,6 +1898,12 @@ class CoarseGrain:
         about: Sequence[float] | ArrayF | None = None,
     ) -> None: ...
     def center(self, nodes: Iterable[Bead]) -> ArrayF: ...
+    @property
+    def coords(self) -> ArrayF:
+        """Every bead's position, ``(N, 3)`` float64 (Å), in bead row order
+        (a copy); assigning an ``(N, 3)`` array writes them all."""
+    @coords.setter
+    def coords(self, value: npt.ArrayLike) -> None: ...
     # --- composition ---
     def replicate(
         self,
@@ -2105,6 +2145,34 @@ class op:
         with ∠b–c–d ``angle`` and dihedral a–b–c–d ``torsion`` (radians):
         NeRF (Parsons et al. 2005). Collinear ``a, b, c`` give no off-axis
         component."""
+    @staticmethod
+    def axis_angle(axis: Sequence[float] | ArrayF, angle: float) -> ArrayF:
+        """The ``(3, 3)`` rotation by ``angle`` radians (right-handed) about
+        ``axis`` (Rodrigues); only the direction of ``axis`` matters.
+
+        Raises
+        ------
+        ValueError
+            ``axis`` is zero or not finite.
+        """
+    @staticmethod
+    def alignment_axis_angle(
+        source: Sequence[float] | ArrayF, target: Sequence[float] | ArrayF
+    ) -> tuple[ArrayF, float] | None:
+        """Unit axis and angle in ``[0, π]`` (radians) turning ``source``
+        onto ``target``; ``None`` when they already point the same way or
+        either is not a direction."""
+    @staticmethod
+    def rotation_axis_angle(rotation: ArrayF) -> tuple[ArrayF, float] | None:
+        """Unit axis and angle in ``[0, π]`` (radians) of a proper rotation
+        matrix, the inverse of :func:`axis_angle`; ``None`` for the identity
+        or a non-finite entry.
+
+        Raises
+        ------
+        ValueError
+            ``rotation`` is not shape ``(3, 3)``.
+        """
 
 class SmartsMatch:
     """One SMARTS embedding: the molecule's atoms in query-atom order, and the
@@ -4626,6 +4694,32 @@ class LammpsLoopTime:
     def raw_line(self) -> str: ...
 
 @final
+class LammpsMinimization:
+    """The ``Minimization stats:`` block of a ``minimize`` run, in the run's units."""
+
+    @property
+    def stopping_criterion(self) -> str: ...
+    @property
+    def energy(self) -> tuple[float, float, float]:
+        """Energy at the first, the next-to-last and the last iteration."""
+    @property
+    def force_two_norm(self) -> tuple[float, float]:
+        """Two-norm of the global force vector, first and last."""
+    @property
+    def force_max_component(self) -> tuple[float, float]:
+        """Largest force component on any atom, first and last."""
+    @property
+    def line_search_alpha(self) -> float: ...
+    @property
+    def max_atom_move(self) -> float: ...
+    @property
+    def iterations(self) -> int: ...
+    @property
+    def force_evaluations(self) -> int: ...
+    @property
+    def raw_lines(self) -> list[str]: ...
+
+@final
 class LammpsPerformance:
     """The ``Performance: ...`` line of a run."""
 
@@ -4747,6 +4841,9 @@ class LammpsRun:
     def thermo(self) -> LammpsThermo | None: ...
     @property
     def loop_time(self) -> LammpsLoopTime | None: ...
+    @property
+    def minimization(self) -> LammpsMinimization | None:
+        """The ``Minimization stats:`` block; ``None`` for a dynamics ``run``."""
     @property
     def performance(self) -> LammpsPerformance | None: ...
     @property
@@ -5386,6 +5483,55 @@ class PercolationResult:
     @property
     def unwrap_images(self) -> npt.NDArray[np.int64]: ...
     def max_dim(self) -> int: ...
+
+@final
+class RingPiercing:
+    """Bonds that pass through a ring, by minimum image
+    (``molrs::compute::RingPiercing``)."""
+    def __new__(cls, *, radius_fraction: float) -> Self: ...
+    def compute(
+        self,
+        *,
+        positions: npt.ArrayLike,
+        simbox: Box,
+        bonds: Sequence[Sequence[int]],
+        rings: Sequence[Sequence[int]],
+    ) -> RingPiercingResult: ...
+    @staticmethod
+    def spec() -> ComputeSpec: ...
+    def tunables(self) -> list[tuple[str, Any]]: ...
+
+@final
+class RingPiercingResult:
+    """Ring piercings: bond ``bond_idx[k]`` passes through ring ``ring_idx[k]``."""
+    @property
+    def ring_idx(self) -> npt.NDArray[Any]: ...
+    @property
+    def bond_idx(self) -> npt.NDArray[Any]: ...
+    @property
+    def n_piercings(self) -> int: ...
+
+@final
+class CloseContacts:
+    """Neighbour pairs more than ``exclude_bonds`` bonds apart
+    (``molrs::compute::CloseContacts``)."""
+    def __new__(cls, *, exclude_bonds: int) -> Self: ...
+    def compute(
+        self, *, pairs: Neighbors, bonds: Sequence[Sequence[int]]
+    ) -> CloseContactsResult: ...
+    @staticmethod
+    def spec() -> ComputeSpec: ...
+    def tunables(self) -> list[tuple[str, Any]]: ...
+
+@final
+class CloseContactsResult:
+    """Close contacts: ``(n, 2)`` sorted pairs ``i < j`` and their distances (Å)."""
+    @property
+    def pairs(self) -> npt.NDArray[Any]: ...
+    @property
+    def distances(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def n_contacts(self) -> int: ...
 
 @final
 class CombinedDistribution:

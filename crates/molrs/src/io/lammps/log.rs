@@ -59,6 +59,31 @@ pub struct LammpsLoopTime {
     pub raw_line: String,
 }
 
+/// The ``Minimization stats:`` block a ``minimize`` prints after its loop time.
+///
+/// Every number is as LAMMPS printed it, in the run's units.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LammpsMinimization {
+    /// Why the minimizer stopped (``energy tolerance``, ``max iterations``, …).
+    pub stopping_criterion: String,
+    /// Energy at the first, the next-to-last and the last iteration.
+    pub energy: [f64; 3],
+    /// Two-norm of the global force vector, first and last.
+    pub force_two_norm: [f64; 2],
+    /// Largest force component on any atom, first and last.
+    pub force_max_component: [f64; 2],
+    /// Step length of the last line search.
+    pub line_search_alpha: f64,
+    /// Largest atom displacement of the last line search.
+    pub max_atom_move: f64,
+    /// Minimizer iterations.
+    pub iterations: i64,
+    /// Force evaluations.
+    pub force_evaluations: i64,
+    /// The block as printed, header first.
+    pub raw_lines: Vec<String>,
+}
+
 /// LAMMPS ``Performance`` summary line.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LammpsPerformance {
@@ -140,6 +165,8 @@ pub struct LammpsRun {
     pub memory: Option<LammpsMemoryUsage>,
     pub thermo: Option<LammpsThermo>,
     pub loop_time: Option<LammpsLoopTime>,
+    /// The ``Minimization stats:`` block; `None` for a ``run`` (dynamics).
+    pub minimization: Option<LammpsMinimization>,
     pub performance: Option<LammpsPerformance>,
     #[serde(rename = "CPU_use")]
     pub cpu_use: Option<LammpsCpuUse>,
@@ -288,6 +315,7 @@ fn parse_run(index: usize, lines: &[&str], line_offset: usize, style: &str) -> L
     let loop_idx = first_index(lines, |line| match_loop_time(line.trim()).is_some());
     let thermo = parse_thermo(lines, &mut consumed, loop_idx, style);
     let loop_time = parse_loop_time(lines, &mut consumed);
+    let minimization = parse_minimization(lines, &mut consumed);
     let performance = parse_performance(lines, &mut consumed);
     let cpu_use = parse_cpu_use(lines, &mut consumed);
     let mpi_task_timing = parse_timing_breakdown(lines, &mut consumed, "MPI task timing breakdown");
@@ -329,6 +357,7 @@ fn parse_run(index: usize, lines: &[&str], line_offset: usize, style: &str) -> L
         memory,
         thermo,
         loop_time,
+        minimization,
         performance,
         cpu_use,
         mpi_task_timing,
@@ -442,6 +471,75 @@ fn parse_loop_time(lines: &[&str], consumed: &mut [bool]) -> Option<LammpsLoopTi
         }
     }
     None
+}
+
+/// Header of the block [`parse_minimization`] reads.
+const MINIMIZATION_HEADER: &str = "Minimization stats:";
+
+/// The ``Minimization stats:`` block: the header, then ``key = values`` lines
+/// up to the first blank line; the energies sit on the line after their key.
+/// `None` without the block, or when any of its lines is missing or does not
+/// read as numbers — those lines then stay in `unparsed_log`.
+fn parse_minimization(lines: &[&str], consumed: &mut [bool]) -> Option<LammpsMinimization> {
+    let start = lines.iter().position(|l| l.trim() == MINIMIZATION_HEADER)?;
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| l.trim().is_empty())
+        .map_or(lines.len(), |offset| start + 1 + offset);
+    let block = &lines[start..end];
+    let value = |key: &str| -> Option<&str> {
+        block.iter().enumerate().find_map(|(row, line)| {
+            let (k, v) = line.trim().split_once('=')?;
+            if k.trim() != key {
+                return None;
+            }
+            let v = v.trim();
+            // A key printed with nothing after `=` has its values on the next line.
+            if v.is_empty() {
+                block.get(row + 1).map(|next| next.trim())
+            } else {
+                Some(v)
+            }
+        })
+    };
+    let floats = |key: &str| -> Option<Vec<f64>> {
+        value(key)?
+            .split_whitespace()
+            .map(|t| t.parse::<f64>().ok())
+            .collect()
+    };
+    let ints = |key: &str| -> Option<Vec<i64>> {
+        value(key)?
+            .split_whitespace()
+            .map(|t| t.parse::<i64>().ok())
+            .collect()
+    };
+    let energy: [f64; 3] = floats("Energy initial, next-to-last, final")?
+        .try_into()
+        .ok()?;
+    let force_two_norm: [f64; 2] = floats("Force two-norm initial, final")?.try_into().ok()?;
+    let force_max_component: [f64; 2] = floats("Force max component initial, final")?
+        .try_into()
+        .ok()?;
+    let [line_search_alpha, max_atom_move]: [f64; 2] =
+        floats("Final line search alpha, max atom move")?
+            .try_into()
+            .ok()?;
+    let [iterations, force_evaluations]: [i64; 2] =
+        ints("Iterations, force evaluations")?.try_into().ok()?;
+    let stopping_criterion = value("Stopping criterion")?.to_string();
+    consumed[start..end].iter_mut().for_each(|c| *c = true);
+    Some(LammpsMinimization {
+        stopping_criterion,
+        energy,
+        force_two_norm,
+        force_max_component,
+        line_search_alpha,
+        max_atom_move,
+        iterations,
+        force_evaluations,
+        raw_lines: block.iter().map(|l| (*l).to_string()).collect(),
+    })
 }
 
 fn parse_performance(lines: &[&str], consumed: &mut [bool]) -> Option<LammpsPerformance> {
@@ -944,6 +1042,74 @@ Total wall time: 0:00:01
         );
         assert_eq!(run.warnings[0].message, "test warning");
         assert!(run.raw_text.contains("Step Temp PotEng E_pair"));
+    }
+
+    fn minimize_log(stats: &str) -> String {
+        format!(
+            "\
+LAMMPS (1 Jan 2026)
+Per MPI rank memory allocation (min/avg/max) = 1 | 1 | 1 Mbytes
+Step Temp PotEng
+0 0.0 500.0
+7 0.0 -12.5
+Loop time of 0.1 on 1 procs for 7 steps with 4 atoms
+
+{stats}
+MPI task timing breakdown:
+Total wall time: 0:00:01
+"
+        )
+    }
+
+    const STATS: &str = "\
+Minimization stats:
+  Stopping criterion = energy tolerance
+  Energy initial, next-to-last, final = 
+      500.25   -12.5   -12.75
+  Force two-norm initial, final = 1.5e+03 0.25
+  Force max component initial, final = 800 0.125
+  Final line search alpha, max atom move = 0.5 0.0625
+  Iterations, force evaluations = 7 15
+";
+
+    #[test]
+    fn minimization_stats_are_read_from_a_minimize_run() {
+        let log = read_lammps_log(minimize_log(STATS).as_bytes(), "default").unwrap();
+        let stats = log.runs[0].minimization.as_ref().unwrap();
+        assert_eq!(stats.stopping_criterion, "energy tolerance");
+        assert_eq!(stats.energy, [500.25, -12.5, -12.75]);
+        assert_eq!(stats.force_two_norm, [1500.0, 0.25]);
+        assert_eq!(stats.force_max_component, [800.0, 0.125]);
+        assert_eq!(stats.line_search_alpha, 0.5);
+        assert_eq!(stats.max_atom_move, 0.0625);
+        assert_eq!((stats.iterations, stats.force_evaluations), (7, 15));
+        assert_eq!(stats.raw_lines.len(), 8);
+        assert!(
+            log.runs[0]
+                .unparsed_log
+                .iter()
+                .all(|line| !line.contains("Stopping criterion")),
+            "a parsed block is not also unparsed"
+        );
+    }
+
+    #[test]
+    fn a_dynamics_run_has_no_minimization() {
+        let log = read_lammps_log(sample_full_log().as_bytes(), "default").unwrap();
+        assert!(log.runs[0].minimization.is_none());
+    }
+
+    #[test]
+    fn an_incomplete_minimization_block_stays_unparsed() {
+        let broken = STATS.replace("  Iterations, force evaluations = 7 15\n", "");
+        let log = read_lammps_log(minimize_log(&broken).as_bytes(), "default").unwrap();
+        assert!(log.runs[0].minimization.is_none());
+        assert!(
+            log.runs[0]
+                .unparsed_log
+                .iter()
+                .any(|line| line.contains("Stopping criterion = energy tolerance"))
+        );
     }
 
     #[test]

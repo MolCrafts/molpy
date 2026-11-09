@@ -31,6 +31,7 @@ mod spec;
 mod values;
 
 mod cluster;
+mod contacts;
 mod decomposition;
 mod density;
 mod dielectric;
@@ -44,6 +45,7 @@ mod kinetic;
 mod kmeans;
 mod order;
 mod percolation;
+mod piercing;
 mod pmft;
 mod rdf;
 mod shape;
@@ -73,6 +75,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pmft::register(m)?;
     cluster::register(m)?;
     percolation::register(m)?;
+    piercing::register(m)?;
+    contacts::register(m)?;
     shape::register(m)?;
     decomposition::register(m)?;
     kmeans::register(m)?;

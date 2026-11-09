@@ -355,6 +355,7 @@
 
 mod binning;
 mod cluster;
+mod contacts;
 mod contract;
 mod decomposition;
 mod density;
@@ -374,6 +375,7 @@ mod kmeans;
 mod named_enum;
 mod order;
 mod percolation;
+mod piercing;
 mod pmft;
 mod rdf;
 pub(crate) mod require;
@@ -387,6 +389,7 @@ mod voronoi;
 // Re-exports
 pub use binning::{Axis, Histogram, UpperEdge};
 pub use cluster::{Cluster, ClusterInput, ClusterResult};
+pub use contacts::{CloseContacts, CloseContactsInput, CloseContactsResult};
 pub use contract::{Accumulate, Batch, Compute, FeatureMatrix, Partition, Stream, Verdict};
 pub use decomposition::{Pca, PcaInput, PcaResult};
 pub use density::{
@@ -439,6 +442,7 @@ pub use order::{
     SteinhardtInput, SteinhardtResult,
 };
 pub use percolation::{Percolation, PercolationInput, PercolationResult};
+pub use piercing::{RingPiercing, RingPiercingInput, RingPiercingResult};
 pub use pmft::{PairCoordinate, Pmft, PmftInput, PmftResult, R12, Xy, Xyt, Xyz};
 pub use rdf::{Rdf, RdfAccumulator, RdfResult};
 /// Crate-internal: the input guards every neighbor-consuming kernel calls

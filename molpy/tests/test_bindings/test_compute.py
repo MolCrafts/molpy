@@ -108,6 +108,8 @@ REQUIRED: dict[str, dict[str, object]] = {
     # groups and features
     "Cluster": {},
     "Percolation": {},
+    "RingPiercing": {"radius_fraction": 1.0},
+    "CloseContacts": {"exclude_bonds": 2},
     "CenterOfMass": {},
     "GyrationTensor": {},
     "InertiaTensor": {},

@@ -15,6 +15,7 @@ use crate::core::{BondNumber, BondOrder};
 use crate::core::{CenterError, EntityTable, LinkError, Port, PortKind};
 use crate::core::{GraphAccess, KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
 use crate::op::I;
+use crate::op::{Fnx3, Fnx3View};
 
 /// Result of [`Atomistic::extract_subgraph`].
 #[derive(Debug, Clone)]
@@ -1171,6 +1172,68 @@ impl Atomistic {
     /// missing coordinate or mass, or a zero total mass.
     pub fn center(&self, atoms: &[NodeId]) -> Result<[f64; 3], CenterError> {
         self.graph.center(atoms)
+    }
+
+    /// Every atom's position, `N × 3` (Å), in atom row order — see
+    /// [`MolGraph::coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::coords`]: an atom without `x`, `y` or `z`.
+    pub fn coords(&self) -> Result<Fnx3, MolRsError> {
+        self.graph.coords()
+    }
+
+    /// Write every atom's position from `coords` (`N × 3`, Å) — see
+    /// [`MolGraph::set_coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::set_coords`]: a shape other than `N × 3`.
+    pub fn set_coords(&mut self, coords: Fnx3View<'_>) -> Result<(), MolRsError> {
+        self.graph.set_coords(coords)
+    }
+
+    // ---- composition ----
+
+    /// The molecular formula in Hill order: carbon first, then hydrogen,
+    /// then every other element alphabetically by symbol; with no carbon,
+    /// every element alphabetically, hydrogen included. A count of one is
+    /// not written (`"C2H6O"`, `"H2O"`, `"ClNa"`). An empty graph is `""`.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when an atom is the wildcard (atomic
+    /// number 0), which names no element; the message gives its row.
+    pub fn formula(&self) -> Result<String, MolRsError> {
+        let mut counts: std::collections::BTreeMap<&'static str, usize> =
+            std::collections::BTreeMap::new();
+        for (row, (_, props)) in self.atoms().enumerate() {
+            let element = props
+                .atomic_number()
+                .and_then(crate::core::Element::by_number)
+                .ok_or_else(|| {
+                    MolRsError::validation(format!(
+                        "atom row {row} is the wildcard and names no element"
+                    ))
+                })?;
+            *counts.entry(element.symbol()).or_default() += 1;
+        }
+        let hill_first: &[&str] = if counts.contains_key("C") {
+            &["C", "H"]
+        } else {
+            &[]
+        };
+        let rest = counts.keys().filter(|s| !hill_first.contains(s));
+        Ok(hill_first
+            .iter()
+            .filter(|s| counts.contains_key(*s))
+            .chain(rest)
+            .map(|symbol| match counts[symbol] {
+                1 => (*symbol).to_string(),
+                n => format!("{symbol}{n}"),
+            })
+            .collect())
     }
 
     // ---- frame conversion ----
@@ -3528,5 +3591,61 @@ mod tests {
         assert_eq!(a.structural_hash(), b.structural_hash());
         assert!(a.is_isomorphic(&b));
         assert_eq!(a.canonical_order().len(), 4);
+    }
+
+    fn atoms_of(numbers: &[Element]) -> Atomistic {
+        let mut mol = Atomistic::new();
+        for &z in numbers {
+            mol.add_atom(props! { keys::ATOMIC_NUMBER => z }).unwrap();
+        }
+        mol
+    }
+
+    #[test]
+    fn formula_is_in_hill_order() {
+        use Element::{C, Cl, H, Na, O};
+        assert_eq!(
+            atoms_of(&[O, C, H, H, C, H, H, H, H]).formula().unwrap(),
+            "C2H6O"
+        );
+        assert_eq!(atoms_of(&[H, C, H, H, H]).formula().unwrap(), "CH4");
+        // No carbon: every element alphabetically, hydrogen included.
+        assert_eq!(atoms_of(&[O, H, H]).formula().unwrap(), "H2O");
+        assert_eq!(atoms_of(&[Na, Cl]).formula().unwrap(), "ClNa");
+        assert_eq!(atoms_of(&[]).formula().unwrap(), "");
+    }
+
+    #[test]
+    fn formula_refuses_the_wildcard() {
+        let mut mol = atoms_of(&[Element::C]);
+        mol.add_atom(props! { keys::ATOMIC_NUMBER => 0_u8 })
+            .unwrap();
+        let err = mol.formula().unwrap_err().to_string();
+        assert!(err.contains("row 1"), "{err}");
+    }
+
+    #[test]
+    fn coords_round_trip_in_atom_row_order() {
+        let mut mol = atoms_of(&[Element::C, Element::O]);
+        let points = ndarray::array![[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]];
+        mol.set_coords(points.view()).unwrap();
+        assert_eq!(mol.coords().unwrap(), points);
+        let second = mol.atom_ids().nth(1).unwrap();
+        assert_eq!(mol.get_atom(second).unwrap().get_f64(keys::Y), Some(4.0));
+    }
+
+    #[test]
+    fn coords_refuse_a_missing_coordinate_and_a_wrong_shape() {
+        let mut mol = atoms_of(&[Element::C, Element::O]);
+        let first = mol.atom_ids().next().unwrap();
+        for key in keys::COORDS {
+            mol.set_atom(first, key, 1.0).unwrap();
+        }
+        let err = mol.coords().unwrap_err().to_string();
+        assert!(err.contains("'x' is absent on 1 of 2"), "{err}");
+        let wrong = ndarray::Array2::<f64>::zeros((3, 3));
+        assert!(mol.set_coords(wrong.view()).is_err());
+        assert_eq!(mol.get_atom(first).unwrap().get_f64(keys::X), Some(1.0));
+        assert_eq!(atoms_of(&[]).coords().unwrap().dim(), (0, 3));
     }
 }

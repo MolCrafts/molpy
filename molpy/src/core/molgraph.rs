@@ -1359,6 +1359,33 @@ macro_rules! leaf_impl {
                 self.inner.translate(delta);
             }
 
+            #[doc = concat!("Every ", $noun, "'s position, ``(N, 3)`` float64 (Å), rows in ", $noun, " row order.")]
+            ///
+            /// Assigning an ``(N, 3)`` array writes ``x`` / ``y`` / ``z`` of
+            /// every one of them; a copy is returned, so editing it changes
+            /// nothing until it is assigned back.
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            #[doc = concat!("    Reading, when a ", $noun, " lacks ``x``, ``y`` or ``z``; assigning, an")]
+            ///     array that is not ``(N, 3)``. Nothing is written then.
+            #[getter]
+            fn coords<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+                self.inner
+                    .coords()
+                    .map(|xyz| xyz.into_pyarray(py))
+                    .map_err(molrs_error_to_pyerr)
+            }
+
+            #[setter]
+            fn set_coords(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+                let xyz = crate::core::block::coords_array(value)?;
+                self.inner
+                    .set_coords(xyz.view())
+                    .map_err(molrs_error_to_pyerr)
+            }
+
             #[doc = concat!("Rotate every ", $noun, " that has coordinates by ``angle`` radians about")]
             /// ``axis``, pivoting on ``about`` (Å; ``None``: the origin).
             ///
@@ -2190,6 +2217,23 @@ impl PyAtomistic {
 }
 
 leaf_impl!(PyAtomistic, "Atomistic", "atom");
+
+#[pymethods]
+impl PyAtomistic {
+    /// The molecular formula in Hill order: carbon, then hydrogen, then every
+    /// other element alphabetically; with no carbon, every element
+    /// alphabetically. A count of one is not written (``"C2H6O"``,
+    /// ``"H2O"``); an empty graph is ``""``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an atom is the wildcard (atomic number 0); the message gives
+    ///     its row.
+    fn formula(&self) -> PyResult<String> {
+        self.inner.formula().map_err(molrs_error_to_pyerr)
+    }
+}
 
 impl PyAtomistic {
     /// A new `Atomistic` holding `inner`, with no props: the graph-out door

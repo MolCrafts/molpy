@@ -61,7 +61,7 @@ pub use forcefield_reader::{LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX, LammpsForcefieldRe
 pub use forcefield_writer::{LammpsForcefieldWriter, refuse_inexpressible_pairs};
 pub use log::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
-    LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
-    LammpsTimingRow, LammpsWarning, is_lammps_log,
+    LammpsMinimization, LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo,
+    LammpsTimingBreakdown, LammpsTimingRow, LammpsWarning, is_lammps_log,
 };
 pub use units::{LammpsLjReference, LammpsUnitConverter, parse_lammps_units_style};

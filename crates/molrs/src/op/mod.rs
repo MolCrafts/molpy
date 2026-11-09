@@ -65,7 +65,7 @@ pub use random::standard_normal;
 pub use rigid::{
     Rigid, alignment_axis_angle, axis_angle, compose_rigid, orthonormal_frame,
     place_from_internal_coords, quat_conj, quat_dot, quat_mul, quat_norm, quat_to_matrix,
-    rotate_by_quat, rotation_about, transform_point,
+    rotate_by_quat, rotation_about, rotation_axis_angle, transform_point,
 };
 pub use so3::unit_vector_from_uniform;
 pub use superpose::{

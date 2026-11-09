@@ -13,6 +13,7 @@ use crate::core::MolRsError;
 use crate::core::keys;
 use crate::core::{MolGraph, NodeId};
 use crate::op::centroid;
+use crate::op::{Fnx3, Fnx3View};
 use crate::op::{axis_angle, rotation_about, transform_point};
 
 /// Why [`MolGraph::center`] has no answer for a node set. Node-carrying variants name
@@ -74,6 +75,68 @@ impl fmt::Display for CenterError {
 impl std::error::Error for CenterError {}
 
 impl MolGraph {
+    /// Every node's position as one `N × 3` array (Å), rows in node row
+    /// order.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when a node lacks one of [`keys::X`],
+    /// [`keys::Y`], [`keys::Z`] (the message names the key and how many nodes
+    /// lack it), or a coordinate column holds another element type. A graph
+    /// with no nodes gives a `0 × 3` array.
+    pub fn coords(&self) -> Result<Fnx3, MolRsError> {
+        let table = self.node_table();
+        let n = table.len();
+        let mut out = Fnx3::zeros((n, 3));
+        if n == 0 {
+            return Ok(out);
+        }
+        for (axis, key) in keys::COORDS.iter().enumerate() {
+            let missing = || MolRsError::validation(format!("no node carries '{key}'"));
+            let (data, valid) = table.column::<f64>(key).map_err(|e| match e {
+                MolRsError::NotFound { .. } => missing(),
+                other => other,
+            })?;
+            let holes = valid.as_slice().iter().filter(|v| !**v).count();
+            if holes > 0 {
+                return Err(MolRsError::validation(format!(
+                    "'{key}' is absent on {holes} of {n} nodes"
+                )));
+            }
+            out.column_mut(axis)
+                .assign(&ndarray::ArrayView1::from(data));
+        }
+        Ok(out)
+    }
+
+    /// Write `coords` (`N × 3`, Å, rows in node row order) into every node's
+    /// [`keys::X`], [`keys::Y`], [`keys::Z`].
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when `coords` is not `N × 3` for the
+    /// graph's `N` nodes, or a coordinate column holds another element type.
+    /// Nothing is written on error.
+    pub fn set_coords(&mut self, coords: Fnx3View<'_>) -> Result<(), MolRsError> {
+        let n = self.node_table().len();
+        if coords.dim() != (n, 3) {
+            return Err(MolRsError::validation(format!(
+                "coords must be ({n}, 3) for {n} nodes, got {:?}",
+                coords.shape()
+            )));
+        }
+        let table = self.node_table_mut();
+        for key in keys::COORDS {
+            if table.columns().any(|c| c == key) {
+                table.column::<f64>(key)?;
+            }
+        }
+        for (axis, key) in keys::COORDS.iter().enumerate() {
+            table.set_column(key, coords.column(axis).to_vec())?;
+        }
+        Ok(())
+    }
+
     /// Translate every node that has coordinates by `delta` (Å; nodes without a
     /// full coordinate set are left untouched).
     ///

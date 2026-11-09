@@ -685,6 +685,26 @@ impl CoarseGrain {
         self.graph.center(beads)
     }
 
+    /// Every bead's position, `N × 3` (Å), in bead row order — see
+    /// [`MolGraph::coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::coords`]: a bead without `x`, `y` or `z`.
+    pub fn coords(&self) -> Result<crate::op::Fnx3, MolRsError> {
+        self.graph.coords()
+    }
+
+    /// Write every bead's position from `coords` (`N × 3`, Å) — see
+    /// [`MolGraph::set_coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::set_coords`]: a shape other than `N × 3`.
+    pub fn set_coords(&mut self, coords: crate::op::Fnx3View<'_>) -> Result<(), MolRsError> {
+        self.graph.set_coords(coords)
+    }
+
     /// Export to a tabular [`Frame`] in the canonical vocabulary every graph
     /// type shares: one `atoms` row per bead, one `bonds` row per CG bond
     /// (`atomi` / `atomj` = the endpoint beads' `atoms` rows), plus a

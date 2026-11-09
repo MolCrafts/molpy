@@ -207,6 +207,8 @@ fn cases() -> Result<Vec<Case>, ComputeError> {
         case(Pmft::<Xyz>::new(3.0, 3.0, 3.0, 10, 10, 10)?),
         case(Cluster::new()),
         case(Percolation::new()),
+        case(RingPiercing::new(1.0)?),
+        case(CloseContacts::new(2)),
         case(CenterOfMass::new()),
         case(GyrationTensor::new()),
         case(InertiaTensor::new()),

@@ -3,7 +3,7 @@
 use ndarray::Array1;
 
 use crate::core::{Frame, MolRsError, keys};
-use crate::op::Idx;
+use crate::op::{F, Idx};
 
 /// Chemical element with complete periodic table (elements 1-118)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1387,6 +1387,52 @@ impl Element {
             .insert(keys::ELEMENT, Array1::from_vec(symbols).into_dyn(), None)
             .map_err(|e| MolRsError::validation(e.to_string()))
     }
+
+    /// Write `atoms.mass` (amu) from `atoms.atomic_number`: each atom's
+    /// standard atomic mass ([`atomic_mass`](Self::atomic_mass)).
+    ///
+    /// The explicit step for a frame whose masses are its elements'; a
+    /// force field that assigns its own masses writes them itself. An
+    /// existing `mass` column is replaced; `atomic_number` is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when the frame has no `atoms` block, the
+    /// block has no unsigned `atomic_number` column, or a row holds the
+    /// wildcard 0 or a number outside 1..=118 — neither has a mass (the
+    /// message names the row and the number). Nothing is written then.
+    pub fn fill_masses(frame: &mut Frame) -> Result<(), MolRsError> {
+        let atoms = frame
+            .get_mut("atoms")
+            .ok_or_else(|| MolRsError::validation("frame has no 'atoms' block"))?;
+        let numbers = atoms
+            .get(keys::ATOMIC_NUMBER)
+            .and_then(|c| c.get::<u64>())
+            .ok_or_else(|| {
+                MolRsError::validation(format!(
+                    "atoms block has no unsigned '{}' column to convert",
+                    keys::ATOMIC_NUMBER
+                ))
+            })?;
+        let masses = numbers
+            .iter()
+            .enumerate()
+            .map(|(row, &z)| {
+                u8::try_from(z)
+                    .ok()
+                    .and_then(Element::by_number)
+                    .map(|e| F::from(e.atomic_mass()))
+                    .ok_or_else(|| {
+                        MolRsError::validation(format!(
+                            "atoms row {row}: {z} names no element with a mass (1..=118)"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<F>, _>>()?;
+        atoms
+            .insert(keys::MASS, Array1::from_vec(masses).into_dyn(), None)
+            .map_err(|e| MolRsError::validation(e.to_string()))
+    }
 }
 
 impl core::fmt::Display for Element {
@@ -1583,6 +1629,37 @@ mod test_element {
         assert!(frame.get("atoms").unwrap().get(keys::ELEMENT).is_none());
     }
 
+    fn float_column(frame: &Frame, key: &str) -> Vec<F> {
+        let atoms = frame.get("atoms").unwrap();
+        atoms
+            .get(key)
+            .unwrap()
+            .get::<F>()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn fill_masses_writes_each_elements_standard_mass() {
+        let mut frame = frame_with(keys::ATOMIC_NUMBER, vec![1 as Idx, 6, 8]);
+        Element::fill_masses(&mut frame).unwrap();
+        let expected: Vec<F> = [Element::H, Element::C, Element::O]
+            .map(|e| F::from(e.atomic_mass()))
+            .to_vec();
+        assert_eq!(float_column(&frame, keys::MASS), expected);
+        assert_eq!(uint_column(&frame, keys::ATOMIC_NUMBER), [1, 6, 8]);
+    }
+
+    #[test]
+    fn fill_masses_refuses_the_wildcard_and_writes_nothing() {
+        let mut frame = frame_with(keys::ATOMIC_NUMBER, vec![6 as Idx, 0]);
+        let msg = validation_message(Element::fill_masses(&mut frame).unwrap_err());
+        assert!(msg.contains("row 1") && msg.contains(" 0 "), "{msg}");
+        assert!(frame.get("atoms").unwrap().get(keys::MASS).is_none());
+    }
+
     #[test]
     fn fill_conversions_require_their_source_column() {
         let mut no_symbols = frame_with(keys::ATOMIC_NUMBER, vec![6 as Idx]);
@@ -1593,7 +1670,11 @@ mod test_element {
         let msg = validation_message(Element::fill_symbols(&mut no_numbers).unwrap_err());
         assert!(msg.contains(keys::ATOMIC_NUMBER), "{msg}");
 
+        let msg = validation_message(Element::fill_masses(&mut no_numbers).unwrap_err());
+        assert!(msg.contains(keys::ATOMIC_NUMBER), "{msg}");
+
         let mut empty = Frame::new();
+        assert!(Element::fill_masses(&mut empty).is_err());
         assert!(Element::fill_atomic_numbers(&mut empty).is_err());
         assert!(Element::fill_symbols(&mut empty).is_err());
     }
