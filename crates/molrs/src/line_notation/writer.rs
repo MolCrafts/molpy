@@ -575,6 +575,7 @@ fn dialect_name(dialect: Dialect) -> &'static str {
         Dialect::Smiles => "SMILES",
         Dialect::Smarts => "SMARTS",
         Dialect::FragmentSmiles => "a SMILES fragment",
+        Dialect::Psmiles => "PSMILES",
     }
 }
 

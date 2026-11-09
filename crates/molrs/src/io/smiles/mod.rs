@@ -14,8 +14,11 @@
 //!   descriptors `[$]`, `[<]`, `[>]`, `[!]` ([`SmilesIr::from_fragment`]
 //!   parses one), whose [`to_atomistic`](FragmentIr::to_atomistic) returns
 //!   the descriptor map beside the graph;
+//! - PSMILES, a polymer repeat unit whose two `*` are joining sites:
+//!   [`SmilesIr::from_psmiles`] reads each `*` as the `$` descriptor and
+//!   hands back the same [`FragmentIr`];
 //! - [`SmilesError`], every refusal of the SMILES family of notations
-//!   (SMILES, SMARTS, CGsmiles: its [`Notation`] says which);
+//!   (SMILES, SMARTS, CGsmiles, PSMILES: its [`Notation`] says which);
 //! - [`SmilesReader`], a `.smi` file read one molecule per line.
 //!
 //! The grammar is the crate's one line-notation grammar, shared with SMARTS
@@ -109,5 +112,32 @@ impl SmilesIr {
     /// A [`SmilesError`] for text that is not fragment notation.
     pub fn from_fragment(body: &str) -> Result<FragmentIr, SmilesError> {
         crate::line_notation::parser::parse_fragment_smiles(body).map(FragmentIr::new)
+    }
+
+    /// Parse a PSMILES repeat unit (`[*]CC[*]`) into a fragment IR.
+    ///
+    /// Each `*` is a joining site with no head or tail, read as the
+    /// unlabelled `$` descriptor on the atom it is bonded to: the result is
+    /// the [`FragmentIr`] that [`from_fragment`](Self::from_fragment) gives
+    /// for `[$]CC[$]`.
+    ///
+    /// # Errors
+    ///
+    /// A [`SmilesError`] stamped [`Notation::Psmiles`] for text that is not a
+    /// PSMILES repeat unit: everything `from_fragment` refuses,
+    /// [`SmilesErrorKind::PsmilesStarNotTerminal`] for a `*` bonded to
+    /// anything but one atom, and [`SmilesErrorKind::PsmilesStarCount`] for a
+    /// unit without exactly two `*`.
+    ///
+    /// ```
+    /// use molrs::io::smiles::SmilesIr;
+    ///
+    /// let (mol, sites) = SmilesIr::from_psmiles("[*]CC[*]")?.to_atomistic()?;
+    /// assert_eq!(mol.n_atoms(), 2);
+    /// assert_eq!(sites.len(), 2);
+    /// # Ok::<(), molrs::io::smiles::SmilesError>(())
+    /// ```
+    pub fn from_psmiles(unit: &str) -> Result<FragmentIr, SmilesError> {
+        crate::line_notation::psmiles::parse_psmiles(unit).map(FragmentIr::new)
     }
 }

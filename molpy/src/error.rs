@@ -223,6 +223,7 @@ fn notation_name(notation: molrs::io::smiles::Notation) -> &'static str {
         molrs::io::smiles::Notation::Smiles => "smiles",
         molrs::io::smiles::Notation::Smarts => "smarts",
         molrs::io::smiles::Notation::CgSmiles => "cgsmiles",
+        molrs::io::smiles::Notation::Psmiles => "psmiles",
     }
 }
 

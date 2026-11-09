@@ -93,7 +93,7 @@ pub fn parse_smiles(input: &str) -> Result<SmilesIr, SmilesError> {
 /// rule at the same stage. SMARTS is not routed here — a recursive `$(...)`
 /// sub-pattern is parsed as a molecule of its own and may legitimately leave a
 /// marker for the enclosing pattern to close.
-fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIr, SmilesError> {
+pub(crate) fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIr, SmilesError> {
     let mol = Parser::new(input, dialect).parse_molecule()?;
     validate_ring_closures(&mol, input)?;
     Ok(mol)
@@ -268,9 +268,24 @@ impl<'a> Parser<'a> {
     /// [`Parser::take_descriptor_run`]'s decision. Running it in
     /// `Dialect::Smiles` too is what lets plain SMILES name the fragment entry
     /// point, instead of dying on an unexpected `$` inside the bracket parser.
+    ///
+    /// In `Dialect::Psmiles` a star — bare `*` or bracketed `[*` — is the
+    /// descriptor instead, and the bracket glyphs are not.
     fn at_descriptor(&self) -> bool {
+        if self.dialect == Dialect::Psmiles && self.at_star() {
+            return true;
+        }
         self.scanner.peek() == Some('[')
             && matches!(self.scanner.peek_next(), Some('$' | '<' | '>' | '!'))
+    }
+
+    /// True when the cursor sits on a PSMILES star: `*`, or `[` then `*`.
+    fn at_star(&self) -> bool {
+        match self.scanner.peek() {
+            Some('*') => true,
+            Some('[') => self.scanner.peek_next() == Some('*'),
+            _ => false,
+        }
     }
 
     /// Consume the run of descriptor brackets at the cursor, if one starts
@@ -299,6 +314,18 @@ impl<'a> Parser<'a> {
         match self.dialect {
             Dialect::Smarts => Ok(None),
             Dialect::Smiles => Err(self.error(SmilesErrorKind::DescriptorInPlainSmiles)),
+            Dialect::Psmiles if !self.at_star() => {
+                Err(self.error(SmilesErrorKind::DescriptorInPlainSmiles))
+            }
+            Dialect::Psmiles => {
+                // A star has one neighbour, so a run of two is a star bonded
+                // to a star (`**C`).
+                let star = self.parse_star()?;
+                if self.at_star() {
+                    return Err(self.error(SmilesErrorKind::PsmilesStarNotTerminal));
+                }
+                Ok(Some(vec![star]))
+            }
             Dialect::FragmentSmiles => {
                 let mut run = vec![self.parse_descriptor()?];
                 while self.at_descriptor() {
@@ -343,6 +370,42 @@ impl<'a> Parser<'a> {
             descriptors.push(desc);
         }
         Ok(descriptors)
+    }
+
+    /// Parse one PSMILES star, `*` or `[*]`, as the unlabelled `$` it means.
+    ///
+    /// The bracket form takes nothing but the star: `[*:1]` is refused rather
+    /// than read as an atom, since in PSMILES every star is a joining site.
+    fn parse_star(&mut self) -> Result<(BondingDescriptor, Span), SmilesError> {
+        let start = self.scanner.pos();
+        if self.scanner.peek() == Some('[') {
+            self.scanner.advance(); // consume '['
+            self.scanner.expect('*')?;
+            self.scanner.expect(']')?;
+        } else {
+            self.scanner.expect('*')?;
+        }
+        let span = self.scanner.span_from(start);
+        Ok((
+            BondingDescriptor {
+                span,
+                kind: DescriptorKind::Symmetric,
+                label: String::new(),
+                order: None,
+            },
+            span,
+        ))
+    }
+
+    /// PSMILES: a star written after an atom closes its bond — what follows
+    /// must not bond to it. Only the end of a branch, of a component or of
+    /// the input may follow; an atom, a bond or a ring digit would make the
+    /// star a second atom's neighbour (`C*C`, `C*1CC1`).
+    fn check_star_ends_here(&self) -> Result<(), SmilesError> {
+        match self.scanner.peek() {
+            None | Some(')' | '.') => Ok(()),
+            Some(_) => Err(self.error(SmilesErrorKind::PsmilesStarNotTerminal)),
+        }
     }
 
     /// Parse one descriptor bracket: `[` glyph label? `]`.
@@ -495,6 +558,9 @@ impl<'a> Parser<'a> {
             return Ok(false);
         };
         let descriptors = self.finish_descriptor_run(run, order, AdjacentBracket::First)?;
+        if self.dialect == Dialect::Psmiles {
+            self.check_star_ends_here()?;
+        }
         Self::anchor(head, tail).descriptors.extend(descriptors);
         Ok(true)
     }
@@ -620,6 +686,10 @@ impl<'a> Parser<'a> {
                 AdjacentBracket::First,
             )?;
             bond = None;
+            // PSMILES: `C(*C)` would bond the star to both carbons.
+            if self.dialect == Dialect::Psmiles {
+                self.check_star_ends_here()?;
+            }
             if self.scanner.peek() == Some(')') {
                 self.scanner.advance(); // consume ')'
                 return Ok((parent, None));

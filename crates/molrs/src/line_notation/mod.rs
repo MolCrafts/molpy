@@ -1,5 +1,5 @@
-//! The line notations' shared grammar: SMILES, SMARTS, and the SMILES
-//! fragment body (see [`Dialect`]) — one abstract syntax tree, one byte
+//! The line notations' shared grammar: SMILES, SMARTS, the SMILES fragment
+//! body and PSMILES (see [`Dialect`]) — one abstract syntax tree, one byte
 //! scanner, one recursive-descent parser, one writer, one error type.
 //!
 //! Crate-private. The SMILES format's public face is [`crate::io::smiles`]
@@ -23,6 +23,7 @@ pub(crate) mod error;
 #[cfg(test)]
 pub(crate) mod fixtures;
 pub(crate) mod parser;
+pub(crate) mod psmiles;
 pub(crate) mod scanner;
 pub(crate) mod validation;
 pub(crate) mod writer;
@@ -77,7 +78,7 @@ pub(crate) fn is_element_symbol(symbol: &str) -> bool {
 
 /// Which notation the parser or writer speaks.
 ///
-/// The three dialects share one AST, one scanner and one recursive-descent
+/// The four dialects share one AST, one scanner and one recursive-descent
 /// parser; this enum is what that shared machinery branches on, so "which
 /// language is this" has a single home rather than one private copy per
 /// direction.
@@ -96,20 +97,25 @@ pub(crate) enum Dialect {
     Smarts,
     /// SMILES fragment body with `CGsmiles` / `BigSMILES` bonding descriptors.
     FragmentSmiles,
+    /// PSMILES repeat unit: SMILES whose `*` / `[*]` are joining sites, read
+    /// as the unlabelled `$` descriptor ([`psmiles`]). Bracket descriptors
+    /// are refused, as in plain SMILES.
+    Psmiles,
 }
 
 impl Dialect {
     /// The notation a diagnostic about this dialect names.
     ///
-    /// Three dialects, two notations: the fragment body is SMILES widened with
+    /// Four dialects, three notations: the fragment body is SMILES widened with
     /// bonding descriptors, not a language of its own, so it reports as
-    /// SMILES. The mapping is total and lives here alone, so the parser and
+    /// SMILES; PSMILES is a named convention and reports as itself. The mapping is total and lives here alone, so the parser and
     /// the writer cannot drift into two answers — and neither holds a second
     /// notation field beside its `dialect`.
     pub(crate) fn notation(self) -> Notation {
         match self {
             Dialect::Smiles | Dialect::FragmentSmiles => Notation::Smiles,
             Dialect::Smarts => Notation::Smarts,
+            Dialect::Psmiles => Notation::Psmiles,
         }
     }
 }

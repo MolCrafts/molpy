@@ -1,10 +1,10 @@
-//! Error types shared by the three line notations this module family reads
-//! and writes: SMILES, SMARTS and `CGsmiles`.
+//! Error types shared by the line notations this module family reads and
+//! writes: SMILES, SMARTS, `CGsmiles` and PSMILES.
 //!
 //! There is one error struct, [`SmilesError`], one list of reasons,
 //! [`SmilesErrorKind`], and one field, [`Notation`], saying which language the
 //! offending text was meant to be — because many reasons (`UnclosedBracket`
-//! and friends) are raised by all three, and the entry point is the only place
+//! and friends) are raised by all of them, and the entry point is the only place
 //! that knows which was being parsed.
 
 use std::fmt;
@@ -14,7 +14,7 @@ use molrs::core::MolRsError;
 
 /// Which line notation was being read or written when an error was raised.
 ///
-/// One error type serves all three notations, so the notation is a *fact owned
+/// One error type serves every notation, so the notation is a *fact owned
 /// by the entry point* rather than something a reader could infer from the
 /// variant name: `UnclosedBracket` is raised by the SMILES, SMARTS and
 /// CGsmiles parsers alike, and only the entry point knows which language
@@ -33,6 +33,8 @@ pub enum Notation {
     Smarts,
     /// `CGsmiles`, the coarse-grained resolution notation.
     CgSmiles,
+    /// PSMILES, a polymer repeat unit whose `*` atoms are joining sites.
+    Psmiles,
 }
 
 impl fmt::Display for Notation {
@@ -41,6 +43,7 @@ impl fmt::Display for Notation {
             Notation::Smiles => "SMILES",
             Notation::Smarts => "SMARTS",
             Notation::CgSmiles => "CGsmiles",
+            Notation::Psmiles => "PSMILES",
         };
         f.write_str(name)
     }
@@ -62,7 +65,7 @@ pub struct SmilesError {
     pub input: String,
     /// Which notation was being parsed or written, as the rendered message
     /// names it. Stamped by the entry point, never derived from [`kind`]:
-    /// several kinds are shared by all three notations.
+    /// several kinds are shared by every notation.
     ///
     /// [`kind`]: SmilesError::kind
     pub notation: Notation,
@@ -72,7 +75,7 @@ pub struct SmilesError {
 /// text as payload where naming it helps.
 ///
 /// A variant says *what* went wrong, never *which notation* was being read —
-/// most of the first group below is raised by all three — so a caller that
+/// most of the first group below is raised by all of them — so a caller that
 /// wants the language reads [`SmilesError::notation`] instead. The variants
 /// fall into three groups: the shared grammar rules, the bonding-descriptor
 /// rules of the SMILES fragment dialect (`DescriptorInPlainSmiles` onwards),
@@ -183,6 +186,14 @@ pub enum SmilesErrorKind {
     /// only; `SmilesIr::parse("[C;0.5]")` still reports
     /// [`SmilesErrorKind::UnclosedBracket`].
     AtomAnnotationUnsupported(String),
+    /// A PSMILES `*` is bonded to something other than exactly one atom: a
+    /// star between two atoms (`C*C`), two stars in a row (`**C`), a star
+    /// opening a branch chain (`C(*C)`) or carrying a ring digit (`C*1CC1`).
+    /// A star is a joining site, so it has exactly one neighbour.
+    PsmilesStarNotTerminal,
+    /// A PSMILES repeat unit carries a number of `*` other than two; the
+    /// payload is the number written.
+    PsmilesStarCount(usize),
 
     // -- CGsmiles coarse-graph kinds ----------------------------------------
     /// A `CGsmiles` block contains nothing: `{}`. The reference implementation
@@ -402,6 +413,12 @@ impl SmilesErrorKind {
             }
             SmilesErrorKind::AtomAnnotationUnsupported(s) => {
                 format!("atom annotation ';{s}' is unsupported")
+            }
+            SmilesErrorKind::PsmilesStarNotTerminal => {
+                "a PSMILES '*' must be bonded to exactly one atom".to_owned()
+            }
+            SmilesErrorKind::PsmilesStarCount(n) => {
+                format!("a PSMILES repeat unit has exactly two '*', found {n}")
             }
             SmilesErrorKind::CgEmptyBlock
             | SmilesErrorKind::CgMalformedAnnotation(_)

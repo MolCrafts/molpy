@@ -1263,8 +1263,8 @@ class SmilesError(ValueError):
         The offending string, empty for errors raised past the parser (the
         expansion and emit stages are handed an IR, not the text).
     notation : str
-        Which notation was being read or written: ``"smiles"``, ``"smarts"``
-        or ``"cgsmiles"``.
+        Which notation was being read or written: ``"smiles"``, ``"smarts"``,
+        ``"cgsmiles"`` or ``"psmiles"``.
     """
 
     kind: str
@@ -2675,6 +2675,10 @@ def read_smiles(smiles: str) -> SmilesIr:
 def read_smiles_fragment(body: str) -> FragmentIr:
     """Read a fragment body (SMILES plus bonding descriptors, e.g.
     ``"[<]OCC[>]"``)."""
+
+def read_psmiles(unit: str) -> FragmentIr:
+    """Read a PSMILES repeat unit (``"[*]CC[*]"``); each ``*`` is a ``$``
+    joining site."""
 
 def write_smiles(
     mol: Atomistic,
