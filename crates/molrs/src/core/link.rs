@@ -370,7 +370,8 @@ impl LinkPlan {
 }
 
 impl MolGraph {
-    /// Join port `a` to port `b` and return the new anchor–anchor bond.
+    /// Join port `a` to port `b` and return the [`Junction`]: the new
+    /// anchor–anchor bond, its anchors and the charge folded onto each.
     ///
     /// Both ports are consumed: on success the two anchors are bonded and
     /// neither port remains. `link` validates both ports before it writes
@@ -502,7 +503,7 @@ impl MolGraph {
     /// pysimm's `random_walk` polymer builder (Fortunato & Colina, *SoftwareX* **6**,
     /// 7 (2017), doi:10.1016/j.softx.2016.12.002); AMBER's `prepgen` spreads it
     /// instead, which molrs does not offer.
-    pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
+    pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<Junction, LinkError> {
         let request = LinkRequest { a, b, class: None };
         let mut junctions = self
             .link_many(std::slice::from_ref(&request))
@@ -515,7 +516,7 @@ impl MolGraph {
                     unreachable!("one pair has no other pair to conflict with")
                 }
             })?;
-        Ok(junctions.pop().expect("one request makes one bond").bond)
+        Ok(junctions.pop().expect("one request makes one junction"))
     }
 
     /// Join every pair of `pairs` in one pass and return one [`Junction`] per
@@ -1334,7 +1335,7 @@ mod tests {
             .add_port(b, hb, PortKind::Right, "p", BondNumber::Double)
             .unwrap();
 
-        let bid = world.link(pa, pb).expect("link");
+        let bid = world.link(pa, pb).expect("link").bond;
 
         let bond = world.get_bond(bid).expect("the returned bond is live");
         let mut ends = bond.nodes.to_vec();
@@ -2430,7 +2431,7 @@ mod tests {
         world.set_bond(departing, keys::STEREO, "up").unwrap();
         let mut reversed = world.clone();
         let mut conflicting = world.clone();
-        let replacement = world.link(pa, pb).unwrap();
+        let replacement = world.link(pa, pb).unwrap().bond;
         assert_eq!(
             world
                 .get_bond(replacement)
@@ -2439,7 +2440,7 @@ mod tests {
                 .get_str(keys::STEREO),
             Some("up")
         );
-        let backward = reversed.link(pb, pa).unwrap();
+        let backward = reversed.link(pb, pa).unwrap().bond;
         assert_eq!(
             reversed
                 .get_bond(backward)

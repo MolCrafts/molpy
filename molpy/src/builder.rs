@@ -12,7 +12,9 @@ use std::collections::HashMap;
 use molrs::builder::{
     AssembleError, Assembler, AxisOrienter, GrowthPlacer, Orienter, Placer, SitePlacer,
 };
-use molrs::builder::{CarbonTubeBuilder, Coarsener, GrapheneBuilder, JunctionReport, TubeExtent};
+use molrs::builder::{
+    CarbonTubeBuilder, Coarsener, GrapheneBuilder, JunctionReport, Retype, TubeExtent,
+};
 use molrs::core::{Atomistic, CoarseGrain, Graph, MolGraph, NodeId};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -20,7 +22,7 @@ use pyo3::types::PyMapping;
 
 use crate::core::frame::PyFrame;
 use crate::core::graph_views::{Leaf, PyRefs};
-use crate::core::molgraph::{PyAtomistic, PyCoarseGrain, PyMolGraph};
+use crate::core::molgraph::{PyAtomistic, PyCoarseGrain, PyJunction, PyMolGraph};
 use crate::core::simbox::PyBox;
 
 /// Exact single-wall carbon nanotube builder.
@@ -696,16 +698,12 @@ impl PyCoarsener {
 }
 
 /// Register `molpy.builder`.
-/// What the junction stage of an assembly did
-/// (``molrs::builder::JunctionReport``), as views of the world it was made
-/// for.
+/// What a junction stage did (``molrs::builder::JunctionReport``), as views
+/// of the world it was made for.
 ///
-/// ``bonds[k]`` is the bond junction ``k`` made, ``anchors[k]`` its two
-/// anchors, ``folds[k]`` the leaving-group charge (e) folded onto each anchor
-/// (``None`` for a side that carried no charges).
-/// ``reclassified_pairs`` are the pair rows whose bond distance the new bonds
-/// shortened (a closed ring's former 1-4 pair); each now holds only its
-/// ``n_bonds``.
+/// ``junctions`` are the ``Junction``s it was given. ``reclassified_pairs``
+/// are the pair rows whose bond distance the new bonds shortened (a closed
+/// ring's former 1-4 pair); each now holds only its ``n_bonds``.
 #[pyclass(module = "molpy.builder", name = "JunctionReport", frozen)]
 pub(crate) struct PyJunctionReport {
     world: Py<PyAny>,
@@ -714,44 +712,17 @@ pub(crate) struct PyJunctionReport {
 
 #[pymethods]
 impl PyJunctionReport {
-    /// The new bonds, one per junction.
+    /// The junctions: the new bonds, their anchors and the charge folded
+    /// onto each anchor.
     #[getter]
-    fn bonds(&self, py: Python<'_>) -> PyRefs {
-        let handles = self
-            .inner
-            .junctions
-            .iter()
-            .map(|j| u64::from(j.bond))
-            .collect();
-        PyRefs::of_relations(self.world.bind(py), "bonds", handles)
-    }
-
-    /// The two anchors of each junction.
-    #[getter]
-    fn anchors<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>> {
-        let leaf = Leaf::of(self.world.bind(py))?;
+    fn junctions(&self, py: Python<'_>) -> Vec<PyJunction> {
         self.inner
             .junctions
             .iter()
-            .map(|j| {
-                Ok((
-                    leaf.node(u64::from(j.anchors[0]))?,
-                    leaf.node(u64::from(j.anchors[1]))?,
-                ))
+            .map(|&inner| PyJunction {
+                world: self.world.clone_ref(py),
+                inner,
             })
-            .collect()
-    }
-
-    /// The charge (e) folded onto each anchor of each junction.
-    #[getter]
-    fn folds(&self) -> Vec<(Option<f64>, Option<f64>)> {
-        self.inner
-            .junctions
-            .iter()
-            .map(|j| (j.folds[0], j.folds[1]))
             .collect()
     }
 
@@ -798,6 +769,50 @@ impl PyJunctionReport {
     }
 }
 
+/// Bring ``world``'s graph-derived terms up to the bonds of ``junctions``
+/// (``molrs::builder::update_junctions``): the angles, dihedrals and pair rows
+/// of every kind ``world`` carries, the pairs a ring closure shortens
+/// reclassified and stripped to their ``n_bonds``. No atom type changes.
+/// Calling it again changes nothing.
+///
+/// Parameters
+/// ----------
+/// world : Atomistic
+/// junctions : list[Junction]
+///     What ``world.link`` returned, one per call.
+///
+/// Returns
+/// -------
+/// JunctionReport
+///
+/// Raises
+/// ------
+/// ValueError
+///     If a junction was made on another graph, or its bond is no longer a
+///     live bond between its anchors; nothing is written then.
+#[pyfunction(name = "update_junctions")]
+fn py_update_junctions(
+    world: &Bound<'_, PyAtomistic>,
+    junctions: Vec<PyRef<'_, PyJunction>>,
+) -> PyResult<PyJunctionReport> {
+    if let Some(k) = junctions
+        .iter()
+        .position(|j| !j.world.bind(world.py()).is(world))
+    {
+        return Err(PyValueError::new_err(format!(
+            "junction {k} was made on another graph"
+        )));
+    }
+    let core: Vec<molrs::core::Junction> = junctions.iter().map(|j| j.inner).collect();
+    let report =
+        molrs::builder::update_junctions(world.try_borrow_mut()?.core_mut(), &core, &Retype::Keep)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(PyJunctionReport {
+        world: world.clone().into_any().unbind(),
+        inner: report,
+    })
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCarbonTubeBuilder>()?;
     m.add_class::<PyGrapheneBuilder>()?;
@@ -806,6 +821,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAxisOrienter>()?;
     m.add_class::<PyAssembler>()?;
     m.add_class::<PyJunctionReport>()?;
+    m.add_function(wrap_pyfunction!(py_update_junctions, m)?)?;
     m.add_class::<PyCoarsener>()?;
     crate::polymer::register(m)?;
     crate::symmetry::register(m)?;

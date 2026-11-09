@@ -86,13 +86,7 @@ fn chain() -> Chain {
 }
 
 fn junction_of(world: &mut Atomistic, a: RelationId, b: RelationId) -> Junction {
-    let bond = world.link(a, b).unwrap();
-    let ends = world.get_bond(bond).unwrap().nodes;
-    Junction {
-        bond,
-        anchors: [ends[0], ends[1]],
-        folds: [None, None],
-    }
+    world.link(a, b).unwrap()
 }
 
 #[test]

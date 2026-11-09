@@ -1005,7 +1005,7 @@ impl PyMolGraph {
     fn link(&mut self, a: u64, b: u64) -> PyResult<u64> {
         self.inner
             .link(RelationId::from(a), RelationId::from(b))
-            .map(u64::from)
+            .map(|junction| u64::from(junction.bond))
             .map_err(link_error_to_pyerr)
     }
 
@@ -1044,6 +1044,49 @@ fn replicate_args(
         Err(_) => frag_ids.extract::<Vec<i32>>()?,
     };
     Ok((transforms, frag_ids))
+}
+
+/// One join made by ``link`` (``molrs::core::Junction``): the new bond, the
+/// two anchors it joins (in the order of the ports given) and the
+/// leaving-group charge (e) folded onto each anchor, ``None`` for a side that
+/// carried no charges. Views of the graph it was made on.
+#[pyclass(module = "molpy.core", name = "Junction", frozen)]
+pub(crate) struct PyJunction {
+    pub(crate) world: Py<PyAny>,
+    pub(crate) inner: molrs::core::Junction,
+}
+
+#[pymethods]
+impl PyJunction {
+    /// The new bond.
+    #[getter]
+    fn bond<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Leaf::of(self.world.bind(py))?.relation("bonds", u64::from(self.inner.bond))
+    }
+
+    /// The anchors of the two ports, in the order they were given.
+    #[getter]
+    fn anchors<'py>(&self, py: Python<'py>) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
+        let leaf = Leaf::of(self.world.bind(py))?;
+        Ok((
+            leaf.node(u64::from(self.inner.anchors[0]))?,
+            leaf.node(u64::from(self.inner.anchors[1]))?,
+        ))
+    }
+
+    /// The charge (e) folded onto each anchor.
+    #[getter]
+    fn folds(&self) -> (Option<f64>, Option<f64>) {
+        (self.inner.folds[0], self.inner.folds[1])
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Junction(bond={}, folds={:?})",
+            u64::from(self.inner.bond),
+            self.inner.folds
+        )
+    }
 }
 
 /// Emits the `#[pymethods]` both leaves share. `$noun` is what the leaf's
@@ -1335,15 +1378,18 @@ macro_rules! leaf_impl {
                 slf: &Bound<'py, Self>,
                 a: &Bound<'py, PyAny>,
                 b: &Bound<'py, PyAny>,
-            ) -> PyResult<Bound<'py, PyAny>> {
+            ) -> PyResult<PyJunction> {
                 let leaf = Leaf::of(slf.as_any())?;
                 let (a, b) = (own_relation(&leaf, a, "ports")?, own_relation(&leaf, b, "ports")?);
-                let bond = slf
+                let junction = slf
                     .try_borrow_mut()?
                     .inner
                     .link(a, b)
                     .map_err(link_error_to_pyerr)?;
-                leaf.relation("bonds", u64::from(bond))
+                Ok(PyJunction {
+                    world: slf.clone().into_any().unbind(),
+                    inner: junction,
+                })
             }
 
             #[doc = concat!("Propagate each ``frag_id`` to the unlabelled degree-1 ", $noun, "s bonded")]

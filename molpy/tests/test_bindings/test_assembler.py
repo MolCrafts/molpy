@@ -323,10 +323,11 @@ def test_assemble_with_report_crosses_the_junctions() -> None:
 
     assert type(world) is mp.core.Atomistic
     assert isinstance(report, mp.builder.JunctionReport)
-    (bond,) = report.bonds
-    (anchors,) = report.anchors
-    assert {a.handle for a in anchors} == {a.handle for a in bond.endpoints}
-    assert report.folds == [(0.25, 0.25)]
+    (junction,) = report.junctions
+    assert {a.handle for a in junction.anchors} == {
+        a.handle for a in junction.bond.endpoints
+    }
+    assert junction.folds == (0.25, 0.25)
     # C0-C1-C1' and C1-C1'-C0' are new, and bare; the monomers' angles keep
     # their stamp.
     assert report.n_added_angles == 2
@@ -344,3 +345,42 @@ def test_assemble_with_report_needs_atomistic_templates() -> None:
         mp.builder.Assembler(
             {"B": template}, mp.builder.SitePlacer()
         ).assemble_with_report(sites)
+
+
+def test_update_junctions_takes_what_link_returned() -> None:
+    """A hand-made ring: the 4-carbon chain's ends linked. The former 1-4 pair
+    becomes 1-2 and loses its override; the ring's angles through the new
+    bond are added."""
+    chain = mp.core.Atomistic()
+    carbons = [chain.add_atom(atomic_number=6) for _ in range(4)]
+    for a, b in zip(carbons, carbons[1:]):
+        chain.add_bond(a, b)
+    ha = chain.add_atom(atomic_number=1)
+    hd = chain.add_atom(atomic_number=1)
+    chain.add_bond(carbons[0], ha)
+    chain.add_bond(carbons[3], hd)
+    left = chain.add_port(carbons[0], ha, "<")
+    right = chain.add_port(carbons[3], hd, ">")
+    chain.generate_topology()
+    for pair in chain.terms("pairs"):
+        pair["epsilon"] = 0.5
+
+    junction = chain.link(right, left)
+    report = mp.builder.update_junctions(chain, [junction])
+
+    assert isinstance(report, mp.builder.JunctionReport)
+    (pair,) = report.reclassified_pairs
+    assert pair["n_bonds"] == 1 and "epsilon" not in pair
+    assert report.n_added_angles == 2
+    again = mp.builder.update_junctions(chain, [junction])
+    assert (again.n_added_angles, len(again.reclassified_pairs)) == (0, 0)
+
+
+def test_update_junctions_refuses_a_junction_of_another_graph() -> None:
+    first = _monomer()
+    first.merge(_monomer())
+    right = next(p for p in first.ports if p["port_kind"] == ">")
+    left = [p for p in first.ports if p["port_kind"] == "<"][-1]
+    junction = first.link(right, left)
+    with pytest.raises(ValueError, match="another graph"):
+        mp.builder.update_junctions(_monomer(), [junction])

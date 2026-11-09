@@ -67,6 +67,7 @@ from molpy._core import (
     SystemSample,
     Terminal,
     Tip4pBuilder,
+    update_junctions,
 )
 
 from molpy.builder.packing import PackingTemplate
@@ -107,5 +108,6 @@ __all__ = [
     "AmberPolymerBuilder",
     "DrudeBuilder",
     "Tip4pBuilder",
+    "update_junctions",
     "PackingTemplate",
 ]

@@ -1107,13 +1107,18 @@ impl Atomistic {
         self.graph.leaving_group(port)
     }
 
-    /// Join port `a` to port `b` and return the new anchor–anchor bond; see
+    /// Join port `a` to port `b` and return the [`Junction`](crate::core::Junction)
+    /// (the new bond, its anchors, the charge folded onto each); see
     /// [`MolGraph::link`] for the charge fold and the refusals.
     ///
     /// # Errors
     ///
     /// The [`LinkError`] of the first refusal; the molecule is unchanged then.
-    pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
+    pub fn link(
+        &mut self,
+        a: RelationId,
+        b: RelationId,
+    ) -> Result<crate::core::Junction, LinkError> {
         self.graph.link(a, b)
     }
 
@@ -3528,7 +3533,7 @@ mod tests {
         };
         let (c0, p0) = unit(PortKind::Left);
         let (c1, p1) = unit(PortKind::Right);
-        let bond = mol.link(p0, p1).unwrap();
+        let bond = mol.link(p0, p1).unwrap().bond;
         assert_eq!(mol.bond_between(c0, c1), Some(bond));
         assert_eq!((mol.n_atoms(), mol.n_ports()), (2, 0));
     }

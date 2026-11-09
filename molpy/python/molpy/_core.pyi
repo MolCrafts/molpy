@@ -1690,11 +1690,11 @@ class Atomistic:
     def del_ports(self, ports: Iterable[Port]) -> None: ...
     def port_on(self, anchor: Atom, handle_atom: Atom) -> Port | None: ...
     def leaving_group(self, port: Port) -> list[Atom]: ...
-    def link(self, a: Port, b: Port) -> Bond:
+    def link(self, a: Port, b: Port) -> Junction:
         """Join port ``a`` to port ``b``: delete both leaving groups, fold
         their charge (e) onto the anchors, bond the anchors with the port
-        order; returns the new bond. The graph is unchanged on a refusal
-        (``ValueError``)."""
+        order; returns the ``Junction`` (the new bond, the anchors, the
+        folds). The graph is unchanged on a refusal (``ValueError``)."""
     def inherit_frag_ids(self) -> int: ...
     # --- geometry ---
     def translate(self, delta: Sequence[float] | ArrayF) -> None: ...
@@ -1764,6 +1764,19 @@ class Atomistic:
     def to_frame(self) -> Frame: ...
     @staticmethod
     def from_frame(frame: Frame) -> Atomistic: ...
+
+@final
+class Junction:
+    """One join ``link`` made: the new bond, the anchors of the two ports in
+    the order given, and the leaving-group charge (e) folded onto each
+    (``None`` for a side that carried no charges)."""
+
+    @property
+    def bond(self) -> Bond: ...
+    @property
+    def anchors(self) -> tuple[Atom, Atom]: ...
+    @property
+    def folds(self) -> tuple[float | None, float | None]: ...
 
 class ExtractedSubgraph:
     """Result of :meth:`Atomistic.extract_subgraph` / :meth:`CoarseGrain.extract_subgraph`.
@@ -1882,7 +1895,7 @@ class CoarseGrain:
     def del_ports(self, ports: Iterable[Port]) -> None: ...
     def port_on(self, anchor: Bead, handle_atom: Bead) -> Port | None: ...
     def leaving_group(self, port: Port) -> list[Bead]: ...
-    def link(self, a: Port, b: Port) -> CgBond: ...
+    def link(self, a: Port, b: Port) -> Junction: ...
     def inherit_frag_ids(self) -> int: ...
     # --- geometry ---
     def translate(self, delta: Sequence[float] | ArrayF) -> None: ...
@@ -4322,20 +4335,25 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
             As :meth:`assemble`.
         """
 
+def update_junctions(world: Atomistic, junctions: Sequence[Junction]) -> JunctionReport:
+    """Bring ``world``'s angles, dihedrals and pair rows (the kinds it
+    carries) up to the bonds of ``junctions``; pairs a ring closure shortens
+    are reclassified and stripped to ``n_bonds``. No atom type changes;
+    a second call changes nothing.
+
+    Raises
+    ------
+    ValueError
+        a junction made on another graph, or whose bond no longer joins its
+        anchors; nothing is written then.
+    """
+
 @final
 class JunctionReport:
-    """What an assembly's junction stage did, as views of its world."""
+    """What a junction stage did, as views of its world."""
 
     @property
-    def bonds(self) -> Refs[Bond]:
-        """The new bond of each junction."""
-    @property
-    def anchors(self) -> list[tuple[Atom, Atom]]:
-        """The two anchors of each junction."""
-    @property
-    def folds(self) -> list[tuple[float | None, float | None]]:
-        """Leaving-group charge (e) folded onto each anchor; ``None`` for a
-        side that carried no charges."""
+    def junctions(self) -> list[Junction]: ...
     @property
     def reclassified_pairs(self) -> Refs[RelationRef]:
         """Pair rows whose bond distance the new bonds shortened; each holds
