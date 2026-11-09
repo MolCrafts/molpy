@@ -14,7 +14,8 @@
 //!   caller declared for each linked anchor's copy, and nothing else: an
 //!   atom's old parameters are not scrubbed — the parameter assignment that
 //!   follows a retype overwrites them. [`Retype::Perceive`] runs a typifier
-//!   over the whole graph and writes the types it changes.
+//!   over the whole graph and writes the types it changes — everywhere, or
+//!   only near the anchors after verifying nothing beyond them changes.
 //! - **Graph-derived terms.** The angles, dihedrals and 1-2/1-3/1-4 pair rows
 //!   of every kind the graph already carries are made to agree with the new
 //!   bond graph. A link only adds bonds, so every existing angle and dihedral
@@ -136,6 +137,16 @@ pub enum JunctionError {
     /// The perceiving typifier refused the graph.
     #[cfg(feature = "ff")]
     Perception(crate::ff::typifier::TypingError),
+    /// Perceiving within `radius` bonds of the anchors, the typifier changes
+    /// the type of `atoms`, which lie beyond it: the rest of the graph is not
+    /// what the typifier would make it, so a local write would leave it
+    /// inconsistent.
+    ChangedBeyondRadius {
+        /// The radius (bonds from an anchor).
+        radius: usize,
+        /// The atoms beyond it whose type would change.
+        atoms: Vec<NodeId>,
+    },
     /// The perceiving typifier gave atom `atom` no type, or (`atom` `None`)
     /// did not keep the graph's atoms.
     Untyped {
@@ -189,6 +200,13 @@ impl fmt::Display for JunctionError {
             ),
             #[cfg(feature = "ff")]
             Self::Perception(error) => write!(f, "the typifier refused the graph: {error}"),
+            Self::ChangedBeyondRadius { radius, atoms } => write!(
+                f,
+                "the typifier changes {} atom type(s) more than {radius} bonds from every \
+                 junction anchor (atoms {:?}); write the whole graph or widen the radius",
+                atoms.len(),
+                atoms.iter().map(|a| u64::from(*a)).collect::<Vec<_>>()
+            ),
             Self::Untyped { atom, detail } => match atom {
                 Some(atom) => write!(f, "atom {}: {detail}", u64::from(*atom)),
                 None => write!(f, "{detail}"),
@@ -206,6 +224,7 @@ impl std::error::Error for JunctionError {
             Self::Perception(error) => Some(error),
             Self::NotABond { .. }
             | Self::Untyped { .. }
+            | Self::ChangedBeyondRadius { .. }
             | Self::NoProvenance { .. }
             | Self::PatchedAtomMissing { .. }
             | Self::AmbiguousCopy { .. }
@@ -258,7 +277,7 @@ pub fn update_junctions(
         }
         #[cfg(feature = "ff")]
         Retype::Perceive(perceive) => {
-            let writes = perceive.plan(world)?;
+            let writes = perceive.plan(world, junctions)?;
             patch::apply(world, writes)?
         }
     };

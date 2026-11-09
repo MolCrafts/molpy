@@ -4361,7 +4361,9 @@ def update_junctions(
 class Perceive:
     """Atom types perceived again over the whole linked world by a native
     typifier: only each atom's ``type`` is read from its ``assign`` and
-    written back where it changes.
+    written back where it changes. With ``radius``, a perception that would
+    change an atom more than ``radius`` bonds from every junction anchor is
+    refused (``ValueError`` from the call that applies it).
 
     Raises
     ------
@@ -4369,7 +4371,9 @@ class Perceive:
         ``typifier`` is a Python subclass, not a native typifier.
     """
 
-    def __new__(cls, typifier: Typifier[Atomistic]) -> Self: ...
+    def __new__(
+        cls, typifier: Typifier[Atomistic], *, radius: int | None = None
+    ) -> Self: ...
 
 @final
 class Patch:

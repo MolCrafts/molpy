@@ -527,4 +527,92 @@ mod perceive {
             .collect();
         assert_eq!(after, before);
     }
+
+    fn local(
+        typifier: impl crate::ff::typifier::Typifier + Send + Sync + 'static,
+        radius: usize,
+    ) -> Retype {
+        Retype::Perceive(Perceive::new(Arc::new(typifier)).within(radius))
+    }
+
+    #[test]
+    fn a_local_write_is_refused_when_atoms_beyond_the_radius_would_change() {
+        let (mut world, _, junctions) = linked_chain();
+        let before = types(&world);
+
+        let err = update_junctions(&mut world, &junctions, &local(ElementTypifier::new(), 0))
+            .unwrap_err();
+
+        match err {
+            JunctionError::ChangedBeyondRadius { radius, atoms } => {
+                assert_eq!(radius, 0);
+                assert_eq!(atoms.len(), world.n_atoms() - 4, "all but the four anchors");
+            }
+            other => panic!("expected ChangedBeyondRadius, got {other}"),
+        }
+        assert_eq!(types(&world), before);
+    }
+
+    #[test]
+    fn a_local_write_touches_only_the_atoms_near_the_anchors() {
+        let (mut world, _, junctions) = linked_chain();
+        update_junctions(&mut world, &[], &perceive(ElementTypifier::new())).unwrap();
+        let anchors: Vec<NodeId> = junctions.iter().flat_map(|j| j.anchors).collect();
+        for &anchor in &anchors {
+            world.set_atom(anchor, keys::TYPE, "stale").unwrap();
+        }
+
+        let report =
+            update_junctions(&mut world, &junctions, &local(ElementTypifier::new(), 0)).unwrap();
+
+        let mut retyped: Vec<NodeId> = report.retyped.iter().map(|r| r.atom).collect();
+        let mut expected = anchors.clone();
+        retyped.sort();
+        expected.sort();
+        assert_eq!(retyped, expected);
+        assert!(types(&world).iter().all(|t| t != "stale"));
+    }
+
+    /// Methanol and methane typed whole (GAFF), then the hydroxyl linked to
+    /// the methyl: the oxygen becomes `os` and the methyl's hydrogens, now on
+    /// a carbon bonded to an oxygen, `h1` — all within one bond of an anchor.
+    #[test]
+    fn a_local_gaff_perception_covers_an_ether_junction_at_radius_one() {
+        let mut world = Atomistic::new();
+        let c1 = carbon(&mut world);
+        let o = world
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
+        bond(&mut world, c1, o);
+        for _ in 0..3 {
+            hydrogen_on(&mut world, c1);
+        }
+        let ho = hydrogen_on(&mut world, o);
+        let c2 = carbon(&mut world);
+        let hs: Vec<NodeId> = (0..4).map(|_| hydrogen_on(&mut world, c2)).collect();
+        let gaff = || AtdTypifier::new(AtdParameterSet::Gff);
+        update_junctions(&mut world, &[], &perceive(gaff())).unwrap();
+        assert_eq!(type_of(&world, o), "oh");
+        assert_eq!(type_of(&world, hs[1]), "hc");
+        let on_o = world
+            .add_port(o, ho, PortKind::Right, "", BondNumber::Single)
+            .unwrap();
+        let on_c = world
+            .add_port(c2, hs[0], PortKind::Left, "", BondNumber::Single)
+            .unwrap();
+        let junction = world.link(on_o, on_c).unwrap();
+
+        let mut narrow = world.clone();
+        let err = update_junctions(&mut narrow, &[junction], &local(gaff(), 0)).unwrap_err();
+        assert!(
+            matches!(err, JunctionError::ChangedBeyondRadius { radius: 0, .. }),
+            "the methyl hydrogens lie one bond out: {err}"
+        );
+
+        update_junctions(&mut world, &[junction], &local(gaff(), 1)).unwrap();
+        assert_eq!(type_of(&world, o), "os");
+        for &h in &hs[1..] {
+            assert_eq!(type_of(&world, h), "h1");
+        }
+    }
 }

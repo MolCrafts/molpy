@@ -459,3 +459,31 @@ def test_perceive_needs_a_native_typifier() -> None:
 def test_retype_must_be_a_patch_or_a_perceive() -> None:
     with pytest.raises(TypeError, match="Patch or a Perceive"):
         _assembler_with({"M": _monomer()}, "keep")
+
+
+def test_a_local_perception_refuses_changes_beyond_its_radius() -> None:
+    template = _monomer()
+    for atom in template.atoms:
+        atom["type"] = "stale"
+    retype = mp.builder.Perceive(mp.ff.typifier.ElementTypifier(), radius=0)
+    with pytest.raises(ValueError, match="bonds from every"):
+        _assembler_with({"M": template}, retype).assemble(_sites(["M", "M"]))
+
+
+def test_a_local_perception_changes_only_atoms_near_the_anchors() -> None:
+    template = _monomer()
+    for atom in template.atoms:
+        atom["type"] = "C" if atom["atomic_number"] == 6 else "H"
+    template.atoms[0]["type"] = "stale"
+    template.atoms[1]["type"] = "stale"
+    retype = mp.builder.Perceive(mp.ff.typifier.ElementTypifier(), radius=0)
+    # Each copy's two carbons are its anchors; the free end's anchor is not a
+    # junction anchor but sits one bond from one.
+    with pytest.raises(ValueError, match="bonds from every"):
+        _assembler_with({"M": template}, retype).assemble(_sites(["M", "M"]))
+    retype = mp.builder.Perceive(mp.ff.typifier.ElementTypifier(), radius=1)
+    world, report = _assembler_with({"M": template}, retype).assemble_with_report(
+        _sites(["M", "M"])
+    )
+    assert {atom["type"] for atom in world.atoms} == {"C", "H"}
+    assert len(report.retyped) == 4

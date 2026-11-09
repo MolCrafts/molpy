@@ -746,10 +746,17 @@ type RetypedRow<'py> = (Bound<'py, PyAny>, Option<String>, String);
 /// Atom types perceived again over the whole linked graph by a native
 /// typifier (``molrs::builder::Perceive``).
 ///
-/// ``Perceive(typifier)``: the typifier's ``assign`` runs on a copy of the
-/// world; only each atom's ``type`` is read and written back where it
-/// changes. Its bonded terms, parameters and output force field are not used —
-/// the parameter assignment that follows overwrites what the old types left.
+/// ``Perceive(typifier, radius=None)``: the typifier's ``assign`` runs on a
+/// copy of the whole world; only each atom's ``type`` is read and written back
+/// where it changes. Its bonded terms, parameters and output force field are
+/// not used — the parameter assignment that follows overwrites what the old
+/// types left.
+///
+/// With ``radius``, only atoms at most ``radius`` bonds from a junction anchor
+/// may change: the perception is still of the whole world (a type can depend
+/// on far atoms), and the call is refused when it would change any atom
+/// beyond the radius — the rest of the world is verified, not assumed, to be
+/// typed already.
 ///
 /// Raises
 /// ------
@@ -765,12 +772,17 @@ pub(crate) struct PyPerceive {
 #[pymethods]
 impl PyPerceive {
     #[new]
-    fn new(typifier: &Bound<'_, PyTypifier>) -> PyResult<Self> {
+    #[pyo3(signature = (typifier, *, radius=None))]
+    fn new(typifier: &Bound<'_, PyTypifier>, radius: Option<usize>) -> PyResult<Self> {
         let shared = typifier.try_borrow()?.shared().ok_or_else(|| {
             PyTypeError::new_err("Perceive needs a native typifier, not a Python subclass")
         })?;
+        let inner = Perceive::new(shared);
         Ok(Self {
-            inner: Perceive::new(shared),
+            inner: match radius {
+                Some(radius) => inner.within(radius),
+                None => inner,
+            },
         })
     }
 }
@@ -901,8 +913,9 @@ impl PyJunctionReport {
 ///     If a junction was made on another graph, its bond is no longer a live
 ///     bond between its anchors, the patch cannot be applied (an anchor
 ///     without provenance, a patched atom gone or claimed by two copies, two
-///     types for one atom), or the typifier refuses the world or leaves an
-///     atom untyped; nothing is written then.
+///     types for one atom), the typifier refuses the world or leaves an atom
+///     untyped, or (with a radius) it would change an atom beyond the radius;
+///     nothing is written then.
 #[pyfunction(name = "update_junctions")]
 #[pyo3(signature = (world, junctions, *, retype=None))]
 fn py_update_junctions(
