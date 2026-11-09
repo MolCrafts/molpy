@@ -8,8 +8,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::builder::orient::direction_fit;
+use crate::builder::{JunctionError, JunctionReport, Retype, Settle};
 use crate::builder::{OrientError, Orienter, SiteLink, SiteView};
 use crate::builder::{ParentJoin, PlaceError, PlaceSite, Placer};
+use crate::core::Atomistic;
 use crate::core::CenterError;
 use crate::core::CoarseGrain;
 use crate::core::LinkManyError;
@@ -128,6 +130,9 @@ pub enum AssembleError {
         /// the site graph's bond order.
         source: Box<LinkManyError>,
     },
+    /// The junction stage refused the linked world
+    /// ([`update_junctions`](crate::builder::update_junctions)).
+    Junction(JunctionError),
 }
 
 impl fmt::Display for AssembleError {
@@ -189,6 +194,7 @@ impl fmt::Display for AssembleError {
                 "bond {bond} (site {site} port {}, site {partner} port {}): {source}",
                 ports[0], ports[1]
             ),
+            Self::Junction(e) => write!(f, "the junctions of the world: {e}"),
         }
     }
 }
@@ -203,6 +209,7 @@ impl std::error::Error for AssembleError {
             Self::Orient { source, .. } => Some(source),
             Self::Place { source, .. } => Some(source),
             Self::Link { source, .. } => Some(source),
+            Self::Junction(source) => Some(source),
             Self::TooManyUnits { .. }
             | Self::UnknownName { .. }
             | Self::Ports { .. }
@@ -403,6 +410,9 @@ enum PortChoice {
 /// - `frag_id` = the site's ordinal (0-based).
 /// - `mol_id` = the ordinal of the site's connected component + 1,
 ///   components numbered by their lowest site ordinal.
+/// - `template` = the library name the site's copy was made from, and
+///   `template_atom` = the atom's row in that template; with `frag_id` they
+///   locate the copy of any template atom, and no later edit renumbers them.
 ///
 /// # World layout
 ///
@@ -489,6 +499,16 @@ pub struct Assembler<G: Graph> {
     library: HashMap<String, G>,
     placer: Box<dyn Placer<G>>,
     orienter: Option<Box<dyn Orienter<G>>>,
+    retype: Retype,
+}
+
+impl Assembler<Atomistic> {
+    /// Type the junctions of every assembled world by `retype` (default
+    /// [`Retype::Keep`]); see [`update_junctions`](crate::builder::update_junctions).
+    pub fn with_retype(mut self, retype: Retype) -> Self {
+        self.retype = retype;
+        self
+    }
 }
 
 impl<G: Graph> Assembler<G> {
@@ -505,9 +525,12 @@ impl<G: Graph> Assembler<G> {
             library,
             placer,
             orienter,
+            retype: Retype::Keep,
         }
     }
+}
 
+impl<G: Graph + Settle> Assembler<G> {
     /// One copy of `library[bead_type]` per site of `sites`, turned, placed
     /// and joined along the site bonds; returns the world as a `G`, the
     /// library's graph type. See the type docs for the rules. An empty site
@@ -537,6 +560,21 @@ impl<G: Graph> Assembler<G> {
     /// port choices tried at a site (one along a `<`/`>` chain, at most 5040)
     /// and the walks retried per component (two for a `<`/`>` chain).
     pub fn assemble(&self, sites: &CoarseGrain) -> Result<G, AssembleError> {
+        self.assemble_with_report(sites).map(|(world, _)| world)
+    }
+
+    /// [`assemble`](Self::assemble), and what its junction stage did: the
+    /// new bonds with their anchors and charge folds, the terms it added and
+    /// the pairs it reclassified. Every link of one assembly is one batch, so
+    /// the report covers them all.
+    ///
+    /// # Errors
+    ///
+    /// As [`assemble`](Self::assemble).
+    pub fn assemble_with_report(
+        &self,
+        sites: &CoarseGrain,
+    ) -> Result<(G, JunctionReport), AssembleError> {
         let graph = SiteGraph::read(sites)?;
         let n = graph.names.len();
 
@@ -754,9 +792,19 @@ impl<G: Graph> Assembler<G> {
             for (c, &u) in group.sites.iter().enumerate() {
                 let mol_id =
                     I::try_from(mol_of[u] + 1).expect("TooManyUnits bounds every component");
-                for &atom in &atoms[c * per_copy..(c + 1) * per_copy] {
+                // A copy's atoms follow its template's rows (`replicate`).
+                for (row, &atom) in atoms[c * per_copy..(c + 1) * per_copy].iter().enumerate() {
+                    let row = I::try_from(row).map_err(|_| {
+                        replicate_err(MolRsError::validation(format!(
+                            "template '{}' has more atoms than an i32 '{}' holds",
+                            group.name,
+                            keys::TEMPLATE_ATOM
+                        )))
+                    })?;
                     world
                         .set_node(atom, keys::MOL_ID, mol_id)
+                        .and_then(|()| world.set_node(atom, keys::TEMPLATE, group.name))
+                        .and_then(|()| world.set_node(atom, keys::TEMPLATE_ATOM, row))
                         .map_err(replicate_err)?;
                 }
             }
@@ -794,7 +842,7 @@ impl<G: Graph> Assembler<G> {
                 class: graph.classes[b],
             })
             .collect();
-        world.link_many(&requests).map_err(|source| {
+        let junctions = world.link_many(&requests).map_err(|source| {
             let source = match source {
                 LinkManyError::Graph(error) => return AssembleError::Output(error),
                 source => source,
@@ -815,7 +863,11 @@ impl<G: Graph> Assembler<G> {
                 source: Box::new(source),
             }
         })?;
-        G::from_graph(world).map_err(AssembleError::Output)
+        let mut world = G::from_graph(world).map_err(AssembleError::Output)?;
+        let report = world
+            .settle(&junctions, &self.retype)
+            .map_err(AssembleError::Junction)?;
+        Ok((world, report))
     }
 
     /// Check the chosen connections on instance-qualified template identities,
@@ -1395,6 +1447,99 @@ mod tests {
             .iter()
             .copied()
             .collect()
+    }
+
+    /// Typed templates (angles, dihedrals and pairs generated, each angle
+    /// stamped): the assembled chain carries every term its bond graph
+    /// implies, the templates' keep their stamp, and the report has one
+    /// junction per site bond.
+    #[test]
+    fn a_chain_of_typed_templates_carries_its_junction_terms() {
+        let mut typed = monomer_labelled("", "");
+        typed
+            .generate_topology(true, true, false, true, true)
+            .unwrap();
+        let ids: Vec<crate::core::RelationId> = typed.angles().map(|(id, _)| id).collect();
+        for id in ids {
+            typed.set_angle(id, keys::TYPE, "stamped").unwrap();
+        }
+        let builder = Assembler::new(
+            HashMap::from([("M".to_owned(), typed)]),
+            Box::new(SitePlacer::new()),
+            Some(Box::new(Unturned)),
+        );
+        let sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("M", [3.0, 0.0, 0.0]),
+                ("M", [6.0, 0.0, 0.0]),
+            ],
+            &[(0, 1), (1, 2)],
+            None,
+        );
+        let (world, report) = builder.assemble_with_report(&sites).unwrap();
+        let mut fresh = world.clone();
+        fresh
+            .generate_topology(true, true, false, true, true)
+            .unwrap();
+        assert_eq!(world.n_angles(), fresh.n_angles());
+        assert_eq!(world.n_dihedrals(), fresh.n_dihedrals());
+        assert_eq!(report.junctions.len(), 2);
+        assert!(report.added_angles > 0 && report.reclassified_pairs.is_empty());
+        let bare = world
+            .angles()
+            .filter(|(_, a)| a.props.get_str(keys::TYPE).is_none())
+            .count();
+        assert_eq!(
+            bare, report.added_angles,
+            "only the junction's angles are bare"
+        );
+    }
+
+    /// Every atom names its template and its row there, and with `frag_id`
+    /// the copy: three copies of one template stay apart, and the rows of
+    /// the atoms that survive the links still name the template's atoms.
+    #[test]
+    fn every_atom_names_its_template_row_and_copy() {
+        let sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("M", [3.0, 0.0, 0.0]),
+                ("M", [6.0, 0.0, 0.0]),
+            ],
+            &[(0, 1), (1, 2)],
+            None,
+        );
+        let world = assembler().assemble(&sites).unwrap();
+        let template = monomer_labelled("", "");
+        let template_z: Vec<u8> = template
+            .atoms()
+            .map(|(_, a)| a.atomic_number().unwrap())
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        for (_, atom) in world.atoms() {
+            assert_eq!(atom.get_str(keys::TEMPLATE), Some("M"));
+            let row = atom.get_int(keys::TEMPLATE_ATOM).unwrap() as usize;
+            assert_eq!(atom.atomic_number(), Some(template_z[row]), "row {row}");
+            let copy = atom.get_int(keys::FRAG_ID).unwrap();
+            assert!(seen.insert((copy, row)), "copy {copy} row {row} twice");
+        }
+        // Rows 2 and 3 are the handles: the middle copy lost both, each end
+        // one, and the two ends different ones (the chain runs `<` to `>`).
+        let rows_of = |copy| -> Vec<usize> {
+            let mut rows: Vec<usize> = seen
+                .iter()
+                .filter(|(c, _)| *c == copy)
+                .map(|&(_, r)| r)
+                .collect();
+            rows.sort_unstable();
+            rows
+        };
+        assert_eq!(rows_of(1), [0, 1, 4]);
+        let (first, last) = (rows_of(0), rows_of(2));
+        assert_eq!((first.len(), last.len()), (4, 4));
+        let kept = |rows: &[usize]| rows.iter().copied().find(|r| [2, 3].contains(r));
+        assert_ne!(kept(&first), kept(&last));
     }
 
     /// Placement reads geometry and topology only: a template carrying a

@@ -4259,8 +4259,10 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
     Invalid or occupied ports are refused, never replaced. Unused single-bond
     ports keep their handles; an unused multiple-bond port requires an
     explicit cap fragment and otherwise raises ``ValueError``.
-    Every atom gets ``frag_id`` (the site's ordinal)
-    and ``mol_id`` (its connected component's ordinal + 1).
+    Every atom gets ``frag_id`` (the site's ordinal), ``mol_id`` (its
+    connected component's ordinal + 1), ``template`` (the library name it was
+    copied from) and ``template_atom`` (its row in that template, never
+    renumbered).
 
     Parameters
     ----------
@@ -4305,6 +4307,45 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
             bond of a site, a site cannot be oriented or placed, a join is
             refused, or the world breaks the graph type's invariant.
         """
+    def assemble_with_report(
+        self, sites: CoarseGrain
+    ) -> tuple[Atomistic, JunctionReport]:
+        """:meth:`assemble`, and what its junction stage did: the linked
+        world's angles, dihedrals and pair rows (the kinds its templates
+        carry) brought up to the new bonds; no atom type changed.
+
+        Raises
+        ------
+        TypeError
+            The library is not of ``Atomistic`` templates.
+        ValueError
+            As :meth:`assemble`.
+        """
+
+@final
+class JunctionReport:
+    """What an assembly's junction stage did, as views of its world."""
+
+    @property
+    def bonds(self) -> Refs[Bond]:
+        """The new bond of each junction."""
+    @property
+    def anchors(self) -> list[tuple[Atom, Atom]]:
+        """The two anchors of each junction."""
+    @property
+    def folds(self) -> list[tuple[float | None, float | None]]:
+        """Leaving-group charge (e) folded onto each anchor; ``None`` for a
+        side that carried no charges."""
+    @property
+    def reclassified_pairs(self) -> Refs[RelationRef]:
+        """Pair rows whose bond distance the new bonds shortened; each holds
+        only its ``n_bonds`` now."""
+    @property
+    def n_added_angles(self) -> int: ...
+    @property
+    def n_added_dihedrals(self) -> int: ...
+    @property
+    def n_added_pairs(self) -> int: ...
 
 # ---------------------------------------------------------------------------
 # 3D coordinate generation (embed)

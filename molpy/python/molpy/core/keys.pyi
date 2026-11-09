@@ -84,6 +84,8 @@ __all__ = [
     "STYLE",
     "SYMMETRY_CLASS",
     "SYMOPS",
+    "TEMPLATE",
+    "TEMPLATE_ATOM",
     "TYPE",
     "TYPE_ID",
     "UNITS",
@@ -171,6 +173,8 @@ SRC_PORT: Key
 STYLE: Key
 SYMMETRY_CLASS: Key
 SYMOPS: Key
+TEMPLATE: Key
+TEMPLATE_ATOM: Key
 TYPE: Key
 TYPE_ID: Key
 UNITS: Key

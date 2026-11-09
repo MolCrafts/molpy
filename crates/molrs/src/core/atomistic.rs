@@ -1124,7 +1124,7 @@ impl Atomistic {
     pub(crate) fn link_many(
         &mut self,
         requests: &[crate::core::LinkRequest],
-    ) -> Result<Vec<RelationId>, crate::core::LinkManyError> {
+    ) -> Result<Vec<crate::core::Junction>, crate::core::LinkManyError> {
         self.graph.link_many(requests)
     }
 

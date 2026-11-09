@@ -9,7 +9,7 @@ use crate::core::Port;
 use crate::core::keys;
 use crate::core::stereo::AlkeneStereo;
 use crate::core::{BondNumber, BondOrder};
-use crate::core::{NodeId, RelationId};
+use crate::core::{NodeId, Props, RelationId};
 
 /// Why [`MolGraph::link`] refused to join two ports.
 #[derive(Debug)]
@@ -332,6 +332,22 @@ pub(crate) fn batch_conflicts<P: Copy + Eq + Hash, A: Copy + Ord + Hash>(
     Ok(())
 }
 
+/// One join of a link: the new bond, the two anchors it joins (in request
+/// order) and the leaving-group charge (e) each anchor received.
+///
+/// The record a later step reads to know what a link changed: the bond is
+/// the new connectivity, `folds` the charge the link moved. A fold is `None`
+/// when the side carried no charges. The leaving atoms themselves are gone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Junction {
+    /// The new anchor–anchor bond.
+    pub bond: RelationId,
+    /// The anchors of the request's ports `a` and `b`.
+    pub anchors: [NodeId; 2],
+    /// The leaving-group charge folded onto each anchor.
+    pub folds: [Option<f64>; 2],
+}
+
 /// Everything one validated pair writes: both ports, both leaving groups
 /// and the charge each leaving group folds onto its anchor (`None` when that
 /// side carries no charge).
@@ -488,22 +504,23 @@ impl MolGraph {
     /// instead, which molrs does not offer.
     pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
         let request = LinkRequest { a, b, class: None };
-        let mut bonds =
-            self.link_many(std::slice::from_ref(&request))
-                .map_err(|error| match error {
-                    LinkManyError::Pair { source, .. } => source,
-                    LinkManyError::Graph(error) => LinkError::Graph(error),
-                    LinkManyError::PortReused { .. }
-                    | LinkManyError::DuplicateBond { .. }
-                    | LinkManyError::BranchesOverlap { .. } => {
-                        unreachable!("one pair has no other pair to conflict with")
-                    }
-                })?;
-        Ok(bonds.pop().expect("one request makes one bond"))
+        let mut junctions = self
+            .link_many(std::slice::from_ref(&request))
+            .map_err(|error| match error {
+                LinkManyError::Pair { source, .. } => source,
+                LinkManyError::Graph(error) => LinkError::Graph(error),
+                LinkManyError::PortReused { .. }
+                | LinkManyError::DuplicateBond { .. }
+                | LinkManyError::BranchesOverlap { .. } => {
+                    unreachable!("one pair has no other pair to conflict with")
+                }
+            })?;
+        Ok(junctions.pop().expect("one request makes one bond").bond)
     }
 
-    /// Join every pair of `pairs` in one pass and return the new anchor–anchor
-    /// bonds in pair order.
+    /// Join every pair of `pairs` in one pass and return one [`Junction`] per
+    /// pair, in pair order: the new anchor–anchor bond, its anchors and the
+    /// charge folded onto each.
     ///
     /// Each pair `(p, r)` is joined by the rule of [`link`](Self::link): the
     /// two leaving groups are removed, each one's charge (e) folds onto its
@@ -563,7 +580,7 @@ impl MolGraph {
     pub(crate) fn link_many(
         &mut self,
         requests: &[LinkRequest],
-    ) -> Result<Vec<RelationId>, LinkManyError> {
+    ) -> Result<Vec<Junction>, LinkManyError> {
         // ---- 1. each pair alone ----
         let plans = requests
             .iter()
@@ -632,13 +649,78 @@ impl MolGraph {
                 self.fold_charge(anchor, fold);
             }
         }
+        let continued = self.continued_impropers(&plans);
         self.del_nodes(&doomed).expect(VALIDATED);
-        let bonds = plans.iter().map(|plan| self.bond_anchors(plan)).collect();
+        let junctions = plans
+            .iter()
+            .map(|plan| Junction {
+                bond: self.bond_anchors(plan),
+                anchors: [plan.a.anchor, plan.b.anchor],
+                folds: [plan.fold_a, plan.fold_b],
+            })
+            .collect();
+        if let Some((kind, impropers)) = continued {
+            for nodes in impropers {
+                self.add_relation(kind, &nodes, Props::new())
+                    .expect(VALIDATED);
+            }
+        }
         for (anchor, label) in stereo {
             self.set_node(anchor, keys::STEREO, label).expect(VALIDATED);
         }
         self.restore_alkene_stereo(&alkenes);
-        Ok(bonds)
+        Ok(junctions)
+    }
+
+    /// The impropers an anchor keeps through a link: every improper whose
+    /// centre is a pair's anchor — the member bonded to the other three,
+    /// wherever the force field put it — and which names that port's handle,
+    /// with the handle replaced by the partner anchor. The anchor's neighbours
+    /// are the same atoms but for the handle, which the partner replaces, so
+    /// the term continues; it is written bare (no type, no parameters), since
+    /// its members are not the ones its parameters were for. An improper with
+    /// another member in a leaving group is not continued. `None` when the
+    /// graph has no improper kind.
+    fn continued_impropers(
+        &self,
+        plans: &[LinkPlan],
+    ) -> Option<(crate::core::KindId, Vec<smallvec::SmallVec<[NodeId; 4]>>)> {
+        const LIVE: &str = "an improper of the kind is live";
+        let kind = self.kind_id(crate::core::schema::block_names::IMPROPERS)?;
+        let doomed: HashSet<NodeId> = plans
+            .iter()
+            .flat_map(|plan| plan.branch_a.iter().chain(&plan.branch_b))
+            .copied()
+            .collect();
+        let sides: Vec<(&Port, NodeId)> = plans
+            .iter()
+            .flat_map(|plan| [(&plan.a, plan.b.anchor), (&plan.b, plan.a.anchor)])
+            .collect();
+        let mut out = Vec::new();
+        for id in self.relation_ids(kind) {
+            let nodes = self.relation_nodes(kind, id).expect(LIVE);
+            for &(port, partner) in &sides {
+                let centre = port.anchor;
+                let names_handle = nodes.contains(&port.handle);
+                let others_survive = nodes
+                    .iter()
+                    .all(|n| *n == port.handle || !doomed.contains(n));
+                let is_centre = nodes.contains(&centre)
+                    && nodes
+                        .iter()
+                        .filter(|&&n| n != centre)
+                        .all(|&n| self.neighbors(centre).any(|m| m == n));
+                if names_handle && others_survive && is_centre {
+                    out.push(
+                        nodes
+                            .iter()
+                            .map(|&n| if n == port.handle { partner } else { n })
+                            .collect(),
+                    );
+                }
+            }
+        }
+        Some((kind, out))
     }
 
     /// Save every surviving E/Z reference: even an unrelated atom-row swap
@@ -1684,12 +1766,93 @@ mod tests {
         assert_eq!(world_state(&world), world_state(&looped));
         assert_eq!(bonds.len(), 3, "one bond per pair");
         for (k, &bid) in bonds.iter().enumerate() {
-            let bond = world.get_bond(bid).expect("a returned bond is live");
+            let bond = world.get_bond(bid.bond).expect("a returned bond is live");
             let mut ends = bond.nodes.to_vec();
             ends.sort();
             let mut expected = vec![units[k].anchor, units[k + 1].anchor];
             expected.sort();
             assert_eq!(ends, expected, "bond {k} joins pair {k}'s anchors");
+        }
+    }
+
+    #[test]
+    fn a_junction_records_its_bond_anchors_and_folds() {
+        let mut world = Atomistic::new();
+        let units = chain(&mut world, 2);
+        let junctions = world
+            .graph_mut()
+            .link_many(&requests(&chain_pairs(&units)))
+            .unwrap();
+        let [junction] = junctions.as_slice() else {
+            panic!("one pair, one junction")
+        };
+        assert_eq!(junction.anchors, [units[0].anchor, units[1].anchor]);
+        assert_eq!(junction.folds, [Some(0.125), Some(0.125)]);
+        let ends = world.get_bond(junction.bond).unwrap().nodes;
+        assert!(ends.contains(&units[0].anchor) && ends.contains(&units[1].anchor));
+    }
+
+    /// A trivalent anchor `C(O)(X)–H`: the improper centred on it continues
+    /// through the link with the partner in the handle's place, bare, in the
+    /// position the handle held — centre first or centre third alike. An
+    /// improper not on the anchor is left as it is.
+    #[test]
+    fn an_improper_centred_on_an_anchor_continues_to_the_partner() {
+        for centre_third in [false, true] {
+            let mut world = Atomistic::new();
+            let c = atom(&mut world, Element::C, None, 0);
+            let o = atom(&mut world, Element::O, None, 0);
+            let x = atom(&mut world, Element::N, None, 0);
+            let h = atom(&mut world, Element::H, None, 0);
+            let (n1, n2, n3) = (
+                atom(&mut world, Element::C, None, 0),
+                atom(&mut world, Element::C, None, 0),
+                atom(&mut world, Element::C, None, 0),
+            );
+            for (a, b) in [(c, o), (c, x), (c, h), (x, n1), (x, n2), (x, n3)] {
+                world.add_bond(a, b, props! {}).unwrap();
+            }
+            let typed = props! { keys::TYPE => "X-X-c-o" };
+            if centre_third {
+                world.add_improper(o, x, c, h, typed).unwrap();
+            } else {
+                world.add_improper(c, o, x, h, typed).unwrap();
+            }
+            // Centred on the nitrogen, naming no handle: untouched.
+            world.add_improper(x, c, n1, n2, props! {}).unwrap();
+            // Names the anchor and the handle but is centred on nothing (n1 is
+            // not the anchor's neighbour): not continued, it goes with h.
+            world.add_improper(c, h, x, n1, props! {}).unwrap();
+            let port = world
+                .add_port(c, h, PortKind::Right, "p", BondNumber::Single)
+                .unwrap();
+            let partner = chain(&mut world, 1).remove(0);
+
+            world.link(port, partner.left).unwrap();
+
+            let mut impropers: Vec<Vec<NodeId>> = world
+                .impropers()
+                .map(|(_, rel)| rel.nodes.to_vec())
+                .collect();
+            impropers.sort();
+            let continued = if centre_third {
+                vec![o, x, c, partner.anchor]
+            } else {
+                vec![c, o, x, partner.anchor]
+            };
+            let mut expected = vec![continued.clone(), vec![x, c, n1, n2]];
+            expected.sort();
+            assert_eq!(impropers, expected, "centre third: {centre_third}");
+            let bare = world
+                .impropers()
+                .find(|(_, rel)| rel.nodes.to_vec() == continued)
+                .unwrap()
+                .1;
+            assert_eq!(
+                bare.props.get_str(keys::TYPE),
+                None,
+                "the continued term is bare"
+            );
         }
     }
 

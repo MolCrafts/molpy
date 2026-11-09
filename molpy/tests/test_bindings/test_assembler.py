@@ -302,3 +302,45 @@ def test_conformer_preserves_ordinal_port_identity() -> None:
     assert [port.anchor["port_site"] for port in posed.ports] == [0, 1]
     assert [port.anchor["port_site"] for port in template.ports] == [0, 1]
     assert posed.n_ports == template.n_ports == 2
+
+
+def _typed_monomer() -> mp.core.Atomistic:
+    """The monomer with its angles and pairs generated, angles stamped, and
+    a charge on every atom."""
+    fragment = _monomer()
+    fragment.generate_topology(gen_dihedral=False)
+    for angle in fragment.angles:
+        angle["type"] = "stamped"
+    for atom in fragment.atoms:
+        atom["charge"] = 0.25 if atom["atomic_number"] == 1 else -0.25
+    return fragment
+
+
+def test_assemble_with_report_crosses_the_junctions() -> None:
+    world, report = _assembler({"M": _typed_monomer()}).assemble_with_report(
+        _sites(["M", "M"])
+    )
+
+    assert type(world) is mp.core.Atomistic
+    assert isinstance(report, mp.builder.JunctionReport)
+    (bond,) = report.bonds
+    (anchors,) = report.anchors
+    assert {a.handle for a in anchors} == {a.handle for a in bond.endpoints}
+    assert report.folds == [(0.25, 0.25)]
+    # C0-C1-C1' and C1-C1'-C0' are new, and bare; the monomers' angles keep
+    # their stamp.
+    assert report.n_added_angles == 2
+    bare = [angle for angle in world.angles if "type" not in angle]
+    assert len(bare) == 2
+    assert len(report.reclassified_pairs) == 0
+
+
+def test_assemble_with_report_needs_atomistic_templates() -> None:
+    sites = mp.core.CoarseGrain()
+    template = mp.core.CoarseGrain()
+    template.add_bead(bead_type="B", x=0.0, y=0.0, z=0.0)
+    sites.add_bead(bead_type="B", x=0.0, y=0.0, z=0.0)
+    with pytest.raises(TypeError, match="Atomistic"):
+        mp.builder.Assembler(
+            {"B": template}, mp.builder.SitePlacer()
+        ).assemble_with_report(sites)

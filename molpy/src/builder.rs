@@ -12,14 +12,14 @@ use std::collections::HashMap;
 use molrs::builder::{
     AssembleError, Assembler, AxisOrienter, GrowthPlacer, Orienter, Placer, SitePlacer,
 };
-use molrs::builder::{CarbonTubeBuilder, Coarsener, GrapheneBuilder, TubeExtent};
+use molrs::builder::{CarbonTubeBuilder, Coarsener, GrapheneBuilder, JunctionReport, TubeExtent};
 use molrs::core::{Atomistic, CoarseGrain, Graph, MolGraph, NodeId};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
 
 use crate::core::frame::PyFrame;
-use crate::core::graph_views::Leaf;
+use crate::core::graph_views::{Leaf, PyRefs};
 use crate::core::molgraph::{PyAtomistic, PyCoarseGrain, PyMolGraph};
 use crate::core::simbox::PyBox;
 
@@ -292,8 +292,10 @@ impl PyAxisOrienter {
 /// pose by the placer.
 /// Each site bond joins one port of each end's copy (``<`` with ``>``, ``$``
 /// with ``$``); the leaving groups are removed. Any topology works: chains,
-/// branches, rings. Every atom gets ``frag_id`` (the site's ordinal) and
-/// ``mol_id`` (its connected component's ordinal + 1).
+/// branches, rings. Every atom gets ``frag_id`` (the site's ordinal),
+/// ``mol_id`` (its connected component's ordinal + 1), ``template`` (the
+/// library name it was copied from) and ``template_atom`` (its row in that
+/// template, never renumbered).
 ///
 /// Parameters
 /// ----------
@@ -515,6 +517,48 @@ impl PyAssembler {
         })
     }
 
+    /// :meth:`assemble`, and what its junction stage did.
+    ///
+    /// For an ``Atomistic`` library only: the junction stage brings the
+    /// linked world's graph-derived terms up to its new bonds — the angles,
+    /// dihedrals and pair rows of every kind the templates carry, the pairs a
+    /// ring closure shortens reclassified and stripped to their ``n_bonds`` —
+    /// and changes no atom type.
+    ///
+    /// Returns
+    /// -------
+    /// tuple[Atomistic, JunctionReport]
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If the library is not of ``Atomistic`` templates.
+    /// ValueError
+    ///     As :meth:`assemble`.
+    fn assemble_with_report<'py>(
+        &self,
+        py: Python<'py>,
+        sites: PyRef<'_, PyCoarseGrain>,
+    ) -> PyResult<(Py<PyAny>, PyJunctionReport)> {
+        let AnyAssembler::Atomistic(a) = &self.inner else {
+            return Err(PyTypeError::new_err(
+                "assemble_with_report needs a library of Atomistic templates",
+            ));
+        };
+        let sites = sites.core().clone();
+        let (world, report) = py
+            .detach(|| a.assemble_with_report(&sites))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let world = PyAtomistic::from_core(py, world)?.into_any();
+        Ok((
+            world.clone_ref(py),
+            PyJunctionReport {
+                world,
+                inner: report,
+            },
+        ))
+    }
+
     fn __repr__(&self) -> String {
         let class = match self.inner {
             AnyAssembler::MolGraph(_) => "MolGraph",
@@ -652,6 +696,108 @@ impl PyCoarsener {
 }
 
 /// Register `molpy.builder`.
+/// What the junction stage of an assembly did
+/// (``molrs::builder::JunctionReport``), as views of the world it was made
+/// for.
+///
+/// ``bonds[k]`` is the bond junction ``k`` made, ``anchors[k]`` its two
+/// anchors, ``folds[k]`` the leaving-group charge (e) folded onto each anchor
+/// (``None`` for a side that carried no charges).
+/// ``reclassified_pairs`` are the pair rows whose bond distance the new bonds
+/// shortened (a closed ring's former 1-4 pair); each now holds only its
+/// ``n_bonds``.
+#[pyclass(module = "molpy.builder", name = "JunctionReport", frozen)]
+pub(crate) struct PyJunctionReport {
+    world: Py<PyAny>,
+    inner: JunctionReport,
+}
+
+#[pymethods]
+impl PyJunctionReport {
+    /// The new bonds, one per junction.
+    #[getter]
+    fn bonds(&self, py: Python<'_>) -> PyRefs {
+        let handles = self
+            .inner
+            .junctions
+            .iter()
+            .map(|j| u64::from(j.bond))
+            .collect();
+        PyRefs::of_relations(self.world.bind(py), "bonds", handles)
+    }
+
+    /// The two anchors of each junction.
+    #[getter]
+    fn anchors<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>> {
+        let leaf = Leaf::of(self.world.bind(py))?;
+        self.inner
+            .junctions
+            .iter()
+            .map(|j| {
+                Ok((
+                    leaf.node(u64::from(j.anchors[0]))?,
+                    leaf.node(u64::from(j.anchors[1]))?,
+                ))
+            })
+            .collect()
+    }
+
+    /// The charge (e) folded onto each anchor of each junction.
+    #[getter]
+    fn folds(&self) -> Vec<(Option<f64>, Option<f64>)> {
+        self.inner
+            .junctions
+            .iter()
+            .map(|j| (j.folds[0], j.folds[1]))
+            .collect()
+    }
+
+    /// Pair rows whose bond distance the new bonds shortened.
+    #[getter]
+    fn reclassified_pairs(&self, py: Python<'_>) -> PyRefs {
+        let handles = self
+            .inner
+            .reclassified_pairs
+            .iter()
+            .map(|&id| u64::from(id))
+            .collect();
+        PyRefs::of_relations(self.world.bind(py), "pairs", handles)
+    }
+
+    /// Angles added through the new bonds.
+    #[getter]
+    fn n_added_angles(&self) -> usize {
+        self.inner.added_angles
+    }
+
+    /// Dihedrals added through the new bonds.
+    #[getter]
+    fn n_added_dihedrals(&self) -> usize {
+        self.inner.added_dihedrals
+    }
+
+    /// Pair rows added through the new bonds.
+    #[getter]
+    fn n_added_pairs(&self) -> usize {
+        self.inner.added_pairs
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "JunctionReport(junctions={}, n_added_angles={}, n_added_dihedrals={}, \
+             n_added_pairs={}, reclassified_pairs={})",
+            self.inner.junctions.len(),
+            self.inner.added_angles,
+            self.inner.added_dihedrals,
+            self.inner.added_pairs,
+            self.inner.reclassified_pairs.len()
+        )
+    }
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCarbonTubeBuilder>()?;
     m.add_class::<PyGrapheneBuilder>()?;
@@ -659,6 +805,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGrowthPlacer>()?;
     m.add_class::<PyAxisOrienter>()?;
     m.add_class::<PyAssembler>()?;
+    m.add_class::<PyJunctionReport>()?;
     m.add_class::<PyCoarsener>()?;
     crate::polymer::register(m)?;
     crate::symmetry::register(m)?;

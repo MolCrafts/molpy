@@ -134,7 +134,7 @@ pub use extract::{ExtractedBall, InducedSubgraph};
 pub use graph::Graph;
 pub(crate) use graph::GraphAccess;
 pub(crate) use link::{BatchConflict, BatchPair, LinkRequest, PortPlan, batch_conflicts};
-pub use link::{LinkError, LinkManyError};
+pub use link::{Junction, LinkError, LinkManyError};
 pub use molgraph::{KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
 pub use molgraph_geometry::CenterError;
 pub use port::{Port, PortKind};
