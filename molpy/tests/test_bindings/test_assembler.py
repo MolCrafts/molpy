@@ -384,3 +384,50 @@ def test_update_junctions_refuses_a_junction_of_another_graph() -> None:
     junction = first.link(right, left)
     with pytest.raises(ValueError, match="another graph"):
         mp.builder.update_junctions(_monomer(), [junction])
+
+
+def test_a_patch_retypes_the_linked_copy() -> None:
+    """Row 0 (C0) is the ``>`` anchor: in a two-site chain only the first
+    copy's C0 is linked, so only it takes the patched type."""
+    template = _monomer()
+    for atom in template.atoms:
+        atom["type"] = "c" if atom["atomic_number"] == 6 else "h"
+    patch = mp.builder.Patch({("M", 0): {0: "c-linked"}})
+    world, report = _assembler_with({"M": template}, patch).assemble_with_report(
+        _sites(["M", "M"])
+    )
+
+    linked = [atom for atom in world.atoms if atom["type"] == "c-linked"]
+    assert len(linked) == 1
+    ((atom, before, after),) = report.retyped
+    assert (atom.handle, before, after) == (linked[0].handle, "c", "c-linked")
+
+
+def test_a_patch_that_cannot_apply_is_a_value_error() -> None:
+    chain = mp.core.Atomistic()
+    first, second = _monomer(), _monomer()
+    chain.merge(first)
+    chain.merge(second)
+    right = next(p for p in chain.ports if p["port_kind"] == ">")
+    left = [p for p in chain.ports if p["port_kind"] == "<"][-1]
+    junction = chain.link(right, left)
+    # A hand-made graph without provenance cannot be patched.
+    with pytest.raises(ValueError, match="frag_id"):
+        mp.builder.update_junctions(
+            chain, [junction], retype=mp.builder.Patch({("M", 0): {0: "x"}})
+        )
+
+
+def test_retype_needs_atomistic_templates() -> None:
+    template = mp.core.CoarseGrain()
+    template.add_bead(bead_type="B", x=0.0, y=0.0, z=0.0)
+    with pytest.raises(TypeError, match="Atomistic"):
+        mp.builder.Assembler(
+            {"B": template}, mp.builder.SitePlacer(), retype=mp.builder.Patch({})
+        )
+
+
+def _assembler_with(library: dict, retype: mp.builder.Patch) -> mp.builder.Assembler:
+    return mp.builder.Assembler(
+        library, mp.builder.SitePlacer(), mp.builder.AxisOrienter(), retype=retype
+    )

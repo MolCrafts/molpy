@@ -250,3 +250,179 @@ fn a_junction_that_is_not_a_bond_is_refused_before_any_write() {
     );
     assert_eq!(angle_set(&world), before);
 }
+
+// ---- Retype::Patch ----
+
+/// One copy `frag` of template "U": C0 (row 0, the `<` anchor), C1 (row 1,
+/// the `>` anchor), their handles H (rows 2, 3) and an O on C0 (row 4), each
+/// typed and stamped with its provenance.
+struct Unit {
+    atoms: [NodeId; 5],
+    left: RelationId,
+    right: RelationId,
+}
+
+fn unit(world: &mut Atomistic, frag: i32) -> Unit {
+    let spec = [
+        (Element::C, "c"),
+        (Element::C, "c"),
+        (Element::H, "h"),
+        (Element::H, "h"),
+        (Element::O, "o"),
+    ];
+    let atoms: [NodeId; 5] = std::array::from_fn(|row| {
+        let (z, ty) = spec[row];
+        world
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => z,
+                keys::TYPE => ty,
+                keys::FRAG_ID => frag,
+                keys::TEMPLATE => "U",
+                keys::TEMPLATE_ATOM => row as i32,
+            })
+            .unwrap()
+    });
+    for (a, b) in [(0, 1), (0, 2), (1, 3), (0, 4)] {
+        bond(world, atoms[a], atoms[b]);
+    }
+    let left = world
+        .add_port(atoms[0], atoms[2], PortKind::Left, "", BondNumber::Single)
+        .unwrap();
+    let right = world
+        .add_port(atoms[1], atoms[3], PortKind::Right, "", BondNumber::Single)
+        .unwrap();
+    Unit { atoms, left, right }
+}
+
+/// Three copies linked head to tail: copy 0's `<` stays free, copy 2's `>`.
+fn linked_chain() -> (Atomistic, Vec<Unit>, Vec<Junction>) {
+    let mut world = Atomistic::new();
+    let units: Vec<Unit> = (0..3).map(|frag| unit(&mut world, frag)).collect();
+    let junctions = vec![
+        world.link(units[0].right, units[1].left).unwrap(),
+        world.link(units[1].right, units[2].left).unwrap(),
+    ];
+    (world, units, junctions)
+}
+
+fn patch(entries: &[(usize, &[(usize, &str)])]) -> Retype {
+    let mut patch = Patch::new();
+    for &(anchor, types) in entries {
+        patch.insert(
+            "U",
+            anchor,
+            types.iter().map(|&(row, ty)| (row, ty.to_owned())),
+        );
+    }
+    Retype::Patch(patch)
+}
+
+fn type_of(world: &Atomistic, atom: NodeId) -> String {
+    world
+        .get_atom(atom)
+        .unwrap()
+        .get_str(keys::TYPE)
+        .unwrap()
+        .to_owned()
+}
+
+fn types(world: &Atomistic) -> Vec<String> {
+    world.atom_ids().map(|id| type_of(world, id)).collect()
+}
+
+#[test]
+fn a_patch_retypes_only_the_copies_whose_anchor_was_linked() {
+    let (mut world, units, junctions) = linked_chain();
+    let retype = patch(&[(0, &[(0, "c-linked"), (4, "o-linked")])]);
+
+    let report = update_junctions(&mut world, &junctions, &retype).unwrap();
+
+    // Row 0 is linked in copies 1 and 2; copy 0's `<` is a chain end.
+    assert_eq!(type_of(&world, units[0].atoms[0]), "c");
+    assert_eq!(type_of(&world, units[0].atoms[4]), "o");
+    for unit in &units[1..] {
+        assert_eq!(type_of(&world, unit.atoms[0]), "c-linked");
+        assert_eq!(type_of(&world, unit.atoms[4]), "o-linked");
+        assert_eq!(type_of(&world, unit.atoms[1]), "c", "row 1 has no entry");
+    }
+    assert_eq!(report.retyped.len(), 4);
+    assert!(report.retyped.iter().all(|r| r.from.is_some()));
+}
+
+#[test]
+fn a_second_patch_changes_nothing() {
+    let (mut world, _, junctions) = linked_chain();
+    let retype = patch(&[(0, &[(4, "o-linked")])]);
+    update_junctions(&mut world, &junctions, &retype).unwrap();
+    let again = update_junctions(&mut world, &junctions, &retype).unwrap();
+    assert!(again.retyped.is_empty());
+}
+
+#[test]
+fn a_conflicting_patch_is_refused_and_writes_nothing() {
+    let (mut world, units, junctions) = linked_chain();
+    world
+        .generate_topology(true, false, false, false, false)
+        .unwrap();
+    let before = (types(&world), world.n_angles());
+    // Copy 1 has both anchors linked: row 4 would be both "a" and "b".
+    let retype = patch(&[(0, &[(4, "a")]), (1, &[(4, "b")])]);
+
+    let err = update_junctions(&mut world, &junctions, &retype).unwrap_err();
+
+    match err {
+        JunctionError::PatchConflict { atom, types } => {
+            assert_eq!(atom, units[1].atoms[4]);
+            assert_eq!(types, ["a".to_owned(), "b".to_owned()]);
+        }
+        other => panic!("expected a conflict, got {other}"),
+    }
+    assert_eq!((types(&world), world.n_angles()), before);
+}
+
+#[test]
+fn a_patch_naming_a_departed_atom_is_refused() {
+    let (mut world, _, junctions) = linked_chain();
+    // Row 2 is the `<` handle: it left with the leaving group.
+    let err = update_junctions(&mut world, &junctions, &patch(&[(0, &[(2, "x")])])).unwrap_err();
+    assert!(
+        matches!(err, JunctionError::PatchedAtomMissing { row: 2, .. }),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_patch_needs_the_anchors_provenance() {
+    let Chain {
+        mut world,
+        left,
+        right,
+        ..
+    } = chain();
+    let junction = world.link(right, left).unwrap();
+    let err = update_junctions(&mut world, &[junction], &patch(&[(0, &[(4, "x")])])).unwrap_err();
+    assert!(
+        matches!(err, JunctionError::NoProvenance { junction: 0, .. }),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_copy_claimed_twice_is_ambiguous() {
+    let (mut world, _, junctions) = linked_chain();
+    // A second copy 1, as a merge of two assemblies leaves it.
+    unit(&mut world, 1);
+    let err = update_junctions(&mut world, &junctions, &patch(&[(0, &[(4, "x")])])).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            JunctionError::AmbiguousCopy {
+                frag_id: 1,
+                row: 4,
+                count: 2,
+                ..
+            }
+        ),
+        "{err}"
+    );
+}

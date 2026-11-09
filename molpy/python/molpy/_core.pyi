@@ -4307,6 +4307,8 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
         library: Mapping[str, G],
         placer: SitePlacer | GrowthPlacer,
         orienter: AxisOrienter | None = None,
+        *,
+        retype: Patch | None = None,
     ) -> Assembler[G]: ...
     def assemble(self, sites: CoarseGrain) -> G:
         """Place and join one copy per site; return the world, of the
@@ -4335,18 +4337,32 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
             As :meth:`assemble`.
         """
 
-def update_junctions(world: Atomistic, junctions: Sequence[Junction]) -> JunctionReport:
-    """Bring ``world``'s angles, dihedrals and pair rows (the kinds it
-    carries) up to the bonds of ``junctions``; pairs a ring closure shortens
-    are reclassified and stripped to ``n_bonds``. No atom type changes;
-    a second call changes nothing.
+def update_junctions(
+    world: Atomistic, junctions: Sequence[Junction], *, retype: Patch | None = None
+) -> JunctionReport:
+    """Bring ``world``'s atom types (by ``retype``; ``None`` keeps them) and
+    its angles, dihedrals and pair rows (the kinds it carries) up to the bonds
+    of ``junctions``; pairs a ring closure shortens are reclassified and
+    stripped to ``n_bonds``. A second call changes nothing.
 
     Raises
     ------
     ValueError
-        a junction made on another graph, or whose bond no longer joins its
-        anchors; nothing is written then.
+        a junction made on another graph or whose bond no longer joins its
+        anchors, or a patch that cannot apply (an anchor without provenance, a
+        patched atom gone or claimed twice, two types for one atom); nothing
+        is written then.
     """
+
+@final
+class Patch:
+    """Atom types a link gives a copy of a template, declared per anchor:
+    ``Patch({(template, anchor_row): {row: type}})``. When that anchor gains a
+    junction bond, the atoms of the same copy (``frag_id``) at each
+    ``template_atom`` row take ``type``. Per anchor, whatever it is linked to;
+    types only; unlinked anchors and chain ends keep their types."""
+
+    def __new__(cls, entries: Mapping[tuple[str, int], Mapping[int, str]]) -> Self: ...
 
 @final
 class JunctionReport:
@@ -4354,6 +4370,9 @@ class JunctionReport:
 
     @property
     def junctions(self) -> list[Junction]: ...
+    @property
+    def retyped(self) -> list[tuple[Atom, str | None, str]]:
+        """Each atom the policy retyped: ``(atom, before, after)``."""
     @property
     def reclassified_pairs(self) -> Refs[RelationRef]:
         """Pair rows whose bond distance the new bonds shortened; each holds

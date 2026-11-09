@@ -13,7 +13,7 @@ use molrs::builder::{
     AssembleError, Assembler, AxisOrienter, GrowthPlacer, Orienter, Placer, SitePlacer,
 };
 use molrs::builder::{
-    CarbonTubeBuilder, Coarsener, GrapheneBuilder, JunctionReport, Retype, TubeExtent,
+    CarbonTubeBuilder, Coarsener, GrapheneBuilder, JunctionReport, Patch, Retype, TubeExtent,
 };
 use molrs::core::{Atomistic, CoarseGrain, Graph, MolGraph, NodeId};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -313,13 +313,19 @@ impl PyAxisOrienter {
 /// orienter : AxisOrienter, optional
 ///     Turns each copy about its centroid before it is placed; needs
 ///     site positions.
+/// retype : Patch, optional
+///     For an ``Atomistic`` library: how atom types follow the junctions.
+///     ``None`` keeps every type; a ``Patch`` writes the types it declares
+///     for each linked anchor's copy. Either way the junction stage brings
+///     the world's angles, dihedrals and pair rows up to the new bonds.
 ///
 /// Raises
 /// ------
 /// TypeError
 ///     If ``library`` is not a mapping of ``str`` to graphs of one type,
-///     ``placer`` is not a :class:`SitePlacer` or :class:`GrowthPlacer`, or
-///     ``orienter`` is not an :class:`AxisOrienter`.
+///     ``placer`` is not a :class:`SitePlacer` or :class:`GrowthPlacer`,
+///     ``orienter`` is not an :class:`AxisOrienter`, or ``retype`` is given
+///     for a library that is not of ``Atomistic`` templates.
 /// ValueError
 ///     If ``library`` is empty (it names the world's graph type).
 ///
@@ -404,11 +410,12 @@ fn assembler<G: Graph>(
 #[pymethods]
 impl PyAssembler {
     #[new]
-    #[pyo3(signature = (library, placer, orienter=None))]
+    #[pyo3(signature = (library, placer, orienter=None, *, retype=None))]
     fn new(
         library: &Bound<'_, PyMapping>,
         placer: &Bound<'_, PyAny>,
         orienter: Option<&Bound<'_, PyAxisOrienter>>,
+        retype: Option<PyRef<'_, PyPatch>>,
     ) -> PyResult<Self> {
         let placer = PlacerKind::of(placer)?;
         let orienter = orienter.is_some();
@@ -432,11 +439,14 @@ impl PyAssembler {
                         .map_err(PyErr::from),
                 )
             };
-            AnyAssembler::Atomistic(assembler(
-                templates(&library, copy, "Atomistic")?,
-                placer,
-                orienter,
-            ))
+            AnyAssembler::Atomistic(
+                assembler(templates(&library, copy, "Atomistic")?, placer, orienter)
+                    .with_retype(retype_of(retype.as_deref())),
+            )
+        } else if retype.is_some() {
+            return Err(PyTypeError::new_err(
+                "retype changes atom types: it needs a library of Atomistic templates",
+            ));
         } else if first.cast::<PyCoarseGrain>().is_ok() {
             let copy = |value: &Bound<'_, PyAny>| {
                 let graph = value.cast::<PyCoarseGrain>().ok()?;
@@ -698,6 +708,43 @@ impl PyCoarsener {
 }
 
 /// Register `molpy.builder`.
+/// Atom types a link gives a copy of a template, declared per anchor
+/// (``molrs::builder::Patch``).
+///
+/// ``Patch({(template, anchor_row): {row: type, ...}, ...})``: when the
+/// anchor at ``anchor_row`` of ``template`` gains a junction bond, the atoms
+/// of the same copy at each ``row`` take ``type``. Atoms are found by their
+/// ``frag_id``, ``template`` and ``template_atom``, which the ``Assembler``
+/// stamps.
+///
+/// An entry is per anchor: the same types apply whatever the anchor is linked
+/// to. Only types change — no charge, atom or term. An anchor no entry names,
+/// and a copy with no linked anchor (a chain end), keep their types.
+#[pyclass(module = "molpy.builder", name = "Patch", frozen)]
+pub(crate) struct PyPatch {
+    inner: Patch,
+}
+
+#[pymethods]
+impl PyPatch {
+    #[new]
+    fn new(entries: HashMap<(String, usize), HashMap<usize, String>>) -> Self {
+        let mut inner = Patch::new();
+        for ((template, anchor), types) in entries {
+            inner.insert(template, anchor, types);
+        }
+        Self { inner }
+    }
+}
+
+/// One retyped atom as Python sees it: the atom, its type before and after.
+type RetypedRow<'py> = (Bound<'py, PyAny>, Option<String>, String);
+
+/// The core policy: `None` keeps every type.
+fn retype_of(patch: Option<&PyPatch>) -> Retype {
+    patch.map_or(Retype::Keep, |p| Retype::Patch(p.inner.clone()))
+}
+
 /// What a junction stage did (``molrs::builder::JunctionReport``), as views
 /// of the world it was made for.
 ///
@@ -723,6 +770,18 @@ impl PyJunctionReport {
                 world: self.world.clone_ref(py),
                 inner,
             })
+            .collect()
+    }
+
+    /// The atoms whose type the policy changed, as ``(atom, before, after)``;
+    /// ``before`` is ``None`` for an atom that had no type.
+    #[getter]
+    fn retyped<'py>(&self, py: Python<'py>) -> PyResult<Vec<RetypedRow<'py>>> {
+        let leaf = Leaf::of(self.world.bind(py))?;
+        self.inner
+            .retyped
+            .iter()
+            .map(|r| Ok((leaf.node(u64::from(r.atom))?, r.from.clone(), r.to.clone())))
             .collect()
     }
 
@@ -769,17 +828,20 @@ impl PyJunctionReport {
     }
 }
 
-/// Bring ``world``'s graph-derived terms up to the bonds of ``junctions``
-/// (``molrs::builder::update_junctions``): the angles, dihedrals and pair rows
-/// of every kind ``world`` carries, the pairs a ring closure shortens
-/// reclassified and stripped to their ``n_bonds``. No atom type changes.
-/// Calling it again changes nothing.
+/// Bring ``world``'s atom types and graph-derived terms up to the bonds of
+/// ``junctions`` (``molrs::builder::update_junctions``): types by ``retype``,
+/// then the angles, dihedrals and pair rows of every kind ``world`` carries,
+/// the pairs a ring closure shortens reclassified and stripped to their
+/// ``n_bonds``. Calling it again changes nothing.
 ///
 /// Parameters
 /// ----------
 /// world : Atomistic
 /// junctions : list[Junction]
 ///     What ``world.link`` returned, one per call.
+/// retype : Patch, optional
+///     ``None`` changes no atom type; a ``Patch`` writes the types it
+///     declares for each linked anchor's copy.
 ///
 /// Returns
 /// -------
@@ -788,12 +850,16 @@ impl PyJunctionReport {
 /// Raises
 /// ------
 /// ValueError
-///     If a junction was made on another graph, or its bond is no longer a
-///     live bond between its anchors; nothing is written then.
+///     If a junction was made on another graph, its bond is no longer a live
+///     bond between its anchors, or the patch cannot be applied (an anchor
+///     without provenance, a patched atom gone or claimed by two copies, two
+///     types for one atom); nothing is written then.
 #[pyfunction(name = "update_junctions")]
+#[pyo3(signature = (world, junctions, *, retype=None))]
 fn py_update_junctions(
     world: &Bound<'_, PyAtomistic>,
     junctions: Vec<PyRef<'_, PyJunction>>,
+    retype: Option<PyRef<'_, PyPatch>>,
 ) -> PyResult<PyJunctionReport> {
     if let Some(k) = junctions
         .iter()
@@ -804,8 +870,9 @@ fn py_update_junctions(
         )));
     }
     let core: Vec<molrs::core::Junction> = junctions.iter().map(|j| j.inner).collect();
+    let retype = retype_of(retype.as_deref());
     let report =
-        molrs::builder::update_junctions(world.try_borrow_mut()?.core_mut(), &core, &Retype::Keep)
+        molrs::builder::update_junctions(world.try_borrow_mut()?.core_mut(), &core, &retype)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(PyJunctionReport {
         world: world.clone().into_any().unbind(),
@@ -821,6 +888,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAxisOrienter>()?;
     m.add_class::<PyAssembler>()?;
     m.add_class::<PyJunctionReport>()?;
+    m.add_class::<PyPatch>()?;
     m.add_function(wrap_pyfunction!(py_update_junctions, m)?)?;
     m.add_class::<PyCoarsener>()?;
     crate::polymer::register(m)?;

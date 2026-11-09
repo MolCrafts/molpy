@@ -10,7 +10,10 @@
 //!
 //! - **Atom types**, by the [`Retype`] policy. [`Retype::Keep`] changes none:
 //!   the caller's templates were typed in the environment the product gives
-//!   them, so their types stay right.
+//!   them, so their types stay right. [`Retype::Patch`] writes the types the
+//!   caller declared for each linked anchor's copy, and nothing else: an
+//!   atom's old parameters are not scrubbed — the parameter assignment that
+//!   follows a retype overwrites them.
 //! - **Graph-derived terms.** The angles, dihedrals and 1-2/1-3/1-4 pair rows
 //!   of every kind the graph already carries are made to agree with the new
 //!   bond graph. A link only adds bonds, so every existing angle and dihedral
@@ -33,16 +36,23 @@ use std::fmt;
 
 use crate::core::keys;
 use crate::core::schema::block_names::PAIRS;
-use crate::core::{Atomistic, Junction, MolRsError, RelationId};
+use crate::core::{Atomistic, Junction, MolRsError, NodeId, RelationId};
+
+mod patch;
+
+pub use patch::{Patch, Retyped};
 
 /// How the atom types of a linked graph follow its new bonds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Retype {
     /// Change no atom type: the templates were typed in the chemical
     /// environment the product gives them (an in-chain residue, a monomer
     /// typed with its neighbours mimicked). The caller answers for that.
     #[default]
     Keep,
+    /// Change the types the caller declared for each linked anchor: see
+    /// [`Patch`].
+    Patch(Patch),
 }
 
 /// What [`update_junctions`] did.
@@ -51,6 +61,10 @@ pub struct JunctionReport {
     /// The junctions it was given: the new bonds, their anchors and the
     /// charge each link folded onto each anchor.
     pub junctions: Vec<Junction>,
+    /// The atoms whose type the policy changed, each with its type before
+    /// (`None` when it had none) and after; an atom already of its patched
+    /// type is not listed.
+    pub retyped: Vec<Retyped>,
     /// Pair rows whose bond distance the new bonds shortened; each holds only
     /// its new `n_bonds` now.
     pub reclassified_pairs: Vec<RelationId>,
@@ -71,6 +85,46 @@ pub enum JunctionError {
         /// The junction's index in the slice given.
         junction: usize,
     },
+    /// A patch needs to know where an anchor came from, and atom `atom` of
+    /// junction `junction` lacks its `frag_id`, `template` or
+    /// `template_atom`.
+    NoProvenance {
+        /// The junction's index in the slice given.
+        junction: usize,
+        /// The anchor without provenance.
+        atom: NodeId,
+    },
+    /// The patch names row `row` of template `template` in copy `frag_id`,
+    /// and the graph holds no such atom (it left with a leaving group, or the
+    /// template has no such row).
+    PatchedAtomMissing {
+        /// The template.
+        template: String,
+        /// The copy.
+        frag_id: i32,
+        /// The template row.
+        row: usize,
+    },
+    /// Copy `frag_id` of template `template` holds row `row` `count` times:
+    /// two graphs with the same `frag_id`s were merged, so the copy is not
+    /// one.
+    AmbiguousCopy {
+        /// The template.
+        template: String,
+        /// The copy.
+        frag_id: i32,
+        /// The template row.
+        row: usize,
+        /// How many atoms claim it.
+        count: usize,
+    },
+    /// Two patches give atom `atom` the different types `types`.
+    PatchConflict {
+        /// The atom.
+        atom: NodeId,
+        /// The two types.
+        types: [String; 2],
+    },
     /// The graph refused an edit.
     Graph(MolRsError),
 }
@@ -82,6 +136,38 @@ impl fmt::Display for JunctionError {
                 f,
                 "junction {junction}: its bond is not a live bond joining its two anchors"
             ),
+            Self::NoProvenance { junction, atom } => write!(
+                f,
+                "junction {junction}: anchor {} carries no '{}', '{}' or '{}' to patch by",
+                u64::from(*atom),
+                keys::FRAG_ID,
+                keys::TEMPLATE,
+                keys::TEMPLATE_ATOM
+            ),
+            Self::PatchedAtomMissing {
+                template,
+                frag_id,
+                row,
+            } => write!(
+                f,
+                "the patch names row {row} of '{template}' in copy {frag_id}, which the graph does not hold"
+            ),
+            Self::AmbiguousCopy {
+                template,
+                frag_id,
+                row,
+                count,
+            } => write!(
+                f,
+                "copy {frag_id} of '{template}' holds row {row} {count} times; merged graphs share frag_ids"
+            ),
+            Self::PatchConflict { atom, types } => write!(
+                f,
+                "atom {} is patched to both '{}' and '{}'",
+                u64::from(*atom),
+                types[0],
+                types[1]
+            ),
             Self::Graph(error) => write!(f, "{error}"),
         }
     }
@@ -91,7 +177,11 @@ impl std::error::Error for JunctionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Graph(error) => Some(error),
-            Self::NotABond { .. } => None,
+            Self::NotABond { .. }
+            | Self::NoProvenance { .. }
+            | Self::PatchedAtomMissing { .. }
+            | Self::AmbiguousCopy { .. }
+            | Self::PatchConflict { .. } => None,
         }
     }
 }
@@ -132,9 +222,13 @@ pub fn update_junctions(
             return Err(JunctionError::NotABond { junction: index });
         }
     }
-    match retype {
-        Retype::Keep => {}
-    }
+    let retyped = match retype {
+        Retype::Keep => Vec::new(),
+        Retype::Patch(patch) => {
+            let writes = patch.plan(world, junctions)?;
+            patch::apply(world, writes)?
+        }
+    };
 
     let with_pairs = world.n_terms(PAIRS)? > 0;
     let before: HashMap<RelationId, i64> = if with_pairs {
@@ -171,6 +265,7 @@ pub fn update_junctions(
 
     Ok(JunctionReport {
         junctions: junctions.to_vec(),
+        retyped,
         reclassified_pairs,
         added_angles,
         added_dihedrals,
@@ -217,6 +312,7 @@ impl Settle for Atomistic {
 fn reported(junctions: &[Junction]) -> JunctionReport {
     JunctionReport {
         junctions: junctions.to_vec(),
+        retyped: Vec::new(),
         reclassified_pairs: Vec::new(),
         added_angles: 0,
         added_dihedrals: 0,

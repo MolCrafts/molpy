@@ -38,7 +38,9 @@ pub use carbon_tube::{CarbonTubeBuilder, CarbonTubeError, TubeExtent};
 pub use coarsen::{CoarsenError, Coarsener};
 pub use graphene::{GrapheneBuilder, GrapheneError};
 pub use growth_strategy::{FccLattice, GrowthStrategy, OffLattice};
-pub use junction::{JunctionError, JunctionReport, Retype, Settle, update_junctions};
+pub use junction::{
+    JunctionError, JunctionReport, Patch, Retype, Retyped, Settle, update_junctions,
+};
 pub use lattice::{Lattice, LatticeError, Site};
 pub use occupancy::OccupancyMode;
 pub use orient::{AxisOrienter, OrientError, Orienter, SiteLink, SiteView};
