@@ -34,7 +34,7 @@
 //! | [`openmm_xml`] | OpenMM force-field XML |
 //! | force-field XML | [`XmlForcefieldReader`] / [`XmlForcefieldWriter`] — every style of a force field as one element, in its declared units |
 //! | [`clpol`] | CL&Pol `alpha.ff`: `read_clpol_alpha` |
-//! | [`smiles`], [`cgsmiles`] | the SMILES and CGsmiles line notations |
+//! | [`smiles`], [`cgsmiles`], `bigsmiles` | the SMILES, CGsmiles and (generative) BigSMILES line notations |
 //! | [`mrec`] | MolRec scientific records (`*.mrec`): `write_mrec`, [`mrec::MrecFile`] |
 //! | CSV | functions only: `read_csv_block` / `write_csv_block` |
 //! | a frame in `stream`'s wire encodings (feature `stream`) | `read_wire_frame` / `write_wire_frame` |
@@ -106,6 +106,8 @@ mod xsf;
 pub mod xtc;
 pub mod xyz;
 
+#[cfg(all(feature = "smiles", feature = "builder"))]
+pub mod bigsmiles;
 #[cfg(feature = "smiles")]
 pub mod cgsmiles;
 #[cfg(feature = "zarr")]

@@ -30,7 +30,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-USER_GUIDE = Path(__file__).resolve().parent.parent / "docs" / "user-guide"
+USER_GUIDE = Path(__file__).resolve().parents[2] / "docs" / "user-guide"
 
 # Per-cell execution timeout in seconds (some cells pack a box).
 CELL_TIMEOUT = 900

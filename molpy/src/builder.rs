@@ -660,6 +660,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAxisOrienter>()?;
     m.add_class::<PyAssembler>()?;
     m.add_class::<PyCoarsener>()?;
+    crate::polymer::register(m)?;
     crate::symmetry::register(m)?;
     crate::lattice::register(m)?;
     crate::virtual_sites::register(m)

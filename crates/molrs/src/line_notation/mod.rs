@@ -78,7 +78,7 @@ pub(crate) fn is_element_symbol(symbol: &str) -> bool {
 
 /// Which notation the parser or writer speaks.
 ///
-/// The four dialects share one AST, one scanner and one recursive-descent
+/// The dialects share one AST, one scanner and one recursive-descent
 /// parser; this enum is what that shared machinery branches on, so "which
 /// language is this" has a single home rather than one private copy per
 /// direction.
@@ -101,14 +101,109 @@ pub(crate) enum Dialect {
     /// as the unlabelled `$` descriptor ([`psmiles`]). Bracket descriptors
     /// are refused, as in plain SMILES.
     Psmiles,
+    /// `BigSMILES` unit body: the fragment dialect with integer descriptor
+    /// ids, no `[!]`, and generative-`BigSMILES` weights `[<|w|]`
+    /// ([`parser::parse_bigsmiles_body`]).
+    BigSmiles,
+}
+
+/// How a dialect reads the brackets `[$]`, `[<]`, `[>]`, `[!]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Descriptors {
+    /// The dialect has no descriptor notation and says so: plain SMILES.
+    Refused,
+    /// The glyphs are not descriptors here: in SMARTS `[$(C)]` is a
+    /// recursive pattern and `[!C]` a negation, left to the query parser.
+    QuerySyntax,
+    /// The dialect reads descriptors, by these rules.
+    Read(DescriptorRules),
+}
+
+/// The descriptor rules of one notation — everything the shared parser
+/// needs to know to read that notation's joining sites. A notation is added
+/// by writing its rules here, in one place, not by branching in the parser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DescriptorRules {
+    /// The descriptor is spelled as a star, `*` or `[*]`, read as the
+    /// unlabelled `$`; the bracket glyphs are then refused.
+    pub star: bool,
+    /// The squash operator `[!]` is part of the notation.
+    pub squash: bool,
+    /// What a label may be written with.
+    pub labels: LabelRule,
+    /// Generation weights `|w …|` may follow the label inside the bracket.
+    pub weights: bool,
+    /// The notation also has ladder and non-covalent descriptors
+    /// (`[<[<1]1]`, `[$:1]`); they are named as unsupported rather than
+    /// read as a label.
+    pub extended: bool,
+    /// A descriptor bonds exactly one atom: one per run, and nothing may
+    /// bond on after one written behind an atom.
+    pub terminal: bool,
+    /// `CGsmiles` atom annotations (`[C;0.5]`) are part of the notation and
+    /// are named as unsupported rather than reported as an unclosed bracket.
+    pub atom_annotations: bool,
+}
+
+/// What a descriptor label may be written with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LabelRule {
+    /// ASCII letters and digits (`CGsmiles`: `[$a1]`).
+    Alphanumeric,
+    /// ASCII digits (`BigSMILES`: `[$1]`).
+    Digits,
+}
+
+impl LabelRule {
+    /// Whether `label` (possibly empty) is one.
+    pub(crate) fn admits(self, label: &str) -> bool {
+        match self {
+            LabelRule::Alphanumeric => label.chars().all(|c| c.is_ascii_alphanumeric()),
+            LabelRule::Digits => label.chars().all(|c| c.is_ascii_digit()),
+        }
+    }
 }
 
 impl Dialect {
+    /// How this dialect reads descriptors. The one table of per-notation
+    /// descriptor rules.
+    pub(crate) fn descriptors(self) -> Descriptors {
+        let rules = DescriptorRules {
+            star: false,
+            squash: false,
+            labels: LabelRule::Alphanumeric,
+            weights: false,
+            extended: false,
+            terminal: false,
+            atom_annotations: false,
+        };
+        match self {
+            Dialect::Smiles => Descriptors::Refused,
+            Dialect::Smarts => Descriptors::QuerySyntax,
+            Dialect::FragmentSmiles => Descriptors::Read(DescriptorRules {
+                squash: true,
+                atom_annotations: true,
+                ..rules
+            }),
+            Dialect::Psmiles => Descriptors::Read(DescriptorRules {
+                star: true,
+                terminal: true,
+                ..rules
+            }),
+            Dialect::BigSmiles => Descriptors::Read(DescriptorRules {
+                labels: LabelRule::Digits,
+                weights: true,
+                extended: true,
+                ..rules
+            }),
+        }
+    }
+
     /// The notation a diagnostic about this dialect names.
     ///
-    /// Four dialects, three notations: the fragment body is SMILES widened with
-    /// bonding descriptors, not a language of its own, so it reports as
-    /// SMILES; PSMILES is a named convention and reports as itself. The mapping is total and lives here alone, so the parser and
+    /// The fragment body is SMILES widened with bonding descriptors, not a
+    /// language of its own, so it reports as SMILES; PSMILES and `BigSMILES`
+    /// are named notations and report as themselves. The mapping is total and lives here alone, so the parser and
     /// the writer cannot drift into two answers — and neither holds a second
     /// notation field beside its `dialect`.
     pub(crate) fn notation(self) -> Notation {
@@ -116,6 +211,7 @@ impl Dialect {
             Dialect::Smiles | Dialect::FragmentSmiles => Notation::Smiles,
             Dialect::Smarts => Notation::Smarts,
             Dialect::Psmiles => Notation::Psmiles,
+            Dialect::BigSmiles => Notation::BigSmiles,
         }
     }
 }

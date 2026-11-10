@@ -24,7 +24,7 @@ of the rule that was broken (``"UnclosedBranch"``, ``"UnexpectedEnd"``,
 ``(start, end)`` pair whose end is clamped to ``len(input)``; ``input``, the
 offending string, empty for the errors raised past the parser, which are handed
 an IR and never see the text it came from; and ``notation``, lowercase
-``"smiles"``, ``"smarts"``, ``"cgsmiles"`` or ``"psmiles"``. It subclasses
+``"smiles"``, ``"smarts"``, ``"cgsmiles"``, ``"psmiles"`` or ``"bigsmiles"``. It subclasses
 :class:`ValueError`, so ``except ValueError`` keeps catching it, and
 ``str(e)`` is the message Rust renders, caret line included.
 """

@@ -23,8 +23,10 @@ as a `CgSmilesIr`.
 
 > **Polymer notations.** CGsmiles is read by `mp.io.cgsmiles.read_cgsmiles`
 > ([below](#cgsmiles-describes-units-and-how-they-join)); it is how units and
-> polymer topologies are written for [Assembly](02_assembly.md). BigSMILES and
-> G-BigSMILES are not parsed.
+> polymer topologies are written for [Assembly](02_assembly.md). A PSMILES repeat
+> unit is read by `mp.io.smiles.read_psmiles` (each `*` is a `$` port), and
+> (generative) BigSMILES by `mp.io.bigsmiles.read_bigsmiles`, whose `to_system()`
+> is the polydisperse ensemble of [Polydisperse Systems](05_polydisperse_systems.md).
 
 ## SMILES describes one specific molecule
 

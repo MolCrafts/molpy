@@ -1,11 +1,13 @@
 # Notation
 
-Chemical string notation, parsed by the native core. Three notations are supported —
-SMILES, CGsmiles and SMARTS — and each is reached through a **type**; the reader
-entry points are `read_smiles(text)` and `read_cgsmiles(text)`. Every notation type lives
-in the module of its Rust owner — SMILES in `mp.io.smiles` (`mp.io.smiles.SmilesIr`), CGsmiles in
-`mp.io.cgsmiles` (`mp.io.cgsmiles.CgSmilesIr`),
-SMARTS in `mp.perceive` (`mp.perceive.SmartsPattern`).
+Chemical string notation, parsed by the native core. One SMILES family is supported —
+SMILES, SMARTS, PSMILES, CGsmiles and (generative) BigSMILES share one atom grammar and one
+bonding-descriptor vocabulary — and each is reached through a **type**; the reader entry
+points are `read_smiles(text)`, `read_smiles_fragment(body)`, `read_psmiles(unit)`,
+`read_cgsmiles(text)` and `read_bigsmiles(text)`. Every notation type lives in the module of
+its Rust owner — SMILES and PSMILES in `mp.io.smiles` (`mp.io.smiles.SmilesIr`), CGsmiles in
+`mp.io.cgsmiles` (`mp.io.cgsmiles.CgSmilesIr`), BigSMILES in `mp.io.bigsmiles`
+(`mp.io.bigsmiles.BigSmilesIr`), SMARTS in `mp.perceive` (`mp.perceive.SmartsPattern`).
 
 ## Quick reference
 
@@ -41,7 +43,17 @@ CGsmiles is parsed by `mp.io.cgsmiles.CgSmilesIr`: `templates()` gives each frag
 as an `Atomistic` whose bonding descriptors are ports (one fragment body alone:
 `mp.io.smiles.read_smiles_fragment(body).to_template()`), and `to_coarsegrain()`
 gives the site graph that [`mp.builder.Assembler`](builder.md) builds.
-BigSMILES and G-BigSMILES are not parsed.
+
+PSMILES writes one repeat unit whose two `*` are its joining sites:
+`mp.io.smiles.read_psmiles("[*]CC[*]")` reads each `*` as the `$` descriptor, so it is
+the fragment `read_smiles_fragment("[$]CC[$]")` gives.
+
+BigSMILES writes a polymer as SMILES with stochastic objects `{[] …; … []}`; its generative
+extension adds port weights (`[<|0.5|]`), size distributions (`|schulz_zimm(1500, 1400)|`) and
+system amounts (`.|5e5|`). `mp.io.bigsmiles.read_bigsmiles(text)` reads both; `to_system()`
+gives the [`mp.builder.System`](builder.md) whose samples the assembler builds, sizes counted
+in heavy-atom mass. Nested stochastic objects, objects inside branches, fragment declarations
+and ladder or non-covalent descriptors are refused.
 
 ## Related
 
@@ -59,6 +71,8 @@ BigSMILES and G-BigSMILES are not parsed.
 ::: molpy.io.smiles.SmilesIr
 
 ::: molpy.io.cgsmiles.CgSmilesIr
+
+::: molpy.io.bigsmiles.BigSmilesIr
 
 ::: molpy.perceive.SmartsPattern
 

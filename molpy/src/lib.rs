@@ -56,6 +56,7 @@ mod md;
 mod op;
 mod optimize;
 mod perceive;
+mod polymer;
 mod stream;
 mod symmetry;
 mod virtual_sites;

@@ -52,6 +52,7 @@ use crate::io::cgsmiles::{
 };
 use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, FragmentIr, Span};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
+use crate::line_notation::LabelRule;
 use crate::line_notation::parser::parse_fragment_smiles;
 use crate::line_notation::scanner::Scanner;
 use crate::line_notation::validation::validate_descriptor;
@@ -996,7 +997,13 @@ impl<'a> CgParser<'a> {
         descriptor: BondingDescriptor,
         span: Span,
     ) -> Result<(), SmilesError> {
-        validate_descriptor(&descriptor, span, self.scanner.input(), Notation::CgSmiles)?;
+        validate_descriptor(
+            &descriptor,
+            span,
+            self.scanner.input(),
+            Notation::CgSmiles,
+            LabelRule::Alphanumeric,
+        )?;
         match self.current.and_then(|index| self.nodes.get_mut(index)) {
             Some(node) => node.descriptors.push(descriptor),
             None => self.leading.push((descriptor, span)),

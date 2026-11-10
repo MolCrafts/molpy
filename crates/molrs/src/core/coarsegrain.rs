@@ -12,9 +12,9 @@ use crate::core::keys;
 
 use crate::core::graph::{Graph, sealed};
 use crate::core::molgraph::NodeGuard;
-use crate::core::{BondNumber, CenterError, EntityTable, LinkError, Port, PortKind};
+use crate::core::{BondNumber, BondOrder, CenterError, EntityTable, LinkError, Port, PortKind};
 use crate::core::{GraphAccess, KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
-use crate::op::Idx;
+use crate::op::{I, Idx};
 
 /// Result of [`CoarseGrain::extract_subgraph`].
 #[derive(Debug, Clone)]
@@ -433,6 +433,44 @@ impl CoarseGrain {
         props: impl Into<Props>,
     ) -> Result<RelationId, MolRsError> {
         self.graph.add_relation(self.bond, &[a, b], props)
+    }
+
+    /// Add an assembly connection: a CG bond from port `src_port` of `a`'s
+    /// template to port `dst_port` of `b`'s, forming a bond of `bond_type`
+    /// and `bond_number`.
+    ///
+    /// The one writer of the four keys an assembly bond carries
+    /// ([`keys::SRC_PORT`], [`keys::DST_PORT`], [`keys::BOND_TYPE`],
+    /// [`keys::BOND_NUMBER`]); every producer of a site graph for the
+    /// assembler goes through it.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] for a port ordinal the column cannot
+    /// hold; what [`add_bond`](Self::add_bond) raises.
+    pub fn add_site_bond(
+        &mut self,
+        a: NodeId,
+        b: NodeId,
+        (src_port, dst_port): (usize, usize),
+        bond_type: BondOrder,
+        bond_number: BondNumber,
+    ) -> Result<RelationId, MolRsError> {
+        let ordinal = |port: usize| {
+            I::try_from(port).map_err(|e| {
+                MolRsError::validation(format!("port {port} is not representable: {e}"))
+            })
+        };
+        self.add_bond(
+            a,
+            b,
+            crate::props! {
+                keys::SRC_PORT => ordinal(src_port)?,
+                keys::DST_PORT => ordinal(dst_port)?,
+                keys::BOND_TYPE => bond_type,
+                keys::BOND_NUMBER => bond_number,
+            },
+        )
     }
 
     /// Delete one CG bond (its beads stay); returns it as stored.

@@ -35,6 +35,9 @@ pub enum Notation {
     CgSmiles,
     /// PSMILES, a polymer repeat unit whose `*` atoms are joining sites.
     Psmiles,
+    /// `BigSMILES` and its generative extension (stochastic objects, weights,
+    /// size distributions).
+    BigSmiles,
 }
 
 impl fmt::Display for Notation {
@@ -44,6 +47,7 @@ impl fmt::Display for Notation {
             Notation::Smarts => "SMARTS",
             Notation::CgSmiles => "CGsmiles",
             Notation::Psmiles => "PSMILES",
+            Notation::BigSmiles => "BigSMILES",
         };
         f.write_str(name)
     }
@@ -194,6 +198,40 @@ pub enum SmilesErrorKind {
     /// A PSMILES repeat unit carries a number of `*` other than two; the
     /// payload is the number written.
     PsmilesStarCount(usize),
+
+    // -- BigSMILES kinds ------------------------------------------------------
+    /// Valid `BigSMILES` this implementation does not model; the payload
+    /// names the feature (nested stochastic objects, an object inside a
+    /// branch, fragment declarations, ladder or non-covalent descriptors).
+    BigUnsupported(String),
+    /// Generation weights `|…|` that are not one or more non-negative
+    /// numbers; the payload is the text between the bars.
+    BigInvalidWeights(String),
+    /// A stochastic object `{…}` that is not a terminal, units and a
+    /// terminal; the payload says what is missing.
+    BigMalformedObject(String),
+    /// A size distribution `|name(…)|` whose name is not one of the six
+    /// generative-`BigSMILES` distributions; the payload is the name.
+    BigUnknownDistribution(String),
+    /// A size distribution with the wrong number of arguments.
+    BigDistributionArity {
+        /// The distribution's name.
+        name: String,
+        /// How many arguments it takes.
+        expected: usize,
+        /// How many were written.
+        found: usize,
+    },
+    /// A number that does not parse, or a distribution whose parameters are
+    /// out of range; the payload is the offending text or reason.
+    BigInvalidNumber(String),
+    /// A system amount `.|…|` that is not a positive number or a percentage
+    /// below 100; the payload is the text between the bars.
+    BigInvalidAmount(String),
+    /// Turning a parsed string into a polymer model failed; the payload is
+    /// the model's reason (parts that do not join, an end group with two
+    /// ports, …).
+    BigBuild(String),
 
     // -- CGsmiles coarse-graph kinds ----------------------------------------
     /// A `CGsmiles` block contains nothing: `{}`. The reference implementation
@@ -420,6 +458,31 @@ impl SmilesErrorKind {
             SmilesErrorKind::PsmilesStarCount(n) => {
                 format!("a PSMILES repeat unit has exactly two '*', found {n}")
             }
+            SmilesErrorKind::BigUnsupported(feature) => {
+                format!("{feature} are not supported")
+            }
+            SmilesErrorKind::BigInvalidWeights(text) => {
+                format!("generation weights '|{text}|' are not non-negative numbers")
+            }
+            SmilesErrorKind::BigMalformedObject(reason) => {
+                format!("malformed stochastic object: {reason}")
+            }
+            SmilesErrorKind::BigUnknownDistribution(name) => format!(
+                "unknown size distribution '{name}' — one of flory_schulz, schulz_zimm, \
+                 gauss, uniform, log_normal, poisson"
+            ),
+            SmilesErrorKind::BigDistributionArity {
+                name,
+                expected,
+                found,
+            } => format!("{name} takes {expected} arguments, found {found}"),
+            SmilesErrorKind::BigInvalidNumber(text) => format!("invalid number: {text}"),
+            SmilesErrorKind::BigInvalidAmount(text) => format!(
+                "system amount '|{text}|' is not a positive number or a percentage below 100"
+            ),
+            SmilesErrorKind::BigBuild(reason) => {
+                format!("cannot build the polymer model: {reason}")
+            }
             SmilesErrorKind::CgEmptyBlock
             | SmilesErrorKind::CgMalformedAnnotation(_)
             | SmilesErrorKind::CgUnsupportedAnnotation { .. }
@@ -556,7 +619,8 @@ impl SmilesErrorKind {
 }
 
 /// Renders as one message line, `<notation> parse error at position <n>:
-/// <reason>`, optionally followed by two context lines: the input, and a caret
+/// <reason>` (`<notation> error at …` for [`SmilesErrorKind::BigBuild`], which
+/// is raised after the parse), optionally followed by two context lines: the input, and a caret
 /// under the byte the span starts at. The prefix is [`SmilesError::notation`]
 /// as the entry point stamped it — `SMILES`, `SMARTS` or `CGsmiles`.
 ///
@@ -568,7 +632,13 @@ impl fmt::Display for SmilesError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let pos = self.span.start;
         let msg = self.kind.message();
-        write!(f, "{} parse error at position {pos}: {msg}", self.notation)?;
+        // A string that parsed and was then refused by the polymer model is
+        // not a parse error.
+        let what = match self.kind {
+            SmilesErrorKind::BigBuild(_) => "error",
+            _ => "parse error",
+        };
+        write!(f, "{} {what} at position {pos}: {msg}", self.notation)?;
 
         // Caret-style context line, when there is an input to point into and
         // it is short enough to be useful. Errors raised away from the scanner

@@ -11,7 +11,7 @@
 //! | [`clpol`]               | the CL&Pol `alpha.ff` polarisation table                 |
 //! | [`forcefield`]          | the force-field reader and writer classes                |
 //! | [`frame_encoding`]      | a frame in the stream's wire encodings                   |
-//! | [`smiles`], [`cgsmiles`] | the SMILES and CGsmiles line notations                  |
+//! | [`smiles`], [`cgsmiles`], [`bigsmiles`] | the SMILES, CGsmiles and BigSMILES line notations |
 //! | [`lammps_log`]          | LAMMPS log files                                         |
 //! | [`lammps_bond_react`]   | LAMMPS `fix bond/react` templates                        |
 //! | [`mrec`]                | `*.mrec` scientific records                              |
@@ -20,6 +20,7 @@
 //! ``molpy.io.Text``, never a bare ``str`` — and a writer a sink — an
 //! ``os.PathLike`` or a ``bytearray``. No door picks a format for the caller.
 
+pub mod bigsmiles;
 pub mod cgsmiles;
 mod clpol;
 mod csv;
@@ -55,6 +56,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     frame_encoding::register(m)?;
     smiles::register(m)?;
     cgsmiles::register(m)?;
+    bigsmiles::register(m)?;
     lammps_bond_react::register(m)?;
     lammps_log::register(m)?;
     #[cfg(feature = "fs")]

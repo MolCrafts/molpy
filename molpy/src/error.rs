@@ -48,6 +48,41 @@ create_exception!(
      keep catching it."
 );
 
+create_exception!(
+    molpy.builder,
+    PolymerError,
+    PyValueError,
+    "Raised when a polymer model is refused or cannot be sampled. `kind` is \
+     the Rust `PolymerError` variant name: `'InvalidParameter'`, \
+     `'InvalidFragment'`, `'InvalidObject'`, `'InvalidMolecule'`, \
+     `'InvalidSystem'` (the model as built is wrong), `'Unsized'`, `'Stuck'` \
+     (this sample could not be grown) or `'Sites'`. Subclasses Python \
+     `ValueError`."
+);
+
+/// Convert a [`molrs::builder::PolymerError`] to a Python
+/// [`PolymerError`](crate::error::PolymerError) carrying its `kind`.
+pub fn polymer_error_to_pyerr(e: molrs::builder::PolymerError) -> PyErr {
+    use molrs::builder::PolymerError as E;
+    let kind = match &e {
+        E::InvalidParameter(_) => "InvalidParameter",
+        E::InvalidFragment { .. } => "InvalidFragment",
+        E::InvalidObject(_) => "InvalidObject",
+        E::InvalidMolecule(_) => "InvalidMolecule",
+        E::InvalidSystem(_) => "InvalidSystem",
+        E::Unsized => "Unsized",
+        E::Stuck(_) => "Stuck",
+        E::Sites(_) => "Sites",
+    };
+    Python::attach(|py| {
+        let err = PolymerError::new_err(e.to_string());
+        match err.value(py).setattr("kind", kind) {
+            Ok(()) => err,
+            Err(failed) => failed,
+        }
+    })
+}
+
 /// Preserve the native units error message at the Python boundary.
 pub fn units_error(error: ::molrs::core::UnitsError) -> PyErr {
     UnitsError::new_err(error.to_string())
@@ -224,6 +259,7 @@ fn notation_name(notation: molrs::io::smiles::Notation) -> &'static str {
         molrs::io::smiles::Notation::Smarts => "smarts",
         molrs::io::smiles::Notation::CgSmiles => "cgsmiles",
         molrs::io::smiles::Notation::Psmiles => "psmiles",
+        molrs::io::smiles::Notation::BigSmiles => "bigsmiles",
     }
 }
 
