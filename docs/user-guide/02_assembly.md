@@ -46,7 +46,9 @@ for port in eo.ports:
 
 `read_smiles_fragment(body).to_template()` returns the fragment body as a ported
 `mp.Atomistic`; `read_cgsmiles(s).templates()` returns a dict from fragment name to one
-such template for every fragment a CGsmiles string defines. Whether two ports may join is decided by their kind, label and order:
+such template for every fragment a CGsmiles string defines. A fragment name is ASCII
+letters and digits only (or the wildcard `*`): write `psingle` or `PBIXBr`, not `p_single`
+or `pbix-br`; the parser names the character it refused. Whether two ports may join is decided by their kind, label and order:
 
 | Port | Joins |
 |------|-------|
