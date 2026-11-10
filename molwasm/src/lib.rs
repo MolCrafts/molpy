@@ -94,6 +94,10 @@ mod optimize;
 /// Chemical perception (rings, aromaticity, hydrogens, …) — WASM face of
 /// `molrs::perceive`.
 mod perceive;
+/// Polymer ensembles (generative BigSMILES) — WASM face of `molrs::builder`'s
+/// polymer model.
+#[cfg(feature = "builder")]
+mod polymer;
 
 // The JS namespace is flat; so is the crate root.
 #[cfg(feature = "builder")]
@@ -111,4 +115,9 @@ pub use io::*;
 pub use optimize::*;
 pub use perceive::{
     add_hydrogens, assign_aromaticity, assign_kekule_bond_orders, assign_rings, remove_hydrogens,
+};
+#[cfg(feature = "builder")]
+pub use polymer::{
+    ChainSize, Distribution, Fragment, Molecule, MoleculeBuilder, StochasticObject,
+    StochasticObjectBuilder, System, SystemBuilder, SystemSample, Terminal,
 };
