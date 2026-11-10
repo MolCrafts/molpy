@@ -4,7 +4,6 @@ use crate::core::{CoarseGrain, NodeId, Props, keys};
 use crate::io::cgsmiles::CgSmilesIr;
 use crate::io::cgsmiles::templates::cg_build;
 use crate::io::smiles::SmilesError;
-use crate::op::I;
 
 impl CgSmilesIr {
     /// Build the deepest coarse level as an explicit assembly graph.
@@ -57,20 +56,13 @@ impl CgSmilesIr {
             .collect::<Result<Vec<NodeId>, _>>()?;
         for (index, connection) in assembly.connections.iter().enumerate() {
             let build = |reason| cg_build(self.span, format!("resolved pair {index}: {reason}"));
-            let ordinal = |port: usize| {
-                I::try_from(port)
-                    .map_err(|e| build(format!("port {port} is not representable: {e}")))
-            };
             let [(src, src_port), (dst, dst_port)] = connection.ends;
-            cg.add_bond(
+            cg.add_site_bond(
                 beads[src],
                 beads[dst],
-                crate::props! {
-                    keys::SRC_PORT => ordinal(src_port)?,
-                    keys::DST_PORT => ordinal(dst_port)?,
-                    keys::BOND_TYPE => connection.kind.bond_type(),
-                    keys::BOND_NUMBER => connection.kind.bond_number(),
-                },
+                (src_port, dst_port),
+                connection.kind.bond_type(),
+                connection.kind.bond_number(),
             )
             .map_err(|e| build(format!("adding the CG bond: {e}")))?;
         }

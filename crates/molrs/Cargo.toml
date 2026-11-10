@@ -54,8 +54,9 @@ default = ["rayon"]
 full = ["io", "compute", "smiles", "ff", "conformer", "voronoi", "md", "builder"]
 
 # Sub-system modules (each gates its module + its unique optional deps).
-# Structure builders (graphene, nanotubes, self-avoiding walks); no unique deps.
-builder   = []
+# Structure builders (graphene, nanotubes, self-avoiding walks, polymer
+# ensembles); `rand_distr` samples the chain-size distributions.
+builder   = ["dep:rand_distr"]
 io        = ["dep:flate2"]
 # `smiles` gates the line notations' shared grammar (`line_notation`): the
 # SMILES format in `io::smiles` and the SMARTS matcher (`perceive::smarts`)
@@ -140,6 +141,8 @@ rand       = "0.10"
 
 # Feature-gated optional deps — a build with a sub-system OFF does not compile
 # that sub-system's unique dependency.
+# builder (polymer chain-size distributions: gamma, normal, Poisson).
+rand_distr     = { version = "0.6", optional = true }
 rayon          = { version = "1.12", optional = true }                                              # core/ff/compute parallelism (default)
 zarrs          = { version = "0.23", optional = true, default-features = false, features = ["ndarray"] }  # zarr trajectories (core+io)
 ruzstd         = { version = "0.9", optional = true, default-features = false, features = ["std"] }    # zarr: pure-Rust zstd decode (wasm32)

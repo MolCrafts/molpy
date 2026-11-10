@@ -142,36 +142,25 @@ See also: [Nanostructures](../user-guide/04_nanostructures.md).
 
 ## Polydisperse melt — Schulz-Zimm distribution
 
-Sample a reproducible chain population from a molecular-weight distribution.
+Sample a reproducible chain population from a molecular-weight distribution,
+written as one generative-BigSMILES string.
 
 ```python
-import numpy as np
 import molpy as mp
-from molpy.builder import (
-    PolydisperseChainGenerator,
-    SchulzZimmPolydisperse,
-    SystemPlanner,
-    WeightedSequenceGenerator,
-)
 
-# Mn = 1500 Da, Mw = 3000 Da, total mass ≈ 500 kDa
-planner = SystemPlanner(
- PolydisperseChainGenerator(
- WeightedSequenceGenerator({"EO": 1.0}),
- {"EO": 44.05},
- distribution=SchulzZimmPolydisperse(1500, 3000),
-),
- target_total_mass=5e5,
-)
-plan = planner.plan_system(np.random.default_rng(42))
-print(f"Planned {len(plan.chains)} chains") # reproducible chain population
+# PEO capped by methyl and hydroxyl: Mw = 3000, Mn = 1500 (heavy-atom mass),
+# 5e4 g/mol of chains in total
+system = mp.io.bigsmiles.read_bigsmiles(
+    "{[] [<]OCC[>]; C[>], [<]O []}|schulz_zimm(3000, 1500)|.|5e4|"
+).to_system()
+sample = system.sample(42)
+print(f"Sampled {len(sample.molecules)} chains")  # reproducible chain population
 
-# Each planned chain is a unit sequence; written as CGsmiles it is a site graph.
-from eo_kit import library  # molpy/examples/topology/
-
-first = plan.chains[0]
-sites = mp.io.cgsmiles.read_cgsmiles("{" + "".join(f"[#{m}]" for m in first.monomers) + "}").to_coarsegrain()
-chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites)
+# Each chain is a site graph; one assembler over the 3D fragments builds it.
+conformer = mp.conformer.Conformer(seed=42)
+library = {name: conformer.generate(t)[0] for name, t in system.library().items()}
+molecule = system.components[0][0]
+chain = mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(molecule.sample(0))
 ```
 
 See also: [Polydisperse Systems](../user-guide/05_polydisperse_systems.md) ·

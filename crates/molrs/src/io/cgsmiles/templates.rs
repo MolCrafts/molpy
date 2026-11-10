@@ -333,7 +333,7 @@ fn cap_open_sites(
 /// [`DescriptorKind::Shared`] (`!`) cannot arrive through
 /// [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse), which refuses the
 /// squash operator while reading; its arm is totality, not support.
-fn port_kind(kind: DescriptorKind) -> PortKind {
+pub(crate) fn port_kind(kind: DescriptorKind) -> PortKind {
     match kind {
         DescriptorKind::Symmetric => PortKind::Symmetric,
         DescriptorKind::Left => PortKind::Left,

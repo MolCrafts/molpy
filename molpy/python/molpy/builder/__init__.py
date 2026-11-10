@@ -22,9 +22,17 @@ Built on those, this module also holds:
   (a :class:`~molpy.Box` unit cell plus a basis; ``Lattice.from_cif`` expands
   a :func:`molpy.io.read_cif` frame by its symmetry operators;
   ``Lattice.build`` tiles it);
-* polymers — sequence generators, chain-length distributions and
-  :class:`SystemPlanner`; :class:`AmberPolymerBuilder` for GAFF chains
-  through AmberTools;
+* polymers — the generative-BigSMILES model: a :class:`Fragment` is one
+  ported template with a weight per port, a :class:`StochasticObject` grows
+  repeat-unit and end-group fragments to a size drawn from a :class:`ChainSize` (a
+  :class:`Distribution` counted in a measure), a :class:`Molecule` joins
+  fixed fragments and objects end to end, and a :class:`System` samples
+  molecule kinds to their :class:`Amount` of a total. ``sample(seed)`` gives
+  the site graph an :class:`Assembler` builds over ``library()``;
+  :func:`molpy.io.bigsmiles.read_bigsmiles` reads the same model from a
+  string. A refusal is a :class:`PolymerError` (a ``ValueError``) whose
+  ``kind`` tells an invalid model from a sample that got stuck. :class:`AmberPolymerBuilder` builds GAFF chains through
+  AmberTools;
 * virtual sites — :class:`DrudeBuilder` (CL&Pol; its shipped table is
   ``DrudeBuilder().polarizability``) and :class:`Tip4pBuilder`;
 * :class:`PackingTemplate` — a built molecule's frame plus its hydrogen
@@ -34,41 +42,38 @@ The modules behind these are implementation modules, outside ``__all__``.
 """
 
 from molpy._core import (
+    Amount,
     Assembler,
     AxisOrienter,
     CarbonTubeBuilder,
+    ChainSize,
     Coarsener,
+    Distribution,
     DrudeBuilder,
+    Fragment,
     GrapheneBuilder,
     GrowthPlacer,
     Lattice,
+    Molecule,
+    MoleculeRecord,
+    PolymerError,
     Site,
     SitePlacer,
     SpaceGroup,
+    StochasticObject,
     SymOp,
+    System,
+    SystemSample,
+    Terminal,
     Tip4pBuilder,
 )
 
 from molpy.builder.packing import PackingTemplate
 from molpy.builder.polymer import (
-    AlternatingSequenceGenerator,
     AmberBuildResult,
     AmberCut,
     AmberPieces,
     AmberPolymerBuilder,
-    BlockSequenceGenerator,
-    Chain,
-    DpDistribution,
-    FlorySchulzPolydisperse,
-    MassDistribution,
-    PoissonPolydisperse,
-    PolydisperseChainGenerator,
-    SchulzZimmPolydisperse,
-    SequenceGenerator,
-    SystemPlan,
-    SystemPlanner,
-    UniformPolydisperse,
-    WeightedSequenceGenerator,
 )
 
 __all__ = [
@@ -83,20 +88,17 @@ __all__ = [
     "Site",
     "SpaceGroup",
     "SymOp",
-    "AlternatingSequenceGenerator",
-    "BlockSequenceGenerator",
-    "Chain",
-    "DpDistribution",
-    "FlorySchulzPolydisperse",
-    "MassDistribution",
-    "PoissonPolydisperse",
-    "PolydisperseChainGenerator",
-    "SchulzZimmPolydisperse",
-    "SequenceGenerator",
-    "SystemPlan",
-    "SystemPlanner",
-    "UniformPolydisperse",
-    "WeightedSequenceGenerator",
+    "Amount",
+    "ChainSize",
+    "Distribution",
+    "Molecule",
+    "MoleculeRecord",
+    "PolymerError",
+    "StochasticObject",
+    "System",
+    "SystemSample",
+    "Fragment",
+    "Terminal",
     "AmberBuildResult",
     "AmberCut",
     "AmberPieces",

@@ -250,7 +250,7 @@ pub(super) mod fixtures;
 mod instantiate;
 mod parser;
 mod resolve;
-mod templates;
+pub(crate) mod templates;
 mod to_assembly_graph;
 mod to_atomistic;
 mod to_coarsegrain;

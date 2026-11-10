@@ -36,12 +36,12 @@
 //! the bracket (`[$]=CCC`); everywhere else it precedes it (`CC=[$]`), and a
 //! bond written after the bracket is an ordinary bond to the next atom.
 
-use crate::line_notation::Dialect;
 use crate::line_notation::ast::*;
 use crate::line_notation::error::{SmilesError, SmilesErrorKind};
 use crate::line_notation::is_element_symbol;
 use crate::line_notation::scanner::Scanner;
 use crate::line_notation::validation::{validate_descriptor, validate_ring_closures};
+use crate::line_notation::{DescriptorRules, Descriptors, Dialect};
 use molrs::core::Element;
 
 /// Maximum recursion depth for SMARTS `$(...)` expressions.
@@ -93,7 +93,7 @@ pub fn parse_smiles(input: &str) -> Result<SmilesIr, SmilesError> {
 /// rule at the same stage. SMARTS is not routed here — a recursive `$(...)`
 /// sub-pattern is parsed as a molecule of its own and may legitimately leave a
 /// marker for the enclosing pattern to close.
-fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIr, SmilesError> {
+pub(crate) fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIr, SmilesError> {
     let mol = Parser::new(input, dialect).parse_molecule()?;
     validate_ring_closures(&mol, input)?;
     Ok(mol)
@@ -184,6 +184,49 @@ pub fn parse_fragment_smiles(input: &str) -> Result<SmilesIr, SmilesError> {
     parse_paired(input, Dialect::FragmentSmiles)
 }
 
+/// The generation weights of one `BigSMILES` descriptor, keyed by the span
+/// of its bracket: `[<|0.5|]` gives one weight, `[$|0.2 0.8|]` a list.
+pub(crate) type DescriptorWeights = Vec<(Span, Vec<f64>)>;
+
+/// The numbers between the bars of generative-`BigSMILES` weights
+/// (`0.2 0.8` of `[$|0.2 0.8|]`): one or more whitespace-separated
+/// non-negative finite numbers, `None` otherwise.
+pub(crate) fn weight_list(text: &str) -> Option<Vec<f64>> {
+    let weights: Option<Vec<f64>> = text
+        .split_whitespace()
+        .map(|w| w.parse::<f64>().ok().filter(|w| w.is_finite() && *w >= 0.0))
+        .collect();
+    weights.filter(|ws| !ws.is_empty())
+}
+
+/// Parse one `BigSMILES` / generative-`BigSMILES` unit body — a repeat
+/// unit, an end group or a piece between stochastic objects — into the
+/// shared IR, with the generation weights its descriptors carry.
+///
+/// The fragment dialect's descriptor placement, with the `BigSMILES` label
+/// rule (a descriptor id is a non-negative integer, `[$1]`), no squash
+/// operator `[!]`, and the generative extension `|w|` / `|w₁ w₂ …|` after
+/// the id. Weights are returned beside the IR, keyed by descriptor span,
+/// rather than stored on [`BondingDescriptor`], which every other dialect
+/// shares.
+///
+/// # Errors
+///
+/// What [`parse_fragment_smiles`] refuses, stamped
+/// [`Notation::BigSmiles`](crate::line_notation::error::Notation::BigSmiles);
+/// [`SmilesErrorKind::InvalidDescriptorLabel`] for a non-integer id,
+/// [`SmilesErrorKind::BigInvalidWeights`] for weights that are not
+/// non-negative numbers, [`SmilesErrorKind::BigUnsupported`] for a ladder or
+/// non-covalent descriptor.
+pub(crate) fn parse_bigsmiles_body(
+    input: &str,
+) -> Result<(SmilesIr, DescriptorWeights), SmilesError> {
+    let mut parser = Parser::new(input, Dialect::BigSmiles);
+    let mol = parser.parse_molecule()?;
+    validate_ring_closures(&mol, input)?;
+    Ok((mol, parser.weights))
+}
+
 // ---------------------------------------------------------------------------
 // Parser internals
 // ---------------------------------------------------------------------------
@@ -195,6 +238,8 @@ struct Parser<'a> {
     /// SMARTS: the next bracket primitive is the first of its bracket, where a
     /// bare `H` is the hydrogen element rather than a hydrogen count.
     bracket_leading: bool,
+    /// `BigSMILES`: the generation weights read inside descriptor brackets.
+    weights: DescriptorWeights,
 }
 
 /// Which bracket of a descriptor run the out-of-bracket bond symbol touches.
@@ -220,6 +265,7 @@ impl<'a> Parser<'a> {
             dialect,
             depth: 0,
             bracket_leading: false,
+            weights: Vec::new(),
         }
     }
 
@@ -268,9 +314,24 @@ impl<'a> Parser<'a> {
     /// [`Parser::take_descriptor_run`]'s decision. Running it in
     /// `Dialect::Smiles` too is what lets plain SMILES name the fragment entry
     /// point, instead of dying on an unexpected `$` inside the bracket parser.
+    ///
+    /// In `Dialect::Psmiles` a star — bare `*` or bracketed `[*` — is the
+    /// descriptor instead, and the bracket glyphs are not.
     fn at_descriptor(&self) -> bool {
+        if self.rules().is_some_and(|rules| rules.star) && self.at_star() {
+            return true;
+        }
         self.scanner.peek() == Some('[')
             && matches!(self.scanner.peek_next(), Some('$' | '<' | '>' | '!'))
+    }
+
+    /// True when the cursor sits on a PSMILES star: `*`, or `[` then `*`.
+    fn at_star(&self) -> bool {
+        match self.scanner.peek() {
+            Some('*') => true,
+            Some('[') => self.scanner.peek_next() == Some('*'),
+            _ => false,
+        }
     }
 
     /// Consume the run of descriptor brackets at the cursor, if one starts
@@ -296,17 +357,46 @@ impl<'a> Parser<'a> {
         if !self.at_descriptor() {
             return Ok(None);
         }
-        match self.dialect {
-            Dialect::Smarts => Ok(None),
-            Dialect::Smiles => Err(self.error(SmilesErrorKind::DescriptorInPlainSmiles)),
-            Dialect::FragmentSmiles => {
-                let mut run = vec![self.parse_descriptor()?];
-                while self.at_descriptor() {
-                    run.push(self.parse_descriptor()?);
-                }
-                Ok(Some(run))
+        let rules = match self.dialect.descriptors() {
+            Descriptors::QuerySyntax => return Ok(None),
+            Descriptors::Refused => {
+                return Err(self.error(SmilesErrorKind::DescriptorInPlainSmiles));
             }
+            Descriptors::Read(rules) => rules,
+        };
+        let mut run = vec![self.parse_one_descriptor(rules)?];
+        while self.at_descriptor() {
+            // A terminal descriptor has one neighbour, so a run of two is a
+            // star bonded to a star (`**C`).
+            if rules.terminal {
+                return Err(self.error(SmilesErrorKind::PsmilesStarNotTerminal));
+            }
+            run.push(self.parse_one_descriptor(rules)?);
         }
+        Ok(Some(run))
+    }
+
+    /// The descriptor rules of this parse, when the dialect reads descriptors.
+    fn rules(&self) -> Option<DescriptorRules> {
+        match self.dialect.descriptors() {
+            Descriptors::Read(rules) => Some(rules),
+            Descriptors::Refused | Descriptors::QuerySyntax => None,
+        }
+    }
+
+    /// Parse the descriptor at the cursor in the spelling `rules` state.
+    fn parse_one_descriptor(
+        &mut self,
+        rules: DescriptorRules,
+    ) -> Result<(BondingDescriptor, Span), SmilesError> {
+        if !rules.star {
+            return self.parse_descriptor(rules);
+        }
+        if !self.at_star() {
+            // A star notation has no bracket glyphs.
+            return Err(self.error(SmilesErrorKind::DescriptorInPlainSmiles));
+        }
+        self.parse_star()
     }
 
     /// Anchor `order` on the descriptor `adjacent` names and validate the run.
@@ -339,14 +429,63 @@ impl<'a> Parser<'a> {
             if index == ordered {
                 desc.order = order;
             }
-            validate_descriptor(&desc, span, self.scanner.input(), self.dialect.notation())?;
+            let labels = self
+                .rules()
+                .expect("a run is read only by a dialect with descriptor rules")
+                .labels;
+            validate_descriptor(
+                &desc,
+                span,
+                self.scanner.input(),
+                self.dialect.notation(),
+                labels,
+            )?;
             descriptors.push(desc);
         }
         Ok(descriptors)
     }
 
+    /// Parse one PSMILES star, `*` or `[*]`, as the unlabelled `$` it means.
+    ///
+    /// The bracket form takes nothing but the star: `[*:1]` is refused rather
+    /// than read as an atom, since in PSMILES every star is a joining site.
+    fn parse_star(&mut self) -> Result<(BondingDescriptor, Span), SmilesError> {
+        let start = self.scanner.pos();
+        if self.scanner.peek() == Some('[') {
+            self.scanner.advance(); // consume '['
+            self.scanner.expect('*')?;
+            self.scanner.expect(']')?;
+        } else {
+            self.scanner.expect('*')?;
+        }
+        let span = self.scanner.span_from(start);
+        Ok((
+            BondingDescriptor {
+                span,
+                kind: DescriptorKind::Symmetric,
+                label: String::new(),
+                order: None,
+            },
+            span,
+        ))
+    }
+
+    /// PSMILES: a star written after an atom closes its bond — what follows
+    /// must not bond to it. Only the end of a branch, of a component or of
+    /// the input may follow; an atom, a bond or a ring digit would make the
+    /// star a second atom's neighbour (`C*C`, `C*1CC1`).
+    fn check_star_ends_here(&self) -> Result<(), SmilesError> {
+        match self.scanner.peek() {
+            None | Some(')' | '.') => Ok(()),
+            Some(_) => Err(self.error(SmilesErrorKind::PsmilesStarNotTerminal)),
+        }
+    }
+
     /// Parse one descriptor bracket: `[` glyph label? `]`.
-    fn parse_descriptor(&mut self) -> Result<(BondingDescriptor, Span), SmilesError> {
+    fn parse_descriptor(
+        &mut self,
+        rules: DescriptorRules,
+    ) -> Result<(BondingDescriptor, Span), SmilesError> {
         let start = self.scanner.pos();
         self.scanner.expect('[')?;
 
@@ -354,15 +493,33 @@ impl<'a> Parser<'a> {
             Some('$') => DescriptorKind::Symmetric,
             Some('<') => DescriptorKind::Left,
             Some('>') => DescriptorKind::Right,
-            Some('!') => DescriptorKind::Shared,
+            Some('!') if rules.squash => DescriptorKind::Shared,
             Some(c) => return Err(self.error(SmilesErrorKind::UnexpectedChar(c))),
             None => return Err(self.error(SmilesErrorKind::UnexpectedEnd)),
         };
 
         let label_start = self.scanner.pos();
+        let mut label_end = None;
+        let mut generation = None;
         loop {
             match self.scanner.peek() {
                 Some(']') => break,
+                Some('|') if rules.weights => {
+                    label_end = Some(self.scanner.pos());
+                    generation = Some(self.parse_generation_weights()?);
+                    if self.scanner.peek() != Some(']') {
+                        return Err(self.error_at(
+                            SmilesErrorKind::UnclosedBracket,
+                            self.scanner.span_from(start),
+                        ));
+                    }
+                    break;
+                }
+                Some('[' | ':') if rules.extended => {
+                    return Err(self.error(SmilesErrorKind::BigUnsupported(
+                        "ladder and non-covalent bond descriptors".to_owned(),
+                    )));
+                }
                 // The order is written outside the bracket (`CC=[$]`);
                 // accepting the `BigSMILES` in-bracket spelling `[<=1]` would
                 // make two notations mean one thing.
@@ -383,18 +540,48 @@ impl<'a> Parser<'a> {
         // The whole run up to `]` is the label; `validate_descriptor` decides
         // whether it is one, so `[$a+]` names the bad label rather than the
         // character.
-        let label = self.scanner.input()[label_start..self.scanner.pos()].to_owned();
+        let label_end = label_end.unwrap_or(self.scanner.pos());
+        let label = self.scanner.input()[label_start..label_end].to_owned();
         self.scanner.advance(); // consume ']'
+        let span = self.scanner.span_from(start);
+        if let Some(weights) = generation {
+            self.weights.push((span, weights));
+        }
 
         Ok((
             BondingDescriptor {
-                span: self.scanner.span_from(start),
+                span,
                 kind,
                 label,
                 order: None,
             },
             self.scanner.span_from(start),
         ))
+    }
+
+    /// Read `|w₁ w₂ …|`, the generative-`BigSMILES` weights after a
+    /// descriptor id; the cursor is on the opening `|`.
+    fn parse_generation_weights(&mut self) -> Result<Vec<f64>, SmilesError> {
+        let start = self.scanner.pos();
+        self.scanner.expect('|')?;
+        let body_start = self.scanner.pos();
+        while !matches!(self.scanner.peek(), Some('|' | ']') | None) {
+            self.scanner.advance();
+        }
+        let text = &self.scanner.input()[body_start..self.scanner.pos()];
+        if self.scanner.peek() != Some('|') {
+            return Err(self.error_at(
+                SmilesErrorKind::BigInvalidWeights(text.to_owned()),
+                self.scanner.span_from(start),
+            ));
+        }
+        self.scanner.advance(); // consume the closing '|'
+        weight_list(text).ok_or_else(|| {
+            self.error_at(
+                SmilesErrorKind::BigInvalidWeights(text.to_owned()),
+                self.scanner.span_from(start),
+            )
+        })
     }
 
     /// The atom a mid-chain descriptor binds to: the most recent bonded atom,
@@ -495,6 +682,9 @@ impl<'a> Parser<'a> {
             return Ok(false);
         };
         let descriptors = self.finish_descriptor_run(run, order, AdjacentBracket::First)?;
+        if self.rules().is_some_and(|rules| rules.terminal) {
+            self.check_star_ends_here()?;
+        }
         Self::anchor(head, tail).descriptors.extend(descriptors);
         Ok(true)
     }
@@ -620,6 +810,10 @@ impl<'a> Parser<'a> {
                 AdjacentBracket::First,
             )?;
             bond = None;
+            // PSMILES: `C(*C)` would bond the star to both carbons.
+            if self.rules().is_some_and(|rules| rules.terminal) {
+                self.check_star_ends_here()?;
+            }
             if self.scanner.peek() == Some(')') {
                 self.scanner.advance(); // consume ')'
                 return Ok((parent, None));
@@ -812,7 +1006,9 @@ impl<'a> Parser<'a> {
             // `[*;s=C,0]`. The fragment dialect does not support them, and
             // this parser is the one place that has already lexed the bracket,
             // so it names the feature rather than claiming a missing `]`.
-            if self.dialect == Dialect::FragmentSmiles && self.scanner.peek() == Some(';') {
+            if self.rules().is_some_and(|rules| rules.atom_annotations)
+                && self.scanner.peek() == Some(';')
+            {
                 self.scanner.advance(); // consume ';'
                 let text_start = self.scanner.pos();
                 while self.scanner.peek().is_some_and(|c| c != ']') {

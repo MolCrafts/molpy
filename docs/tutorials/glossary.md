@@ -54,7 +54,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 ### Modules
 
 **Parsing**
-: `mp.io.smiles.SmilesIr` and `mp.perceive.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `mp.io.cgsmiles.CgSmilesIr` parses CGsmiles into ported units and site graphs. BigSMILES is not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
+: `mp.io.smiles.SmilesIr` and `mp.perceive.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `mp.io.cgsmiles.CgSmilesIr` parses CGsmiles into ported fragments and site graphs; `mp.io.smiles.read_psmiles` reads a PSMILES repeat unit; `mp.io.bigsmiles.read_bigsmiles` reads (generative) BigSMILES into the polymer model of `mp.builder`. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
 
 **Reaction**
 : A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). See [Notation](../api/notation.md).

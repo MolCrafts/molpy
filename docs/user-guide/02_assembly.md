@@ -253,9 +253,12 @@ to use next; the typifiers, writers and minimisers take an `mp.Atomistic`.
 
 ## Polydisperse systems
 
-`SystemPlanner` and its distributions (see [Polydisperse Systems](05_polydisperse_systems.md))
-still plan the chains. Each planned chain's monomer sequence becomes a CGsmiles path,
-`"{" + "".join(f"[#{m}]" for m in chain.monomers) + "}"`, which one reusable assembler builds.
+A polydisperse ensemble is the polymer model of `mp.builder` (see
+[Polydisperse Systems](05_polydisperse_systems.md)): fragments grown into chains of random
+size by a `StochasticObject`, sampled to a total by a `System`, or read from one
+generative-BigSMILES string with `mp.io.bigsmiles.read_bigsmiles(text).to_system()`. A sample
+is already a site graph — one site per placed fragment, `bead_type` its name — so one
+reusable assembler over `library()` builds every chain.
 
 ## Relax before use
 

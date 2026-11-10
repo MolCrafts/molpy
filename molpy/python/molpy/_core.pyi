@@ -1263,8 +1263,8 @@ class SmilesError(ValueError):
         The offending string, empty for errors raised past the parser (the
         expansion and emit stages are handed an IR, not the text).
     notation : str
-        Which notation was being read or written: ``"smiles"``, ``"smarts"``
-        or ``"cgsmiles"``.
+        Which notation was being read or written: ``"smiles"``, ``"smarts"``,
+        ``"cgsmiles"``, ``"psmiles"`` or ``"bigsmiles"``.
     """
 
     kind: str
@@ -2313,6 +2313,255 @@ class Coarsener:
         """
 
 # ---------------------------------------------------------------------------
+# Polymer ensembles — generative BigSMILES (molrs::builder::polymer)
+# ---------------------------------------------------------------------------
+
+type Measure = Literal["repeat_units", "heavy_atom_mass", "mass"]
+
+class PolymerError(ValueError):
+    """Raised when a polymer model is refused or cannot be sampled.
+
+    ``kind`` is the Rust variant name: ``"InvalidParameter"``,
+    ``"InvalidFragment"``, ``"InvalidObject"``, ``"InvalidMolecule"``,
+    ``"InvalidSystem"`` (the model as built is wrong), ``"Unsized"``,
+    ``"Stuck"`` (this sample could not be grown) or ``"Sites"``.
+    """
+
+    kind: str
+
+class Distribution:
+    """A chain-size distribution of generative BigSMILES, its parameters
+    named as the notation writes them. What a drawn value counts is the
+    :class:`ChainSize` measure it sits in."""
+
+    @final
+    class FlorySchulz(Distribution):
+        """``P(k) = a² k (1 − a)^(k − 1)``, ``0 < a < 1``."""
+
+        __match_args__ = ("a",)
+        def __new__(cls, a: float) -> Self: ...
+        @property
+        def a(self) -> float: ...
+
+    @final
+    class SchulzZimm(Distribution):
+        """Gamma of mean ``mn`` and weight average ``mw``, ``mw > mn > 0``."""
+
+        __match_args__ = ("mw", "mn")
+        def __new__(cls, mw: float, mn: float) -> Self: ...
+        @property
+        def mw(self) -> float: ...
+        @property
+        def mn(self) -> float: ...
+
+    @final
+    class Gauss(Distribution):
+        """Normal, ``sigma ≥ 0``."""
+
+        __match_args__ = ("mu", "sigma")
+        def __new__(cls, mu: float, sigma: float) -> Self: ...
+        @property
+        def mu(self) -> float: ...
+        @property
+        def sigma(self) -> float: ...
+
+    @final
+    class Uniform(Distribution):
+        """Uniform over ``[low, high]``, ``0 ≤ low ≤ high``."""
+
+        __match_args__ = ("low", "high")
+        def __new__(cls, low: float, high: float) -> Self: ...
+        @property
+        def low(self) -> float: ...
+        @property
+        def high(self) -> float: ...
+
+    @final
+    class LogNormal(Distribution):
+        """Log-normal of number average ``mn`` and dispersity ``d > 1``."""
+
+        __match_args__ = ("mn", "d")
+        def __new__(cls, mn: float, d: float) -> Self: ...
+        @property
+        def mn(self) -> float: ...
+        @property
+        def d(self) -> float: ...
+
+    @final
+    class Poisson(Distribution):
+        """Poisson of mean ``n > 0``."""
+
+        __match_args__ = ("n",)
+        def __new__(cls, n: float) -> Self: ...
+        @property
+        def n(self) -> float: ...
+
+@final
+class ChainSize:
+    """Size targets drawn from a :class:`Distribution`, counted in
+    ``measure`` (``"repeat_units"``, ``"heavy_atom_mass"`` or ``"mass"``,
+    masses in g/mol). ``ValueError`` for parameters out of range."""
+
+    def __new__(cls, distribution: Distribution, measure: Measure) -> Self: ...
+    @property
+    def distribution(self) -> Distribution: ...
+    @property
+    def measure(self) -> Measure: ...
+
+@final
+class Fragment:
+    """One ported template under the name sites refer to it by, with a
+    generation weight per port (a float, its reactivity; a list, its pairing
+    weight with each port of the stochastic object; ``None``: 1.0 on every
+    port)."""
+
+    def __new__(
+        cls,
+        name: str,
+        template: Atomistic,
+        weights: Sequence[float | Sequence[float]] | None = None,
+    ) -> Self: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def template(self) -> Atomistic:
+        """A copy of the ported template."""
+    @property
+    def n_ports(self) -> int: ...
+    @property
+    def heavy_atom_mass(self) -> float:
+        """Summed non-hydrogen atomic mass, g/mol."""
+    @property
+    def mass(self) -> float:
+        """Mass with every port bonded (heavy atoms plus kept hydrogens),
+        g/mol."""
+
+@final
+class Terminal:
+    """The descriptor at one end of a stochastic object, standing for the
+    port of the part on that side (``kind`` ``"$"``, ``"<"`` or ``">"``)."""
+
+    def __new__(
+        cls,
+        kind: str,
+        label: str = "",
+        order: int = 1,
+        weights: Sequence[float] | None = None,
+    ) -> Self: ...
+    @property
+    def kind(self) -> str: ...
+    @property
+    def label(self) -> str: ...
+    @property
+    def order(self) -> int: ...
+    @property
+    def weights(self) -> list[float] | None: ...
+
+@final
+class StochasticObject:
+    """Repeat fragments and end groups grown to a size drawn from ``size``,
+    entered through ``left`` and left through ``right``; without a ``size``
+    it cannot be sampled."""
+
+    def __new__(
+        cls,
+        repeat_units: Sequence[Fragment],
+        end_groups: Sequence[Fragment] = ...,
+        *,
+        left: Terminal | None = None,
+        right: Terminal | None = None,
+        size: ChainSize | None = None,
+    ) -> Self: ...
+    @property
+    def repeat_units(self) -> list[Fragment]: ...
+    @property
+    def end_groups(self) -> list[Fragment]: ...
+    @property
+    def size(self) -> ChainSize | None: ...
+
+@final
+class Molecule:
+    """Fixed fragments and stochastic objects joined end to end: a fixed fragment's
+    first port takes the part before it and its last port the part after
+    it; an object's terminals stand for its neighbours' ports."""
+
+    def __new__(cls, parts: Sequence[Fragment | StochasticObject]) -> Self: ...
+    @property
+    def parts(self) -> list[Fragment | StochasticObject]: ...
+    def library(self) -> dict[str, Atomistic]:
+        """Every fragment the molecule may place, by name — the ``Assembler``
+        library (add hydrogens and coordinates first)."""
+    def sample(self, seed: int) -> CoarseGrain:
+        """One sample as a site graph, deterministic in ``seed``."""
+
+class Amount:
+    """How much of a :class:`System` one molecule kind makes up, in the
+    system's measure."""
+
+    @final
+    class Total(Amount):
+        """An absolute amount, ``> 0``."""
+
+        __match_args__ = ("value",)
+        def __new__(cls, value: float) -> Self: ...
+        @property
+        def value(self) -> float: ...
+
+    @final
+    class Percent(Amount):
+        """A share of the whole system, ``0 < percent < 100``."""
+
+        __match_args__ = ("percent",)
+        def __new__(cls, percent: float) -> Self: ...
+        @property
+        def percent(self) -> float: ...
+
+@final
+class MoleculeRecord:
+    """One sampled molecule: its component and its size."""
+
+    @property
+    def component(self) -> int: ...
+    @property
+    def n_fragments(self) -> int: ...
+    @property
+    def n_repeat_units(self) -> int: ...
+    @property
+    def heavy_atom_mass(self) -> float: ...
+    @property
+    def mass(self) -> float: ...
+
+@final
+class SystemSample:
+    """Every molecule's sites in one site graph, and a record per molecule
+    in site order."""
+
+    @property
+    def sites(self) -> CoarseGrain: ...
+    @property
+    def molecules(self) -> list[MoleculeRecord]: ...
+
+@final
+class System:
+    """Molecule kinds sampled until each reaches its :class:`Amount` of the
+    total, counted in ``measure``."""
+
+    def __new__(
+        cls, components: Sequence[tuple[Molecule, Amount]], *, measure: Measure
+    ) -> Self: ...
+    @property
+    def components(self) -> list[tuple[Molecule, Amount]]: ...
+    @property
+    def measure(self) -> Measure: ...
+    def targets(self) -> list[float]:
+        """Each component's target, in the system's measure."""
+    def library(self) -> dict[str, Atomistic]:
+        """Every fragment any molecule may place, by name."""
+    def sample(self, seed: int) -> SystemSample:
+        """Molecules of each component until it reaches its target,
+        deterministic in ``seed``."""
+
+# ---------------------------------------------------------------------------
 # Chemical perception — the builder (graph in / graph out, non-mutating)
 # ---------------------------------------------------------------------------
 
@@ -2676,6 +2925,10 @@ def read_smiles_fragment(body: str) -> FragmentIr:
     """Read a fragment body (SMILES plus bonding descriptors, e.g.
     ``"[<]OCC[>]"``)."""
 
+def read_psmiles(unit: str) -> FragmentIr:
+    """Read a PSMILES repeat unit (``"[*]CC[*]"``); each ``*`` is a ``$``
+    joining site."""
+
 def write_smiles(
     mol: Atomistic,
     *,
@@ -2914,6 +3167,23 @@ class CgSmilesIr:
 
 def read_cgsmiles(text: str) -> CgSmilesIr:
     """Read a CGsmiles string; ``SmilesError`` for text that is not CGsmiles."""
+
+@final
+class BigSmilesIr:
+    """A parsed (generative) BigSMILES string, handed out by
+    :func:`read_bigsmiles`."""
+
+    @property
+    def n_molecules(self) -> int: ...
+    def to_molecules(self) -> list[Molecule]:
+        """Each molecule as a :class:`Molecule`; fragments named by position
+        (``"m.p"``, ``"m.p.rk"``, ``"m.p.ek"``)."""
+    def to_system(self) -> System:
+        """Every molecule in its written amount, counting heavy-atom mass."""
+
+def read_bigsmiles(text: str) -> BigSmilesIr:
+    """Read a (generative) BigSMILES string; ``SmilesError`` with
+    ``notation == "bigsmiles"`` for text that is not BigSMILES."""
 
 # ---------------------------------------------------------------------------
 # I/O — readers and writers (molpy.io: one function per format and

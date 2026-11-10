@@ -8,7 +8,9 @@ a ``read_*`` function and never constructed by the caller. SMARTS is not a forma
 perceived graph — so it lives, wholly, in :mod:`molpy.perceive`.
 
 :func:`read_smiles_fragment` parses a fragment body with bonding
-descriptors (``[<]OCC[>]``) into a :class:`FragmentIr`, whose
+descriptors (``[<]OCC[>]``) into a :class:`FragmentIr`, and
+:func:`read_psmiles` a PSMILES repeat unit (``[*]CC[*]``, each ``*`` read as
+the ``$`` descriptor) into the same, whose
 ``to_atomistic()`` returns the graph beside its descriptors and whose
 ``to_template()`` builds the ported unit. A :class:`BondingDescriptor` is one
 such joining-site marker, as the CGsmiles records (:mod:`molpy.io.cgsmiles`)
@@ -22,7 +24,7 @@ of the rule that was broken (``"UnclosedBranch"``, ``"UnexpectedEnd"``,
 ``(start, end)`` pair whose end is clamped to ``len(input)``; ``input``, the
 offending string, empty for the errors raised past the parser, which are handed
 an IR and never see the text it came from; and ``notation``, lowercase
-``"smiles"``, ``"smarts"`` or ``"cgsmiles"``. It subclasses
+``"smiles"``, ``"smarts"``, ``"cgsmiles"``, ``"psmiles"`` or ``"bigsmiles"``. It subclasses
 :class:`ValueError`, so ``except ValueError`` keeps catching it, and
 ``str(e)`` is the message Rust renders, caret line included.
 """
@@ -32,6 +34,7 @@ from molpy._core import (
     FragmentIr,
     SmilesError,
     SmilesIr,
+    read_psmiles,
     read_smiles,
     read_smiles_fragment,
     write_smiles,
@@ -42,6 +45,7 @@ __all__ = [
     "FragmentIr",
     "SmilesError",
     "SmilesIr",
+    "read_psmiles",
     "read_smiles",
     "read_smiles_fragment",
     "write_smiles",

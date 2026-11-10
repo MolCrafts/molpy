@@ -24,6 +24,7 @@ molpy._core.ColumnMapping
 molpy._core.FeatureMatrix
 molpy._core.FrozenMetaValue
 molpy._core.GaffParameterSet
+molpy._core.Measure
 molpy._core.ParamInput
 molpy._core.ParamValue
 molpy._core.Partition
