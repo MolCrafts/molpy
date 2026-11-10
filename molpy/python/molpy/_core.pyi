@@ -1182,7 +1182,8 @@ class Element:
 
     Not constructed directly: look one up with :meth:`by_symbol` or
     :meth:`by_number`. The frame-level species conversions are the explicit
-    static steps :meth:`fill_atomic_numbers` / :meth:`fill_symbols`.
+    static steps :meth:`fill_atomic_numbers` / :meth:`fill_symbols`, and
+    :meth:`fill_masses` writes the standard masses.
     """
 
     @staticmethod
@@ -1226,6 +1227,17 @@ class Element:
         ValueError
             no ``atoms`` block, no unsigned ``atomic_number`` column, or a
             number outside ``0..=118`` (names the row).
+        """
+    @staticmethod
+    def fill_masses(frame: Frame) -> None:
+        """Write ``atoms.mass`` (amu) from ``atoms.atomic_number``, in place:
+        each atom's standard atomic mass; an existing ``mass`` is replaced.
+
+        Raises
+        ------
+        ValueError
+            no ``atoms`` block, no unsigned ``atomic_number`` column, or the
+            wildcard 0 / a number outside ``1..=118`` (names the row).
         """
     @property
     def z(self) -> int: ...
@@ -1678,11 +1690,11 @@ class Atomistic:
     def del_ports(self, ports: Iterable[Port]) -> None: ...
     def port_on(self, anchor: Atom, handle_atom: Atom) -> Port | None: ...
     def leaving_group(self, port: Port) -> list[Atom]: ...
-    def link(self, a: Port, b: Port) -> Bond:
+    def link(self, a: Port, b: Port) -> Junction:
         """Join port ``a`` to port ``b``: delete both leaving groups, fold
         their charge (e) onto the anchors, bond the anchors with the port
-        order; returns the new bond. The graph is unchanged on a refusal
-        (``ValueError``)."""
+        order; returns the ``Junction`` (the new bond, the anchors, the
+        folds). The graph is unchanged on a refusal (``ValueError``)."""
     def inherit_frag_ids(self) -> int: ...
     # --- geometry ---
     def translate(self, delta: Sequence[float] | ArrayF) -> None: ...
@@ -1699,6 +1711,28 @@ class Atomistic:
     ) -> None: ...
     def center(self, nodes: Iterable[Atom]) -> ArrayF:
         """Mass-weighted centre (Å) of ``nodes``, a float64 ``(3,)`` array."""
+    @property
+    def coords(self) -> ArrayF:
+        """Every atom's position, ``(N, 3)`` float64 (Å), in atom row order
+        (a copy). Assigning an ``(N, 3)`` array writes every atom's
+        ``x`` / ``y`` / ``z``.
+
+        Raises
+        ------
+        ValueError
+            reading, an atom without ``x``, ``y`` or ``z``; assigning, an
+            array that is not ``(N, 3)`` (nothing is written).
+        """
+    @coords.setter
+    def coords(self, value: npt.ArrayLike) -> None: ...
+    def formula(self) -> str:
+        """Molecular formula in Hill order (``"C2H6O"``, ``"H2O"``).
+
+        Raises
+        ------
+        ValueError
+            an atom is the wildcard (atomic number 0).
+        """
     # --- composition ---
     def replicate(
         self,
@@ -1730,6 +1764,19 @@ class Atomistic:
     def to_frame(self) -> Frame: ...
     @staticmethod
     def from_frame(frame: Frame) -> Atomistic: ...
+
+@final
+class Junction:
+    """One join ``link`` made: the new bond, the anchors of the two ports in
+    the order given, and the leaving-group charge (e) folded onto each
+    (``None`` for a side that carried no charges)."""
+
+    @property
+    def bond(self) -> Bond: ...
+    @property
+    def anchors(self) -> tuple[Atom, Atom]: ...
+    @property
+    def folds(self) -> tuple[float | None, float | None]: ...
 
 class ExtractedSubgraph:
     """Result of :meth:`Atomistic.extract_subgraph` / :meth:`CoarseGrain.extract_subgraph`.
@@ -1848,7 +1895,7 @@ class CoarseGrain:
     def del_ports(self, ports: Iterable[Port]) -> None: ...
     def port_on(self, anchor: Bead, handle_atom: Bead) -> Port | None: ...
     def leaving_group(self, port: Port) -> list[Bead]: ...
-    def link(self, a: Port, b: Port) -> CgBond: ...
+    def link(self, a: Port, b: Port) -> Junction: ...
     def inherit_frag_ids(self) -> int: ...
     # --- geometry ---
     def translate(self, delta: Sequence[float] | ArrayF) -> None: ...
@@ -1864,6 +1911,12 @@ class CoarseGrain:
         about: Sequence[float] | ArrayF | None = None,
     ) -> None: ...
     def center(self, nodes: Iterable[Bead]) -> ArrayF: ...
+    @property
+    def coords(self) -> ArrayF:
+        """Every bead's position, ``(N, 3)`` float64 (Å), in bead row order
+        (a copy); assigning an ``(N, 3)`` array writes them all."""
+    @coords.setter
+    def coords(self, value: npt.ArrayLike) -> None: ...
     # --- composition ---
     def replicate(
         self,
@@ -2105,6 +2158,34 @@ class op:
         with ∠b–c–d ``angle`` and dihedral a–b–c–d ``torsion`` (radians):
         NeRF (Parsons et al. 2005). Collinear ``a, b, c`` give no off-axis
         component."""
+    @staticmethod
+    def axis_angle(axis: Sequence[float] | ArrayF, angle: float) -> ArrayF:
+        """The ``(3, 3)`` rotation by ``angle`` radians (right-handed) about
+        ``axis`` (Rodrigues); only the direction of ``axis`` matters.
+
+        Raises
+        ------
+        ValueError
+            ``axis`` is zero or not finite.
+        """
+    @staticmethod
+    def alignment_axis_angle(
+        source: Sequence[float] | ArrayF, target: Sequence[float] | ArrayF
+    ) -> tuple[ArrayF, float] | None:
+        """Unit axis and angle in ``[0, π]`` (radians) turning ``source``
+        onto ``target``; ``None`` when they already point the same way or
+        either is not a direction."""
+    @staticmethod
+    def rotation_axis_angle(rotation: ArrayF) -> tuple[ArrayF, float] | None:
+        """Unit axis and angle in ``[0, π]`` (radians) of a proper rotation
+        matrix, the inverse of :func:`axis_angle`; ``None`` for the identity
+        or a non-finite entry.
+
+        Raises
+        ------
+        ValueError
+            ``rotation`` is not shape ``(3, 3)``.
+        """
 
 class SmartsMatch:
     """One SMARTS embedding: the molecule's atoms in query-atom order, and the
@@ -4160,7 +4241,19 @@ class GrowthPlacer:
     Takes no arguments.
     """
 
-    def __init__(self) -> None: ...
+    def __new__(cls, *, max_fit_rmsd: float | None = None) -> Self:
+        """A site closing several bonds at once (a ladder, a ring, crosslink
+        or periodic closure, a bridge) takes the best rigid fit to all of
+        them; ``max_fit_rmsd`` (Å) refuses a fit that misses by more, and
+        ``None`` accepts every fit.
+
+        Raises
+        ------
+        ValueError
+            ``max_fit_rmsd`` negative or not finite.
+        """
+    @property
+    def max_fit_rmsd(self) -> float | None: ...
 
 @final
 class AxisOrienter:
@@ -4191,8 +4284,10 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
     Invalid or occupied ports are refused, never replaced. Unused single-bond
     ports keep their handles; an unused multiple-bond port requires an
     explicit cap fragment and otherwise raises ``ValueError``.
-    Every atom gets ``frag_id`` (the site's ordinal)
-    and ``mol_id`` (its connected component's ordinal + 1).
+    Every atom gets ``frag_id`` (the site's ordinal), ``mol_id`` (its
+    connected component's ordinal + 1), ``template`` (the library name it was
+    copied from) and ``template_atom`` (its row in that template, never
+    renumbered).
 
     Parameters
     ----------
@@ -4224,6 +4319,9 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
         library: Mapping[str, G],
         placer: SitePlacer | GrowthPlacer,
         orienter: AxisOrienter | None = None,
+        *,
+        retype: Patch | Perceive | None = None,
+        cell: Box | None = None,
     ) -> Assembler[G]: ...
     def assemble(self, sites: CoarseGrain) -> G:
         """Place and join one copy per site; return the world, of the
@@ -4237,6 +4335,88 @@ class Assembler[G: (MolGraph, Atomistic, CoarseGrain)]:
             bond of a site, a site cannot be oriented or placed, a join is
             refused, or the world breaks the graph type's invariant.
         """
+    def assemble_with_report(
+        self, sites: CoarseGrain
+    ) -> tuple[Atomistic, JunctionReport]:
+        """:meth:`assemble`, and what its junction stage did: the linked
+        world's angles, dihedrals and pair rows (the kinds its templates
+        carry) brought up to the new bonds; no atom type changed.
+
+        Raises
+        ------
+        TypeError
+            The library is not of ``Atomistic`` templates.
+        ValueError
+            As :meth:`assemble`.
+        """
+
+def update_junctions(
+    world: Atomistic,
+    junctions: Sequence[Junction],
+    *,
+    retype: Patch | Perceive | None = None,
+) -> JunctionReport:
+    """Bring ``world``'s atom types (by ``retype``; ``None`` keeps them) and
+    its angles, dihedrals and pair rows (the kinds it carries) up to the bonds
+    of ``junctions``; pairs a ring closure shortens are reclassified and
+    stripped to ``n_bonds``. A second call changes nothing.
+
+    Raises
+    ------
+    ValueError
+        a junction made on another graph or whose bond no longer joins its
+        anchors, or a patch that cannot apply (an anchor without provenance, a
+        patched atom gone or claimed twice, two types for one atom); nothing
+        is written then.
+    """
+
+@final
+class Perceive:
+    """Atom types perceived again over the whole linked world by a native
+    typifier: only each atom's ``type`` is read from its ``assign`` and
+    written back where it changes. With ``radius``, a perception that would
+    change an atom more than ``radius`` bonds from every junction anchor is
+    refused (``ValueError`` from the call that applies it).
+
+    Raises
+    ------
+    TypeError
+        ``typifier`` is a Python subclass, not a native typifier.
+    """
+
+    def __new__(
+        cls, typifier: Typifier[Atomistic], *, radius: int | None = None
+    ) -> Self: ...
+
+@final
+class Patch:
+    """Atom types a link gives a copy of a template, declared per anchor:
+    ``Patch({(template, anchor_row): {row: type}})``. When that anchor gains a
+    junction bond, the atoms of the same copy (``frag_id``) at each
+    ``template_atom`` row take ``type``. Per anchor, whatever it is linked to;
+    types only; unlinked anchors and chain ends keep their types."""
+
+    def __new__(cls, entries: Mapping[tuple[str, int], Mapping[int, str]]) -> Self: ...
+
+@final
+class JunctionReport:
+    """What a junction stage did, as views of its world."""
+
+    @property
+    def junctions(self) -> list[Junction]: ...
+    @property
+    def retyped(self) -> list[tuple[Atom, str | None, str]]:
+        """Each atom the policy retyped: ``(atom, before, after)``."""
+    @property
+    def reclassified_pairs(self) -> Refs[RelationRef]:
+        """Pair rows whose bond distance the new bonds shortened; each holds
+        only its ``n_bonds`` now."""
+    @property
+    def n_added_angles(self) -> int: ...
+    @property
+    def n_added_dihedrals(self) -> int: ...
+    @property
+    def n_added_pairs(self) -> int: ...
 
 # ---------------------------------------------------------------------------
 # 3D coordinate generation (embed)
@@ -4626,6 +4806,32 @@ class LammpsLoopTime:
     def raw_line(self) -> str: ...
 
 @final
+class LammpsMinimization:
+    """The ``Minimization stats:`` block of a ``minimize`` run, in the run's units."""
+
+    @property
+    def stopping_criterion(self) -> str: ...
+    @property
+    def energy(self) -> tuple[float, float, float]:
+        """Energy at the first, the next-to-last and the last iteration."""
+    @property
+    def force_two_norm(self) -> tuple[float, float]:
+        """Two-norm of the global force vector, first and last."""
+    @property
+    def force_max_component(self) -> tuple[float, float]:
+        """Largest force component on any atom, first and last."""
+    @property
+    def line_search_alpha(self) -> float: ...
+    @property
+    def max_atom_move(self) -> float: ...
+    @property
+    def iterations(self) -> int: ...
+    @property
+    def force_evaluations(self) -> int: ...
+    @property
+    def raw_lines(self) -> list[str]: ...
+
+@final
 class LammpsPerformance:
     """The ``Performance: ...`` line of a run."""
 
@@ -4747,6 +4953,9 @@ class LammpsRun:
     def thermo(self) -> LammpsThermo | None: ...
     @property
     def loop_time(self) -> LammpsLoopTime | None: ...
+    @property
+    def minimization(self) -> LammpsMinimization | None:
+        """The ``Minimization stats:`` block; ``None`` for a dynamics ``run``."""
     @property
     def performance(self) -> LammpsPerformance | None: ...
     @property
@@ -5386,6 +5595,55 @@ class PercolationResult:
     @property
     def unwrap_images(self) -> npt.NDArray[np.int64]: ...
     def max_dim(self) -> int: ...
+
+@final
+class RingPiercing:
+    """Bonds that pass through a ring, by minimum image
+    (``molrs::compute::RingPiercing``)."""
+    def __new__(cls, *, radius_fraction: float) -> Self: ...
+    def compute(
+        self,
+        *,
+        positions: npt.ArrayLike,
+        simbox: Box,
+        bonds: Sequence[Sequence[int]],
+        rings: Sequence[Sequence[int]],
+    ) -> RingPiercingResult: ...
+    @staticmethod
+    def spec() -> ComputeSpec: ...
+    def tunables(self) -> list[tuple[str, Any]]: ...
+
+@final
+class RingPiercingResult:
+    """Ring piercings: bond ``bond_idx[k]`` passes through ring ``ring_idx[k]``."""
+    @property
+    def ring_idx(self) -> npt.NDArray[Any]: ...
+    @property
+    def bond_idx(self) -> npt.NDArray[Any]: ...
+    @property
+    def n_piercings(self) -> int: ...
+
+@final
+class CloseContacts:
+    """Neighbour pairs more than ``exclude_bonds`` bonds apart
+    (``molrs::compute::CloseContacts``)."""
+    def __new__(cls, *, exclude_bonds: int) -> Self: ...
+    def compute(
+        self, *, pairs: Neighbors, bonds: Sequence[Sequence[int]]
+    ) -> CloseContactsResult: ...
+    @staticmethod
+    def spec() -> ComputeSpec: ...
+    def tunables(self) -> list[tuple[str, Any]]: ...
+
+@final
+class CloseContactsResult:
+    """Close contacts: ``(n, 2)`` sorted pairs ``i < j`` and their distances (Å)."""
+    @property
+    def pairs(self) -> npt.NDArray[Any]: ...
+    @property
+    def distances(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def n_contacts(self) -> int: ...
 
 @final
 class CombinedDistribution:

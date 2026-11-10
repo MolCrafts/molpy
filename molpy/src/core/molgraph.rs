@@ -1005,7 +1005,7 @@ impl PyMolGraph {
     fn link(&mut self, a: u64, b: u64) -> PyResult<u64> {
         self.inner
             .link(RelationId::from(a), RelationId::from(b))
-            .map(u64::from)
+            .map(|junction| u64::from(junction.bond))
             .map_err(link_error_to_pyerr)
     }
 
@@ -1044,6 +1044,49 @@ fn replicate_args(
         Err(_) => frag_ids.extract::<Vec<i32>>()?,
     };
     Ok((transforms, frag_ids))
+}
+
+/// One join made by ``link`` (``molrs::core::Junction``): the new bond, the
+/// two anchors it joins (in the order of the ports given) and the
+/// leaving-group charge (e) folded onto each anchor, ``None`` for a side that
+/// carried no charges. Views of the graph it was made on.
+#[pyclass(module = "molpy.core", name = "Junction", frozen)]
+pub(crate) struct PyJunction {
+    pub(crate) world: Py<PyAny>,
+    pub(crate) inner: molrs::core::Junction,
+}
+
+#[pymethods]
+impl PyJunction {
+    /// The new bond.
+    #[getter]
+    fn bond<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Leaf::of(self.world.bind(py))?.relation("bonds", u64::from(self.inner.bond))
+    }
+
+    /// The anchors of the two ports, in the order they were given.
+    #[getter]
+    fn anchors<'py>(&self, py: Python<'py>) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
+        let leaf = Leaf::of(self.world.bind(py))?;
+        Ok((
+            leaf.node(u64::from(self.inner.anchors[0]))?,
+            leaf.node(u64::from(self.inner.anchors[1]))?,
+        ))
+    }
+
+    /// The charge (e) folded onto each anchor.
+    #[getter]
+    fn folds(&self) -> (Option<f64>, Option<f64>) {
+        (self.inner.folds[0], self.inner.folds[1])
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Junction(bond={}, folds={:?})",
+            u64::from(self.inner.bond),
+            self.inner.folds
+        )
+    }
 }
 
 /// Emits the `#[pymethods]` both leaves share. `$noun` is what the leaf's
@@ -1335,15 +1378,18 @@ macro_rules! leaf_impl {
                 slf: &Bound<'py, Self>,
                 a: &Bound<'py, PyAny>,
                 b: &Bound<'py, PyAny>,
-            ) -> PyResult<Bound<'py, PyAny>> {
+            ) -> PyResult<PyJunction> {
                 let leaf = Leaf::of(slf.as_any())?;
                 let (a, b) = (own_relation(&leaf, a, "ports")?, own_relation(&leaf, b, "ports")?);
-                let bond = slf
+                let junction = slf
                     .try_borrow_mut()?
                     .inner
                     .link(a, b)
                     .map_err(link_error_to_pyerr)?;
-                leaf.relation("bonds", u64::from(bond))
+                Ok(PyJunction {
+                    world: slf.clone().into_any().unbind(),
+                    inner: junction,
+                })
             }
 
             #[doc = concat!("Propagate each ``frag_id`` to the unlabelled degree-1 ", $noun, "s bonded")]
@@ -1357,6 +1403,33 @@ macro_rules! leaf_impl {
             #[doc = concat!("Translate every ", $noun, " that has coordinates by ``delta`` (Å).")]
             fn translate(&mut self, delta: [f64; 3]) {
                 self.inner.translate(delta);
+            }
+
+            #[doc = concat!("Every ", $noun, "'s position, ``(N, 3)`` float64 (Å), rows in ", $noun, " row order.")]
+            ///
+            /// Assigning an ``(N, 3)`` array writes ``x`` / ``y`` / ``z`` of
+            /// every one of them; a copy is returned, so editing it changes
+            /// nothing until it is assigned back.
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            #[doc = concat!("    Reading, when a ", $noun, " lacks ``x``, ``y`` or ``z``; assigning, an")]
+            ///     array that is not ``(N, 3)``. Nothing is written then.
+            #[getter]
+            fn coords<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+                self.inner
+                    .coords()
+                    .map(|xyz| xyz.into_pyarray(py))
+                    .map_err(molrs_error_to_pyerr)
+            }
+
+            #[setter]
+            fn set_coords(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+                let xyz = crate::core::block::coords_array(value)?;
+                self.inner
+                    .set_coords(xyz.view())
+                    .map_err(molrs_error_to_pyerr)
             }
 
             #[doc = concat!("Rotate every ", $noun, " that has coordinates by ``angle`` radians about")]
@@ -2190,6 +2263,23 @@ impl PyAtomistic {
 }
 
 leaf_impl!(PyAtomistic, "Atomistic", "atom");
+
+#[pymethods]
+impl PyAtomistic {
+    /// The molecular formula in Hill order: carbon, then hydrogen, then every
+    /// other element alphabetically; with no carbon, every element
+    /// alphabetically. A count of one is not written (``"C2H6O"``,
+    /// ``"H2O"``); an empty graph is ``""``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an atom is the wildcard (atomic number 0); the message gives
+    ///     its row.
+    fn formula(&self) -> PyResult<String> {
+        self.inner.formula().map_err(molrs_error_to_pyerr)
+    }
+}
 
 impl PyAtomistic {
     /// A new `Atomistic` holding `inner`, with no props: the graph-out door

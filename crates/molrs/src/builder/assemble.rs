@@ -8,8 +8,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::builder::orient::direction_fit;
+use crate::builder::{JunctionError, JunctionReport, Retype, Settle};
 use crate::builder::{OrientError, Orienter, SiteLink, SiteView};
 use crate::builder::{ParentJoin, PlaceError, PlaceSite, Placer};
+use crate::core::Atomistic;
 use crate::core::CenterError;
 use crate::core::CoarseGrain;
 use crate::core::LinkManyError;
@@ -18,13 +20,14 @@ use crate::core::MolRsError;
 use crate::core::NodeId;
 use crate::core::Port;
 use crate::core::RelationId;
+use crate::core::SimBox;
 use crate::core::keys;
 use crate::core::{BatchConflict, BatchPair, LinkRequest, PortPlan, batch_conflicts};
 use crate::core::{BondNumber, BondOrder};
 use crate::core::{Graph, GraphAccess};
-use crate::op::I;
 use crate::op::Vec3;
 use crate::op::vec3::sub;
+use crate::op::{F, I};
 use crate::op::{Rigid, transform_point};
 
 /// The most port assignments tried at one site before it is refused.
@@ -128,6 +131,9 @@ pub enum AssembleError {
         /// the site graph's bond order.
         source: Box<LinkManyError>,
     },
+    /// The junction stage refused the linked world
+    /// ([`update_junctions`](crate::builder::update_junctions)).
+    Junction(JunctionError),
 }
 
 impl fmt::Display for AssembleError {
@@ -189,6 +195,7 @@ impl fmt::Display for AssembleError {
                 "bond {bond} (site {site} port {}, site {partner} port {}): {source}",
                 ports[0], ports[1]
             ),
+            Self::Junction(e) => write!(f, "the junctions of the world: {e}"),
         }
     }
 }
@@ -203,6 +210,7 @@ impl std::error::Error for AssembleError {
             Self::Orient { source, .. } => Some(source),
             Self::Place { source, .. } => Some(source),
             Self::Link { source, .. } => Some(source),
+            Self::Junction(source) => Some(source),
             Self::TooManyUnits { .. }
             | Self::UnknownName { .. }
             | Self::Ports { .. }
@@ -244,6 +252,9 @@ struct SiteGraph {
     fixed: Vec<[Option<usize>; 2]>,
     /// Explicit output chemistry, independent of coarse edge multiplicity.
     classes: Vec<Option<(BondOrder, BondNumber)>>,
+    /// The periodic image of each bond's second end, seen from its first
+    /// (`ix`, `iy`, `iz`; zero for a bond inside the cell).
+    images: Vec<[i32; 3]>,
     /// Per site, its `(partner, bond, end)` incidences, including both self ends.
     incident: Vec<Vec<(usize, usize, usize)>>,
 }
@@ -274,6 +285,7 @@ impl SiteGraph {
         let mut incident = vec![Vec::new(); n];
         let mut fixed = Vec::with_capacity(sites.n_bonds());
         let mut classes = Vec::with_capacity(sites.n_bonds());
+        let mut images = Vec::with_capacity(sites.n_bonds());
         for (_, bond) in sites.bonds() {
             let (u, v) = (ordinal[&bond.nodes[0]], ordinal[&bond.nodes[1]]);
             let row = bonds.len();
@@ -310,6 +322,19 @@ impl SiteGraph {
                     )
                 }),
             );
+            let image = keys::IMAGES.map(|key| bond.props.get_int(key));
+            images.push(match image {
+                [None, None, None] => [0; 3],
+                [Some(x), Some(y), Some(z)] => [x, y, z],
+                _ => {
+                    return Err(AssembleError::Connection {
+                        bond: row,
+                        sites: [u, v],
+                        ports: [None, None],
+                        reason: "ix, iy and iz are supplied together".to_owned(),
+                    });
+                }
+            });
             incident[u].push((v, row, 0));
             incident[v].push((u, row, 1));
             bonds.push((u, v));
@@ -321,6 +346,7 @@ impl SiteGraph {
             bonds,
             fixed,
             classes,
+            images,
             incident,
         })
     }
@@ -403,6 +429,9 @@ enum PortChoice {
 /// - `frag_id` = the site's ordinal (0-based).
 /// - `mol_id` = the ordinal of the site's connected component + 1,
 ///   components numbered by their lowest site ordinal.
+/// - `template` = the library name the site's copy was made from, and
+///   `template_atom` = the atom's row in that template; with `frag_id` they
+///   locate the copy of any template atom, and no later edit renumbers them.
 ///
 /// # World layout
 ///
@@ -489,6 +518,17 @@ pub struct Assembler<G: Graph> {
     library: HashMap<String, G>,
     placer: Box<dyn Placer<G>>,
     orienter: Option<Box<dyn Orienter<G>>>,
+    retype: Retype,
+    cell: Option<SimBox>,
+}
+
+impl Assembler<Atomistic> {
+    /// Type the junctions of every assembled world by `retype` (default
+    /// [`Retype::Keep`]); see [`update_junctions`](crate::builder::update_junctions).
+    pub fn with_retype(mut self, retype: Retype) -> Self {
+        self.retype = retype;
+        self
+    }
 }
 
 impl<G: Graph> Assembler<G> {
@@ -505,9 +545,22 @@ impl<G: Graph> Assembler<G> {
             library,
             placer,
             orienter,
+            retype: Retype::Keep,
+            cell: None,
         }
     }
 
+    /// The periodic cell a site bond's image (`ix`, `iy`, `iz`) is counted
+    /// in: across such a bond the far site is joined in the image
+    /// `H · (ix, iy, iz)` away, so a chain or network can close through the
+    /// cell's faces.
+    pub fn with_cell(mut self, cell: SimBox) -> Self {
+        self.cell = Some(cell);
+        self
+    }
+}
+
+impl<G: Graph + Settle> Assembler<G> {
     /// One copy of `library[bead_type]` per site of `sites`, turned, placed
     /// and joined along the site bonds; returns the world as a `G`, the
     /// library's graph type. See the type docs for the rules. An empty site
@@ -537,7 +590,43 @@ impl<G: Graph> Assembler<G> {
     /// port choices tried at a site (one along a `<`/`>` chain, at most 5040)
     /// and the walks retried per component (two for a `<`/`>` chain).
     pub fn assemble(&self, sites: &CoarseGrain) -> Result<G, AssembleError> {
+        self.assemble_with_report(sites).map(|(world, _)| world)
+    }
+
+    /// [`assemble`](Self::assemble), and what its junction stage did: the
+    /// new bonds with their anchors and charge folds, the terms it added and
+    /// the pairs it reclassified. Every link of one assembly is one batch, so
+    /// the report covers them all.
+    ///
+    /// # Errors
+    ///
+    /// As [`assemble`](Self::assemble).
+    pub fn assemble_with_report(
+        &self,
+        sites: &CoarseGrain,
+    ) -> Result<(G, JunctionReport), AssembleError> {
         let graph = SiteGraph::read(sites)?;
+        // The translation of each bond's second end, seen from its first.
+        let shifts: Vec<Vec3> = graph
+            .images
+            .iter()
+            .enumerate()
+            .map(|(b, image)| match (image, &self.cell) {
+                ([0, 0, 0], _) => Ok([0.0; 3]),
+                (image, Some(cell)) => Ok(std::array::from_fn(|axis| {
+                    (0..3)
+                        .map(|k| F::from(image[k]) * cell.lattice(k)[axis])
+                        .sum()
+                })),
+                (_, None) => Err(AssembleError::Connection {
+                    bond: b,
+                    sites: [graph.bonds[b].0, graph.bonds[b].1],
+                    ports: [None, None],
+                    reason: "a bond with a periodic image needs the assembler's cell (with_cell)"
+                        .to_owned(),
+                }),
+            })
+            .collect::<Result<_, _>>()?;
         let n = graph.names.len();
 
         // ---- group sites by template ----
@@ -681,6 +770,7 @@ impl<G: Graph> Assembler<G> {
 
         // ---- place: parents before children ----
         let mut poses = vec![Rigid::IDENTITY; n];
+        let mut placed = vec![false; n];
         for walk in &walks {
             for &(u, parent) in walk {
                 let group = &groups[group_of[u].0];
@@ -689,28 +779,38 @@ impl<G: Graph> Assembler<G> {
                     site: u,
                     source,
                 };
-                // One join per site bond to the parent: the walk's bond first,
-                // then every parallel bond to the same parent (a ladder).
+                // One join per site bond to a placed site: the walk's bond to
+                // the parent first, then every other — a ladder's parallel
+                // bond, a ring, crosslink or periodic closure — each with the
+                // placed site taken in the image its bond names.
                 let join_through = |p: usize, b: usize| -> Result<ParentJoin, AssembleError> {
                     let (anchor, handle) = port_of(b, graph.end(b, p)).atoms.ok_or_else(|| {
                         place_err(PlaceError::Port(format!(
                             "the port of site {p} toward site {u} has an atom without x/y/z"
                         )))
                     })?;
+                    // `shifts[b]` moves the bond's second end; seen from `u`,
+                    // `p` is shifted forward when it is that end, back otherwise.
+                    let sign = if graph.end(b, p) == 1 { 1.0 } else { -1.0 };
+                    let shift = |x: Vec3| -> Vec3 {
+                        std::array::from_fn(|axis| x[axis] + sign * shifts[b][axis])
+                    };
                     Ok(ParentJoin {
                         port: port_of(b, graph.end(b, u)).id,
-                        anchor: transform_point(&poses[p], anchor),
-                        handle: transform_point(&poses[p], handle),
+                        anchor: shift(transform_point(&poses[p], anchor)),
+                        handle: shift(transform_point(&poses[p], handle)),
                         anchor_radius: port_of(b, graph.end(b, p)).anchor_radius,
                     })
                 };
-                let (parent, extra_parents) = match parent {
+                let (parent, extra_joins) = match parent {
                     None => (None, Vec::new()),
                     Some((p, b)) => {
                         let extra = graph.incident[u]
                             .iter()
-                            .filter(|&&(partner, other, _)| partner == p && other != b)
-                            .map(|&(_, other, _)| join_through(p, other))
+                            .filter(|&&(partner, other, _)| {
+                                partner != u && placed[partner] && other != b
+                            })
+                            .map(|&(partner, other, _)| join_through(partner, other))
                             .collect::<Result<Vec<_>, _>>()?;
                         (Some(join_through(p, b)?), extra)
                     }
@@ -719,12 +819,13 @@ impl<G: Graph> Assembler<G> {
                     position: graph.positions.as_ref().map(|ps| ps[u]),
                     turn: turns[u],
                     parent,
-                    extra_parents,
+                    extra_joins,
                 };
                 poses[u] = self
                     .placer
                     .place(group.template, &site)
                     .map_err(place_err)?;
+                placed[u] = true;
             }
         }
 
@@ -754,9 +855,19 @@ impl<G: Graph> Assembler<G> {
             for (c, &u) in group.sites.iter().enumerate() {
                 let mol_id =
                     I::try_from(mol_of[u] + 1).expect("TooManyUnits bounds every component");
-                for &atom in &atoms[c * per_copy..(c + 1) * per_copy] {
+                // A copy's atoms follow its template's rows (`replicate`).
+                for (row, &atom) in atoms[c * per_copy..(c + 1) * per_copy].iter().enumerate() {
+                    let row = I::try_from(row).map_err(|_| {
+                        replicate_err(MolRsError::validation(format!(
+                            "template '{}' has more atoms than an i32 '{}' holds",
+                            group.name,
+                            keys::TEMPLATE_ATOM
+                        )))
+                    })?;
                     world
                         .set_node(atom, keys::MOL_ID, mol_id)
+                        .and_then(|()| world.set_node(atom, keys::TEMPLATE, group.name))
+                        .and_then(|()| world.set_node(atom, keys::TEMPLATE_ATOM, row))
                         .map_err(replicate_err)?;
                 }
             }
@@ -794,7 +905,7 @@ impl<G: Graph> Assembler<G> {
                 class: graph.classes[b],
             })
             .collect();
-        world.link_many(&requests).map_err(|source| {
+        let junctions = world.link_many(&requests).map_err(|source| {
             let source = match source {
                 LinkManyError::Graph(error) => return AssembleError::Output(error),
                 source => source,
@@ -815,7 +926,11 @@ impl<G: Graph> Assembler<G> {
                 source: Box::new(source),
             }
         })?;
-        G::from_graph(world).map_err(AssembleError::Output)
+        let mut world = G::from_graph(world).map_err(AssembleError::Output)?;
+        let report = world
+            .settle(&junctions, &self.retype)
+            .map_err(AssembleError::Junction)?;
+        Ok((world, report))
     }
 
     /// Check the chosen connections on instance-qualified template identities,
@@ -1395,6 +1510,224 @@ mod tests {
             .iter()
             .copied()
             .collect()
+    }
+
+    /// A straight unit along x: C0 (row 0, `<` with H0 at −x), C1 (row 1,
+    /// `>` with H1 at +x).
+    fn straight_unit() -> Atomistic {
+        let mut m = Atomistic::new();
+        let c0 = atom(&mut m, Element::C, [0.0, 0.0, 0.0], 12.0);
+        let c1 = atom(&mut m, Element::C, [1.54, 0.0, 0.0], 12.0);
+        let h0 = atom(&mut m, Element::H, [-1.09, 0.0, 0.0], 1.0);
+        let h1 = atom(&mut m, Element::H, [2.63, 0.0, 0.0], 1.0);
+        for (a, b) in [(c0, c1), (c0, h0), (c1, h1)] {
+            m.add_bond(a, b, props! {}).unwrap();
+        }
+        m.add_port(c0, h0, PortKind::Left, "", BondNumber::Single)
+            .unwrap();
+        m.add_port(c1, h1, PortKind::Right, "", BondNumber::Single)
+            .unwrap();
+        m
+    }
+
+    /// `n` units in a ring whose last bond (last → first) crosses the +x face.
+    fn periodic_ring(n: usize) -> CoarseGrain {
+        let mut cg = CoarseGrain::new();
+        let ids: Vec<_> = (0..n)
+            .map(|_| cg.add_bead(props! { keys::BEAD_TYPE => "U" }).unwrap())
+            .collect();
+        // Each bond joins its first site's `>` (port 1) to its second's `<`
+        // (port 0), so the chain grows along +x and closes through +x.
+        for pair in ids.windows(2) {
+            cg.add_bond(
+                pair[0],
+                pair[1],
+                props! { keys::SRC_PORT => 1, keys::DST_PORT => 0 },
+            )
+            .unwrap();
+        }
+        cg.add_bond(
+            ids[n - 1],
+            ids[0],
+            props! {
+                keys::SRC_PORT => 1,
+                keys::DST_PORT => 0,
+                keys::IX => 1,
+                keys::IY => 0,
+                keys::IZ => 0,
+            },
+        )
+        .unwrap();
+        cg
+    }
+
+    /// The length one unit adds along x as it grows: C0→C1 plus a C–C bond.
+    fn period() -> f64 {
+        1.54 + 2.0 * f64::from(Element::C.covalent_radius())
+    }
+
+    fn cell(lx: f64) -> crate::core::SimBox {
+        crate::core::SimBox::new(
+            crate::core::Cell::Lengths([lx, 20.0, 20.0]),
+            [0.0; 3],
+            [true; 3],
+        )
+        .unwrap()
+    }
+
+    fn grower_within(max: f64) -> Assembler<Atomistic> {
+        Assembler::new(
+            HashMap::from([("U".to_owned(), straight_unit())]),
+            Box::new(GrowthPlacer::new().with_max_fit_rmsd(max).unwrap()),
+            None,
+        )
+    }
+
+    /// Five units closed through the x faces of a cell five periods long: the
+    /// closing unit fits both its parent and the first unit's image, the
+    /// closing bond is one C–C length by minimum image, and the bonded
+    /// network percolates along x.
+    #[test]
+    fn a_ring_closed_through_the_cell_faces_is_periodic() {
+        let n = 5;
+        let lx = n as f64 * period();
+        let world = grower_within(1e-6)
+            .with_cell(cell(lx))
+            .assemble(&periodic_ring(n))
+            .unwrap();
+        // Each unit keeps its C0–C1 bond; each of the n site bonds adds one.
+        assert_eq!((world.n_bonds(), world.n_ports()), (2 * n, 0));
+        let points = world.coords().unwrap();
+        let row: HashMap<NodeId, usize> = world
+            .atom_ids()
+            .enumerate()
+            .map(|(r, id)| (id, r))
+            .collect();
+        let bonds: Vec<[usize; 2]> = world
+            .bonds()
+            .map(|(_, b)| [row[&b.nodes[0]], row[&b.nodes[1]]])
+            .collect();
+        let simbox = cell(lx);
+        let cc = 2.0 * f64::from(Element::C.covalent_radius());
+        let longest = bonds
+            .iter()
+            .map(|&[i, j]| {
+                let d = simbox
+                    .mic()
+                    .apply(std::array::from_fn(|a| points[[j, a]] - points[[i, a]]));
+                (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+            })
+            .fold(0.0, f64::max);
+        assert!(
+            (longest - 1.54).abs() < 1e-6 || (longest - cc).abs() < 1e-6,
+            "{longest}"
+        );
+        #[cfg(feature = "compute")]
+        {
+            use crate::compute::{Compute, Percolation, PercolationInput};
+            let out = Percolation::new()
+                .compute(PercolationInput {
+                    positions: points.view(),
+                    simbox: &simbox,
+                    bonds: &bonds,
+                })
+                .unwrap();
+            assert_eq!(out.percolation_dims, vec![1]);
+            assert_eq!(out.translations, vec![vec![[1, 0, 0]]]);
+        }
+    }
+
+    /// The same ring in a cell one ångström too long: no rigid pose closes
+    /// the last unit onto both neighbours, and the misfit refuses it.
+    #[test]
+    fn a_periodic_closure_that_cannot_be_made_is_refused() {
+        let n = 5;
+        let err = grower_within(0.1)
+            .with_cell(cell(n as f64 * period() + 1.0))
+            .assemble(&periodic_ring(n))
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssembleError::Place {
+                    source: PlaceError::Misfit { .. },
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_bond_image_needs_a_cell() {
+        let err = grower_within(0.1).assemble(&periodic_ring(3)).unwrap_err();
+        assert!(
+            matches!(err, AssembleError::Connection { bond: 2, .. }),
+            "{err}"
+        );
+    }
+
+    /// Without a tolerance the closure the cell cannot make is still placed:
+    /// the closing unit takes the best rigid fit to both neighbours, and a
+    /// minimisation relaxes the rest.
+    #[test]
+    fn without_a_tolerance_the_best_fit_is_taken() {
+        let n = 5;
+        let world = Assembler::new(
+            HashMap::from([("U".to_owned(), straight_unit())]),
+            Box::new(GrowthPlacer::new()),
+            None,
+        )
+        .with_cell(cell(n as f64 * period() + 1.0))
+        .assemble(&periodic_ring(n))
+        .unwrap();
+        assert_eq!((world.n_bonds(), world.n_ports()), (2 * n, 0));
+    }
+
+    /// Every atom names its template and its row there, and with `frag_id`
+    /// the copy: three copies of one template stay apart, and the rows of
+    /// the atoms that survive the links still name the template's atoms.
+    #[test]
+    fn every_atom_names_its_template_row_and_copy() {
+        let sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("M", [3.0, 0.0, 0.0]),
+                ("M", [6.0, 0.0, 0.0]),
+            ],
+            &[(0, 1), (1, 2)],
+            None,
+        );
+        let world = assembler().assemble(&sites).unwrap();
+        let template = monomer_labelled("", "");
+        let template_z: Vec<u8> = template
+            .atoms()
+            .map(|(_, a)| a.atomic_number().unwrap())
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        for (_, atom) in world.atoms() {
+            assert_eq!(atom.get_str(keys::TEMPLATE), Some("M"));
+            let row = atom.get_int(keys::TEMPLATE_ATOM).unwrap() as usize;
+            assert_eq!(atom.atomic_number(), Some(template_z[row]), "row {row}");
+            let copy = atom.get_int(keys::FRAG_ID).unwrap();
+            assert!(seen.insert((copy, row)), "copy {copy} row {row} twice");
+        }
+        // Rows 2 and 3 are the handles: the middle copy lost both, each end
+        // one, and the two ends different ones (the chain runs `<` to `>`).
+        let rows_of = |copy| -> Vec<usize> {
+            let mut rows: Vec<usize> = seen
+                .iter()
+                .filter(|(c, _)| *c == copy)
+                .map(|&(_, r)| r)
+                .collect();
+            rows.sort_unstable();
+            rows
+        };
+        assert_eq!(rows_of(1), [0, 1, 4]);
+        let (first, last) = (rows_of(0), rows_of(2));
+        assert_eq!((first.len(), last.len()), (4, 4));
+        let kept = |rows: &[usize]| rows.iter().copied().find(|r| [2, 3].contains(r));
+        assert_ne!(kept(&first), kept(&last));
     }
 
     /// Placement reads geometry and topology only: a template carrying a

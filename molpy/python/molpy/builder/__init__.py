@@ -53,10 +53,13 @@ from molpy._core import (
     Fragment,
     GrapheneBuilder,
     GrowthPlacer,
+    JunctionReport,
     Lattice,
     Molecule,
     MoleculeRecord,
     PolymerError,
+    Patch,
+    Perceive,
     Site,
     SitePlacer,
     SpaceGroup,
@@ -66,6 +69,7 @@ from molpy._core import (
     SystemSample,
     Terminal,
     Tip4pBuilder,
+    update_junctions,
 )
 
 from molpy.builder.packing import PackingTemplate
@@ -83,8 +87,11 @@ __all__ = [
     "Coarsener",
     "GrapheneBuilder",
     "GrowthPlacer",
+    "JunctionReport",
     "SitePlacer",
     "Lattice",
+    "Patch",
+    "Perceive",
     "Site",
     "SpaceGroup",
     "SymOp",
@@ -105,5 +112,6 @@ __all__ = [
     "AmberPolymerBuilder",
     "DrudeBuilder",
     "Tip4pBuilder",
+    "update_junctions",
     "PackingTemplate",
 ]

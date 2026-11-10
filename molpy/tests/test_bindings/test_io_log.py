@@ -40,6 +40,43 @@ def test_parse_returns_the_structured_classes():
     assert isinstance(log.header, mp.io.lammps.LammpsLogHeader)
 
 
+_MINIMIZE_LOG = """\
+LAMMPS (1 Jan 2026)
+Per MPI rank memory allocation (min/avg/max) = 1 | 1 | 1 Mbytes
+Step Temp PotEng
+0 0 500.25
+7 0 -12.75
+Loop time of 0.1 on 1 procs for 7 steps with 4 atoms
+
+Minimization stats:
+  Stopping criterion = max iterations
+  Energy initial, next-to-last, final = 
+      500.25   -12.5   -12.75
+  Force two-norm initial, final = 1500 0.25
+  Force max component initial, final = 800 0.125
+  Final line search alpha, max atom move = 0.5 0.0625
+  Iterations, force evaluations = 7 15
+
+Total wall time: 0:00:01
+"""
+
+
+def test_minimization_stats_cross_as_python_types():
+    run = mp.io.read_lammps_log(mp.io.Text(_MINIMIZE_LOG)).runs[0]
+    stats = run.minimization
+    assert isinstance(stats, mp.io.lammps.LammpsMinimization)
+    assert stats.stopping_criterion == "max iterations"
+    assert stats.energy == (500.25, -12.5, -12.75)
+    assert stats.force_two_norm == (1500.0, 0.25)
+    assert stats.force_max_component == (800.0, 0.125)
+    assert (stats.line_search_alpha, stats.max_atom_move) == (0.5, 0.0625)
+    assert (stats.iterations, stats.force_evaluations) == (7, 15)
+
+
+def test_a_dynamics_run_has_no_minimization():
+    assert mp.io.read_lammps_log(mp.io.Text(_LOG)).runs[0].minimization is None
+
+
 def test_thermo_columns_cross_as_float64_arrays():
     thermo = mp.io.read_lammps_log(mp.io.Text(_LOG)).runs[0].thermo
     assert thermo.columns == ["Step", "Temp", "PotEng"]

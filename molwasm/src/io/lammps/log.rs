@@ -22,7 +22,9 @@ use wasm_bindgen::prelude::*;
 /// (snake_case) names: `version`, `header`, `runs`, `total_wall_time`,
 /// `warnings`, `raw_text`, `style`, `path` (always `""`). Each run has
 /// `index`, `memory`, `thermo` (`{ columns, rows, raw_lines }`, or `undefined` for
-/// a run that printed none), `loop_time`, `performance`, `CPU_use`,
+/// a run that printed none), `loop_time`, `minimization` (the
+/// `Minimization stats:` block of a `minimize`, else `undefined`),
+/// `performance`, `CPU_use`,
 /// `MPI_task_timing`, `thread_timing`, `load_balance`,
 /// `neighbor_statistics`, `warnings`, `setup_log`, `unparsed_log` and
 /// `raw_text`. `style` is the thermo style the run printed; only `"default"`

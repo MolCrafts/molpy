@@ -302,3 +302,284 @@ def test_conformer_preserves_ordinal_port_identity() -> None:
     assert [port.anchor["port_site"] for port in posed.ports] == [0, 1]
     assert [port.anchor["port_site"] for port in template.ports] == [0, 1]
     assert posed.n_ports == template.n_ports == 2
+
+
+def _typed_monomer() -> mp.core.Atomistic:
+    """The monomer with its angles and pairs generated, angles stamped, and
+    a charge on every atom."""
+    fragment = _monomer()
+    fragment.generate_topology(gen_dihedral=False)
+    for angle in fragment.angles:
+        angle["type"] = "stamped"
+    for atom in fragment.atoms:
+        atom["charge"] = 0.25 if atom["atomic_number"] == 1 else -0.25
+    return fragment
+
+
+def test_assemble_with_report_crosses_the_junctions() -> None:
+    world, report = _assembler({"M": _typed_monomer()}).assemble_with_report(
+        _sites(["M", "M"])
+    )
+
+    assert type(world) is mp.core.Atomistic
+    assert isinstance(report, mp.builder.JunctionReport)
+    (junction,) = report.junctions
+    assert {a.handle for a in junction.anchors} == {
+        a.handle for a in junction.bond.endpoints
+    }
+    assert junction.folds == (0.25, 0.25)
+    # C0-C1-C1' and C1-C1'-C0' are new, and bare; the monomers' angles keep
+    # their stamp.
+    assert report.n_added_angles == 2
+    bare = [angle for angle in world.angles if "type" not in angle]
+    assert len(bare) == 2
+    assert len(report.reclassified_pairs) == 0
+
+
+def test_assemble_with_report_needs_atomistic_templates() -> None:
+    sites = mp.core.CoarseGrain()
+    template = mp.core.CoarseGrain()
+    template.add_bead(bead_type="B", x=0.0, y=0.0, z=0.0)
+    sites.add_bead(bead_type="B", x=0.0, y=0.0, z=0.0)
+    with pytest.raises(TypeError, match="Atomistic"):
+        mp.builder.Assembler(
+            {"B": template}, mp.builder.SitePlacer()
+        ).assemble_with_report(sites)
+
+
+def test_update_junctions_takes_what_link_returned() -> None:
+    """A hand-made ring: the 4-carbon chain's ends linked. The former 1-4 pair
+    becomes 1-2 and loses its override; the ring's angles through the new
+    bond are added."""
+    chain = mp.core.Atomistic()
+    carbons = [chain.add_atom(atomic_number=6) for _ in range(4)]
+    for a, b in zip(carbons, carbons[1:]):
+        chain.add_bond(a, b)
+    ha = chain.add_atom(atomic_number=1)
+    hd = chain.add_atom(atomic_number=1)
+    chain.add_bond(carbons[0], ha)
+    chain.add_bond(carbons[3], hd)
+    left = chain.add_port(carbons[0], ha, "<")
+    right = chain.add_port(carbons[3], hd, ">")
+    chain.generate_topology()
+    for pair in chain.terms("pairs"):
+        pair["epsilon"] = 0.5
+
+    junction = chain.link(right, left)
+    report = mp.builder.update_junctions(chain, [junction])
+
+    assert isinstance(report, mp.builder.JunctionReport)
+    (pair,) = report.reclassified_pairs
+    assert pair["n_bonds"] == 1 and "epsilon" not in pair
+    assert report.n_added_angles == 2
+    again = mp.builder.update_junctions(chain, [junction])
+    assert (again.n_added_angles, len(again.reclassified_pairs)) == (0, 0)
+
+
+def test_update_junctions_refuses_a_junction_of_another_graph() -> None:
+    first = _monomer()
+    first.merge(_monomer())
+    right = next(p for p in first.ports if p["port_kind"] == ">")
+    left = [p for p in first.ports if p["port_kind"] == "<"][-1]
+    junction = first.link(right, left)
+    with pytest.raises(ValueError, match="another graph"):
+        mp.builder.update_junctions(_monomer(), [junction])
+
+
+def test_a_patch_retypes_the_linked_copy() -> None:
+    """Row 0 (C0) is the ``>`` anchor: in a two-site chain only the first
+    copy's C0 is linked, so only it takes the patched type."""
+    template = _monomer()
+    for atom in template.atoms:
+        atom["type"] = "c" if atom["atomic_number"] == 6 else "h"
+    patch = mp.builder.Patch({("M", 0): {0: "c-linked"}})
+    world, report = _assembler_with({"M": template}, patch).assemble_with_report(
+        _sites(["M", "M"])
+    )
+
+    linked = [atom for atom in world.atoms if atom["type"] == "c-linked"]
+    assert len(linked) == 1
+    ((atom, before, after),) = report.retyped
+    assert (atom.handle, before, after) == (linked[0].handle, "c", "c-linked")
+
+
+def test_a_patch_that_cannot_apply_is_a_value_error() -> None:
+    chain = mp.core.Atomistic()
+    first, second = _monomer(), _monomer()
+    chain.merge(first)
+    chain.merge(second)
+    right = next(p for p in chain.ports if p["port_kind"] == ">")
+    left = [p for p in chain.ports if p["port_kind"] == "<"][-1]
+    junction = chain.link(right, left)
+    # A hand-made graph without provenance cannot be patched.
+    with pytest.raises(ValueError, match="frag_id"):
+        mp.builder.update_junctions(
+            chain, [junction], retype=mp.builder.Patch({("M", 0): {0: "x"}})
+        )
+
+
+def test_retype_needs_atomistic_templates() -> None:
+    template = mp.core.CoarseGrain()
+    template.add_bead(bead_type="B", x=0.0, y=0.0, z=0.0)
+    with pytest.raises(TypeError, match="Atomistic"):
+        mp.builder.Assembler(
+            {"B": template}, mp.builder.SitePlacer(), retype=mp.builder.Patch({})
+        )
+
+
+def _assembler_with(library: dict, retype: mp.builder.Patch) -> mp.builder.Assembler:
+    return mp.builder.Assembler(
+        library, mp.builder.SitePlacer(), mp.builder.AxisOrienter(), retype=retype
+    )
+
+
+def test_perceive_retypes_the_whole_world() -> None:
+    template = _monomer()
+    for atom in template.atoms:
+        atom["type"] = "stale"
+    retype = mp.builder.Perceive(mp.ff.typifier.ElementTypifier())
+    world, report = _assembler_with({"M": template}, retype).assemble_with_report(
+        _sites(["M", "M"])
+    )
+
+    assert {atom["type"] for atom in world.atoms} == {"C", "H"}
+    assert len(report.retyped) == world.n_atoms
+    assert all(before == "stale" for _, before, _ in report.retyped)
+
+
+def test_perceive_needs_a_native_typifier() -> None:
+    class Mine(mp.ff.typifier.Typifier):
+        def assign(self, graph):
+            raise NotImplementedError
+
+    with pytest.raises(TypeError, match="native"):
+        mp.builder.Perceive(Mine())
+
+
+def test_retype_must_be_a_patch_or_a_perceive() -> None:
+    with pytest.raises(TypeError, match="Patch or a Perceive"):
+        _assembler_with({"M": _monomer()}, "keep")
+
+
+def test_a_local_perception_refuses_changes_beyond_its_radius() -> None:
+    template = _monomer()
+    for atom in template.atoms:
+        atom["type"] = "stale"
+    retype = mp.builder.Perceive(mp.ff.typifier.ElementTypifier(), radius=0)
+    with pytest.raises(ValueError, match="bonds from every"):
+        _assembler_with({"M": template}, retype).assemble(_sites(["M", "M"]))
+
+
+def test_a_local_perception_changes_only_atoms_near_the_anchors() -> None:
+    template = _monomer()
+    for atom in template.atoms:
+        atom["type"] = "C" if atom["atomic_number"] == 6 else "H"
+    template.atoms[0]["type"] = "stale"
+    template.atoms[1]["type"] = "stale"
+    retype = mp.builder.Perceive(mp.ff.typifier.ElementTypifier(), radius=0)
+    # Each copy's two carbons are its anchors; the free end's anchor is not a
+    # junction anchor but sits one bond from one.
+    with pytest.raises(ValueError, match="bonds from every"):
+        _assembler_with({"M": template}, retype).assemble(_sites(["M", "M"]))
+    retype = mp.builder.Perceive(mp.ff.typifier.ElementTypifier(), radius=1)
+    world, report = _assembler_with({"M": template}, retype).assemble_with_report(
+        _sites(["M", "M"])
+    )
+    assert {atom["type"] for atom in world.atoms} == {"C", "H"}
+    assert len(report.retyped) == 4
+
+
+def _straight_unit() -> mp.core.Atomistic:
+    """C0 (`<` with H0 at -x) and C1 (`>` with H1 at +x) on the x axis."""
+    unit = mp.core.Atomistic()
+    c0 = unit.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0, mass=12.011)
+    c1 = unit.add_atom(atomic_number=6, x=1.54, y=0.0, z=0.0, mass=12.011)
+    h0 = unit.add_atom(atomic_number=1, x=-1.09, y=0.0, z=0.0, mass=1.008)
+    h1 = unit.add_atom(atomic_number=1, x=2.63, y=0.0, z=0.0, mass=1.008)
+    unit.add_bond(c0, c1)
+    unit.add_bond(c0, h0)
+    unit.add_bond(c1, h1)
+    unit.add_port(c0, h0, "<")
+    unit.add_port(c1, h1, ">")
+    return unit
+
+
+def _periodic_ring(n: int) -> mp.core.CoarseGrain:
+    """``n`` units, each `>` (port 1) joined to the next one's `<` (port 0),
+    the last closing onto the first through the +x face."""
+    first = list(range(n))
+    second = [(k + 1) % n for k in range(n)]
+    image = [0] * (n - 1) + [1]
+    frame = mp.core.Frame(
+        {
+            "atoms": {"type": np.array(["U"] * n)},
+            "bonds": {
+                "atomi": np.array(first),
+                "atomj": np.array(second),
+                "src_port": np.array([1] * n),
+                "dst_port": np.array([0] * n),
+                "ix": np.array(image),
+                "iy": np.zeros(n, dtype=np.int64),
+                "iz": np.zeros(n, dtype=np.int64),
+            },
+        }
+    )
+    return mp.core.CoarseGrain.from_frame(frame)
+
+
+def _period() -> float:
+    """How far one unit advances along x as it grows, measured on an open
+    two-unit chain: the distance between the two copies' C0."""
+    frame = mp.core.Frame(
+        {
+            "atoms": {"type": np.array(["U", "U"])},
+            "bonds": {
+                "atomi": np.array([0]),
+                "atomj": np.array([1]),
+                "src_port": np.array([1]),
+                "dst_port": np.array([0]),
+            },
+        }
+    )
+    chain = mp.builder.Assembler(
+        {"U": _straight_unit()}, mp.builder.GrowthPlacer()
+    ).assemble(mp.core.CoarseGrain.from_frame(frame))
+    starts = [atom for atom in chain.atoms if atom["template_atom"] == 0]
+    return abs(starts[1]["x"] - starts[0]["x"])
+
+
+def test_a_ring_closed_through_the_cell_percolates() -> None:
+    n = 5
+    cell = mp.Box.ortho([n * _period(), 20.0, 20.0])
+    world = mp.builder.Assembler(
+        {"U": _straight_unit()},
+        mp.builder.GrowthPlacer(max_fit_rmsd=1e-6),
+        cell=cell,
+    ).assemble(_periodic_ring(n))
+    frame = world.to_frame()
+    bonds = np.column_stack([frame["bonds"]["atomi"], frame["bonds"]["atomj"]])
+    out = mp.compute.Percolation().compute(
+        positions=world.coords, simbox=cell, bonds=bonds.tolist()
+    )
+    assert out.percolation_dims == [1]
+    assert out.translations == [[(1, 0, 0)]]
+
+
+def test_a_closure_beyond_the_misfit_is_a_value_error() -> None:
+    n = 5
+    cell = mp.Box.ortho([n * _period() + 1.0, 20.0, 20.0])
+    assembler = mp.builder.Assembler(
+        {"U": _straight_unit()}, mp.builder.GrowthPlacer(max_fit_rmsd=0.1), cell=cell
+    )
+    with pytest.raises(ValueError, match="rms"):
+        assembler.assemble(_periodic_ring(n))
+    # Without a tolerance the best fit is taken and left to a minimisation.
+    best_effort = mp.builder.Assembler(
+        {"U": _straight_unit()}, mp.builder.GrowthPlacer(), cell=cell
+    ).assemble(_periodic_ring(n))
+    assert best_effort.n_ports == 0
+
+
+def test_a_negative_tolerance_is_a_value_error() -> None:
+    with pytest.raises(ValueError):
+        mp.builder.GrowthPlacer(max_fit_rmsd=-1.0)

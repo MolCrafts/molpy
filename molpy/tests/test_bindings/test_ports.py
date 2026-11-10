@@ -326,13 +326,17 @@ def test_merge_type_conflict_is_a_value_error() -> None:
         world.merge(other)
 
 
-def test_link_returns_the_bond_and_consumes_both_ports() -> None:
+def test_link_returns_the_junction_and_consumes_both_ports() -> None:
     world, first, second = _two_monomers()
     assert world.n_atoms == 8
     assert world.n_ports == 4
+    anchors = (first[">"].anchor, second["<"].anchor)
 
-    bond = world.link(first[">"], second["<"])
+    junction = world.link(first[">"], second["<"])
 
+    assert type(junction) is mp.core.Junction
+    assert junction.anchors == anchors
+    bond = junction.bond
     assert type(bond) is mp.core.Bond
     assert bond in world.bonds
     assert {bond.itom["atomic_number"], bond.jtom["atomic_number"]} == {6}

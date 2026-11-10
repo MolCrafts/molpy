@@ -9,8 +9,8 @@ use super::PySource;
 use crate::error::io_error_to_pyerr;
 use molrs::io::lammps::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
-    LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
-    LammpsTimingRow, LammpsWarning, is_lammps_log as is_lammps_log_rs,
+    LammpsMinimization, LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo,
+    LammpsTimingBreakdown, LammpsTimingRow, LammpsWarning, is_lammps_log as is_lammps_log_rs,
 };
 use molrs::io::read_lammps_log as read_lammps_log_rs;
 use numpy::{PyArray1, PyArray2};
@@ -204,6 +204,73 @@ impl PyLammpsLoopTime {
         format!(
             "LammpsLoopTime(seconds={}, procs={}, steps={:?}, atoms={:?})",
             self.inner.seconds, self.inner.procs, self.inner.steps, self.inner.atoms
+        )
+    }
+}
+
+/// The ``Minimization stats:`` block of a ``minimize`` run, in the run's units.
+#[pyclass(
+    module = "molpy.io.lammps",
+    name = "LammpsMinimization",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyLammpsMinimization {
+    inner: LammpsMinimization,
+}
+
+#[pymethods]
+impl PyLammpsMinimization {
+    /// Why the minimizer stopped, as LAMMPS words it.
+    #[getter]
+    fn stopping_criterion(&self) -> String {
+        self.inner.stopping_criterion.clone()
+    }
+    /// Energy at the first, the next-to-last and the last iteration.
+    #[getter]
+    fn energy(&self) -> (f64, f64, f64) {
+        let [a, b, c] = self.inner.energy;
+        (a, b, c)
+    }
+    /// Two-norm of the global force vector, first and last.
+    #[getter]
+    fn force_two_norm(&self) -> (f64, f64) {
+        let [a, b] = self.inner.force_two_norm;
+        (a, b)
+    }
+    /// Largest force component on any atom, first and last.
+    #[getter]
+    fn force_max_component(&self) -> (f64, f64) {
+        let [a, b] = self.inner.force_max_component;
+        (a, b)
+    }
+    /// Step length of the last line search.
+    #[getter]
+    fn line_search_alpha(&self) -> f64 {
+        self.inner.line_search_alpha
+    }
+    /// Largest atom displacement of the last line search.
+    #[getter]
+    fn max_atom_move(&self) -> f64 {
+        self.inner.max_atom_move
+    }
+    #[getter]
+    fn iterations(&self) -> i64 {
+        self.inner.iterations
+    }
+    #[getter]
+    fn force_evaluations(&self) -> i64 {
+        self.inner.force_evaluations
+    }
+    #[getter]
+    fn raw_lines(&self) -> Vec<String> {
+        self.inner.raw_lines.clone()
+    }
+    fn __repr__(&self) -> String {
+        format!(
+            "LammpsMinimization(stopping_criterion={:?}, iterations={}, force_evaluations={})",
+            self.inner.stopping_criterion, self.inner.iterations, self.inner.force_evaluations
         )
     }
 }
@@ -561,6 +628,14 @@ impl PyLammpsRun {
             .clone()
             .map(|inner| PyLammpsLoopTime { inner })
     }
+    /// The ``Minimization stats:`` block; ``None`` for a dynamics ``run``.
+    #[getter]
+    fn minimization(&self) -> Option<PyLammpsMinimization> {
+        self.inner
+            .minimization
+            .clone()
+            .map(|inner| PyLammpsMinimization { inner })
+    }
     #[getter]
     fn performance(&self) -> Option<PyLammpsPerformance> {
         self.inner
@@ -799,6 +874,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLammpsLogHeader>()?;
     m.add_class::<PyLammpsMemoryUsage>()?;
     m.add_class::<PyLammpsLoopTime>()?;
+    m.add_class::<PyLammpsMinimization>()?;
     m.add_class::<PyLammpsPerformance>()?;
     m.add_class::<PyLammpsCpuUse>()?;
     m.add_class::<PyLammpsTimingRow>()?;

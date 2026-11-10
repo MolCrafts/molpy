@@ -118,6 +118,52 @@ pub fn alignment_axis_angle(from: Vec3, to: Vec3) -> Option<(Vec3, F)> {
     })
 }
 
+/// The unit axis and the angle in `[0, π]` (radians) of the proper rotation
+/// `rotation`: the inverse of [`axis_angle`], so
+/// `axis_angle(a, θ) == Some(rotation)` for the returned `(a, θ)`.
+///
+/// The angle is `atan2(sin θ, cos θ)` with `cos θ = (tr R − 1)/2` and
+/// `2 sin θ a = (R₂₁ − R₁₂, R₀₂ − R₂₀, R₁₀ − R₀₁)`. Past a quarter turn that
+/// antisymmetric part shrinks to nothing as θ → π, so the axis is read from
+/// the symmetric part instead, `R + Rᵀ = 2 cos θ I + 2 (1 − cos θ) a aᵀ`, and
+/// oriented along the antisymmetric part; at exactly π either orientation is
+/// the same rotation. `None` for a rotation whose antisymmetric part is
+/// exactly zero with a positive cosine — the identity, which turns about no
+/// axis — and for a non-finite entry. `rotation` must be a proper rotation;
+/// any other matrix gives an axis and angle of no meaning.
+pub fn rotation_axis_angle(rotation: Mat3) -> Option<(Vec3, F)> {
+    let r = rotation;
+    if r.iter().flatten().any(|v| !v.is_finite()) {
+        return None;
+    }
+    let w = [r[2][1] - r[1][2], r[0][2] - r[2][0], r[1][0] - r[0][1]];
+    let cos = ((r[0][0] + r[1][1] + r[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
+    let angle = (norm(w) / 2.0).atan2(cos);
+    if cos >= 0.0 {
+        return normalize(w).map(|axis| (axis, angle));
+    }
+    // a_i² = (R_ii − cos θ) / (1 − cos θ); start from the largest component.
+    let squares: [F; 3] = std::array::from_fn(|i| ((r[i][i] - cos) / (1.0 - cos)).max(0.0));
+    let i = (0..3).fold(
+        0,
+        |best, k| if squares[k] > squares[best] { k } else { best },
+    );
+    let ai = squares[i].sqrt();
+    let axis: Vec3 = std::array::from_fn(|j| {
+        if j == i {
+            ai
+        } else {
+            (r[i][j] + r[j][i]) / (2.0 * (1.0 - cos) * ai)
+        }
+    });
+    let axis = if dot(axis, w) < 0.0 {
+        scale(axis, -1.0)
+    } else {
+        axis
+    };
+    normalize(axis).map(|axis| (axis, angle))
+}
+
 /// The right-handed orthonormal frame whose first axis is `primary` and
 /// whose second lies in the plane of `primary` and `secondary`, as the
 /// columns `[e₁ e₂ e₃]` of a proper rotation: `e₁ = p̂`,
@@ -284,6 +330,33 @@ mod tests {
                 "component {d}: expected {want:?}, got {got:?}"
             );
         }
+    }
+
+    #[test]
+    fn rotation_axis_angle_inverts_axis_angle_over_the_whole_half_turn() {
+        let axis = normalize([1.0, -2.0, 0.5]).unwrap();
+        for angle in [1e-6, 0.3, FRAC_PI_2, 2.0, 3.0, PI - 1e-9, PI] {
+            let r = axis_angle(axis, angle).unwrap();
+            let (got_axis, got_angle) = rotation_axis_angle(r).unwrap();
+            assert!((got_angle - angle).abs() < 1e-9, "{angle}: {got_angle}");
+            assert_mat_close(axis_angle(got_axis, got_angle).unwrap(), r);
+        }
+    }
+
+    #[test]
+    fn rotation_axis_angle_reads_a_quarter_turn_about_z() {
+        let (axis, angle) = rotation_axis_angle(RZ90).unwrap();
+        assert_vec_close(axis, [0.0, 0.0, 1.0]);
+        assert!((angle - FRAC_PI_2).abs() < TOL);
+    }
+
+    #[test]
+    fn rotation_axis_angle_has_no_axis_for_the_identity_or_nan() {
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        assert_eq!(rotation_axis_angle(identity), None);
+        let mut broken = RZ90;
+        broken[1][1] = F::NAN;
+        assert_eq!(rotation_axis_angle(broken), None);
     }
 
     fn assert_quat_close(got: Quat, want: Quat) {

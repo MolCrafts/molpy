@@ -12,16 +12,20 @@ use std::collections::HashMap;
 use molrs::builder::{
     AssembleError, Assembler, AxisOrienter, GrowthPlacer, Orienter, Placer, SitePlacer,
 };
-use molrs::builder::{CarbonTubeBuilder, Coarsener, GrapheneBuilder, TubeExtent};
-use molrs::core::{Atomistic, CoarseGrain, Graph, MolGraph, NodeId};
+use molrs::builder::{
+    CarbonTubeBuilder, Coarsener, GrapheneBuilder, JunctionReport, Patch, Perceive, Retype,
+    TubeExtent,
+};
+use molrs::core::{Atomistic, CoarseGrain, Graph, MolGraph, NodeId, SimBox};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
 
 use crate::core::frame::PyFrame;
-use crate::core::graph_views::Leaf;
-use crate::core::molgraph::{PyAtomistic, PyCoarseGrain, PyMolGraph};
+use crate::core::graph_views::{Leaf, PyRefs};
+use crate::core::molgraph::{PyAtomistic, PyCoarseGrain, PyJunction, PyMolGraph};
 use crate::core::simbox::PyBox;
+use crate::ff::typifier::PyTypifier;
 
 /// Exact single-wall carbon nanotube builder.
 #[pyclass(module = "molpy.builder", name = "CarbonTubeBuilder", subclass)]
@@ -246,19 +250,54 @@ impl PySitePlacer {
 /// the anchor of its port toward its parent points back along the parent's
 /// leaving bond, one covalent bond length (the two anchors' covalent radii)
 /// from the parent's anchor. Needs no site positions; bond angles and
-/// overlaps are left to a later minimisation. Takes no arguments.
+/// overlaps are left to a later minimisation.
+///
+/// A site with more than one bond to sites placed before it — a ladder, a
+/// ring, crosslink or periodic closure, a bridge between two placed sites —
+/// is placed by one rigid least-squares fit closing them all: the best
+/// geometry a rigid copy gives. A rigid copy cannot always close them, and a
+/// later minimisation relaxes what the fit leaves; when the geometry must
+/// close, ``max_fit_rmsd`` refuses a fit that misses its targets by more.
+///
+/// Parameters
+/// ----------
+/// max_fit_rmsd : float, optional
+///     The misfit allowed (Å, root mean square). ``None`` accepts every fit.
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``max_fit_rmsd`` is negative or not finite.
 #[pyclass(module = "molpy.builder", name = "GrowthPlacer", frozen)]
-pub struct PyGrowthPlacer;
+pub struct PyGrowthPlacer {
+    inner: GrowthPlacer,
+}
 
 #[pymethods]
 impl PyGrowthPlacer {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (*, max_fit_rmsd=None))]
+    fn new(max_fit_rmsd: Option<f64>) -> PyResult<Self> {
+        let inner = match max_fit_rmsd {
+            Some(max) => GrowthPlacer::new()
+                .with_max_fit_rmsd(max)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+            None => GrowthPlacer::new(),
+        };
+        Ok(Self { inner })
+    }
+
+    /// The misfit a several-bond fit may have (Å); ``None`` accepts any.
+    #[getter]
+    fn max_fit_rmsd(&self) -> Option<f64> {
+        self.inner.max_fit_rmsd()
     }
 
     fn __repr__(&self) -> String {
-        "GrowthPlacer()".to_owned()
+        match self.inner.max_fit_rmsd() {
+            Some(max) => format!("GrowthPlacer(max_fit_rmsd={max})"),
+            None => "GrowthPlacer()".to_owned(),
+        }
     }
 }
 
@@ -292,8 +331,10 @@ impl PyAxisOrienter {
 /// pose by the placer.
 /// Each site bond joins one port of each end's copy (``<`` with ``>``, ``$``
 /// with ``$``); the leaving groups are removed. Any topology works: chains,
-/// branches, rings. Every atom gets ``frag_id`` (the site's ordinal) and
-/// ``mol_id`` (its connected component's ordinal + 1).
+/// branches, rings. Every atom gets ``frag_id`` (the site's ordinal),
+/// ``mol_id`` (its connected component's ordinal + 1), ``template`` (the
+/// library name it was copied from) and ``template_atom`` (its row in that
+/// template, never renumbered).
 ///
 /// Parameters
 /// ----------
@@ -309,13 +350,25 @@ impl PyAxisOrienter {
 /// orienter : AxisOrienter, optional
 ///     Turns each copy about its centroid before it is placed; needs
 ///     site positions.
+/// cell : Box, optional
+///     The periodic cell a site bond's image is counted in. A site bond with
+///     ``ix`` / ``iy`` / ``iz`` joins its second site in the image
+///     ``H · (ix, iy, iz)`` away, so a chain or network closes through the
+///     cell's faces; such a bond without a cell is refused.
+/// retype : Patch | Perceive, optional
+///     For an ``Atomistic`` library: how atom types follow the junctions.
+///     ``None`` keeps every type; a ``Patch`` writes the types it declares
+///     for each linked anchor's copy; a ``Perceive`` the types its typifier
+///     perceives over the whole world. Either way the junction stage brings
+///     the world's angles, dihedrals and pair rows up to the new bonds.
 ///
 /// Raises
 /// ------
 /// TypeError
 ///     If ``library`` is not a mapping of ``str`` to graphs of one type,
-///     ``placer`` is not a :class:`SitePlacer` or :class:`GrowthPlacer`, or
-///     ``orienter`` is not an :class:`AxisOrienter`.
+///     ``placer`` is not a :class:`SitePlacer` or :class:`GrowthPlacer`,
+///     ``orienter`` is not an :class:`AxisOrienter`, or ``retype`` is given
+///     for a library that is not of ``Atomistic`` templates.
 /// ValueError
 ///     If ``library`` is empty (it names the world's graph type).
 ///
@@ -343,15 +396,15 @@ enum AnyAssembler {
 #[derive(Clone, Copy)]
 enum PlacerKind {
     Site,
-    Growth,
+    Growth(GrowthPlacer),
 }
 
 impl PlacerKind {
     fn of(placer: &Bound<'_, PyAny>) -> PyResult<Self> {
         if placer.cast::<PySitePlacer>().is_ok() {
             Ok(Self::Site)
-        } else if placer.cast::<PyGrowthPlacer>().is_ok() {
-            Ok(Self::Growth)
+        } else if let Ok(growth) = placer.cast::<PyGrowthPlacer>() {
+            Ok(Self::Growth(growth.get().inner))
         } else {
             Err(PyTypeError::new_err(format!(
                 "placer must be a SitePlacer or a GrowthPlacer, not {}",
@@ -363,7 +416,7 @@ impl PlacerKind {
     fn build<G: Graph>(self) -> Box<dyn Placer<G>> {
         match self {
             Self::Site => Box::new(SitePlacer::new()),
-            Self::Growth => Box::new(GrowthPlacer::new()),
+            Self::Growth(placer) => Box::new(placer),
         }
     }
 }
@@ -392,20 +445,28 @@ fn assembler<G: Graph>(
     library: HashMap<String, G>,
     placer: PlacerKind,
     orienter: bool,
+    cell: Option<&SimBox>,
 ) -> Assembler<G> {
     let orienter = orienter.then(|| Box::new(AxisOrienter::new()) as Box<dyn Orienter<G>>);
-    Assembler::new(library, placer.build(), orienter)
+    let assembler = Assembler::new(library, placer.build(), orienter);
+    match cell {
+        Some(cell) => assembler.with_cell(cell.clone()),
+        None => assembler,
+    }
 }
 
 #[pymethods]
 impl PyAssembler {
     #[new]
-    #[pyo3(signature = (library, placer, orienter=None))]
+    #[pyo3(signature = (library, placer, orienter=None, *, retype=None, cell=None))]
     fn new(
         library: &Bound<'_, PyMapping>,
         placer: &Bound<'_, PyAny>,
         orienter: Option<&Bound<'_, PyAxisOrienter>>,
+        retype: Option<&Bound<'_, PyAny>>,
+        cell: Option<PyRef<'_, PyBox>>,
     ) -> PyResult<Self> {
+        let cell = cell.as_ref().map(|b| &b.inner);
         let placer = PlacerKind::of(placer)?;
         let orienter = orienter.is_some();
         let library: Vec<(String, Bound<'_, PyAny>)> = library
@@ -428,11 +489,19 @@ impl PyAssembler {
                         .map_err(PyErr::from),
                 )
             };
-            AnyAssembler::Atomistic(assembler(
-                templates(&library, copy, "Atomistic")?,
-                placer,
-                orienter,
-            ))
+            AnyAssembler::Atomistic(
+                assembler(
+                    templates(&library, copy, "Atomistic")?,
+                    placer,
+                    orienter,
+                    cell,
+                )
+                .with_retype(retype_of(retype)?),
+            )
+        } else if retype.is_some() {
+            return Err(PyTypeError::new_err(
+                "retype changes atom types: it needs a library of Atomistic templates",
+            ));
         } else if first.cast::<PyCoarseGrain>().is_ok() {
             let copy = |value: &Bound<'_, PyAny>| {
                 let graph = value.cast::<PyCoarseGrain>().ok()?;
@@ -447,6 +516,7 @@ impl PyAssembler {
                 templates(&library, copy, "CoarseGrain")?,
                 placer,
                 orienter,
+                cell,
             ))
         } else if first.cast::<PyMolGraph>().is_ok() {
             let copy = |value: &Bound<'_, PyAny>| {
@@ -462,6 +532,7 @@ impl PyAssembler {
                 templates(&library, copy, "MolGraph")?,
                 placer,
                 orienter,
+                cell,
             ))
         } else {
             return Err(PyTypeError::new_err(format!(
@@ -513,6 +584,48 @@ impl PyAssembler {
                 PyCoarseGrain::from_core(py, world)?.into_any()
             }
         })
+    }
+
+    /// :meth:`assemble`, and what its junction stage did.
+    ///
+    /// For an ``Atomistic`` library only: the junction stage brings the
+    /// linked world's graph-derived terms up to its new bonds — the angles,
+    /// dihedrals and pair rows of every kind the templates carry, the pairs a
+    /// ring closure shortens reclassified and stripped to their ``n_bonds`` —
+    /// and changes no atom type.
+    ///
+    /// Returns
+    /// -------
+    /// tuple[Atomistic, JunctionReport]
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If the library is not of ``Atomistic`` templates.
+    /// ValueError
+    ///     As :meth:`assemble`.
+    fn assemble_with_report<'py>(
+        &self,
+        py: Python<'py>,
+        sites: PyRef<'_, PyCoarseGrain>,
+    ) -> PyResult<(Py<PyAny>, PyJunctionReport)> {
+        let AnyAssembler::Atomistic(a) = &self.inner else {
+            return Err(PyTypeError::new_err(
+                "assemble_with_report needs a library of Atomistic templates",
+            ));
+        };
+        let sites = sites.core().clone();
+        let (world, report) = py
+            .detach(|| a.assemble_with_report(&sites))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let world = PyAtomistic::from_core(py, world)?.into_any();
+        Ok((
+            world.clone_ref(py),
+            PyJunctionReport {
+                world,
+                inner: report,
+            },
+        ))
     }
 
     fn __repr__(&self) -> String {
@@ -652,6 +765,237 @@ impl PyCoarsener {
 }
 
 /// Register `molpy.builder`.
+/// Atom types a link gives a copy of a template, declared per anchor
+/// (``molrs::builder::Patch``).
+///
+/// ``Patch({(template, anchor_row): {row: type, ...}, ...})``: when the
+/// anchor at ``anchor_row`` of ``template`` gains a junction bond, the atoms
+/// of the same copy at each ``row`` take ``type``. Atoms are found by their
+/// ``frag_id``, ``template`` and ``template_atom``, which the ``Assembler``
+/// stamps.
+///
+/// An entry is per anchor: the same types apply whatever the anchor is linked
+/// to. Only types change — no charge, atom or term. An anchor no entry names,
+/// and a copy with no linked anchor (a chain end), keep their types.
+#[pyclass(module = "molpy.builder", name = "Patch", frozen)]
+pub(crate) struct PyPatch {
+    inner: Patch,
+}
+
+#[pymethods]
+impl PyPatch {
+    #[new]
+    fn new(entries: HashMap<(String, usize), HashMap<usize, String>>) -> Self {
+        let mut inner = Patch::new();
+        for ((template, anchor), types) in entries {
+            inner.insert(template, anchor, types);
+        }
+        Self { inner }
+    }
+}
+
+/// One retyped atom as Python sees it: the atom, its type before and after.
+type RetypedRow<'py> = (Bound<'py, PyAny>, Option<String>, String);
+
+/// Atom types perceived again over the whole linked graph by a native
+/// typifier (``molrs::builder::Perceive``).
+///
+/// ``Perceive(typifier, radius=None)``: the typifier's ``assign`` runs on a
+/// copy of the whole world; only each atom's ``type`` is read and written back
+/// where it changes. Its bonded terms, parameters and output force field are
+/// not used — the parameter assignment that follows overwrites what the old
+/// types left.
+///
+/// With ``radius``, only atoms at most ``radius`` bonds from a junction anchor
+/// may change: the perception is still of the whole world (a type can depend
+/// on far atoms), and the call is refused when it would change any atom
+/// beyond the radius — the rest of the world is verified, not assumed, to be
+/// typed already.
+///
+/// Raises
+/// ------
+/// TypeError
+///     If ``typifier`` is not a native typifier (``AtdTypifier``,
+///     ``OplsAaTypifier``, ``Mmff94Typifier``, ``ElementTypifier``, …): a
+///     Python subclass's ``assign`` cannot run while the GIL is released.
+#[pyclass(module = "molpy.builder", name = "Perceive", frozen)]
+pub(crate) struct PyPerceive {
+    inner: Perceive,
+}
+
+#[pymethods]
+impl PyPerceive {
+    #[new]
+    #[pyo3(signature = (typifier, *, radius=None))]
+    fn new(typifier: &Bound<'_, PyTypifier>, radius: Option<usize>) -> PyResult<Self> {
+        let shared = typifier.try_borrow()?.shared().ok_or_else(|| {
+            PyTypeError::new_err("Perceive needs a native typifier, not a Python subclass")
+        })?;
+        let inner = Perceive::new(shared);
+        Ok(Self {
+            inner: match radius {
+                Some(radius) => inner.within(radius),
+                None => inner,
+            },
+        })
+    }
+}
+
+/// The core policy of a ``retype=`` argument: ``None`` keeps every type.
+fn retype_of(retype: Option<&Bound<'_, PyAny>>) -> PyResult<Retype> {
+    let Some(retype) = retype else {
+        return Ok(Retype::Keep);
+    };
+    if let Ok(patch) = retype.cast::<PyPatch>() {
+        return Ok(Retype::Patch(patch.get().inner.clone()));
+    }
+    if let Ok(perceive) = retype.cast::<PyPerceive>() {
+        return Ok(Retype::Perceive(perceive.get().inner.clone()));
+    }
+    Err(PyTypeError::new_err(format!(
+        "retype must be a Patch or a Perceive, not {}",
+        retype.get_type().name()?
+    )))
+}
+
+/// What a junction stage did (``molrs::builder::JunctionReport``), as views
+/// of the world it was made for.
+///
+/// ``junctions`` are the ``Junction``s it was given. ``reclassified_pairs``
+/// are the pair rows whose bond distance the new bonds shortened (a closed
+/// ring's former 1-4 pair); each now holds only its ``n_bonds``.
+#[pyclass(module = "molpy.builder", name = "JunctionReport", frozen)]
+pub(crate) struct PyJunctionReport {
+    world: Py<PyAny>,
+    inner: JunctionReport,
+}
+
+#[pymethods]
+impl PyJunctionReport {
+    /// The junctions: the new bonds, their anchors and the charge folded
+    /// onto each anchor.
+    #[getter]
+    fn junctions(&self, py: Python<'_>) -> Vec<PyJunction> {
+        self.inner
+            .junctions
+            .iter()
+            .map(|&inner| PyJunction {
+                world: self.world.clone_ref(py),
+                inner,
+            })
+            .collect()
+    }
+
+    /// The atoms whose type the policy changed, as ``(atom, before, after)``;
+    /// ``before`` is ``None`` for an atom that had no type.
+    #[getter]
+    fn retyped<'py>(&self, py: Python<'py>) -> PyResult<Vec<RetypedRow<'py>>> {
+        let leaf = Leaf::of(self.world.bind(py))?;
+        self.inner
+            .retyped
+            .iter()
+            .map(|r| Ok((leaf.node(u64::from(r.atom))?, r.from.clone(), r.to.clone())))
+            .collect()
+    }
+
+    /// Pair rows whose bond distance the new bonds shortened.
+    #[getter]
+    fn reclassified_pairs(&self, py: Python<'_>) -> PyRefs {
+        let handles = self
+            .inner
+            .reclassified_pairs
+            .iter()
+            .map(|&id| u64::from(id))
+            .collect();
+        PyRefs::of_relations(self.world.bind(py), "pairs", handles)
+    }
+
+    /// Angles added through the new bonds.
+    #[getter]
+    fn n_added_angles(&self) -> usize {
+        self.inner.added_angles
+    }
+
+    /// Dihedrals added through the new bonds.
+    #[getter]
+    fn n_added_dihedrals(&self) -> usize {
+        self.inner.added_dihedrals
+    }
+
+    /// Pair rows added through the new bonds.
+    #[getter]
+    fn n_added_pairs(&self) -> usize {
+        self.inner.added_pairs
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "JunctionReport(junctions={}, n_added_angles={}, n_added_dihedrals={}, \
+             n_added_pairs={}, reclassified_pairs={})",
+            self.inner.junctions.len(),
+            self.inner.added_angles,
+            self.inner.added_dihedrals,
+            self.inner.added_pairs,
+            self.inner.reclassified_pairs.len()
+        )
+    }
+}
+
+/// Bring ``world``'s atom types and graph-derived terms up to the bonds of
+/// ``junctions`` (``molrs::builder::update_junctions``): types by ``retype``,
+/// then the angles, dihedrals and pair rows of every kind ``world`` carries,
+/// the pairs a ring closure shortens reclassified and stripped to their
+/// ``n_bonds``. Calling it again changes nothing.
+///
+/// Parameters
+/// ----------
+/// world : Atomistic
+/// junctions : list[Junction]
+///     What ``world.link`` returned, one per call.
+/// retype : Patch | Perceive, optional
+///     ``None`` changes no atom type; a ``Patch`` writes the types it
+///     declares for each linked anchor's copy; a ``Perceive`` the types its
+///     typifier perceives over the whole world.
+///
+/// Returns
+/// -------
+/// JunctionReport
+///
+/// Raises
+/// ------
+/// ValueError
+///     If a junction was made on another graph, its bond is no longer a live
+///     bond between its anchors, the patch cannot be applied (an anchor
+///     without provenance, a patched atom gone or claimed by two copies, two
+///     types for one atom), the typifier refuses the world or leaves an atom
+///     untyped, or (with a radius) it would change an atom beyond the radius;
+///     nothing is written then.
+#[pyfunction(name = "update_junctions")]
+#[pyo3(signature = (world, junctions, *, retype=None))]
+fn py_update_junctions(
+    world: &Bound<'_, PyAtomistic>,
+    junctions: Vec<PyRef<'_, PyJunction>>,
+    retype: Option<&Bound<'_, PyAny>>,
+) -> PyResult<PyJunctionReport> {
+    if let Some(k) = junctions
+        .iter()
+        .position(|j| !j.world.bind(world.py()).is(world))
+    {
+        return Err(PyValueError::new_err(format!(
+            "junction {k} was made on another graph"
+        )));
+    }
+    let core: Vec<molrs::core::Junction> = junctions.iter().map(|j| j.inner).collect();
+    let retype = retype_of(retype)?;
+    let report =
+        molrs::builder::update_junctions(world.try_borrow_mut()?.core_mut(), &core, &retype)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(PyJunctionReport {
+        world: world.clone().into_any().unbind(),
+        inner: report,
+    })
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCarbonTubeBuilder>()?;
     m.add_class::<PyGrapheneBuilder>()?;
@@ -659,6 +1003,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGrowthPlacer>()?;
     m.add_class::<PyAxisOrienter>()?;
     m.add_class::<PyAssembler>()?;
+    m.add_class::<PyJunctionReport>()?;
+    m.add_class::<PyPatch>()?;
+    m.add_class::<PyPerceive>()?;
+    m.add_function(wrap_pyfunction!(py_update_junctions, m)?)?;
     m.add_class::<PyCoarsener>()?;
     crate::polymer::register(m)?;
     crate::symmetry::register(m)?;

@@ -626,18 +626,23 @@ impl CoarseGrain {
         self.graph.leaving_group(port)
     }
 
-    /// Join port `a` to port `b` and return the new anchor–anchor CG bond;
-    /// see [`MolGraph::link`]. The leaving groups' beads are deleted, and
-    /// their membership with them.
+    /// Join port `a` to port `b` and return the
+    /// [`Junction`](crate::core::Junction) (the new CG bond, its anchors, the
+    /// charge folded onto each); see [`MolGraph::link`]. The leaving groups'
+    /// beads are deleted, and their membership with them.
     ///
     /// # Errors
     ///
     /// The [`LinkError`] of the first refusal; the graph is unchanged then.
-    pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
-        let bond = self.graph.link(a, b)?;
+    pub fn link(
+        &mut self,
+        a: RelationId,
+        b: RelationId,
+    ) -> Result<crate::core::Junction, LinkError> {
+        let junction = self.graph.link(a, b)?;
         let live = self.graph.node_table();
         self.members.retain(|bead, _| live.contains(*bead));
-        Ok(bond)
+        Ok(junction)
     }
 
     /// Propagate each [`keys::FRAG_ID`] to the unlabelled degree-1 beads
@@ -683,6 +688,26 @@ impl CoarseGrain {
     /// The [`CenterError`] of [`MolGraph::center`].
     pub fn center(&self, beads: &[NodeId]) -> Result<[f64; 3], CenterError> {
         self.graph.center(beads)
+    }
+
+    /// Every bead's position, `N × 3` (Å), in bead row order — see
+    /// [`MolGraph::coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::coords`]: a bead without `x`, `y` or `z`.
+    pub fn coords(&self) -> Result<crate::op::Fnx3, MolRsError> {
+        self.graph.coords()
+    }
+
+    /// Write every bead's position from `coords` (`N × 3`, Å) — see
+    /// [`MolGraph::set_coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::set_coords`]: a shape other than `N × 3`.
+    pub fn set_coords(&mut self, coords: crate::op::Fnx3View<'_>) -> Result<(), MolRsError> {
+        self.graph.set_coords(coords)
     }
 
     /// Export to a tabular [`Frame`] in the canonical vocabulary every graph

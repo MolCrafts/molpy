@@ -698,6 +698,35 @@ impl<K: Key> EntityTable<K> {
         }
     }
 
+    /// Replace the whole `T` column `key` with `values`, one per row in row
+    /// order, every row valid; a missing column is created.
+    ///
+    /// # Errors
+    ///
+    /// When `values` does not have one value per row, or `key` already holds
+    /// another element type (no silent coercion). Nothing is written on error.
+    pub fn set_column<T: EntityDtype>(
+        &mut self,
+        key: &str,
+        values: Vec<T>,
+    ) -> Result<(), MolRsError> {
+        let n = self.rows.len();
+        if values.len() != n {
+            return Err(MolRsError::validation(format!(
+                "column '{key}' needs {n} values, one per row, got {}",
+                values.len()
+            )));
+        }
+        if let Some(col) = self.cols.get(key)
+            && T::slot(col).is_none()
+        {
+            return Err(type_conflict(key, T::NAME, col.type_name()));
+        }
+        self.cols
+            .insert(key.to_owned(), T::wrap(values, Validity(vec![true; n])));
+        Ok(())
+    }
+
     /// Mutably borrow the whole `T` column `key` (zero-copy slice) plus its
     /// validity mask, for in-place vectorized updates over the dense,
     /// row-aligned column (rows are compacted, so the slice spans exactly the

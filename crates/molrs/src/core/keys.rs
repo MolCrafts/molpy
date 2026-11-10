@@ -109,6 +109,16 @@ named_keys! {
     /// `MolGraph::replicate` stamps on every copy and `set_atom` / `set_node`
     /// with this key writes per atom.
     pub const FRAG_ID: &str = "frag_id";
+    /// Atom prop: the library name of the template an assembled atom was
+    /// copied from, a string the [`Assembler`](crate::builder::Assembler)
+    /// stamps on every copy.
+    pub const TEMPLATE: &str = "template";
+    /// Atom prop: the atom's row in its template's atom table, an `i32` the
+    /// [`Assembler`](crate::builder::Assembler) stamps on every copy. It names
+    /// the template's atom for good: removing or reordering atoms of the
+    /// assembled graph never rewrites it. With [`FRAG_ID`] (which copy) and
+    /// [`TEMPLATE`] (which template) it locates the copy of any template atom.
+    pub const TEMPLATE_ATOM: &str = "template_atom";
     /// Atom prop: the 0-based id of the atom's charge-equivalence class,
     /// written by `perceive::assign_equivalence_classes`. Class ids
     /// are assigned in order of first appearance in the atom order, so the

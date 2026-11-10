@@ -17,6 +17,8 @@
 pub mod atd;
 pub mod gaff;
 
+use std::sync::Arc;
+
 use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -36,7 +38,7 @@ use crate::io::PySource;
 /// Where a [`PyTypifier`]'s typing state lives.
 enum TypifierState {
     /// A native typifier class: the Rust base owns the matcher and the output.
-    Native(Typing<Box<dyn Typifier + Send + Sync>>),
+    Native(Typing<Arc<dyn Typifier + Send + Sync>>),
     /// A Python subclass: the matcher is its ``assign`` method and this base
     /// holds the output, unset until first seeded (see [`PyTypifier::seed`]).
     Python(Option<ForceField>),
@@ -69,7 +71,16 @@ impl PyTypifier {
     /// whose output starts as `typifier.source_forcefield().empty_like()`.
     pub(crate) fn native(typifier: impl Typifier + Send + Sync + 'static) -> Self {
         Self {
-            state: TypifierState::Native(Typing::new(Box::new(typifier))),
+            state: TypifierState::Native(Typing::new(Arc::new(typifier))),
+        }
+    }
+
+    /// The native typifier, shared; `None` for a Python subclass, whose
+    /// matcher is its `assign` method.
+    pub(crate) fn shared(&self) -> Option<Arc<dyn Typifier + Send + Sync>> {
+        match &self.state {
+            TypifierState::Native(typing) => Some(Arc::clone(typing.typifier())),
+            TypifierState::Python(_) => None,
         }
     }
 
