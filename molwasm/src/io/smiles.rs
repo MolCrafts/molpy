@@ -12,6 +12,8 @@
 //! | `SmilesIr.parse(text)`, `ir.toFrame()` | `SmilesIr::parse`, `to_atomistic` + `to_frame` |
 //! | `SmilesIr.fromFrame(frame)`, `ir.toString()` | `SmilesIr::from_atomistic` (default emit options), `Display` |
 //! | `CgSmilesIr.parse(text)`, `ir.toFrame()` | `CgSmilesIr::parse`, `to_atomistic` + `to_frame` |
+//! | `SmilesIr.fromFragment(body)`, `SmilesIr.fromPsmiles(unit)`, `fragment.toTemplate()` | `SmilesIr::from_fragment`, `from_psmiles`, `FragmentIr::to_template` + `to_frame` |
+//! | `BigSmilesIr.parse(text)`, `ir.toMolecules()`, `ir.toSystem()` | `BigSmilesIr::parse`, `to_molecules`, `to_system` |
 //!
 //! # Typical workflow (JavaScript)
 //!
@@ -183,6 +185,137 @@ impl SmilesIr {
     }
 }
 
+#[wasm_bindgen(js_class = SmilesIr)]
+impl SmilesIr {
+    /// Parse a fragment body — SMILES plus bonding descriptors
+    /// (`[<]OCC[>]`, `[$]COC[$]`) — `SmilesIr::from_fragment`.
+    ///
+    /// # Errors
+    ///
+    /// Throws for text that is not fragment notation.
+    #[wasm_bindgen(js_name = fromFragment)]
+    pub fn from_fragment(body: &str) -> Result<FragmentIr, JsValue> {
+        molrs::io::smiles::SmilesIr::from_fragment(body)
+            .map(|inner| FragmentIr { inner })
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Parse a PSMILES repeat unit (`[*]CC[*]`) — `SmilesIr::from_psmiles`.
+    /// Each `*` is a joining site with no head or tail, read as the `$`
+    /// descriptor: the result is the fragment `fromFragment("[$]CC[$]")`
+    /// gives.
+    ///
+    /// # Errors
+    ///
+    /// Throws for a `*` bonded to anything but one atom, a unit without
+    /// exactly two `*`, or text that is not SMILES.
+    #[wasm_bindgen(js_name = fromPsmiles)]
+    pub fn from_psmiles(unit: &str) -> Result<FragmentIr, JsValue> {
+        molrs::io::smiles::SmilesIr::from_psmiles(unit)
+            .map(|inner| FragmentIr { inner })
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+}
+
+/// A fragment body — SMILES plus bonding descriptors — the WASM face of
+/// `molrs::io::smiles::FragmentIr`.
+#[wasm_bindgen(js_name = FragmentIr)]
+pub struct FragmentIr {
+    inner: molrs::io::smiles::FragmentIr,
+}
+
+#[wasm_bindgen(js_class = FragmentIr)]
+impl FragmentIr {
+    /// The ported unit of this body as a [`Frame`] — `FragmentIr::to_template`:
+    /// heavy atoms plus one hydrogen handle per descriptor (`atoms`, `bonds`)
+    /// and one row of `ports` per descriptor. No coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the body does not convert, or the template cannot be
+    /// written as a frame.
+    #[wasm_bindgen(js_name = toTemplate)]
+    pub fn to_template(&self) -> Result<Frame, JsValue> {
+        let template = self
+            .inner
+            .to_template()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Frame::from_rs(
+            template
+                .to_frame()
+                .map_err(|e| JsValue::from_str(&format!("toTemplate: {e}")))?,
+        )
+    }
+}
+
+/// A parsed BigSMILES / generative-BigSMILES string — the WASM face of
+/// `molrs::io::bigsmiles::BigSmilesIr`.
+#[cfg(feature = "builder")]
+#[wasm_bindgen(js_name = BigSmilesIr)]
+pub struct BigSmilesIr {
+    inner: molrs::io::bigsmiles::BigSmilesIr,
+}
+
+#[cfg(feature = "builder")]
+#[wasm_bindgen(js_class = BigSmilesIr)]
+impl BigSmilesIr {
+    /// Parse a BigSMILES or generative-BigSMILES string: stochastic objects
+    /// `{[] …; … []}`, port weights `[<|0.5|]`, size distributions
+    /// `|schulz_zimm(1500, 1400)|` and system amounts `.|5e5|`.
+    ///
+    /// # Errors
+    ///
+    /// Throws for text that is not (generative) BigSMILES, or uses notation
+    /// molrs does not model.
+    #[wasm_bindgen(js_name = parse)]
+    pub fn parse(text: &str) -> Result<BigSmilesIr, JsValue> {
+        molrs::io::bigsmiles::BigSmilesIr::parse(text)
+            .map(|inner| BigSmilesIr { inner })
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// The number of `.`-separated molecules the string writes.
+    #[wasm_bindgen(getter, js_name = nMolecules)]
+    pub fn n_molecules(&self) -> usize {
+        self.inner.molecules.len()
+    }
+
+    /// Each molecule as a [`Molecule`](crate::polymer::Molecule); fragments
+    /// are named by position (`"m.p"`, `"m.p.rk"`, `"m.p.ek"`, and
+    /// `"m.p.hk"` for the hydrogen that ends an object written without end
+    /// groups). Sizes count heavy-atom mass.
+    ///
+    /// # Errors
+    ///
+    /// Throws for a string the polymer model refuses.
+    #[wasm_bindgen(js_name = toMolecules)]
+    pub fn to_molecules(&self) -> Result<Vec<crate::polymer::Molecule>, JsValue> {
+        let molecules = self
+            .inner
+            .to_molecules()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(molecules
+            .into_iter()
+            .map(|inner| crate::polymer::Molecule { inner })
+            .collect())
+    }
+
+    /// The string as a [`System`](crate::polymer::System): every molecule in
+    /// its written amount, counting heavy-atom mass.
+    ///
+    /// # Errors
+    ///
+    /// Throws for a molecule without an amount, or amounts the system
+    /// refuses.
+    #[wasm_bindgen(js_name = toSystem)]
+    pub fn to_system(&self) -> Result<crate::polymer::System, JsValue> {
+        self.inner
+            .to_system()
+            .map(|inner| crate::polymer::System { inner })
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+}
+
 /// A parsed CGsmiles string — the WASM face of
 /// `molrs::io::cgsmiles::CgSmilesIr`: the coarse-grained levels and their
 /// fragment tables, no atoms until [`toFrame`](Self::to_frame) expands the
@@ -230,6 +363,48 @@ impl CgSmilesIr {
 mod tests {
     use super::*;
     use wasm_bindgen_test::*;
+
+    #[wasm_bindgen_test]
+    fn a_psmiles_unit_is_the_dollar_fragment() {
+        let star = SmilesIr::from_psmiles("[*]CC[*]")
+            .unwrap()
+            .to_template()
+            .unwrap();
+        let dollar = SmilesIr::from_fragment("[$]CC[$]")
+            .unwrap()
+            .to_template()
+            .unwrap();
+        for frame in [&star, &dollar] {
+            // Two carbons and one hydrogen handle per port.
+            assert_eq!(frame.get("atoms").unwrap().n_rows().unwrap(), 4);
+            assert_eq!(frame.get("ports").unwrap().n_rows().unwrap(), 2);
+        }
+        assert!(SmilesIr::from_psmiles("*CC").is_err());
+    }
+
+    #[cfg(feature = "builder")]
+    #[wasm_bindgen_test]
+    fn a_bigsmiles_system_samples_to_its_amount() {
+        let ir = BigSmilesIr::parse("{[][$]CC[$][]}|poisson(300)|.|3000|").unwrap();
+        assert_eq!(ir.n_molecules(), 1);
+        assert_eq!(ir.to_molecules().unwrap().len(), 1);
+        let system = ir.to_system().unwrap();
+        assert_eq!(system.measure(), "heavy_atom_mass");
+        let sample = system.sample(7).unwrap();
+        assert!(
+            sample
+                .sites()
+                .unwrap()
+                .get("atoms")
+                .unwrap()
+                .n_rows()
+                .unwrap()
+                > 0
+        );
+        // The implicit hydrogen end group is in the library.
+        assert!(system.library().unwrap().has(&JsValue::from_str("0.0.h0")));
+        assert!(BigSmilesIr::parse("{[][<]CC[>][]}|zipf(2)|").is_err());
+    }
 
     /// `fromFrame` + `toString` is the core's canonical writer, and its text
     /// reads back as the same molecule.
