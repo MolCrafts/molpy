@@ -43,3 +43,11 @@ def test_a_missing_amount_is_a_build_error() -> None:
     with pytest.raises(mp.io.smiles.SmilesError) as excinfo:
         ir.to_system()
     assert excinfo.value.kind == "BigBuild"
+
+
+def test_an_object_without_end_groups_ends_in_hydrogen() -> None:
+    (mol,) = mp.io.bigsmiles.read_bigsmiles(
+        "{[][$]CC[$][]}|gauss(120, 0)|"
+    ).to_molecules()
+    assert "0.0.h0" in mol.library()
+    assert mol.sample(0).n_beads >= 3

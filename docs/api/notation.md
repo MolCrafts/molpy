@@ -52,7 +52,8 @@ BigSMILES writes a polymer as SMILES with stochastic objects `{[] …; … []}`;
 extension adds port weights (`[<|0.5|]`), size distributions (`|schulz_zimm(1500, 1400)|`) and
 system amounts (`.|5e5|`). `mp.io.bigsmiles.read_bigsmiles(text)` reads both; `to_system()`
 gives the [`mp.builder.System`](builder.md) whose samples the assembler builds, sizes counted
-in heavy-atom mass. Nested stochastic objects, objects inside branches, fragment declarations
+in heavy-atom mass. An object written without end groups (`{[][$]CC[$][]}`) ends in hydrogen.
+Nested stochastic objects, objects inside branches, fragment declarations
 and ladder or non-covalent descriptors are refused.
 
 ## Related

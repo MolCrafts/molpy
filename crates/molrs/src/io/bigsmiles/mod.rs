@@ -55,10 +55,16 @@
 //!
 //! A string that reads but spells a model the builder refuses is
 //! [`SmilesErrorKind::BigBuild`](crate::io::smiles::SmilesErrorKind::BigBuild),
-//! raised by the conversions and spanned at the piece refused: an object
-//! with nothing before it and no end group to start from
-//! (`{[][$]CC[$][]}`), a terminal facing no part, pieces whose ports do not
-//! join. List weights count the ports of the object's repeat units and end
+//! raised by the conversions and spanned at the piece refused: a terminal
+//! facing no part, pieces whose ports do not join.
+//!
+//! # Unwritten end groups are hydrogen
+//!
+//! An object written without end groups (`{[][$]CC[$][]}`, the usual
+//! `BigSMILES` homopolymer) ends in hydrogen: the conversions give it one
+//! implicit hydrogen end group per kind of single-bond repeat-unit port.
+//! Written list weights do not count these and never choose them. An object
+//! that writes any end group gets none added — its ends are as written. List weights count the ports of the object's repeat units and end
 //! groups, in written order; the terminals are not positions.
 //!
 //! References: Lin, T.-S. et al., *BigSMILES: A Structurally-Based Line

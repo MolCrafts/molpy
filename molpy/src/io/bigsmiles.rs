@@ -26,7 +26,10 @@ impl PyBigSmilesIr {
     /// Each molecule as a :class:`molpy.builder.Molecule`. Fragments are named by
     /// position: ``"m.p"`` for SMILES piece ``p`` of molecule ``m``,
     /// ``"m.p.rk"`` / ``"m.p.ek"`` for repeat unit / end group ``k`` of
-    /// object ``p``. Size distributions count heavy-atom mass.
+    /// object ``p``. Size distributions count heavy-atom mass. An object
+    /// written without end groups ends in hydrogen: it gets one implicit
+    /// hydrogen end group per kind of single-bond repeat-unit port,
+    /// ``"m.p.hk"``.
     ///
     /// Raises
     /// ------

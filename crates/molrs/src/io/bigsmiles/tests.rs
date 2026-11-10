@@ -371,9 +371,61 @@ fn a_mean_no_sampler_represents_is_refused_when_read() {
 }
 
 #[test]
-fn an_object_that_cannot_start_is_refused_when_built_not_when_sampled() {
-    // No part before the object and no end group: nothing to start from.
-    let err = ir("{[][$]CC[$][]}|poisson(100)|")
+fn an_object_without_end_groups_ends_in_hydrogen() {
+    // The commonest BigSMILES homopolymer: no end groups written.
+    let molecule = ir("{[][$]CC[$][]}|poisson(100)|")
+        .to_molecules()
+        .unwrap()
+        .remove(0);
+    assert!(molecule.library().contains_key("0.0.h0"));
+    let (world, types) = assembled("{[][$]CC[$][]}|gauss(120, 0)|", 2);
+    let n = types.iter().filter(|t| t.ends_with(".r0")).count();
+    assert_eq!(types.iter().filter(|t| t.ends_with(".h0")).count(), 2);
+    assert_eq!(n_element(&world, 6), 2 * n);
+    assert_eq!(n_element(&world, 1), 4 * n + 2, "H-(CH2CH2)n-H");
+    assert_eq!(world.n_ports(), 0);
+}
+
+#[test]
+fn each_kind_of_port_gets_its_own_hydrogen() {
+    let molecule = ir("{[][<]CC[>][]}|gauss(60, 0)|")
+        .to_molecules()
+        .unwrap()
+        .remove(0);
+    let library = molecule.library();
+    assert!(library.contains_key("0.0.h0") && library.contains_key("0.0.h1"));
+    assert_eq!(
+        molecule.sample(0).unwrap().n_bonds(),
+        bead_types(&molecule.sample(0).unwrap()).len() - 1
+    );
+}
+
+#[test]
+fn written_list_weights_keep_their_positions_beside_implicit_caps() {
+    // Two written ports, so lists of two; the implicit caps are not counted.
+    let molecule = ir("{[][<|1 0|]CC[>|1 0|][]}|gauss(60, 0)|").to_molecules();
+    assert!(
+        molecule.is_ok(),
+        "{:?}",
+        molecule.err().map(|e| e.to_string())
+    );
+}
+
+#[test]
+fn written_end_groups_are_not_supplemented() {
+    // `<` ends have no cap among the written end groups: no hydrogen is added.
+    let molecule = ir("{[][<]CC[>];[<]C[]}|gauss(60, 0)|")
+        .to_molecules()
+        .unwrap()
+        .remove(0);
+    assert!(molecule.library().keys().all(|k| !k.contains(".h")));
+    assert!(molecule.sample(0).is_err());
+}
+
+#[test]
+fn a_double_bond_port_has_no_hydrogen_cap() {
+    // Hydrogen forms one bond; with no end group there is nothing to start from.
+    let err = ir("{[][$]=CC=[$][]}|poisson(100)|")
         .to_molecules()
         .unwrap_err();
     assert!(matches!(err.kind, SmilesErrorKind::BigBuild(_)));
