@@ -193,6 +193,8 @@ fn bound_specs() -> Vec<(&'static str, molrs::compute::ComputeSpec)> {
         InertiaTensor,
         Pca,
         Kmeans,
+        FreeVolume,
+        PoreSizeDistribution,
     ];
     #[cfg(feature = "voronoi")]
     let specs = [
@@ -416,6 +418,8 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
     holds_spec_defaults(InertiaTensor::new(), &[]);
     holds_spec_defaults(ok(Pca::new(2)), &[]);
     holds_spec_defaults(ok(Kmeans::new(2, None, None)), &[]);
+    holds_spec_defaults(ok(FreeVolume::new(0.0, None, None)), &[]);
+    holds_spec_defaults(ok(PoreSizeDistribution::new(0.5, None)), &[]);
 
     #[cfg(feature = "voronoi")]
     {

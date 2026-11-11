@@ -10,8 +10,8 @@ use crate::ff::typifier::{AtdParameterSet, AtdTypifier};
 
 use super::error::ChargeError;
 use super::model::{
-    ChargeModel, charge_error, check_count, equivalence_average, reject_dummy_types,
-    without_type_columns,
+    ChargeModel, atomic_number_of, charge_error, check_count, equivalence_average,
+    reject_dummy_types, without_type_columns,
 };
 
 /// AM1-BCC correction-family selector.
@@ -241,7 +241,8 @@ impl BccModel {
         let types = typifier.types_of(&perceived).map_err(charge_error)?;
         reject_dummy_types(&perceived, &types, atd.table().name)?;
 
-        let delta = bcc_increments(&self.table, &perceived, &types).map_err(charge_error_row)?;
+        let delta = bcc_increments(&self.table, &perceived, &types)
+            .map_err(|e| charge_error_row(&perceived, e))?;
 
         Ok(am1.iter().zip(delta).map(|(q, d)| q + d).collect())
     }
@@ -266,18 +267,26 @@ impl ChargeModel for BccModel {
     }
 }
 
-/// A correction-lookup failure, as a charge failure.
-fn charge_error_row(err: BccIncrementError) -> ChargeError {
+/// A correction-lookup failure, as a charge failure that names the two atoms.
+fn charge_error_row(mol: &Atomistic, err: BccIncrementError) -> ChargeError {
     match err {
         BccIncrementError::MissingRow {
             left,
             right,
             bond_type,
-        } => ChargeError::MissingCorrection {
-            left,
-            right,
-            bond_type,
-        },
+            atoms: (i, j),
+        } => {
+            let (zi, zj) = match (atomic_number_of(mol, i), atomic_number_of(mol, j)) {
+                (Ok(zi), Ok(zj)) => (zi, zj),
+                (Err(e), _) | (_, Err(e)) => return e,
+            };
+            ChargeError::MissingCorrection {
+                left,
+                right,
+                bond_type,
+                atoms: [(i, zi), (j, zj)],
+            }
+        }
         BccIncrementError::Malformed { detail } => ChargeError::Malformed { detail },
     }
 }
@@ -379,6 +388,8 @@ enum BccIncrementError {
         right: String,
         /// The perceived antechamber bond type.
         bond_type: i32,
+        /// The two endpoints' 0-based indices in graph atom order.
+        atoms: (usize, usize),
     },
     /// The graph could not be read.
     Malformed {
@@ -432,6 +443,7 @@ fn bcc_increments(
                 left: types[i].to_owned(),
                 right: types[j].to_owned(),
                 bond_type,
+                atoms: (i, j),
             });
         };
         delta[i] += dq;

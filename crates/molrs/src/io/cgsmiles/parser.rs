@@ -426,8 +426,15 @@ impl<'a> CgParser<'a> {
             return Err(malformed());
         };
         let name = &rest[..equals];
-        if name.is_empty() || !name.chars().all(Self::is_fragment_name_char) {
+        if name.is_empty() {
             return Err(malformed());
+        }
+        if let Some(ch) = name.chars().find(|&c| !Self::is_fragment_name_char(c)) {
+            let kind = SmilesErrorKind::CgInvalidFragmentName {
+                name: name.to_owned(),
+                ch,
+            };
+            return Err(self.scanner.error_at(kind, entry));
         }
         let body = Span::new(entry.start + 1 + equals + 1, entry.end);
         if body.start >= body.end {
@@ -734,6 +741,21 @@ impl<'a> CgParser<'a> {
         let name_start = self.scanner.pos();
         while matches!(self.scanner.peek(), Some(c) if Self::is_fragment_name_char(c)) {
             self.scanner.advance();
+        }
+        // A name ends at the annotations (`;`) or the bracket (`]`). Any
+        // other character here belongs to a name the alphabet cannot spell
+        // (`[#p_single]`): name it, instead of failing later on whatever the
+        // grammar expected next.
+        if let Some(ch) = self.scanner.peek().filter(|c| !matches!(c, ';' | ']')) {
+            let input = self.scanner.input();
+            let end = input[name_start..]
+                .find([';', ']'])
+                .map_or(input.len(), |k| name_start + k);
+            let kind = SmilesErrorKind::CgInvalidFragmentName {
+                name: input[name_start..end].to_owned(),
+                ch,
+            };
+            return Err(self.scanner.error_at(kind, Span::new(name_start, end)));
         }
         let name = self.scanner.input()[name_start..self.scanner.pos()].to_owned();
         if name.is_empty() {
@@ -2390,6 +2412,39 @@ mod tests {
             (15..22).contains(&err.span.start),
             "span was {:?} in {text:?}",
             err.span
+        );
+    }
+
+    /// A node name outside the alphabet is reported as the name it is, with
+    /// the offending character, not as whatever token the grammar wanted next.
+    #[test]
+    fn test_node_name_with_underscore_names_the_character() {
+        let text = "{[#p_single][#pbridge]}";
+        let err = err_of(text);
+        assert_eq!(
+            err.kind,
+            SmilesErrorKind::CgInvalidFragmentName {
+                name: "p_single".to_owned(),
+                ch: '_',
+            }
+        );
+        assert_eq!(
+            err.span,
+            crate::io::smiles::Span::new(3, 11),
+            "span covers the name"
+        );
+    }
+
+    /// The same rule at a definition `#NAME=`, and a hyphen as the culprit.
+    #[test]
+    fn test_definition_name_with_hyphen_names_the_character() {
+        let err = err_of("{[#A]}.{#pbix-br=CC}");
+        assert_eq!(
+            err.kind,
+            SmilesErrorKind::CgInvalidFragmentName {
+                name: "pbix-br".to_owned(),
+                ch: '-',
+            }
         );
     }
 

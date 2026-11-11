@@ -32,6 +32,43 @@ macro_rules! frame_reader {
     };
 }
 
+/// Read a CP2K input with an inline cell and coordinates.
+#[pyfunction]
+pub fn read_cp2k_input<'py>(
+    py: Python<'py>,
+    source: PySource<'_>,
+) -> PyResult<(PyFrame, Bound<'py, PyDict>)> {
+    let input = source
+        .read(molrs::io::read_cp2k_input)
+        .map_err(io_error_to_pyerr)?;
+    Ok((
+        PyFrame::from_core_frame(input.frame)?,
+        json_map_to_plain_dict(py, &input.settings)?,
+    ))
+}
+
+/// Read an explicit-cell, Gamma-point Quantum ESPRESSO pw.x input.
+#[pyfunction]
+pub fn read_qe_input<'py>(
+    py: Python<'py>,
+    source: PySource<'_>,
+) -> PyResult<(PyFrame, Bound<'py, PyDict>)> {
+    let input = source
+        .read(molrs::io::read_qe_input)
+        .map_err(io_error_to_pyerr)?;
+    let settings = PyDict::new(py);
+    settings.set_item("namelists", input.namelists)?;
+    settings.set_item(
+        "species",
+        input
+            .species
+            .into_iter()
+            .map(|s| (s.label, s.mass_amu, s.pseudopotential))
+            .collect::<Vec<_>>(),
+    )?;
+    Ok((PyFrame::from_core_frame(input.frame)?, settings))
+}
+
 /// A `write_<fmt>(sink, frame)` door over the core function `$rs`.
 macro_rules! frame_writer {
     ($(#[$doc:meta])* $name:ident => $rs:path) => {
@@ -856,9 +893,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         wrap_pyfunction!(read_sdf, m)?,
         wrap_pyfunction!(read_xsf, m)?,
         wrap_pyfunction!(write_xsf, m)?,
+        wrap_pyfunction!(read_cp2k_input, m)?,
         wrap_pyfunction!(read_cube, m)?,
         wrap_pyfunction!(write_cube, m)?,
         wrap_pyfunction!(read_poscar, m)?,
+        wrap_pyfunction!(read_qe_input, m)?,
         wrap_pyfunction!(write_poscar, m)?,
         wrap_pyfunction!(read_chgcar, m)?,
         wrap_pyfunction!(read_ac, m)?,

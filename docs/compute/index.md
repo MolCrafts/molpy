@@ -255,6 +255,7 @@ The pages are grouped the way the questions group, not the way the classes do.
 | Which atoms are near which? | [NeighborList](neighborlist.md) | `NeighborList` |
 | How are neighbours spaced? | [RDF](rdf.md) | `Rdf` |
 | Where is the matter, in space? | [Density](density.md) | `LocalDensity`, `GaussianDensity`, `SphereVoxelization` |
+| How much of the cell is empty, and how wide are the pores? | [Porosity](porosity.md) | `FreeVolume`, `PoreSizeDistribution` |
 | What would a diffraction experiment see? | [Diffraction](diffraction.md) | `StaticStructureFactorDebye`, `StaticStructureFactorDirect`, `DiffractionPattern` |
 | Where do neighbours sit around an anisotropic particle? | [PMFT](pmft.md) | `PmftXy`, `PmftXyt`, `PmftXyz`, `PmftR12` |
 | How are bond lengths, angles, torsions distributed? | [Distribution](distribution.md) | `DistributionFunction`, `CombinedDistribution` |

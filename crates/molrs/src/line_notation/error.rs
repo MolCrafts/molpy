@@ -311,6 +311,13 @@ pub enum SmilesErrorKind {
     /// fragment name is ASCII alphanumeric, or the single wildcard `*`, the
     /// same alphabet `[#NAME]` accepts).
     CgMalformedFragmentDef,
+    /// A fragment name — in a node `[#NAME]` or a definition `#NAME=` —
+    /// holds a character the notation does not allow: `[#p_single]`,
+    /// `{#pbix-br=CC}`. A name is ASCII letters and digits, or the single
+    /// wildcard `*`. `name` is the name as written up to the next `;`, `]`
+    /// or `=`, and `ch` is its first character outside that alphabet, so the
+    /// message says what to rename rather than where the grammar gave up.
+    CgInvalidFragmentName { name: String, ch: char },
     /// A fragment entry defines an empty body: `{[#A]}.{#A=}`. The name is
     /// written, the `=` is written, and nothing follows it before the `,` or
     /// the `}`.
@@ -496,6 +503,7 @@ impl SmilesErrorKind {
             | SmilesErrorKind::CgInvalidRingMarker
             | SmilesErrorKind::CgExpectedBlock
             | SmilesErrorKind::CgMalformedFragmentDef
+            | SmilesErrorKind::CgInvalidFragmentName { .. }
             | SmilesErrorKind::CgEmptyFragmentBody
             | SmilesErrorKind::CgDuplicateFragment(_)
             | SmilesErrorKind::CgUndefinedFragment(_)
@@ -568,6 +576,13 @@ impl SmilesErrorKind {
             SmilesErrorKind::CgMalformedFragmentDef => {
                 "malformed fragment entry — write '#NAME=body', entries separated by ','".to_owned()
             }
+            SmilesErrorKind::CgInvalidFragmentName { name, ch } => format!(
+                "fragment name '{name}' contains {ch:?} — a fragment name is ASCII letters \
+                 and digits only (or the wildcard '*'), e.g. '{}'",
+                name.chars()
+                    .filter(char::is_ascii_alphanumeric)
+                    .collect::<String>()
+            ),
             SmilesErrorKind::CgEmptyFragmentBody => {
                 "empty fragment body — '#NAME=' defines nothing".to_owned()
             }
@@ -988,6 +1003,17 @@ mod tests {
     }
 
     #[test]
+    fn test_display_cg_invalid_fragment_name_names_the_character_and_a_fix() {
+        let msg = cg_message(SmilesErrorKind::CgInvalidFragmentName {
+            name: "p_single".to_owned(),
+            ch: '_',
+        });
+        assert!(msg.contains("'p_single'"), "message was {msg:?}");
+        assert!(msg.contains("'_'"), "message was {msg:?}");
+        assert!(msg.contains("'psingle'"), "message was {msg:?}");
+    }
+
+    #[test]
     fn test_display_cg_empty_fragment_body_names_the_empty_body() {
         let msg = cg_message(SmilesErrorKind::CgEmptyFragmentBody);
         assert!(msg.to_lowercase().contains("empty"), "message was {msg:?}");
@@ -1152,6 +1178,10 @@ mod tests {
             cg_message(SmilesErrorKind::CgInvalidRingMarker),
             cg_message(SmilesErrorKind::CgExpectedBlock),
             cg_message(SmilesErrorKind::CgMalformedFragmentDef),
+            cg_message(SmilesErrorKind::CgInvalidFragmentName {
+                name: "p_single".to_owned(),
+                ch: '_',
+            }),
             cg_message(SmilesErrorKind::CgEmptyFragmentBody),
             cg_message(SmilesErrorKind::CgDuplicateFragment("PEO".to_owned())),
             cg_message(SmilesErrorKind::CgUndefinedFragment("PEO".to_owned())),

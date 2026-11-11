@@ -115,6 +115,9 @@ REQUIRED: dict[str, dict[str, object]] = {
     "InertiaTensor": {},
     "Pca": {"n_components": 2},
     "Kmeans": {"k": 2},
+    # porosity
+    "FreeVolume": {"probe_radius": 0.0},
+    "PoreSizeDistribution": {"spacing": 0.5},
     # voronoi
     "RadicalVoronoi": {},
     "VoronoiIntegration": {"unit": "angstrom"},

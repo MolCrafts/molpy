@@ -59,6 +59,10 @@ pub enum ChargeError {
         right: String,
         /// The perceived antechamber bond type (1/2/3/6/7/8/9).
         bond_type: i32,
+        /// The two endpoints: 0-based index in graph atom order and atomic
+        /// number, so the message says which bond of the caller's molecule it
+        /// is, not only the model's internal labels.
+        atoms: [(usize, u8); 2],
     },
     /// The molecule itself could not be read.
     ///
@@ -94,9 +98,14 @@ impl fmt::Display for ChargeError {
                 left,
                 right,
                 bond_type,
+                atoms: [(i, zi), (j, zj)],
             } => write!(
                 f,
-                "missing BCC correction for bond {left}|{right}|{bond_type}"
+                "missing BCC correction for bond {left}|{right}|{bond_type} \
+                 (atom {i} {} – atom {j} {}): the parameter set has no row for it, \
+                 so this model cannot charge the molecule",
+                species_label(*zi),
+                species_label(*zj)
             ),
             Self::Malformed { detail } => write!(f, "malformed molecule: {detail}"),
         }
@@ -126,14 +135,16 @@ mod tests {
     #[test]
     fn missing_correction_names_the_bond() {
         let err = ChargeError::MissingCorrection {
-            left: "B".to_owned(),
-            right: "11".to_owned(),
-            bond_type: 1,
+            left: "31".to_owned(),
+            right: "91".to_owned(),
+            bond_type: 9,
+            atoms: [(0, 8), (1, 1)],
         };
         assert_eq!(
             err.to_string(),
-            "missing BCC correction for bond B|11|1",
-            "the two BCC atom types and the perceived bond type"
+            "missing BCC correction for bond 31|91|9 (atom 0 O – atom 1 H): the parameter \
+             set has no row for it, so this model cannot charge the molecule",
+            "the BCC types, the bond type, and the caller's two atoms"
         );
     }
 }
