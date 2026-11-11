@@ -76,8 +76,7 @@ pub struct FreeVolumeResult {
 }
 
 impl FreeVolume {
-    /// A probe of radius `probe_radius` (Å), with
-    /// [`DEFAULT`](Self::default_n_samples) samples and seed 0.
+    /// A probe of radius `probe_radius` (Å), with 20,000 samples and seed 0.
     ///
     /// # Errors
     /// [`ComputeError::OutOfRange`] for a negative or non-finite radius.

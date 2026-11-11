@@ -189,5 +189,17 @@ mod tests {
                 simbox: &tilted,
             });
         assert!(matches!(err, Err(ComputeError::OutOfRange { .. })));
+        let simbox = cube(10.0);
+        for spacing in [0.001, f64::MIN_POSITIVE] {
+            let err =
+                PoreSizeDistribution::new(spacing)
+                    .unwrap()
+                    .compute(PoreSizeDistributionInput {
+                        positions: array![[0.0, 0.0, 0.0]].view(),
+                        radii: array![1.0].view(),
+                        simbox: &simbox,
+                    });
+            assert!(matches!(err, Err(ComputeError::OutOfRange { .. })));
+        }
     }
 }

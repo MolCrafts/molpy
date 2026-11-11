@@ -62,8 +62,7 @@ pub struct PoreSizeDistributionResult {
 }
 
 impl PoreSizeDistribution {
-    /// Voxels of edge about `spacing` (Å), histogram bins of
-    /// [`DEFAULT`](Self::default_bin_width) Å.
+    /// Voxels of edge about `spacing` (Å), histogram bins of 0.1 Å.
     ///
     /// # Errors
     /// [`ComputeError::OutOfRange`] for a non-positive or non-finite spacing.
@@ -101,9 +100,12 @@ impl Compute for PoreSizeDistribution {
     type Output = PoreSizeDistributionResult;
 
     /// # Errors
-    /// The position and radius errors of [`geometry`](super::geometry), plus
-    /// [`ComputeError::OutOfRange`] for a triclinic cell or a grid above
-    /// [`MAX_VOXELS`](self).
+    /// [`ComputeError::EmptyInput`] with no atoms;
+    /// [`ComputeError::DimensionMismatch`] when `radii` is not one per atom;
+    /// [`ComputeError::BadShape`] when `positions` is not `N × 3`;
+    /// [`ComputeError::NonFinite`] for a non-finite coordinate;
+    /// [`ComputeError::OutOfRange`] for an invalid radius or cell, a triclinic
+    /// cell, or a grid above 8,000,000 voxels.
     fn compute(
         &self,
         input: PoreSizeDistributionInput<'_>,
@@ -126,13 +128,13 @@ impl Compute for PoreSizeDistribution {
 
 fn grid_dims(cell: &geometry::CellGeom, spacing: F) -> Result<[usize; 3], ComputeError> {
     let dims = std::array::from_fn(|k| (cell.lengths[k] / spacing).round().max(1.0) as usize);
-    let n = dims[0] * dims[1] * dims[2];
-    if n > MAX_VOXELS {
-        return Err(ComputeError::OutOfRange {
+    dims.iter()
+        .try_fold(1_usize, |n, &axis| n.checked_mul(axis))
+        .filter(|&n| n <= MAX_VOXELS)
+        .ok_or_else(|| ComputeError::OutOfRange {
             field: "PoreSizeDistribution::spacing",
-            value: format!("{n} voxels exceeds {MAX_VOXELS}"),
-        });
-    }
+            value: format!("grid {dims:?} exceeds {MAX_VOXELS} voxels"),
+        })?;
     Ok(dims)
 }
 
