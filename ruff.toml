@@ -1,5 +1,5 @@
 # Python lint for this repository (molrs-python/, scripts/), run by
-# `scripts/check.sh ruff` at commit time and in CI. One rule: text-mode file
+# `molci run ruff` at commit time and in CI. One rule: text-mode file
 # I/O must name its encoding. Without it Python decodes with the locale --
 # UTF-8 on Linux and macOS, cp1252 on Windows -- so a read that passes every
 # Linux hook fails only on CI's Windows leg (PLW1514 is a preview rule;

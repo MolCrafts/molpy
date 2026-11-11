@@ -20,7 +20,7 @@ manual, gates); the Python binding is one of the bindings.
 | `molc/` | C API, header `molc.h`, symbols `molc_*` / `Molc*` / `MOLC_*` | — |
 | `molcxx/` | CXX bridge for Atomiverse C++ (`FrameView`, zero-copy) | — |
 | `docs/` + `zensical.toml` | the molpy manual (Zensical). The first page is molpy; the manual then navigates to molrs. Other bindings are documented by their own tools | — |
-| `scripts/check.sh` | the one definition of every gate | — |
+| `molci` in MolCrafts CI | the one definition of every gate | — |
 
 There is no Python `molrs` package and no `molrs-python`. Python code imports
 `molpy`; the native module is `molpy._core` (the only module whose name starts
@@ -139,8 +139,9 @@ engine produced for it. A test never stages, prints or rewrites files.
 
 ## Build and gates
 
-Every gate is `scripts/check.sh <gate…>`; prek hooks and CI call the same
-script. `scripts/check.sh verify` is the pre-push gate (every check once).
+Every gate is `molci run <gate>`; hooks and CI call the same pinned
+MolCrafts CI implementation. `molci verify` is the pre-push gate: every
+applicable check must pass or have a valid cached success. `--full` reruns all checks.
 Never bypass hooks (`--no-verify`); fix the failure.
 
 Gates: `fmt ruff partners clippy doc test ffi cxx capi python types wasm mrec
@@ -151,8 +152,8 @@ pytest; `types`, `mrec` and `docs` reuse that wheel.
 cargo mrs-test                         # core unit tests (alias, one feature set)
 cargo mrs-test -- ff::potential        # one module, no rebuild
 cargo mrs-doctest                      # rustdoc examples
-scripts/check.sh python                # wheel + molpy pytest
-scripts/check.sh docs                  # strict manual build (zensical)
+molci run python                # wheel + molpy pytest
+molci run docs                  # strict manual build (zensical)
 uv --directory molpy run --no-sync pytest tests/test_bindings/test_md.py   # one file, after `python`
 ```
 
@@ -199,13 +200,11 @@ A site-packages check uses `python -I`.
 ## Documentation
 
 The manual is executable: every ```python block runs, top to bottom per page,
-against the current API (`scripts/run_doc_blocks.py`, in the `docs` gate). A
+against the current API (`molci run docs`, in the `docs` gate). A
 block that cannot run in the docs environment starts with `# docs: skip — <reason>`. Tutorials and guides are textbook
 prose (concept → motivation → mechanics), not bullet lists; no visionary
 claims. Public Python API has type hints and Google-style docstrings; Rust
-uses rustdoc with runnable examples. Figures come from real runs
-(`molpy/scripts/docs_series`, writing `docs/series/`), never hand-typed
-points.
+uses rustdoc with runnable examples. Figures come from real runs, never hand-typed points.
 
 ## Workflow
 

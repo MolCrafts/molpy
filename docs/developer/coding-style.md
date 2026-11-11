@@ -106,7 +106,7 @@ Use Google-style docstrings for public functions and classes. Include `Args`, `R
 
 ## Formatting
 
-Ruff is the single source of truth for formatting and linting. From `molpy/`, run `uv run --no-sync ruff format python tests` and `uv run --no-sync ruff check python tests` before committing. The `python` gate checks the format; the `ruff` gate (`scripts/check.sh ruff`, also a pre-commit hook) lints the whole repository.
+Ruff is the single source of truth for formatting and linting. From `molpy/`, run `uv run --no-sync ruff format python tests` and `uv run --no-sync ruff check python tests` before committing. The `python` gate checks the format; the `ruff` gate (`molci run ruff`, also a pre-commit hook) lints the whole repository.
 
 
 ## Ready-to-commit checklist

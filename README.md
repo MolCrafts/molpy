@@ -86,9 +86,10 @@ optional, and only for the programs molpy still shells out to.
 ```bash
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
-uvx pre-commit install
+uv tool install "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@$(sed -n 's/^CI_REF=//p' .github/partners.env)"
+molci doctor --install-hooks
 uv --directory molpy sync --extra dev
-scripts/check.sh verify
+molci verify --full
 ```
 
 Each binding is its own Cargo workspace. Build it with

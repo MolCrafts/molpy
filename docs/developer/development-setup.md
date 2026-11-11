@@ -8,8 +8,8 @@ You need Python 3.12 or newer, Git, [uv](https://docs.astral.sh/uv/), and the
 Rust toolchain ([`rustup`](https://rustup.rs/)): molpy builds
 its [Rust core](rust-core.md) from source. The repository pins
 the toolchain channel and components in `rust-toolchain.toml`, so no manual
-component setup is required. Everything else is installed by the commands
-below.
+component setup is required. Install CMake/CTest, Node 24 or newer, wasm-pack 0.15.0 and Binaryen 133
+for the native binding/package gates; doctor checks prerequisites.
 
 
 ## Quick setup
@@ -23,7 +23,8 @@ project: `molpy/Cargo.toml` + `molpy/src/` build the native module
 ```bash
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
-uvx pre-commit install
+uv tool install "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@$(sed -n 's/^CI_REF=//p' .github/partners.env)"
+molci doctor --install-hooks
 uv --directory molpy sync --extra dev   # builds molpy in place (editable)
 cd molpy && uv run --no-sync pytest     # the Python suite
 ```
@@ -34,13 +35,29 @@ The package source is `molpy/python/molpy/`.
 
 ## Gates
 
-`scripts/check.sh verify` is the pre-push gate, every check once. Its Python
-gates are `python` (build one molpy wheel from this checkout, install it in
-molpy's locked environment, `molpy/uv.lock`, and run the suite on it),
-`types` (`molpy/python/molpy/_core.pyi` against the compiled module) and `docs`
-(this manual, `--strict`, on the same wheel). CI runs `python` on every OS
-leg and `docs` on the Linux wheel. mollog and molcfg come from PyPI, within
-`molpy/pyproject.toml`'s `[project]` ranges.
+`.pre-commit-config.yaml` is the single hook entry point. Commit runs the
+cheap stage; push requires all applicable native gates. MolCrafts CI's pinned
+`rust-python` registry owns ordering, tool requirements and successful-result
+caching. Unknown source paths invalidate every cached success. Source changes,
+lockfiles, platform/tool versions and dependency artifacts enter cache keys.
+A missing tool or unavailable runner fails with a reproduction command.
+
+Use `molci check` for commit checks, `verify` for native validation
+with valid successes reused, and `verify --full` to execute the entire suite.
+`run GATE` and `explain GATE` use the same registry. `molci verify --full`
+is the full-suite convenience command. The Python gate builds one wheel;
+types, Molrec, executable documentation and package inspection reuse its exact
+bytes. `molpy/uv.lock` pins their shared environments, including the conformance group.
+
+The installed push transport preserves every Git ref before pre-commit reads
+stdin. Pushed refs must resolve to the verified HEAD and source must be clean;
+use separate clean worktrees for distinct source snapshots. Reinstall through
+`doctor --install-hooks` after running another hook install command. Hooks can
+be bypassed, so upstream PRs still receive independent native and platform
+verification. A normal fork push starts no redundant GitHub compilation.
+
+Use `molci partners pin-ci SHA` when updating shared infrastructure; it updates
+hooks, Actions and the CI package source together, then refreshes the lock.
 
 ## Developing across operating systems
 
@@ -69,10 +86,6 @@ DOCS_DIR="$PWD/docs" uv --directory molpy run --locked --extra doc zensical serv
 
 The site is at `http://localhost:8000`. Changes to `.md` files are reflected immediately.
 
-User-guide notebooks are pre-rendered to Markdown (Zensical does not run notebooks
-at build time). After editing one, regenerate its page with
-`python molpy/scripts/render_notebooks.py`.
-
 
 ## External tools
 
@@ -86,10 +99,11 @@ declare `# docs: skip — <reason>`.
 ## Common commands
 
 ```bash
-scripts/check.sh fmt ruff                 # formatting and lint, Rust and Python
-scripts/check.sh python types             # molpy wheel + suite, stub check
-scripts/check.sh docs                     # this manual, --strict
-scripts/check.sh verify                   # the pre-push gate: every check once
+molci check                 # formatting and lint, Rust and Python
+molci run python
+molci run types             # molpy wheel + suite, stub check
+molci run docs                     # this manual, --strict
+molci verify --full                   # the pre-push gate: every check once
 cargo mrs-test                            # Rust core unit tests
 cd molpy && uv run --no-sync ruff format python tests   # auto-format Python
 ```
@@ -97,4 +111,4 @@ cd molpy && uv run --no-sync ruff format python tests   # auto-format Python
 
 ## Troubleshooting
 
-If imports fail after pulling new code, rebuild molpy in place: `uv --directory molpy sync --extra dev --reinstall-package molcrafts-molpy` (the Rust side changed). The manual builds with `scripts/check.sh docs`. If formatting checks fail, run `uv --directory molpy run --no-sync ruff format python tests` before pushing.
+If imports fail after pulling new code, rebuild molpy in place: `uv --directory molpy sync --extra dev --reinstall-package molcrafts-molpy` (the Rust side changed). The manual builds with `molci run docs`. If formatting checks fail, run `uv --directory molpy run --no-sync ruff format python tests` before pushing.

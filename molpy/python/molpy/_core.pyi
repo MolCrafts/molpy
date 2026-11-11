@@ -1,7 +1,7 @@
 """Type stubs of the native module ``molpy._core``.
 
 Hand-maintained beside the PyO3 source in `molpy/src/**.rs`. The `types` gate
-(`scripts/check.sh types`) holds it to the compiled module with
+(`molci run types`) holds it to the compiled module with
 `mypy.stubtest`: every name, signature, parameter kind and default declared
 here, and every public runtime name missing here, fails the gate.
 """

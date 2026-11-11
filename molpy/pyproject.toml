@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Gate tools. scripts/check.sh python builds one non-editable wheel and installs
+# Gate tools. molci run python builds one non-editable wheel and installs
 # it into this locked environment; `maturin develop` builds it in place.
 dev = [
     "maturin>=1.0,<2.0",
@@ -162,7 +162,7 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
-# The `types` gate (scripts/check.sh types): the stub python/molpy/_core.pyi
+# The `types` gate (molci run types): the stub python/molpy/_core.pyi
 # is the native module's type contract, checked strictly from the source tree
 # (`mypy_path`) against the installed extension (stubtest). molpy's
 # pure-Python modules are followed for their names only.
@@ -177,3 +177,11 @@ follow_imports = "silent"
 [[tool.mypy.overrides]]
 module = ["molpy._core"]
 follow_imports = "normal"
+
+# Conformance reuses the tested wheel; these sources share the CI/partner pins.
+[dependency-groups]
+ci = ["molrec", "molcrafts-ci"]
+
+[tool.uv.sources]
+molrec = { git = "https://github.com/MolCrafts/molrec", rev = "5707ec1d49d2049796ef46fb61c0775b986e753a" }
+molcrafts-ci = { git = "https://github.com/MolCrafts/molcrafts-ci", rev = "1ebdbdcf3d43411fdcc294736c5117d71c6350f9" }
