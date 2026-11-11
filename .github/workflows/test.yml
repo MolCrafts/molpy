@@ -20,7 +20,7 @@ defaults:
 jobs:
   context:
     name: test
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@72813fc0f78b220dab40d9091244a989ba56c92d
     with:
       profile: rust-python
   native:
@@ -32,12 +32,12 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
-    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
+    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@72813fc0f78b220dab40d9091244a989ba56c92d
+    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@72813fc0f78b220dab40d9091244a989ba56c92d
       with:
         cache: native
-    - uses: MolCrafts/molcrafts-ci/actions/setup-python@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
-    - uses: MolCrafts/molcrafts-ci/actions/setup-wasm@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
+    - uses: MolCrafts/molcrafts-ci/actions/setup-python@72813fc0f78b220dab40d9091244a989ba56c92d
+    - uses: MolCrafts/molcrafts-ci/actions/setup-wasm@72813fc0f78b220dab40d9091244a989ba56c92d
     - run: molci platform native
   platform:
     name: test / platform (${{ matrix.lane }})
@@ -51,13 +51,13 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
-    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
+    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@72813fc0f78b220dab40d9091244a989ba56c92d
+    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@72813fc0f78b220dab40d9091244a989ba56c92d
       with:
         cache: native
-    - uses: MolCrafts/molcrafts-ci/actions/setup-python@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
+    - uses: MolCrafts/molcrafts-ci/actions/setup-python@72813fc0f78b220dab40d9091244a989ba56c92d
     - if: matrix.lane == 'wasm'
-      uses: MolCrafts/molcrafts-ci/actions/setup-wasm@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
+      uses: MolCrafts/molcrafts-ci/actions/setup-wasm@72813fc0f78b220dab40d9091244a989ba56c92d
     - run: molci platform ${{ matrix.lane }}
   result:
     name: test / result
@@ -65,9 +65,9 @@ jobs:
     - context
     - native
     - platform
-    if: always() && needs.context.outputs.validate == 'true'
+    if: always() && (needs.context.result != 'success' || needs.context.outputs.validate != 'false')
     runs-on: ubuntu-latest
     steps:
-    - uses: MolCrafts/molcrafts-ci/actions/validation-result@1fb2cffd9c018c4f0cfd9af140cd39e2c398f717
+    - uses: MolCrafts/molcrafts-ci/actions/validation-result@72813fc0f78b220dab40d9091244a989ba56c92d
       with:
         needs: ${{ toJSON(needs) }}
