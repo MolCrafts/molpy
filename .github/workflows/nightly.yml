@@ -48,47 +48,33 @@ jobs:
     - uses: MolCrafts/molcrafts-ci/actions/setup-python@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
     - name: Measure the Rust core
       id: measure
-      run: 'molci run measure-rust
-
-        '
+      run: |
+        molci run measure-rust
     - name: Test and coverage snapshots
       if: ${{ !cancelled() && steps.measure.outcome == 'success' }}
-      run: 'GITHUB_SHA=$(git rev-parse HEAD)
-
+      run: |
+        GITHUB_SHA=$(git rev-parse HEAD)
         export GITHUB_SHA
-
         export GITHUB_REF=refs/heads/dev
-
         args=(--out .ci-out/snapshots --cargo-test .ci-out/cargo-test.log --coverage-producer llvm-cov)
-
         [ ! -f .ci-out/lcov.info ] || args+=(--coverage .ci-out/lcov.info --coverage-format lcov)
-
         molci snapshot "${args[@]}" ${TRACK:+"$TRACK"}
-
-        '
     - name: Conformance snapshot
       if: ${{ !cancelled() }}
-      run: 'GITHUB_SHA=$(git rev-parse HEAD)
-
+      run: |
+        GITHUB_SHA=$(git rev-parse HEAD)
         export GITHUB_SHA
-
         export GITHUB_REF=refs/heads/dev
-
         molci run measure-conformance
-
-        '
     - if: ${{ !cancelled() }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: ci-snapshots
         if-no-files-found: ignore
-        path: '.ci-out/snapshots/tests.json
-
+        path: |
+          .ci-out/snapshots/tests.json
           .ci-out/snapshots/coverage.json
-
           .ci-out/snapshots/conformance.json
-
-          '
   submit:
     name: nightly / submit
     needs:
@@ -121,15 +107,27 @@ jobs:
       with:
         ref: ${{ needs.context.outputs.source-ref }}
     - id: v
-      run: "python3 - <<'PYCODE'\nimport json, os, subprocess, tomllib, urllib.error, urllib.request\nfrom pathlib\
-        \ import Path\nbase = tomllib.loads(Path(\"Cargo.toml\").read_text(encoding=\"utf-8\"))[\"workspace\"][\"\
-        package\"][\"version\"]\nsha = subprocess.check_output([\"git\", \"rev-parse\", \"HEAD\"], text=True).strip()\n\
-        stamp = int(subprocess.check_output([\"git\", \"show\", \"-s\", \"--format=%ct\", \"HEAD\"], text=True))\n\
-        version = f\"{base}.dev{stamp}{int(sha[:12], 16)}\"\nbuild = True\nurl = f\"https://pypi.org/pypi/molcrafts-molpy-nightly/{version}/json\"\
-        \ntry:\n    with urllib.request.urlopen(url, timeout=30) as response:\n        json.load(response)\n   \
-        \ build = False\nexcept urllib.error.HTTPError as exc:\n    if exc.code != 404:\n        raise\nwith open(os.environ[\"\
-        GITHUB_OUTPUT\"], \"a\", encoding=\"utf-8\") as output:\n    print(f\"version={version}\", file=output)\n\
-        \    print(f\"build={str(build).lower()}\", file=output)\nPYCODE\n"
+      run: |
+        python3 - <<'PYCODE'
+        import json, os, subprocess, tomllib, urllib.error, urllib.request
+        from pathlib import Path
+        base = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        stamp = int(subprocess.check_output(["git", "show", "-s", "--format=%ct", "HEAD"], text=True))
+        version = f"{base}.dev{stamp}{int(sha[:12], 16)}"
+        build = True
+        url = f"https://pypi.org/pypi/molcrafts-molpy-nightly/{version}/json"
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                json.load(response)
+            build = False
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            print(f"version={version}", file=output)
+            print(f"build={str(build).lower()}", file=output)
+        PYCODE
   wheels:
     if: needs.context.outputs.nightly == 'true' && needs.version.outputs.build == 'true'
     name: nightly / wheels (${{ matrix.os }})
@@ -150,27 +148,17 @@ jobs:
         ref: ${{ needs.context.outputs.source-ref }}
     - uses: MolCrafts/molcrafts-ci/actions/setup-python@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
     - name: Stamp the dev version and the nightly name
-      run: 'python - "${{ needs.version.outputs.version }}" <<''PY''
-
+      run: |
+        python - "${{ needs.version.outputs.version }}" <<'PY'
         import pathlib, re, sys
-
         p = pathlib.Path("molpy/pyproject.toml")
-
         t = p.read_text(encoding="utf-8")
-
-        t = re.sub(r''^name\s*=\s*"molcrafts-molpy"'', ''name = "molcrafts-molpy-nightly"'', t, count=1, flags=re.M)
-
+        t = re.sub(r'^name\s*=\s*"molcrafts-molpy"', 'name = "molcrafts-molpy-nightly"', t, count=1, flags=re.M)
         # The release version comes from Cargo.toml (dynamic); a nightly states
-
         # its PEP 440 dev version here instead.
-
-        t = re.sub(r''^dynamic\s*=\s*\["version"\]'', f''version = "{sys.argv[1]}"'', t, count=1, flags=re.M)
-
+        t = re.sub(r'^dynamic\s*=\s*\["version"\]', f'version = "{sys.argv[1]}"', t, count=1, flags=re.M)
         p.write_text(t, encoding="utf-8")
-
         PY
-
-        '
     - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
       with:
         working-directory: molpy

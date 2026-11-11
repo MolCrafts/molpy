@@ -23,13 +23,12 @@ jobs:
   guard:
     name: release / guard
     needs: context
-    if: needs.context.outputs.skip-pr != 'true' && (github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream
-      == 'true')
+    if: needs.context.outputs.skip-pr != 'true' && (github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 100
     permissions:
       contents: read
-      checks: read
+      actions: read
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -37,14 +36,10 @@ jobs:
     - uses: MolCrafts/molcrafts-ci/actions/setup-molci@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
     - name: The tag is the package version, on master
       if: needs.context.outputs.publish == 'true'
-      run: 'version=$(python3 -c ''import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])'')
-
-        [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1;
-        }
-
+      run: |
+        version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+        [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
         molci run partners
-
-        '
     - name: Exact upstream master verification
       uses: MolCrafts/molcrafts-ci/actions/release-verify@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
       env:
@@ -73,6 +68,7 @@ jobs:
     environment: crates-io
     permissions:
       id-token: write
+      contents: read
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - uses: MolCrafts/molcrafts-ci/actions/setup-rust@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
@@ -80,13 +76,20 @@ jobs:
       uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9
     - env:
         CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-      run: "VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path crates/molrs/Cargo.toml | jq -r\
-        \ '.packages[0].version')\n# crates.io rejects a request without a User-Agent.\nif curl -sfL -A \"molrs-release/1.0\"\
-        \ \"https://crates.io/api/v1/crates/molcrafts-molrs/$VERSION\" >/dev/null; then\n  echo \"molcrafts-molrs@$VERSION\
-        \ is already on crates.io\"\n  exit 0\nfi\nset +e\nOUT=$(cargo publish --locked --manifest-path crates/molrs/Cargo.toml\
-        \ 2>&1)\nCODE=$?\nset -e\nprintf '%s\\n' \"$OUT\"\n# Index lag after a successful earlier publish.\n[ \"\
-        $CODE\" -eq 0 ] || printf '%s\\n' \"$OUT\" | grep -qiE 'already exists|already uploaded' || exit \"$CODE\"\
-        \n"
+      run: |
+        VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path crates/molrs/Cargo.toml | jq -r '.packages[0].version')
+        # crates.io rejects a request without a User-Agent.
+        if curl -sfL -A "molrs-release/1.0" "https://crates.io/api/v1/crates/molcrafts-molrs/$VERSION" >/dev/null; then
+          echo "molcrafts-molrs@$VERSION is already on crates.io"
+          exit 0
+        fi
+        set +e
+        OUT=$(cargo publish --locked --manifest-path crates/molrs/Cargo.toml 2>&1)
+        CODE=$?
+        set -e
+        printf '%s\n' "$OUT"
+        # Index lag after a successful earlier publish.
+        [ "$CODE" -eq 0 ] || printf '%s\n' "$OUT" | grep -qiE 'already exists|already uploaded' || exit "$CODE"
   npm-pack:
     if: needs.context.outputs.skip-pr != 'true'
     name: release / npm (dry run)
@@ -117,6 +120,7 @@ jobs:
     environment: npm
     permissions:
       id-token: write
+      contents: read
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - uses: MolCrafts/molcrafts-ci/actions/setup-wasm@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
@@ -129,9 +133,14 @@ jobs:
     - working-directory: molwasm/pkg
       env:
         NODE_AUTH_TOKEN: ''
-      run: "NAME=$(node -p \"require('./package.json').name\")\nVERSION=$(node -p \"require('./package.json').version\"\
-        )\nif npm view \"$NAME@$VERSION\" version >/dev/null 2>&1; then\n  echo \"$NAME@$VERSION is already on npm\"\
-        \nelse\n  npm publish --access public --provenance\nfi\n"
+      run: |
+        NAME=$(node -p "require('./package.json').name")
+        VERSION=$(node -p "require('./package.json').version")
+        if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+          echo "$NAME@$VERSION is already on npm"
+        else
+          npm publish --access public --provenance
+        fi
   wheels:
     if: needs.context.outputs.skip-pr != 'true'
     name: release / wheels (${{ matrix.artifact }})
@@ -269,13 +278,21 @@ jobs:
         targets: ${{ matrix.target }}
         cache: release-capi-${{ matrix.artifact }}
     - name: Build and package (lib + header + LICENSE + sha256)
-      run: "target=${{ matrix.target }}\ncargo build --locked --release --manifest-path molc/Cargo.toml ${target:+--target\
-        \ \"$target\"}\nVERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path molc/Cargo.toml |\
-        \ jq -r '.packages[0].version')\nOUT=\"molc-${VERSION}-${{ matrix.artifact }}\"\nLIBDIR=\"target/${target:+$target/}release\"\
-        \nmkdir -p \"stage/$OUT\"\ncp molc/include/molc.h LICENSE \"stage/$OUT/\"\nfound=0\nfor f in libmolc.dylib\
-        \ libmolc.so libmolc.a molc.dll molc.dll.lib molc.lib; do\n  if [ -f \"$LIBDIR/$f\" ]; then cp \"$LIBDIR/$f\"\
-        \ \"stage/$OUT/\"; found=1; fi\ndone\n[ \"$found\" -eq 1 ]\ntar -C stage -czf \"$OUT.tar.gz\" \"$OUT\"\n\
-        sha256sum \"$OUT.tar.gz\" > \"$OUT.tar.gz.sha256\"\n"
+      run: |
+        target=${{ matrix.target }}
+        cargo build --locked --release --manifest-path molc/Cargo.toml ${target:+--target "$target"}
+        VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path molc/Cargo.toml | jq -r '.packages[0].version')
+        OUT="molc-${VERSION}-${{ matrix.artifact }}"
+        LIBDIR="target/${target:+$target/}release"
+        mkdir -p "stage/$OUT"
+        cp molc/include/molc.h LICENSE "stage/$OUT/"
+        found=0
+        for f in libmolc.dylib libmolc.so libmolc.a molc.dll molc.dll.lib molc.lib; do
+          if [ -f "$LIBDIR/$f" ]; then cp "$LIBDIR/$f" "stage/$OUT/"; found=1; fi
+        done
+        [ "$found" -eq 1 ]
+        tar -C stage -czf "$OUT.tar.gz" "$OUT"
+        sha256sum "$OUT.tar.gz" > "$OUT.tar.gz.sha256"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: capi-${{ matrix.artifact }}
@@ -299,6 +316,8 @@ jobs:
     - env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
-      run: "gh release view \"$GITHUB_REF_NAME\" >/dev/null 2>&1 \\\n  || gh release create \"$GITHUB_REF_NAME\"\
-        \ --verify-tag --generate-notes \\\n       --notes \"Documentation: https://docs.molcrafts.org/molrs/\"\n\
-        gh release upload \"$GITHUB_REF_NAME\" assets/* --clobber\n"
+      run: |
+        gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+          || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+               --notes "Documentation: https://docs.molcrafts.org/molrs/"
+        gh release upload "$GITHUB_REF_NAME" assets/* --clobber
