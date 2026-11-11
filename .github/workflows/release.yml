@@ -17,7 +17,7 @@ jobs:
     permissions:
       contents: read
     name: release
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
     with:
       profile: rust-python
   guard:
@@ -33,7 +33,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         fetch-depth: 0
-    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
     - name: The tag is the package version, on master
       if: needs.context.outputs.publish == 'true'
       run: |
@@ -41,7 +41,7 @@ jobs:
         [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
         molci run partners
     - name: Exact upstream master verification
-      uses: MolCrafts/molcrafts-ci/actions/release-verify@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+      uses: MolCrafts/molcrafts-ci/actions/release-verify@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
       env:
         GH_TOKEN: ${{ github.token }}
       with:
@@ -55,8 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
-    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
+    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
     - run: molci run package-crate
   crate:
     name: release / crate
@@ -71,7 +71,7 @@ jobs:
       contents: read
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
     - id: auth
       uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9
     - env:
@@ -99,11 +99,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
-    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-molci@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
+    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
       with:
         cache: release-wasm
-    - uses: MolCrafts/molcrafts-ci/actions/setup-wasm@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-wasm@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
     - run: molci run package-wasm
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
@@ -123,7 +123,7 @@ jobs:
       contents: read
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: MolCrafts/molcrafts-ci/actions/setup-wasm@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-wasm@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
       with:
         registry-url: https://registry.npmjs.org
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -174,10 +174,10 @@ jobs:
           manylinux: auto
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: MolCrafts/molcrafts-ci/actions/setup-python@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-python@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
       with:
         python-version: '3.14'
-    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
       with:
         cache: release-py-${{ matrix.artifact }}
     - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
@@ -201,10 +201,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: MolCrafts/molcrafts-ci/actions/setup-python@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-python@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
       with:
         python-version: '3.14'
-    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
       with:
         targets: wasm32-unknown-emscripten
         cache: release-py-pyodide
@@ -273,7 +273,7 @@ jobs:
           artifact: windows-x64
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@1ebdbdcf3d43411fdcc294736c5117d71c6350f9
+    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@a10699d9198ef1fa210a9fa79ece62cb0cb63e44
       with:
         targets: ${{ matrix.target }}
         cache: release-capi-${{ matrix.artifact }}

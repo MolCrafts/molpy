@@ -53,8 +53,9 @@ The installed push transport preserves every Git ref before pre-commit reads
 stdin. Pushed refs must resolve to the verified HEAD and source must be clean;
 use separate clean worktrees for distinct source snapshots. Reinstall through
 `doctor --install-hooks` after running another hook install command. Hooks can
-be bypassed, so upstream PRs still receive independent native and platform
-verification. A normal fork push starts no redundant GitHub compilation.
+be bypassed, so external PRs receive independent native verification. The trusted
+personal development path receives every platform lane; master receives the full
+independent native suite. A normal fork push starts no redundant GitHub compilation.
 
 Use `molci partners pin-ci SHA` when updating shared infrastructure; it updates
 hooks, Actions and the CI package source together, then refreshes the lock.
