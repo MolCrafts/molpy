@@ -661,7 +661,7 @@ wheels = [
 [[package]]
 name = "molcrafts-ci"
 version = "0.3.0"
-source = { git = "https://github.com/MolCrafts/molcrafts-ci?rev=1fb2cffd9c018c4f0cfd9af140cd39e2c398f717#1fb2cffd9c018c4f0cfd9af140cd39e2c398f717" }
+source = { git = "https://github.com/MolCrafts/molcrafts-ci?rev=72813fc0f78b220dab40d9091244a989ba56c92d#72813fc0f78b220dab40d9091244a989ba56c92d" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -755,7 +755,7 @@ provides-extras = ["all", "dev", "doc"]
 
 [package.metadata.requires-dev]
 ci = [
-    { name = "molcrafts-ci", git = "https://github.com/MolCrafts/molcrafts-ci?rev=1fb2cffd9c018c4f0cfd9af140cd39e2c398f717" },
+    { name = "molcrafts-ci", git = "https://github.com/MolCrafts/molcrafts-ci?rev=72813fc0f78b220dab40d9091244a989ba56c92d" },
     { name = "molrec", git = "https://github.com/MolCrafts/molrec?rev=5707ec1d49d2049796ef46fb61c0775b986e753a" },
 ]
 
