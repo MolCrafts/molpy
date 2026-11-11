@@ -59,4 +59,4 @@ or relation. For example, the assembler records which site an atom came from in
 - [ ] Native copy/merge/extract and Frame round trips cover the new kind.
 - [ ] PyO3 exports and type stubs are updated before Python code uses the API.
 - [ ] MolPy re-exports the native type.
-- [ ] The Rust and Python suites pass (`scripts/check.sh verify`).
+- [ ] The Rust and Python suites pass (`molci verify --full`).

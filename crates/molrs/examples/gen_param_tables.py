@@ -49,9 +49,9 @@ generated from GROMACS's `oplsaa.ff` by `cargo mrs-gen-opls`
 Run it where AmberTools, `rustfmt` (which formats the output as `cargo fmt`
 does) and molrs (its periodic table names the elements) are installed:
 
-    AMBERHOME=/path/to/amber python3 scripts/gen_param_tables.py
-    AMBERHOME=... python3 scripts/gen_param_tables.py --out-dir /tmp/tables
-    AMBERHOME=... python3 scripts/gen_param_tables.py --check
+    AMBERHOME=/path/to/amber python3 crates/molrs/examples/gen_param_tables.py
+    AMBERHOME=... python3 crates/molrs/examples/gen_param_tables.py --out-dir /tmp/tables
+    AMBERHOME=... python3 crates/molrs/examples/gen_param_tables.py --check
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ from functools import cache
 from pathlib import Path
 from typing import ClassVar
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[3]
 OUT_DIR = REPO / "crates/molrs/src/ff/params"
 
 # Every emitted table opens by saying where it came from — which is the ONLY place
@@ -77,7 +77,7 @@ OUT_DIR = REPO / "crates/molrs/src/ff/params"
 # source, reviewed, grepped and stepped through like any other.
 HEADER = """//! {title}
 //!
-//! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`, which emits
+//! DO NOT HAND-EDIT — regenerate with `crates/molrs/examples/gen_param_tables.py`, which emits
 //! this table from AmberTools' own `.DAT` / `.DEF` files. That is where the table
 //! came FROM; it is not what the table IS — this is ordinary source, not a build
 //! artefact.

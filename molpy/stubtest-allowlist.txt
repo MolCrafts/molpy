@@ -1,4 +1,4 @@
-# stubtest allowlist for molpy._core (scripts/check.sh types).
+# stubtest allowlist for molpy._core (molci run types).
 #
 # Only structural exemptions belong here: a name the stub must spell
 # differently from the runtime because a single-file stub cannot spell it

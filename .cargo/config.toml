@@ -11,7 +11,7 @@ target-dir = "target"
 # Canonical command set for the root workspace.
 #
 # Every human, hook, CI step and agent invocation goes through these aliases
-# (the gates themselves are scripts/check.sh).
+# (the gates themselves are molci).
 # The reason is not brevity: a cargo invocation that spells the feature list
 # differently resolves a *different* feature set, which is a different
 # fingerprint, which compiles all 293k lines of `molcrafts-molrs` again and

@@ -22,7 +22,7 @@ use crate::ff::params::{
 /// the choice is a parameter rather than a default.
 ///
 /// Both tables are [`ff::params`](crate::ff::params) data: typed Rust `const`s
-/// emitted by `scripts/gen_param_tables.py`, the same path `gaff.dat` and the
+/// emitted by `crates/molrs/examples/gen_param_tables.py`, the same path `gaff.dat` and the
 /// seven `ATOMTYPE_*.DEF` take. Nothing here is
 /// parsed at runtime; a malformed table is a **compile** error.
 ///

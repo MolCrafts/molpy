@@ -14,7 +14,7 @@ and reached through the `TEST_DATA_DIR` fixture; nothing is downloaded.
 ## Running tests
 
 ```bash
-scripts/check.sh python                        # the CI command: build the wheel, run the suite
+molci run python                        # the CI command: build the wheel, run the suite
 cd molpy
 uv run --no-sync pytest tests/test_engine/test_lammps.py   # one file, on the installed wheel
 uv run --no-sync pytest tests/ -k "lammps"                 # keyword filter

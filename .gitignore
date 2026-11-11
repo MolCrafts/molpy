@@ -82,7 +82,7 @@ scripts/molrs-aarch64-*.err
 .pytest_cache/
 .ruff_cache/
 .ci-out/
-# pytest-cov data from `scripts/check.sh --report … python`
+# pytest-cov data from `molci run python`
 .coverage
 
 # Captured build/lint output (e.g. `cargo mrs-clippy > x.log`) is not source.

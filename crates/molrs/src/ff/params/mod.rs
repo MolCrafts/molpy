@@ -3,7 +3,7 @@
 //!
 //! molrs parses **no** parameter text at runtime. The upstream `.DAT` / `.DEF`
 //! tables are transcribed into the `const`s in the sibling modules here by
-//! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME` (the
+//! `crates/molrs/examples/gen_param_tables.py`, which reads them from `$AMBERHOME` (the
 //! committed fourteen are AmberTools 26.1's; `--check` verifies them byte for
 //! byte); [`mmff`]
 //! is ported from RDKit's `Params.cpp` and merged with what MMFF's XML
