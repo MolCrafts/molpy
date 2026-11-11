@@ -352,6 +352,7 @@
 //! | `decomposition` | [`Pca`] of any [`FeatureMatrix`] |
 //! | `kmeans` | [`Kmeans`] over any [`FeatureMatrix`] |
 //! | `voronoi` | `RadicalVoronoi`, `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`, `VoronoiIntegration`, `FiniteFieldPolarizability` (feature `voronoi`) |
+//! | `porosity` | [`FreeVolume`], [`PoreSizeDistribution`] |
 
 mod binning;
 mod cluster;
@@ -377,6 +378,7 @@ mod order;
 mod percolation;
 mod piercing;
 mod pmft;
+mod porosity;
 mod rdf;
 pub(crate) mod require;
 mod shape;
@@ -444,6 +446,10 @@ pub use order::{
 pub use percolation::{Percolation, PercolationInput, PercolationResult};
 pub use piercing::{RingPiercing, RingPiercingInput, RingPiercingResult};
 pub use pmft::{PairCoordinate, Pmft, PmftInput, PmftResult, R12, Xy, Xyt, Xyz};
+pub use porosity::{
+    FreeVolume, FreeVolumeInput, FreeVolumeResult, PoreSizeDistribution, PoreSizeDistributionInput,
+    PoreSizeDistributionResult,
+};
 pub use rdf::{Rdf, RdfAccumulator, RdfResult};
 /// Crate-internal: the input guards every neighbor-consuming kernel calls
 /// before it reads `disp` (Å) or `dist_sq` (Å²), or before it updates both

@@ -93,6 +93,7 @@ nav = [
       { "NeighborList" = "compute/neighborlist.md" },
       { "RDF" = "compute/rdf.md" },
       { "Density" = "compute/density.md" },
+      { "Porosity" = "compute/porosity.md" },
       { "Diffraction" = "compute/diffraction.md" },
       { "PMFT" = "compute/pmft.md" },
     ] },

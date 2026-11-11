@@ -8,14 +8,14 @@ use crate::compute::{
     ContinuousCoordination, CorrelationFunction, Correlator, Cubatic, CumulativeTrapezoid,
     CurrentAcf, DebyeFit, Derivative, Described, DiffractionPattern, DipoleAcf,
     DipoleAutocorrelationSpectrum, DipoleMoment, DipoleRateCrossSpectrum, DistributionFunction,
-    EinsteinHelfandSpectrum, EnergyDrift, EnvironmentMatch, GaussianDensity, GreenKuboSpectrum,
-    GyrationTensor, HBonds, Hexatic, InertiaTensor, InternalCoordinate, KineticEnergy, Kmeans,
-    KramersKronig, LinearFit, LocalBondProjection, LocalDensity, LocalDescriptors, Msd, Nematic,
-    OnsagerCorrelation, PairPresence, Pca, Percolation, Plateau, Pmft, PolarizabilityParts, R12,
-    RamanSpectrum, Rdf, ReorientationAcf, RingPiercing, RotationalAutocorrelation, RouteAgreement,
-    SolidLiquid, SpatialDistribution, Spectrum, SphereVoxelization, StaticDielectric,
-    StaticStructureFactorDebye, StaticStructureFactorDirect, Steinhardt, Survival, Unwrap, Vacf,
-    VanHove, Xy, Xyt, Xyz,
+    EinsteinHelfandSpectrum, EnergyDrift, EnvironmentMatch, FreeVolume, GaussianDensity,
+    GreenKuboSpectrum, GyrationTensor, HBonds, Hexatic, InertiaTensor, InternalCoordinate,
+    KineticEnergy, Kmeans, KramersKronig, LinearFit, LocalBondProjection, LocalDensity,
+    LocalDescriptors, Msd, Nematic, OnsagerCorrelation, PairPresence, Pca, Percolation, Plateau,
+    Pmft, PolarizabilityParts, PoreSizeDistribution, R12, RamanSpectrum, Rdf, ReorientationAcf,
+    RingPiercing, RotationalAutocorrelation, RouteAgreement, SolidLiquid, SpatialDistribution,
+    Spectrum, SphereVoxelization, StaticDielectric, StaticStructureFactorDebye,
+    StaticStructureFactorDirect, Steinhardt, Survival, Unwrap, Vacf, VanHove, Xy, Xyt, Xyz,
 };
 
 static ALL: LazyLock<Vec<ComputeSpec>> = LazyLock::new(|| {
@@ -95,6 +95,8 @@ static ALL: LazyLock<Vec<ComputeSpec>> = LazyLock::new(|| {
         InertiaTensor::spec(),
         Pca::spec(),
         Kmeans::spec(),
+        FreeVolume::spec(),
+        PoreSizeDistribution::spec(),
     ]
     .into_iter()
     .chain(voronoi_specs())

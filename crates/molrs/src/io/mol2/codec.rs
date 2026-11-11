@@ -664,6 +664,16 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         .get("z")
         .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
+    // CRYSIN records a, b, c and the angles, and nothing else: the cell it
+    // states sits at the origin. A frame whose box origin is elsewhere keeps
+    // that relationship only if the coordinates move with it, so each ATOM
+    // line is written at `r - origin`. The frame itself is not modified.
+    // Origin 0 subtracts nothing. A frame with no box shifts by zero too.
+    let shift = frame
+        .simbox
+        .as_ref()
+        .map(SimBox::origin)
+        .unwrap_or([0.0; 3]);
     let subst_id_col = atoms.get(keys::RES_ID).and_then(|c| c.get::<u64>());
     let subst_name_col = atoms.get(keys::RES_NAME).and_then(|c| c.get::<String>());
     for i in 0..n {
@@ -677,9 +687,9 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             "{:>7} {:<8} {:>10.4} {:>10.4} {:>10.4} {:<6} {} {:<8}",
             id,
             name,
-            xs[[i]],
-            ys[[i]],
-            zs[[i]],
+            xs[[i]] - shift[0],
+            ys[[i]] - shift[1],
+            zs[[i]] - shift[2],
             atype,
             sid,
             sname
@@ -737,7 +747,9 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         }
     }
     // The cell, when the frame has one: lengths and angles, space group P1
-    // (number 1), setting 1. A frame without a box writes no CRYSIN.
+    // (number 1), setting 1. CRYSIN has no origin; the ATOM coordinates
+    // above were shifted by `-origin` so this origin-0 cell is the same
+    // cell. A frame without a box writes no CRYSIN.
     if let Some(simbox) = frame.simbox.as_ref() {
         let (lengths, angles) = (simbox.lengths(), simbox.angles());
         writeln!(writer, "@<TRIPOS>CRYSIN")?;
@@ -963,6 +975,59 @@ mod tests {
             .expect("CRYSIN reads back as a box")
             .lengths();
         assert!((lengths[0] - 68.105).abs() < 1e-3 && (lengths[2] - 102.898).abs() < 1e-3);
+    }
+
+    /// CRYSIN cannot store an origin. Writing subtracts it from the
+    /// coordinates, so the origin-0 cell read back encloses the same
+    /// points. The frame passed to the writer is left unchanged.
+    #[test]
+    fn crysin_writes_coordinates_relative_to_a_nonzero_origin() {
+        let mut frame = read_mol2(ETHANE_MIN.as_bytes()).unwrap();
+        let cell = crate::core::Cell::LengthsAngles {
+            lengths: [10.0, 12.0, 14.0],
+            angles: [90.0, 90.0, 90.0],
+        };
+        let origin = [2.5, -1.25, 4.0];
+        frame.simbox = Some(SimBox::new(cell, origin, [true; 3]).unwrap());
+        let mut out = Vec::new();
+        write_mol2(&mut out, &frame).unwrap();
+
+        let kept = frame.get("atoms").unwrap();
+        let kept_x = kept.get("x").and_then(|c| c.get::<f64>()).unwrap();
+        assert!(
+            (kept_x[[0]] - 0.0).abs() < 1e-12,
+            "writer must not move the frame"
+        );
+        assert!((kept_x[[1]] - 1.5).abs() < 1e-12);
+
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("@<TRIPOS>CRYSIN\n10.0000 12.0000 14.0000 90.0000 90.0000 90.0000 1 1\n"),
+            "{text}"
+        );
+        let back = read_mol2(text.as_bytes()).unwrap();
+        let box_back = back.simbox.as_ref().expect("CRYSIN reads back as a box");
+        let back_origin = box_back.origin();
+        assert!(
+            back_origin.iter().all(|v| v.abs() < 1e-9),
+            "read origin {back_origin:?}"
+        );
+        let atoms = back.get("atoms").unwrap();
+        let xs = atoms.get("x").and_then(|c| c.get::<f64>()).unwrap();
+        let ys = atoms.get("y").and_then(|c| c.get::<f64>()).unwrap();
+        let zs = atoms.get("z").and_then(|c| c.get::<f64>()).unwrap();
+        // Written positions are the originals minus the origin. The C–C
+        // vector is unchanged, so the cell still holds the same geometry.
+        assert!((xs[[0]] - (0.0 - origin[0])).abs() < 1e-3);
+        assert!((ys[[0]] - (0.0 - origin[1])).abs() < 1e-3);
+        assert!((zs[[0]] - (0.0 - origin[2])).abs() < 1e-3);
+        assert!((xs[[1]] - xs[[0]] - 1.5).abs() < 1e-3);
+        assert!((ys[[1]] - ys[[0]]).abs() < 1e-3);
+        assert!((zs[[1]] - zs[[0]]).abs() < 1e-3);
+        let lengths = box_back.lengths();
+        assert!((lengths[0] - 10.0).abs() < 1e-3);
+        assert!((lengths[1] - 12.0).abs() < 1e-3);
+        assert!((lengths[2] - 14.0).abs() < 1e-3);
     }
 
     #[test]

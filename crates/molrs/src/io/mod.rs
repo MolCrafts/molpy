@@ -81,9 +81,11 @@ pub mod amber;
 pub mod cif;
 #[cfg(feature = "ff")]
 pub mod clpol;
+pub mod cp2k;
 mod csv;
 mod cube;
 pub mod dcd;
+pub mod espresso;
 #[cfg(feature = "stream")]
 mod frame_encoding;
 pub mod gro;
@@ -122,9 +124,11 @@ pub use amber::prmtop::read_prmtop;
 pub use cif::codec::{read_cif, write_cif};
 #[cfg(feature = "ff")]
 pub use clpol::codec::read_clpol_alpha;
+pub use cp2k::read_cp2k_input;
 pub use csv::{read_csv_block, write_csv_block};
 pub use cube::{CubeReader, read_cube, write_cube};
 pub use dcd::codec::{read_dcd, write_dcd};
+pub use espresso::read_qe_input;
 #[cfg(feature = "stream")]
 pub use frame_encoding::{read_wire_frame, write_wire_frame};
 pub use gro::codec::{read_gro, write_gro};
