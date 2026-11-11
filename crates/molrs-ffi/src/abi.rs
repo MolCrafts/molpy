@@ -1,38 +1,29 @@
-//! The ABI contract of the molrs FFI layer.
+//! The capsule contract of the molrs FFI layer.
 //!
 //! All cross-extension interop (molpy ↔ molpack, cxxapi consumers)
 //! exchanges raw `molrs_ffi` handles, so both sides must embed a
-//! layout-identical molrs core. The project rule is **minor-line = ABI
-//! version**: every downstream shares one molrs minor line, and the layout of
-//! every FFI-crossing type is frozen within a minor. This module is the
-//! single source of the versioned capsule names and the handshake line —
+//! layout-identical molrs core. A capsule name is a fixed per-handle prefix
+//! plus this build's [`build_fingerprint`], so two builds that may lay a handle
+//! out differently refuse each other's capsules instead of dereferencing a
+//! drifted layout. This module is the single source of the capsule names —
 //! binders and consumers must take them from here, never hard-code them.
 
 use std::ffi::{CStr, CString};
 use std::sync::OnceLock;
 
-/// The ABI line of this build: `major.minor` of the statically linked
-/// `molcrafts-molrs` core (e.g. `"0.17"`). This crate's version is the core's
-/// by policy, and its dependency on the core is pinned to that minor line, so
-/// its own `CARGO_PKG_VERSION` names the line.
-///
-/// Two extensions may exchange `molrs_ffi` handles if and only if their ABI
-/// lines are equal. Patch versions may differ — layout is frozen within a
-/// minor line.
-pub fn abi_line() -> &'static str {
-    static LINE: OnceLock<String> = OnceLock::new();
-    LINE.get_or_init(|| {
-        let mut parts = env!("CARGO_PKG_VERSION").split('.');
-        let major = parts.next().expect("the version has a major component");
-        let minor = parts.next().expect("the version has a minor component");
-        format!("{major}.{minor}")
-    })
-}
+/// Fixed name prefix of [`crate::FrameRef`] capsules.
+const FRAMEREF_CAPSULE_PREFIX: &str = "molrs.FrameRef";
+/// Fixed name prefix of `ForceFieldRef` capsules.
+const FORCEFIELDREF_CAPSULE_PREFIX: &str = "molrs.ForceFieldRef";
+/// Fixed name prefix of [`crate::RegionRef`] capsules.
+const REGIONREF_CAPSULE_PREFIX: &str = "molrs.RegionRef";
 
 /// Size and alignment of every type a handle exchange dereferences: the
-/// handles themselves and what they point at. A change to any of them inside
-/// a minor line fails `tests::layout_matches_the_snapshot` (the `ffi` gate)
-/// and changes [`build_fingerprint`].
+/// handles themselves and what they point at, down to the arena lock, and
+/// what a consumer reaches and drops through a frame — its blocks' columns,
+/// their storage and its meta values. A change to any of them fails
+/// `tests::layout_matches_the_snapshot` (the `ffi` gate) and changes
+/// [`build_fingerprint`].
 pub fn layout() -> Vec<(&'static str, usize, usize)> {
     use std::mem::{align_of, size_of};
     let out = vec![
@@ -50,6 +41,14 @@ pub fn layout() -> Vec<(&'static str, usize, usize)> {
             "FrameArena",
             size_of::<crate::FrameArena>(),
             align_of::<crate::FrameArena>(),
+        ),
+        // What a `FrameArenaCell` points at: the lock a consumer takes on
+        // every access. Listed so a build whose arena lock differs (the
+        // former `RefCell`, another platform's `RwLock`) refuses the capsule.
+        (
+            "FrameArenaLock",
+            size_of::<std::sync::RwLock<crate::FrameArena>>(),
+            align_of::<std::sync::RwLock<crate::FrameArena>>(),
         ),
         (
             "RegionRef",
@@ -70,6 +69,24 @@ pub fn layout() -> Vec<(&'static str, usize, usize)> {
             "SimBox",
             size_of::<molrs::core::SimBox>(),
             align_of::<molrs::core::SimBox>(),
+        ),
+        // Behind the blocks' maps: a consumer that frees a producer's frame
+        // frees these with its own build's layout. A column array's size does
+        // not depend on its element type, so one stands for all.
+        (
+            "Column",
+            size_of::<molrs::core::Column>(),
+            align_of::<molrs::core::Column>(),
+        ),
+        (
+            "ColumnArray",
+            size_of::<molrs::core::ColumnArray<molrs::op::F>>(),
+            align_of::<molrs::core::ColumnArray<molrs::op::F>>(),
+        ),
+        (
+            "MetaValue",
+            size_of::<molrs::core::MetaValue>(),
+            align_of::<molrs::core::MetaValue>(),
         ),
     ];
     #[cfg(feature = "ff")]
@@ -92,15 +109,17 @@ pub fn layout() -> Vec<(&'static str, usize, usize)> {
     out
 }
 
-/// This build's ABI fingerprint, 16 hex digits: FNV-1a over the `rustc`
-/// version that compiled it and [`layout`]. Two builds of one minor line
-/// exchange handles only when their fingerprints agree too — same line, same
-/// compiler, same layout — because the line alone cannot see a layout the
-/// compiler or a dependency's patch release chose differently.
+/// This build's handle fingerprint, 16 hex digits: FNV-1a over the `rustc`
+/// that compiled it, a digest of the molrs and molrs-ffi sources it embeds,
+/// and [`layout`]. Two builds exchange handles only when their fingerprints
+/// agree — same compiler, same source, same layout — so a consumer statically
+/// linked against an older molrs is refused cleanly until it is rebuilt.
 pub fn build_fingerprint() -> &'static str {
     static FINGERPRINT: OnceLock<String> = OnceLock::new();
     FINGERPRINT.get_or_init(|| {
         let mut text = String::from(env!("MOLRS_FFI_RUSTC"));
+        text.push_str(";source:");
+        text.push_str(env!("MOLRS_FFI_SOURCE"));
         for (name, size, align) in layout() {
             text.push_str(&format!(";{name}:{size}:{align}"));
         }
@@ -113,42 +132,41 @@ pub fn build_fingerprint() -> &'static str {
     })
 }
 
-fn versioned_name(prefix: &str) -> CString {
-    CString::new(format!("{prefix}/{}+{}", abi_line(), build_fingerprint()))
-        .expect("capsule name has no NUL")
+fn capsule_name(prefix: &str) -> CString {
+    CString::new(format!("{prefix}/{}", build_fingerprint())).expect("capsule name has no NUL")
 }
 
 /// PyCapsule name for [`crate::FrameRef`] handles:
-/// `molrs.FrameRef/<abi_line>+<build_fingerprint>`.
+/// `molrs.FrameRef/<build_fingerprint>`.
 ///
-/// The name carries the ABI line and the build fingerprint, so an exchange
-/// between builds that may lay a handle out differently fails the capsule
-/// name check (a clean `ValueError`) instead of dereferencing a drifted
-/// layout.
+/// An exchange between builds that may lay a handle out differently fails the
+/// capsule name check (a clean `ValueError`) instead of dereferencing a
+/// drifted layout.
 pub fn frameref_capsule_name() -> &'static CStr {
     static NAME: OnceLock<CString> = OnceLock::new();
-    NAME.get_or_init(|| versioned_name("molrs.FrameRef"))
+    NAME.get_or_init(|| capsule_name(FRAMEREF_CAPSULE_PREFIX))
 }
 
 /// PyCapsule name for `ForceFieldRef` handles:
-/// `molrs.ForceFieldRef/<abi_line>+<build_fingerprint>`.
+/// `molrs.ForceFieldRef/<build_fingerprint>`.
 ///
 /// Not gated on the `ff` feature — it is only a string, and a core-only build
 /// may still need to *recognize* (and reject) a force-field capsule.
 pub fn forcefield_capsule_name() -> &'static CStr {
     static NAME: OnceLock<CString> = OnceLock::new();
-    NAME.get_or_init(|| versioned_name("molrs.ForceFieldRef"))
+    NAME.get_or_init(|| capsule_name(FORCEFIELDREF_CAPSULE_PREFIX))
 }
 
 /// PyCapsule name for [`crate::RegionRef`] handles:
-/// `molrs.RegionRef/<abi_line>+<build_fingerprint>`.
+/// `molrs.RegionRef/<build_fingerprint>`.
 ///
 /// A region crosses the boundary as shared geometry the consumer evaluates
-/// in place (see [`crate::RegionRef`]); the versioned name keeps a
-/// cross-minor exchange failing at the name check like the other handles.
+/// in place (see [`crate::RegionRef`]); the fingerprinted name keeps an
+/// exchange between differing layouts failing at the name check like the
+/// other handles.
 pub fn regionref_capsule_name() -> &'static CStr {
     static NAME: OnceLock<CString> = OnceLock::new();
-    NAME.get_or_init(|| versioned_name("molrs.RegionRef"))
+    NAME.get_or_init(|| capsule_name(REGIONREF_CAPSULE_PREFIX))
 }
 
 #[cfg(test)]
@@ -156,17 +174,20 @@ mod tests {
     use super::*;
 
     /// The layout of the handle-crossing types on a 64-bit target. A change
-    /// here inside a minor line is an ABI break: bump the minor version (and
-    /// this snapshot), never only the snapshot.
+    /// here is a deliberate layout change: update this snapshot with it.
     #[cfg(all(target_pointer_width = "64", feature = "ff"))]
     const SNAPSHOT: &[(&str, usize, usize)] = &[
         ("FrameRef", 16, 8),
         ("BlockRef", 48, 8),
         ("FrameArena", 32, 8),
+        ("FrameArenaLock", 48, 8),
         ("RegionRef", 16, 8),
         ("Frame", 1224, 8),
         ("Block", 328, 8),
         ("SimBox", 1080, 8),
+        ("Column", 16, 8),
+        ("ColumnArray", 112, 8),
+        ("MetaValue", 80, 8),
         ("ForceFieldRef", 8, 8),
         ("ForceField", 136, 8),
     ];
@@ -182,22 +203,46 @@ mod tests {
         );
     }
 
+    /// A frame crosses as a handle, but the consumer drops what it reaches:
+    /// every block's columns and their storage, and the meta values. Their
+    /// layouts are part of the contract — a build whose column storage
+    /// differs (an `Option<Box<dyn Any>>` keeper more, or less) passed the
+    /// capsule check and freed a producer's columns with the wrong layout.
     #[test]
-    fn abi_line_is_major_minor_of_molrs_version() {
-        let expected: Vec<&str> = env!("CARGO_PKG_VERSION").split('.').take(2).collect();
-        assert_eq!(abi_line(), expected.join("."));
-        assert_eq!(abi_line().split('.').count(), 2);
+    fn the_layout_reaches_what_dropping_a_frame_walks() {
+        use std::mem::{align_of, size_of};
+        let reached = [
+            (
+                "Column",
+                size_of::<molrs::core::Column>(),
+                align_of::<molrs::core::Column>(),
+            ),
+            (
+                "ColumnArray",
+                size_of::<molrs::core::ColumnArray<molrs::op::F>>(),
+                align_of::<molrs::core::ColumnArray<molrs::op::F>>(),
+            ),
+            (
+                "MetaValue",
+                size_of::<molrs::core::MetaValue>(),
+                align_of::<molrs::core::MetaValue>(),
+            ),
+        ];
+        let layout = layout();
+        for entry in reached {
+            assert!(layout.contains(&entry), "{entry:?} is not in {layout:?}");
+        }
     }
 
     #[test]
-    fn capsule_names_carry_the_abi_line_and_differ() {
+    fn capsule_names_carry_the_build_fingerprint_and_differ() {
         let frame = frameref_capsule_name().to_str().expect("utf8");
         let ff = forcefield_capsule_name().to_str().expect("utf8");
         let region = regionref_capsule_name().to_str().expect("utf8");
-        let suffix = format!("{}+{}", abi_line(), build_fingerprint());
-        assert_eq!(frame, format!("molrs.FrameRef/{suffix}"));
-        assert_eq!(ff, format!("molrs.ForceFieldRef/{suffix}"));
-        assert_eq!(region, format!("molrs.RegionRef/{suffix}"));
+        let fingerprint = build_fingerprint();
+        assert_eq!(frame, format!("molrs.FrameRef/{fingerprint}"));
+        assert_eq!(ff, format!("molrs.ForceFieldRef/{fingerprint}"));
+        assert_eq!(region, format!("molrs.RegionRef/{fingerprint}"));
         assert_ne!(frame, ff);
         assert_ne!(frame, region);
         assert_ne!(ff, region);

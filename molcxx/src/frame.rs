@@ -12,8 +12,8 @@ use crate::bridge;
 //
 // `molrs_ffi::FrameRef` is the handle type used by every molrs language
 // binding (python, wasm). It pairs a `FrameId` with the shared
-// `FrameArenaCell` (`Rc<RefCell<FrameArena>>`) that owns the frame — cloning
-// is two `Rc` bumps and keeps the arena alive. Atomiverse C++ reads/writes a `molrs.core.Frame` entirely through this
+// `FrameArenaCell` (`Arc<RwLock<FrameArena>>`) that owns the frame — cloning
+// is one `Arc` bump and keeps the arena alive. Atomiverse C++ reads/writes a `molrs.core.Frame` entirely through this
 // handle, so the SCF / MD pipeline never copies a whole frame.
 //
 // cxx `extern "Rust"` opaque types are crate-local by convention, so the
@@ -48,15 +48,15 @@ pub(crate) fn frame_new() -> Box<FrameRef> {
 ///
 /// This is the cross-extension ingress point. molpy's
 /// `Frame._ffi_frameref_capsule()` produces a `PyCapsule` named
-/// `molrs_ffi::abi::frameref_capsule_name()` — `"molrs.FrameRef/<major.minor>"`,
-/// carrying the ABI line. PyO3 heap-boxes the capsule payload, and that payload
+/// `molrs_ffi::abi::frameref_capsule_name()` — `"molrs.FrameRef/<fingerprint>"`,
+/// carrying the build fingerprint. PyO3 heap-boxes the capsule payload, and that payload
 /// is a `#[repr(transparent)]` `FrameRefPtr` — itself a `*mut FrameRef`
 /// (a clone of the Python frame's handle). The capsule's `void*` is
 /// therefore `*mut *mut molrs_ffi::FrameRef`.
 ///
 /// `addr` is `PyCapsule_GetPointer` cast to `usize`. This function resolves
 /// it as `*const *const molrs_ffi::FrameRef`, dereferences once to reach the
-/// cloned `*const FrameRef`, then `.clone()`s it — two cheap `Rc` bumps —
+/// cloned `*const FrameRef`, then `.clone()`s it — one `Arc` bump —
 /// producing a handle onto the *same* shared frame arena. Reads and writes
 /// through the returned handle are visible in the originating Python
 /// `molrs.core.Frame`.
@@ -67,11 +67,11 @@ pub(crate) fn frame_new() -> Box<FrameRef> {
 /// capsule from `molpy.Frame._ffi_frameref_capsule()`, asked for with the
 /// name THIS build accepts — [`frameref_capsule_name`], never a name the
 /// producer reports — and valid for the duration of this call. The name
-/// carries the molrs minor line and the build fingerprint (compiler and
-/// handle layout), so a producer that may lay a handle out differently fails
-/// the name check instead of being dereferenced here. The molrs FFI frame arena is
-/// single-threaded and GIL-guarded; the caller must hold the GIL (or
-/// otherwise guarantee exclusive access) while calling.
+/// carries the build fingerprint (compiler and handle layout), so a producer that may lay a handle out differently fails
+/// the name check instead of being dereferenced here. The caller must keep
+/// the capsule alive during the call (hold the GIL); the returned handle is
+/// `Send + Sync` and may then be used without it — an access that meets a
+/// conflicting one on another thread is refused as `FrameBusy`.
 ///
 /// @param addr `molrs.FrameRef` capsule pointer (a `*mut *mut FrameRef`)
 /// @return boxed bridge handle sharing the same arena as the source frame
@@ -619,7 +619,6 @@ pub(crate) fn frame_set_box(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
 
     /// Round-trip: write every column dtype + simbox through the bridge,
     /// then read them back and assert element-wise equality. Also exercises
@@ -748,7 +747,7 @@ mod tests {
 
     /// Capsule / shared-arena semantics: a cloned `FrameRef` shares the
     /// same frame arena. Round-tripping through `Box::into_raw`/`from_raw`
-    /// (the PyCapsule pattern) must preserve `Rc::ptr_eq`, and a mutation
+    /// (the PyCapsule pattern) must share one arena, and a mutation
     /// through one handle must be visible through the other.
     #[test]
     fn cloned_frameref_shares_arena() {
@@ -761,7 +760,7 @@ mod tests {
         let mut recovered: Box<FrameRef> = unsafe { Box::from_raw(raw) };
 
         // Same arena behind both handles.
-        assert!(Rc::ptr_eq(&original.0.arena, &recovered.0.arena));
+        assert!(original.0.arena.ptr_eq(&recovered.0.arena));
 
         // Mutate through the recovered handle, observe through the original.
         frame_set_column_f64(&mut recovered, "atoms", "x", &[7.0, 8.0, 9.0]).unwrap();

@@ -247,7 +247,7 @@ pub mod ffi {
         // `Frame._ffi_frameref_capsule()`). `unsafe` — caller must pass a
         // live pointer; see the `# Safety` note on the Rust impl.
         unsafe fn frame_clone_from_addr(addr: usize) -> Box<FrameRef>;
-        // The capsule name THIS build accepts (ABI line + build fingerprint):
+        // The capsule name THIS build accepts (carries the build fingerprint):
         // pass it to `PyCapsule_GetPointer`, which then refuses a producer
         // whose build may lay a handle out differently.
         fn frameref_capsule_name() -> String;

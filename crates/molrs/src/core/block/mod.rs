@@ -216,7 +216,7 @@ impl Block {
     ///
     /// `col` is anything that converts into a [`Column`]: an owned
     /// `ArrayD<T>` of any [`BlockDtype`], a pre-built [`Column`] (the zero-copy
-    /// path for moving a column between blocks), or a [`ColumnArray`].
+    /// path for moving a column between blocks).
     ///
     /// `validity` is the column's per-row validity mask, or `None` for a
     /// column whose every row holds a value. `mask[i] == false` marks row `i`

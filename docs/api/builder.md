@@ -3,9 +3,9 @@
 System construction. `mp.builder` holds the native builders —
 site-graph assembly (`Assembler` with its placers and orienter), the
 `Coarsener`, the graphene / nanotube builders, crystals (`Lattice`, `Site`,
-`SpaceGroup`, `SymOp`) and the virtual-site builders — and adds molpy's own:
-the polymer planning layer, `PackingTemplate`, and the AmberTools polymer
-builder, which makes a GAFF chain without the assembler:
+`SpaceGroup`, `SymOp`) and the virtual-site builders — polymer ensembles (`Fragment`, `StochasticObject`, `Molecule`, `System`: the
+generative-BigSMILES model) — and adds molpy's own: `PackingTemplate` and the
+AmberTools polymer builder, which makes a GAFF chain without the assembler:
 prepgen cuts one antechamber-typed oligomer and tleap `sequence` joins the
 residues. Every name has one path, `mp.builder.<Name>`; the modules behind it
 are implementation modules, outside `mp.builder.__all__`.
@@ -18,12 +18,13 @@ are implementation modules, outside `mp.builder.__all__`.
 | `mp.builder.GrowthPlacer` | Grows each molecule breadth-first onto its parent's ports; needs no site positions | Topologies from CGsmiles notation |
 | `mp.builder.SitePlacer` | Puts each copy's centroid on its site | Sites with positions (a coarsened CG model) |
 | `mp.builder.AxisOrienter` | Turns each copy onto its site: backbone-to-centre along the site axis and joining atoms along the bonds for chain units; port directions fitted to bond directions for branch units | Backmapping with `SitePlacer` |
-| `mp.io.cgsmiles.CgSmilesIr` | `.templates()` → name → ported `mp.Atomistic`; `.to_coarsegrain()` → site graph | Writing units and topologies |
+| `mp.io.cgsmiles.CgSmilesIr` | `.templates()` → name → ported `mp.Atomistic`; `.to_assembly_graph()` → exact resolved site graph; `.to_coarsegrain()` → simplified projection | Writing units and topologies |
 | `mp.io.smiles.read_smiles_fragment` | `read_smiles_fragment(body).to_template()` → one ported `mp.Atomistic` from a fragment body | Writing one unit |
 | `mp.perceive.SubgraphMatcher` / `mp.builder.Coarsener` | Find bead groups in a CG model; turn them into sites with a position and an axis | Site graphs from a CG model |
-| `SystemPlanner` / `PolydisperseChainGenerator` / `Chain` / `SystemPlan` | Sample a polydisperse chain plan to a target mass | Bulk / MW-distributed systems |
-| `SchulzZimmPolydisperse` / `FlorySchulzPolydisperse` / `PoissonPolydisperse` / `UniformPolydisperse` | Chain-length distributions (`MassDistribution` / `DpDistribution` protocols) | Choosing a molecular-weight distribution |
-| `WeightedSequenceGenerator` / `BlockSequenceGenerator` / `AlternatingSequenceGenerator` | Monomer sequences (`SequenceGenerator` protocol) | Copolymer composition |
+| `mp.builder.Fragment` | `Fragment(name, template, weights=None)`: one ported template and a generation weight per port (a float, its reactivity; a list, its pairing weight with each port of the object) | Repeat units, end groups, caps |
+| `mp.builder.StochasticObject` / `ChainSize` / `Distribution` | Repeat units and end groups grown to a size drawn from `ChainSize(Distribution.SchulzZimm(mw=…, mn=…), "mass")` (`FlorySchulz`, `Gauss`, `Uniform`, `LogNormal`, `Poisson`; measures `"repeat_units"`, `"mass"`, `"heavy_atom_mass"`) | Chain-size distributions, copolymer composition |
+| `mp.builder.Molecule` / `System` / `Amount` | Fragments and objects joined end to end; molecule kinds sampled to `Amount.Total(value=…)` / `Amount.Percent(percent=…)` of a total. `sample(seed)` → site graph (`System`: `SystemSample` with `.sites` and a `MoleculeRecord` per chain); `library()` → the assembler's templates | Bulk / MW-distributed systems |
+| `mp.io.bigsmiles.read_bigsmiles` | `read_bigsmiles(text).to_system()`: the same model from one generative-BigSMILES string (sizes in heavy-atom mass) | Writing an ensemble as notation |
 | `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` `Frame` + `.cell()` box | Zigzag, armchair, and chiral nanotubes |
 | `GrapheneBuilder` | `GrapheneBuilder(nx, ny, ...)` → `.build()` `Frame` + `.cell()` box | Rectangular graphene honeycomb sheet |
 | `Lattice` / `Site` / `SpaceGroup` | `Lattice(box, basis)`: a `mp.Box` unit cell (lattice vectors are the columns of `box.h`) plus basis sites in fractional coordinates; `Lattice.from_cif(frame)` expands a CIF's asymmetric unit by the operators `read_cif` keeps; `.build(region, repeats=...)` tiles it | Crystals |
@@ -62,8 +63,11 @@ assert set(atoms["mol_id"].tolist()) == {1}  # one connected component
 assert chain.n_ports == 2  # the chain ends keep their ports and hydrogens
 ```
 
-Each bond joins one accepting port of each end, chosen by the assembler; the
-leaving handles are removed and their charge folds onto the anchors. A build
+Each bond joins one accepting port of each end. Supply `src_port` and
+`dst_port` to `sites.add_bond(a, b, ...)` to fix the template port ordinals;
+without them the assembler chooses from the remaining compatible ports.
+The leaving handles are removed and their partial charge folds onto the
+anchors. Formal charges must already describe the product fragments. A build
 that cannot give every bond a port raises `ValueError` naming the site. For a
 site graph coarsened from a CG model, use
 `mp.builder.Assembler(library, mp.builder.SitePlacer(), mp.builder.AxisOrienter())` — see
@@ -192,43 +196,49 @@ assert len(salt.basis) == 8
 
 ## Polydisperse systems
 
-Sample a chain plan, then build each chain's monomer sequence as a CGsmiles
-path with the same assembler:
+Grow chains of random size from fragments, sample them to a total, and build
+each sampled chain with one assembler:
 
 ```python
-import numpy as np
-from molpy.builder import (
-    PolydisperseChainGenerator,
-    SchulzZimmPolydisperse,
-    SystemPlanner,
-    WeightedSequenceGenerator,
-)
-
-planner = SystemPlanner(
-    PolydisperseChainGenerator(
-        WeightedSequenceGenerator({"EO": 1.0}),
-        {"EO": 44.05},
-        distribution=SchulzZimmPolydisperse(1500, 3000),
-    ),
-    target_total_mass=5e3,
-)
-plan = planner.plan_system(np.random.default_rng(42))
-chains = [
-    assembler.assemble(
-        mp.io.cgsmiles.read_cgsmiles(
-            "{" + "".join(f"[#{m}]" for m in chain.monomers) + "}"
-        ).to_coarsegrain()
+eo = mp.builder.Fragment("EO", mp.io.smiles.read_smiles_fragment("[<]OCC[>]").to_template())
+cap = mp.builder.Fragment("Me", mp.io.smiles.read_smiles_fragment("[<]C").to_template())
+start = mp.builder.Fragment("MeO", mp.io.smiles.read_smiles_fragment("C[>]").to_template())
+peo = mp.builder.Molecule([
+    mp.builder.StochasticObject(
+        [eo],
+        [start, cap],
+        size=mp.builder.ChainSize(
+            mp.builder.Distribution.SchulzZimm(mw=3000.0, mn=1500.0), "mass"
+        ),
     )
-    for chain in plan.chains[:2]
+])
+system = mp.builder.System(
+    [(peo, mp.builder.Amount.Total(value=5e3))], measure="mass"
+)
+sample = system.sample(42)
+assert sum(m.mass for m in sample.molecules) >= 5e3
+
+conformer = mp.conformer.Conformer(seed=42)
+library = {name: conformer.generate(t)[0] for name, t in peo.library().items()}
+chains = [
+    mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(peo.sample(seed))
+    for seed in range(2)
 ]
-assert len(chains) == 2
+assert all(chain.n_ports == 0 for chain in chains)
 ```
 
-`plan_system` returns a plan whose total mass is within `max_rel_error` of the
-target, or raises `RuntimeError` saying how far short it fell and why (trimming
-off, no shorter chain fits, or `max_chains` reached). A mass distribution's
-sampled mass becomes one whole `generate_sequence(dp)` call, so alternating and
-block generators keep their pattern.
+Growth starts from an end group, adds repeat units by port weight until the
+chain reaches a size drawn from its `ChainSize` (at least one repeat unit; a
+size counted in repeat units is a whole number), and caps the last open port
+with the end group that accepts it. A system samples chains until the total is
+reached — it stops at the first chain reaching it, trims nothing and bounds
+nothing, so the amounts are sampled as written. A model that cannot be sampled
+is refused when built, as a `mp.builder.PolymerError` whose `kind` names the
+reason (`"InvalidMolecule"`, `"InvalidObject"`, …; `"Stuck"` for a sample that
+could not be grown). An alternating copolymer is a list weight that pairs each unit only
+with the other; a block copolymer is two objects in one `Molecule`. The same
+system is `mp.io.bigsmiles.read_bigsmiles(text).to_system()` for a
+generative-BigSMILES `text`.
 
 ## Related
 

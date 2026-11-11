@@ -16,7 +16,9 @@
 //!   Nocedal & Wright, *Numerical Optimization* (2nd ed.), Algorithm 7.4
 //!   (L-BFGS two-loop recursion) + Algorithm 3.1 (backtracking line search).
 
-use super::OptimizationReport;
+use std::cell::Cell;
+
+use super::{OptimizationReport, StopReason};
 
 /// Default number of correction pairs retained by the L-BFGS history.
 ///
@@ -35,7 +37,7 @@ const EXPAND: f64 = 2.1;
 /// Maximum line-search trial evaluations per outer iteration.
 const MAX_LS_TRIALS: usize = 40;
 
-/// Convergence criterion for the core minimizer.
+/// Gradient criterion for the core minimizer.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Converge {
     /// Stop when the RMS gradient `‖g‖ / √n` drops below the tolerance
@@ -45,6 +47,36 @@ pub(crate) enum Converge {
     /// the tolerance (kcal/mol/Å). The ASE / molpy convention used by the
     /// public geometry optimizer.
     Fmax(f64),
+}
+
+/// LAMMPS's `minimize etol ftol maxiter maxeval` stopping criteria, checked
+/// alongside the gradient criterion; the first one met stops the run.
+///
+/// * `etol` — relative energy change between successive iterations, as
+///   LAMMPS evaluates it: `|E - E_prev| < etol · ½(|E| + |E_prev| + 1e-8)`.
+///   `0` disables it.
+/// * `ftol` — 2-norm of the global force vector (energy / Å). `0` disables it.
+/// * `max_evals` — force/energy evaluations, line-search trials included.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Limits {
+    pub etol: f64,
+    pub ftol: f64,
+    pub max_evals: usize,
+}
+
+impl Limits {
+    /// No LAMMPS criterion: the gradient criterion and the iteration cap only.
+    pub const NONE: Self = Self {
+        etol: 0.0,
+        ftol: 0.0,
+        max_evals: usize::MAX,
+    };
+}
+
+/// LAMMPS's energy-change test (`min.cpp`, `EPS_ENERGY = 1e-8`).
+#[inline]
+fn energy_converged(etol: f64, previous: f64, current: f64) -> bool {
+    etol > 0.0 && (current - previous).abs() < etol * 0.5 * (current.abs() + previous.abs() + 1e-8)
 }
 
 /// Maximum per-atom force magnitude from a flat `3N` gradient (= -forces).
@@ -64,12 +96,14 @@ pub(crate) fn fmax_from_grad(grad: &[f64]) -> f64 {
 /// L-BFGS core. Minimizes `eval` (returning `(energy, forces = -grad)`) in
 /// place over `coords`.
 ///
-/// Returns `(energy, final_grad, steps, converged)` where `final_grad` is the
-/// gradient (= -forces) at the returned point — callers derive `fmax` or
-/// `grad_rms` from it as needed.
+/// Returns `(energy, final_grad, steps, evaluations, stop)` where `final_grad`
+/// is the gradient (= -forces) at the returned point — callers derive `fmax`
+/// or `grad_rms` from it as needed — and `stop` says which criterion ended
+/// the run.
 ///
-/// * `max_iters` — outer-iteration cap.
-/// * `converge`  — convergence criterion (`GradRms` or `Fmax`).
+/// * `max_iters` — outer-iteration cap (LAMMPS `maxiter`).
+/// * `converge`  — gradient criterion (`GradRms` or `Fmax`).
+/// * `limits`    — LAMMPS `etol` / `ftol` / `maxeval`.
 /// * `max_step`  — per-step trust region in Å. `f64::INFINITY` disables it
 ///   (the search direction is taken as-is and the line search may expand);
 ///   any finite value clamps the search direction so no accepted step displaces
@@ -79,17 +113,23 @@ pub(crate) fn minimize_core<F>(
     coords: &mut [f64],
     max_iters: usize,
     converge: Converge,
+    limits: Limits,
     max_step: f64,
     memory: usize,
-    mut eval: F,
-) -> (f64, Vec<f64>, usize, bool)
+    mut raw_eval: F,
+) -> (f64, Vec<f64>, usize, usize, StopReason)
 where
     F: FnMut(&[f64]) -> (f64, Vec<f64>),
 {
     let n = coords.len();
     if n == 0 {
-        return (0.0, Vec::new(), 0, true);
+        return (0.0, Vec::new(), 0, 0, StopReason::Empty);
     }
+    let evals = Cell::new(0_usize);
+    let mut eval = |c: &[f64]| {
+        evals.set(evals.get() + 1);
+        raw_eval(c)
+    };
     let memory = memory.max(1);
     let trust = max_step.is_finite();
 
@@ -103,21 +143,28 @@ where
     let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(memory);
     let mut rho_hist: Vec<f64> = Vec::with_capacity(memory);
 
-    let mut converged = false;
+    let mut stop = StopReason::MaxIterations;
     let mut iters = 0;
 
     for it in 0..max_iters {
-        iters = it + 1;
-
         let gnorm2 = dot(&grad, &grad);
+        if limits.ftol > 0.0 && gnorm2 <= limits.ftol * limits.ftol {
+            stop = StopReason::ForceNorm;
+            break;
+        }
         let metric_converged = match converge {
             Converge::GradRms(tol) => gnorm2.sqrt() * inv_sqrt_n < tol,
             Converge::Fmax(tol) => fmax_from_grad(&grad) < tol,
         };
         if metric_converged {
-            converged = true;
+            stop = StopReason::Gradient;
             break;
         }
+        if evals.get() >= limits.max_evals {
+            stop = StopReason::MaxEvaluations;
+            break;
+        }
+        iters = it + 1;
 
         // --- L-BFGS two-loop recursion: direction = -H·grad ---------------
         let mut q = grad.clone();
@@ -247,6 +294,7 @@ where
                 // gradient inconsistent with its energy, or a singular term),
                 // not at a minimum. Stop without claiming convergence; a
                 // stationary point is caught by that gradient test instead.
+                stop = StopReason::LineSearch;
                 break;
             }
         }
@@ -268,9 +316,17 @@ where
             y_hist.push(y_k);
         }
         grad = new_grad;
+        if energy_converged(limits.etol, e0, energy) {
+            stop = StopReason::EnergyChange;
+            break;
+        }
     }
 
-    (energy, grad, iters, converged)
+    if stop == StopReason::MaxIterations && max_iters == 0 {
+        // A zero-iteration run only reads the start.
+        iters = 0;
+    }
+    (energy, grad, iters, evals.get(), stop)
 }
 
 /// RMS-gradient-tolerance L-BFGS entry point for the ETKDG stages: both
@@ -288,15 +344,16 @@ pub(crate) fn minimize_lbfgs_rms<F>(
 where
     F: FnMut(&[f64]) -> (f64, Vec<f64>),
 {
-    let (energy, grad, iters, converged) = minimize_core(
+    let (energy, grad, iters, evals, stop) = minimize_core(
         coords,
         max_iters,
         Converge::GradRms(grad_rms_tol),
+        Limits::NONE,
         f64::INFINITY,
         HISTORY,
         eval,
     );
-    OptimizationReport::from_gradient(converged, iters, energy, &grad)
+    OptimizationReport::from_gradient(stop, iters, evals, energy, &grad)
 }
 
 /// RMS of a flat gradient, `|g| / sqrt(len)`; zero for an empty one.

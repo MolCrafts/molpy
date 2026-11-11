@@ -12,9 +12,9 @@ use crate::core::keys;
 
 use crate::core::graph::{Graph, sealed};
 use crate::core::molgraph::NodeGuard;
-use crate::core::{BondNumber, CenterError, EntityTable, LinkError, Port, PortKind};
+use crate::core::{BondNumber, BondOrder, CenterError, EntityTable, LinkError, Port, PortKind};
 use crate::core::{GraphAccess, KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
-use crate::op::Idx;
+use crate::op::{I, Idx};
 
 /// Result of [`CoarseGrain::extract_subgraph`].
 #[derive(Debug, Clone)]
@@ -419,6 +419,13 @@ impl CoarseGrain {
     }
 
     /// Add a CG bond between two existing beads.
+    ///
+    /// Assembly connections optionally carry `src_port` and `dst_port`,
+    /// zero-based rows in the endpoints' template port tables; the schema
+    /// refuses a negative or non-integer ordinal here. That the two come
+    /// together, exist in their templates and accept each other is checked
+    /// by the assembler, which owns the library and is the one reader of
+    /// the pair. Parallel bonds are distinct relations.
     pub fn add_bond(
         &mut self,
         a: NodeId,
@@ -426,6 +433,44 @@ impl CoarseGrain {
         props: impl Into<Props>,
     ) -> Result<RelationId, MolRsError> {
         self.graph.add_relation(self.bond, &[a, b], props)
+    }
+
+    /// Add an assembly connection: a CG bond from port `src_port` of `a`'s
+    /// template to port `dst_port` of `b`'s, forming a bond of `bond_type`
+    /// and `bond_number`.
+    ///
+    /// The one writer of the four keys an assembly bond carries
+    /// ([`keys::SRC_PORT`], [`keys::DST_PORT`], [`keys::BOND_TYPE`],
+    /// [`keys::BOND_NUMBER`]); every producer of a site graph for the
+    /// assembler goes through it.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] for a port ordinal the column cannot
+    /// hold; what [`add_bond`](Self::add_bond) raises.
+    pub fn add_site_bond(
+        &mut self,
+        a: NodeId,
+        b: NodeId,
+        (src_port, dst_port): (usize, usize),
+        bond_type: BondOrder,
+        bond_number: BondNumber,
+    ) -> Result<RelationId, MolRsError> {
+        let ordinal = |port: usize| {
+            I::try_from(port).map_err(|e| {
+                MolRsError::validation(format!("port {port} is not representable: {e}"))
+            })
+        };
+        self.add_bond(
+            a,
+            b,
+            crate::props! {
+                keys::SRC_PORT => ordinal(src_port)?,
+                keys::DST_PORT => ordinal(dst_port)?,
+                keys::BOND_TYPE => bond_type,
+                keys::BOND_NUMBER => bond_number,
+            },
+        )
     }
 
     /// Delete one CG bond (its beads stay); returns it as stored.
@@ -581,18 +626,23 @@ impl CoarseGrain {
         self.graph.leaving_group(port)
     }
 
-    /// Join port `a` to port `b` and return the new anchor–anchor CG bond;
-    /// see [`MolGraph::link`]. The leaving groups' beads are deleted, and
-    /// their membership with them.
+    /// Join port `a` to port `b` and return the
+    /// [`Junction`](crate::core::Junction) (the new CG bond, its anchors, the
+    /// charge folded onto each); see [`MolGraph::link`]. The leaving groups'
+    /// beads are deleted, and their membership with them.
     ///
     /// # Errors
     ///
     /// The [`LinkError`] of the first refusal; the graph is unchanged then.
-    pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
-        let bond = self.graph.link(a, b)?;
+    pub fn link(
+        &mut self,
+        a: RelationId,
+        b: RelationId,
+    ) -> Result<crate::core::Junction, LinkError> {
+        let junction = self.graph.link(a, b)?;
         let live = self.graph.node_table();
         self.members.retain(|bead, _| live.contains(*bead));
-        Ok(bond)
+        Ok(junction)
     }
 
     /// Propagate each [`keys::FRAG_ID`] to the unlabelled degree-1 beads
@@ -638,6 +688,26 @@ impl CoarseGrain {
     /// The [`CenterError`] of [`MolGraph::center`].
     pub fn center(&self, beads: &[NodeId]) -> Result<[f64; 3], CenterError> {
         self.graph.center(beads)
+    }
+
+    /// Every bead's position, `N × 3` (Å), in bead row order — see
+    /// [`MolGraph::coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::coords`]: a bead without `x`, `y` or `z`.
+    pub fn coords(&self) -> Result<crate::op::Fnx3, MolRsError> {
+        self.graph.coords()
+    }
+
+    /// Write every bead's position from `coords` (`N × 3`, Å) — see
+    /// [`MolGraph::set_coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::set_coords`]: a shape other than `N × 3`.
+    pub fn set_coords(&mut self, coords: crate::op::Fnx3View<'_>) -> Result<(), MolRsError> {
+        self.graph.set_coords(coords)
     }
 
     /// Export to a tabular [`Frame`] in the canonical vocabulary every graph
@@ -1106,6 +1176,27 @@ mod tests {
         cg.add_bond(b1, b2, props! {}).unwrap();
         assert_eq!(cg.n_beads(), 2);
         assert_eq!(cg.n_bonds(), 1);
+    }
+
+    #[test]
+    fn assembly_port_ordinals_are_unsigned_integers_and_round_trip() {
+        let mut cg = CoarseGrain::new();
+        let a = cg.add_bead(props! { keys::BEAD_TYPE => "A" }).unwrap();
+        let b = cg.add_bead(props! { keys::BEAD_TYPE => "B" }).unwrap();
+        for p in [
+            props! { keys::SRC_PORT => -1, keys::DST_PORT => 0 },
+            props! { keys::SRC_PORT => 1.0, keys::DST_PORT => 0 },
+            props! { keys::SRC_PORT => true, keys::DST_PORT => 0 },
+        ] {
+            assert!(cg.add_bond(a, b, p).is_err());
+            assert_eq!(cg.n_bonds(), 0);
+        }
+        cg.add_bond(a, b, props! { keys::SRC_PORT => 1, keys::DST_PORT => 0 })
+            .unwrap();
+        let restored = CoarseGrain::from_frame(&cg.to_frame().unwrap()).unwrap();
+        let (_, bond) = restored.bonds().next().unwrap();
+        assert_eq!(bond.props.get_int(keys::SRC_PORT), Some(1));
+        assert_eq!(bond.props.get_int(keys::DST_PORT), Some(0));
     }
 
     #[test]

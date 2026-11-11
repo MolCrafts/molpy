@@ -8,8 +8,8 @@ use molrs::op::F;
 
 use super::*;
 use crate::compute::{
-    Axis, ComputeError, InputKind, LagKernel, ParamDefault, ParamKind, ParamValue, RegularGrid,
-    Stencil, SurvivalKind, Window,
+    Axis, ComputeError, FreeVolume, InputKind, LagKernel, ParamDefault, ParamKind, ParamValue,
+    PoreSizeDistribution, RegularGrid, Stencil, SurvivalKind, Window,
 };
 
 #[test]
@@ -206,11 +206,16 @@ fn cases() -> Result<Vec<Case>, ComputeError> {
         case(Pmft::<Xyt>::new(3.0, 3.0, 10, 10, 8)?),
         case(Pmft::<Xyz>::new(3.0, 3.0, 3.0, 10, 10, 10)?),
         case(Cluster::new()),
+        case(Percolation::new()),
+        case(RingPiercing::new(1.0)?),
+        case(CloseContacts::new(2)),
         case(CenterOfMass::new()),
         case(GyrationTensor::new()),
         case(InertiaTensor::new()),
         case(Pca::new(2)?),
         case(Kmeans::new(3)?),
+        case(FreeVolume::new(0.0)?),
+        case(PoreSizeDistribution::new(0.5)?),
     ];
     #[cfg(feature = "voronoi")]
     {

@@ -1,16 +1,17 @@
-"""Polydisperse polymer system: sample a chain-length distribution.
+"""Polydisperse polymer system: sample a chain-size distribution.
 
-A real melt is not monodisperse. You sample chain lengths from a
-molecular-weight distribution, then build each chain. The distribution +
-planner primitives do the sampling; you compose them directly (no wrapper):
+A real melt is not monodisperse. A generative-BigSMILES string states the
+whole ensemble — the repeat units and their weights, the end groups, the
+chain-size distribution and the system total — and ``to_system()`` reads it
+into the polymer model of ``mp.builder``:
 
-    distribution + sequence generator -> PolydisperseChainGenerator
-    -> SystemPlanner.plan_system() -> a list of Chain (dp, monomers, mass)
+    Fragment (ported template + port weights)
+    -> StochasticObject (repeat units, end groups, ChainSize)
+    -> Molecule -> System.sample(seed) -> a site graph + one record per chain
 
-Each ``Chain`` carries its monomer sequence. Written as a CGsmiles string
-(``{[#Sty][#MA]...}``), ``mp.io.cgsmiles.CgSmilesIr(...).to_coarsegrain()`` turns it into a
-site graph that ``mp.builder.Assembler(library, mp.builder.GrowthPlacer())`` grows into one
-chain (see topology/02_block.py).
+Each sampled chain is a site graph: ``Molecule.sample(seed)`` (or the whole
+system's ``sample.sites``) is what ``mp.builder.Assembler(library,
+mp.builder.GrowthPlacer())`` grows into atoms (see topology/02_block.py).
 
 Guide: docs/user-guide/05_polydisperse_systems.md
 Run:   python 05_polydisperse.py
@@ -18,44 +19,37 @@ Run:   python 05_polydisperse.py
 
 import numpy as np
 
-from molpy.builder import (
-    PolydisperseChainGenerator,
-    SchulzZimmPolydisperse,
-    SystemPlanner,
-    WeightedSequenceGenerator,
+import molpy as mp
+
+# A styrene / methyl-acrylate copolymer, 80:20 by port weight, methyl caps,
+# Schulz-Zimm sizes (Mw 1500, Mn 1400) and a 5e5 g/mol system — every size
+# counted in heavy-atom mass, as generative BigSMILES writes it.
+TEXT = (
+    "{[] [<|8|]CC(c1ccccc1)[>|8|], [<|2|]CC(C(=O)OC)[>|2|]; C[>], [<]C []}"
+    "|schulz_zimm(1500, 1400)|.|5e5|"
 )
 
 
 def main() -> None:
-    # A styrene / methyl-acrylate copolymer, 80:20 by mole (the weights are
-    # per-monomer draw probabilities). Monomer molar masses (g/mol) set the
-    # chain masses the planner accumulates.
-    monomer_mass = {"Sty": 104.15, "MA": 86.09}
-    seq_gen = WeightedSequenceGenerator(monomer_weights={"Sty": 8.0, "MA": 2.0})
+    system = mp.io.bigsmiles.read_bigsmiles(TEXT).to_system()
 
-    # Schulz-Zimm distribution in molecular-weight space (target Mn, Mw).
-    distribution = SchulzZimmPolydisperse(Mn=1400, Mw=1500)
+    # Deterministic in the seed.
+    sample = system.sample(42)
 
-    planner = SystemPlanner(
-        PolydisperseChainGenerator(seq_gen, monomer_mass, distribution=distribution),
-        target_total_mass=5e5,  # keep sampling chains until the box mass is hit
-        max_rel_error=0.02,
+    heavy = np.array([c.heavy_atom_mass for c in sample.molecules])
+    Mn = float(heavy.mean())
+    Mw = float((heavy**2).sum() / heavy.sum())
+    print(f"sampled {len(sample.molecules)} chains for {system.targets()[0]:.0f} g/mol")
+    print(f"  heavy-atom Mn={Mn:.0f}  Mw={Mw:.0f}  PDI={Mw / Mn:.3f}")
+
+    # Every chain is a connected component of one site graph; a site's
+    # bead_type names the fragment placed there.
+    first = sample.molecules[0]
+    print(
+        f"  first chain: {first.n_repeat_units} repeat units, "
+        f"{first.n_fragments} fragments, {first.mass:.1f} g/mol with hydrogens"
     )
-
-    # Deterministic sampling via a seeded rng passed at plan time.
-    plan = planner.plan_system(np.random.default_rng(42))
-
-    mw = np.array([c.mass for c in plan.chains])
-    Mn = float(mw.mean())
-    Mw = float((mw**2).sum() / mw.sum())
-    print(f"sampled {len(plan.chains)} chains for target mass {plan.target_mass:.0f}")
-    print(f"  Mn={Mn:.0f}  Mw={Mw:.0f}  PDI={Mw / Mn:.3f}")
-
-    # Each Chain is (dp, monomer sequence, mass). Its CGsmiles string is the
-    # topology `mp.io.cgsmiles.CgSmilesIr(...).to_coarsegrain()` reads (see topology/).
-    first = plan.chains[0]
-    labels = "".join(f"[#{m}]" for m in first.monomers[:8])
-    print(f"  first chain: dp={first.dp}, cgsmiles[:8]=" + "{" + labels + " ...}")
+    print(f"  fragments: {sorted(system.library())}")
 
 
 if __name__ == "__main__":

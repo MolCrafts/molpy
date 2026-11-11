@@ -94,14 +94,12 @@ impl CgSmilesIr {
     /// # A handle is told from a repletion hydrogen only by the port
     ///
     /// Nothing marks a handle on the atom itself; the `ports` relation is the
-    /// whole record. Do not round-trip a template through
-    /// [`remove_hydrogens`](crate::perceive::remove_hydrogens):
-    /// it decides by a kind-blind neighbour count, so a handle (one `bonds`
-    /// relation plus one `ports` relation to the same anchor) counts as
-    /// degree 2 and is kept while every repletion hydrogen is stripped — a
-    /// port relation is being counted as a bond, which is a routed defect,
-    /// not a contract. Adding hydrogens is safe: repletion skips atoms that
-    /// are already hydrogen and never touches a handle.
+    /// whole record. [`remove_hydrogens`](crate::perceive::remove_hydrogens)
+    /// protects port anchors and handles explicitly, and counts only real
+    /// bonds when deciding which other hydrogens to remove. Repletion keeps
+    /// each handle and reserves its port's future bond order before adding
+    /// hydrogens, so a double-bond port cannot overfill its anchor. The
+    /// handle's own physical bond remains single.
     ///
     /// # A template is instance-free
     ///
@@ -118,8 +116,9 @@ impl CgSmilesIr {
     /// [`PairEnd::Body::port`](crate::io::cgsmiles::PairEnd::Body::port) uses
     /// against the same body. The *n*-th descriptor of a definition is
     /// therefore the *n*-th port added for it.
-    /// [`port_ids`](molrs::core::Atomistic::port_ids) promises no iteration order, so read a port
-    /// back by its [`Port`](molrs::core::Port) rather than by position.
+    /// [`port_ids`](molrs::core::Atomistic::port_ids) returns port-table row order.
+    /// Coordinate generation preserves that order. Changing the template's
+    /// port structure invalidates a connection plan using its ordinals.
     ///
     /// # Errors
     ///
@@ -334,7 +333,7 @@ fn cap_open_sites(
 /// [`DescriptorKind::Shared`] (`!`) cannot arrive through
 /// [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse), which refuses the
 /// squash operator while reading; its arm is totality, not support.
-fn port_kind(kind: DescriptorKind) -> PortKind {
+pub(crate) fn port_kind(kind: DescriptorKind) -> PortKind {
     match kind {
         DescriptorKind::Symmetric => PortKind::Symmetric,
         DescriptorKind::Left => PortKind::Left,
@@ -517,6 +516,7 @@ mod tests {
     /// An unlabelled symmetric descriptor carrying `order`.
     fn descriptor(order: Option<BondKind>) -> BondingDescriptor {
         BondingDescriptor {
+            span: crate::line_notation::ast::Span::new(0, 0),
             kind: DescriptorKind::Symmetric,
             label: String::new(),
             order,

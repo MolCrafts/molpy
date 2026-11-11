@@ -12,6 +12,7 @@
 //! | `Scalar`, `Index` | `number` |
 //! | `Scalars`, `Angles` | `Float64Array` or `number[]` |
 //! | `Indices`, `IndexPairs`, `Tuples` | `Uint32Array` or `number[]`, flat |
+//! | `IndexLists` | an array of `Uint32Array` or `number[]`, one per list |
 //! | `Mask` | `Uint8Array` or `boolean[]` |
 //! | `Positions`, `Vectors`, `Quaternions`, `Series` | a shaped array (below) |
 //! | `Trajectory`, `Field` | a shaped array of rank 3 |
@@ -374,6 +375,23 @@ impl<'a> Fields<'a> {
             expected: format!("{}: a multiple of {arity} indices", self.what(key)),
             got: describe(value),
         })
+    }
+
+    /// Index lists of any lengths (`IndexLists`): an array of flat lists.
+    pub(crate) fn index_lists(&self, key: &str) -> Result<Vec<Vec<usize>>, ComputeError> {
+        let expected = "an array of Uint32Array or number[]";
+        let value = self.require(key, expected)?;
+        if !Array::is_array(&value) {
+            return Err(self.fail(key, expected, &value));
+        }
+        Array::from(&value)
+            .iter()
+            .map(|list| {
+                naturals(&list)
+                    .map(|items| items.into_iter().map(|i| i as usize).collect())
+                    .ok_or_else(|| self.fail(key, expected, &list))
+            })
+            .collect()
     }
 
     /// One flat tuple table per axis (`TuplesList`), each of its arity.

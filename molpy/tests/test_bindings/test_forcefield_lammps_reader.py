@@ -231,7 +231,7 @@ def _hand_ff() -> mp.ff.forcefield.ForceField:
     ff = mp.ff.forcefield.ForceField("hand", units="real")
     ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     c3 = ff.def_style("atom", "full").def_type("c3", mass=12.011)
-    ff.def_style("pair", "lj/cut", {"cutoff": 9.0}).def_type(
+    ff.def_style("pair", "lj/cut", {"cutoff": 9.0, "mixing": "arithmetic"}).def_type(
         "c3", c3, epsilon=0.1078, sigma=3.39771
     )
     ff.def_style("bond", "harmonic").def_type("c3-c3", c3, c3, k=228.89, r0=1.5354)

@@ -855,9 +855,12 @@ fn style_cases() -> Vec<(String, String)> {
                     .def_type(t, &[], Params::from_iter([("mass", m), ("charge", 0.0)]))
                     .unwrap();
             }
-            let s = ff
-                .def_style(category, name, Params::from_iter(style.iter().copied()))
-                .unwrap();
+            let mut style = Params::from_iter(style.iter().copied());
+            if name == "lj/cut" {
+                // The golden's `pair_modify mix arithmetic`: the rule is stated.
+                style.set("mixing", "arithmetic");
+            }
+            let s = ff.def_style(category, name, style).unwrap();
             let arity = match category {
                 "bond" => 2,
                 "angle" => 3,

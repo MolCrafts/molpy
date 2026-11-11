@@ -1,7 +1,8 @@
 //! [`MD`] walks [`Phase::ALL`] once per step and launches the components
 //! bound to each phase in ascending order.
 
-use molrs::core::{Frame, NeighborList, UnitPreset};
+use molrs::core::keys::{self, LAMMPS_UNITS};
+use molrs::core::{Frame, NeighborList, UnitStyle};
 use molrs::op::F;
 
 use super::bound_potential::{BoundPotential, Mounted};
@@ -23,13 +24,23 @@ struct Installed {
 /// In-process molecular dynamics. One driver, the LAMMPS phase list, and
 /// components inserted onto it.
 ///
+/// A run is in one LAMMPS units style, fixed at construction, and every
+/// input is taken in it, as LAMMPS takes every input in its `units`: masses,
+/// positions, velocities, the timestep, force-field parameters, temperatures,
+/// pressures and damping times. Nothing is converted between styles. An
+/// input that states another style — a [`BoundPotential`], a force field
+/// ([`FfEvaluator::with_units`]), the frame's `units` / `lammps_units` meta —
+/// is refused with [`MdError::UnitsMismatch`].
+///
 /// `run` writes the frame it is given. It does not return a second state.
 pub struct MD {
     installed: Vec<Installed>,
     /// Per phase, the installed indices in launch order; built with the run.
     schedule: [Vec<usize>; Phase::COUNT],
     scratch: Scratch,
-    units: UnitPreset,
+    units: UnitStyle,
+    /// The timestep, in the style's time unit (LAMMPS `update->dt`).
+    dt: F,
     /// The step index of the last force evaluation; it counts across runs.
     step: u64,
     /// The next build continues a checkpoint: the frame's forces are the
@@ -39,26 +50,22 @@ pub struct MD {
 }
 
 impl MD {
-    /// A driver in `units`, with the force-clear and kinetic-energy
-    /// infrastructure bound. The clear runs at `pre_force` order -1000. The
-    /// kinetic energy runs at `end_of_step` order -100 and writes
-    /// `frame.meta["kinetic"]`.
+    /// A driver in LAMMPS units style `units`, with the force-clear and
+    /// kinetic-energy infrastructure bound. The clear runs at `pre_force`
+    /// order -1000. The kinetic energy runs at `end_of_step` order -100 and
+    /// writes `frame.meta["kinetic"]`.
     ///
-    /// `units` is the run's unit system: `dt` is in its time unit, energies
-    /// and forces in its energy and force units, masses in its mass unit.
-    ///
-    /// # Errors
-    ///
-    /// [`MdError::Invalid`] when the registry cannot derive the preset's
-    /// step constants ([`UnitPreset::ftm2v`], [`UnitPreset::mvv2e`]).
-    pub fn new(units: UnitPreset) -> Result<Self, MdError> {
-        units.ftm2v()?;
-        units.mvv2e()?;
+    /// The timestep starts at the style's LAMMPS default
+    /// ([`UnitConstants::dt`](molrs::core::UnitConstants): 0.005 τ in `lj`,
+    /// 1 fs in `real`, 0.001 ps in `metal`, …), as `units` sets it in LAMMPS;
+    /// [`set_timestep`](Self::set_timestep) changes it.
+    pub fn new(units: UnitStyle) -> Self {
         let mut md = Self {
             installed: Vec::new(),
             schedule: Default::default(),
             scratch: Scratch::new(),
             units,
+            dt: units.constants().dt,
             step: 0,
             resuming: false,
             built: false,
@@ -67,12 +74,32 @@ impl MD {
         let kinetic = KineticEnergy::default();
         let bindings = kinetic.default_bindings();
         md.install(kinetic, bindings, Flags::default());
-        Ok(md)
+        md
     }
 
-    /// The run's unit system.
-    pub fn units(&self) -> &UnitPreset {
-        &self.units
+    /// The run's units style.
+    pub fn units(&self) -> UnitStyle {
+        self.units
+    }
+
+    /// The timestep, in the run style's time unit.
+    pub fn timestep(&self) -> F {
+        self.dt
+    }
+
+    /// Set the timestep (LAMMPS `timestep dt`), in the run style's time
+    /// unit. The integrator, thermostat and barostat all step by it.
+    ///
+    /// # Errors
+    ///
+    /// [`MdError::Invalid`] for a `dt` that is not finite and positive.
+    pub fn set_timestep(&mut self, dt: F) -> Result<(), MdError> {
+        if !dt.is_finite() || dt <= 0.0 {
+            return Err(MdError::Invalid(format!("dt must be > 0, got {dt}")));
+        }
+        self.dt = dt;
+        self.built = false;
+        Ok(())
     }
 
     /// The step index of the last force evaluation: 0 after the evaluation
@@ -104,7 +131,6 @@ impl MD {
         &mut self,
         integrator: T,
     ) -> Result<(), MdError> {
-        let dt = require_positive_dt(integrator.dt())?;
         self.remove_kind(Kind::Integrator);
         let bindings = integrator.default_bindings();
         self.install(
@@ -112,7 +138,6 @@ impl MD {
             bindings,
             Flags {
                 kind: Kind::Integrator,
-                dt: Some(dt),
                 ..Flags::default()
             },
         );
@@ -132,31 +157,27 @@ impl MD {
         Ok(())
     }
 
-    /// Append a thermostat. Its `dt` must equal the integrator's `dt`; that
-    /// check runs at [`build`](Self::build), so the integrator may be set after.
+    /// Append a thermostat. It steps by the run's timestep.
     pub fn set_thermostat<T: Thermostat + 'static>(
         &mut self,
         thermostat: T,
     ) -> Result<(), MdError> {
-        let dt = require_positive_dt(thermostat.dt())?;
         let bindings = thermostat.default_bindings();
         self.install(
             thermostat,
             bindings,
             Flags {
                 kind: Kind::Thermostat,
-                dt: Some(dt),
                 ..Flags::default()
             },
         );
         Ok(())
     }
 
-    /// Replace any barostat already bound with `barostat`. Its `dt` must equal
-    /// the integrator's `dt`, checked at [`build`](Self::build). Every force
-    /// provider must give the step a virial, or the barostat refuses the step.
+    /// Replace any barostat already bound with `barostat`. It steps by the
+    /// run's timestep. Every force provider must give the step a virial, or
+    /// the barostat refuses the step.
     pub fn set_barostat<T: Barostat + 'static>(&mut self, barostat: T) -> Result<(), MdError> {
-        let dt = require_positive_dt(barostat.dt())?;
         self.remove_kind(Kind::Barostat);
         let bindings = barostat.default_bindings();
         self.install(
@@ -164,7 +185,6 @@ impl MD {
             bindings,
             Flags {
                 kind: Kind::Barostat,
-                dt: Some(dt),
                 ..Flags::default()
             },
         );
@@ -178,7 +198,11 @@ impl MD {
     /// pair kernels, and the list is searched again once the motion and the
     /// cell strain since the last search could have brought a pair across the
     /// `skin` ([`VerletCadence`](molrs::core::VerletCadence); `0` searches
-    /// every step).
+    /// every step), LAMMPS `neigh_modify every 1 delay 0 check yes`.
+    ///
+    /// The list's cutoff already holds the skin — LAMMPS's `cutneigh`, not
+    /// its force cutoff — so `skin` has no default: the style's LAMMPS
+    /// default would silently narrow the reach of the pair kernels.
     ///
     /// # Errors
     ///
@@ -204,8 +228,11 @@ impl MD {
     /// included: a run has one evaluator).
     ///
     /// `skin` is the margin the potential's own neighbour search builds at
-    /// beyond its [`cutoff`](BoundPotential::cutoff). The driver decides when that
-    /// search must run again and says so through
+    /// beyond its [`cutoff`](BoundPotential::cutoff), LAMMPS's `neighbor
+    /// skin`; `None` takes the run style's LAMMPS default
+    /// ([`UnitConstants::skin`](molrs::core::UnitConstants): 0.3 σ in `lj`,
+    /// 2 Å in `real` and `metal`, …). The driver decides when that search must
+    /// run again and says so through
     /// [`PotentialStep::rebuild`](super::PotentialStep).
     ///
     /// # Errors
@@ -214,7 +241,7 @@ impl MD {
     pub fn set_bound_potential<C: BoundPotential + 'static>(
         &mut self,
         potential: C,
-        skin: F,
+        skin: Option<F>,
     ) -> Result<(), MdError> {
         let mounted = Mounted::new(Box::new(potential), skin)?;
         self.remove_kind(Kind::Evaluator);
@@ -238,11 +265,19 @@ impl MD {
         self.install(component, vec![(phase, order)], Flags::default());
     }
 
-    /// Check the mounted set and `build` every component.
+    /// Check the mounted set and the frame, and `build` every component.
     ///
     /// [`run`](Self::run) calls this on the first entry. A setter after that
     /// invalidates it, and the next `run` builds again.
+    ///
+    /// # Errors
+    ///
+    /// Beside a missing integrator, evaluator or neighbour list: a frame
+    /// whose `units` meta (its preset) or `lammps_units` meta names a style
+    /// other than the run's, and a component's own refusal — a potential or
+    /// force field in another style among them ([`MdError::UnitsMismatch`]).
     pub fn build(&mut self, frame: &mut Frame) -> Result<(), MdError> {
+        self.require_frame_units(frame)?;
         if !self
             .installed
             .iter()
@@ -280,25 +315,8 @@ impl MD {
                     .into(),
             ));
         }
-        let integ_dt = self
-            .installed
-            .iter()
-            .find(|c| c.flags.kind == Kind::Integrator)
-            .and_then(|c| c.flags.dt);
-        for installed in &self.installed {
-            let coupling = match installed.flags.kind {
-                Kind::Thermostat => "thermostat",
-                Kind::Barostat => "barostat",
-                _ => continue,
-            };
-            if installed.flags.dt != integ_dt {
-                return Err(MdError::Invalid(format!(
-                    "{coupling} dt differs from the integrator dt"
-                )));
-            }
-        }
         for installed in &mut self.installed {
-            installed.component.build(frame, &self.units)?;
+            installed.component.build(frame, self.units, self.dt)?;
         }
         for phase in Phase::ALL {
             let mut order: Vec<(i32, usize)> = self
@@ -333,6 +351,35 @@ impl MD {
             self.step += 1;
             self.scratch.begin(self.step);
             self.step_once(frame)?;
+        }
+        Ok(())
+    }
+
+    /// Refuse a frame that states a units style other than the run's: its
+    /// `units` meta (the preset of the force-field `units` object) or the
+    /// `lammps_units` a LAMMPS data file's title stated.
+    fn require_frame_units(&self, frame: &Frame) -> Result<(), MdError> {
+        let stated = match (frame.meta.get(keys::UNITS), frame.meta.get(LAMMPS_UNITS)) {
+            (Some(units), _) => keys::units_preset(units).ok_or_else(|| {
+                MdError::Invalid(format!(
+                    "the frame's '{}' meta names no LAMMPS units style; the run is in '{}'",
+                    keys::UNITS,
+                    self.units
+                ))
+            })?,
+            (None, Some(style)) => style.as_str().ok_or_else(|| {
+                MdError::Invalid(format!(
+                    "the frame's '{LAMMPS_UNITS}' meta must be a units style name"
+                ))
+            })?,
+            (None, None) => return Ok(()),
+        };
+        if stated != self.units.name() {
+            return Err(MdError::UnitsMismatch {
+                what: "the frame".into(),
+                declared: stated.to_owned(),
+                run: self.units,
+            });
         }
         Ok(())
     }
@@ -404,13 +451,6 @@ impl Installed {
     }
 }
 
-fn require_positive_dt(dt: F) -> Result<F, MdError> {
-    if !dt.is_finite() || dt <= 0.0 {
-        return Err(MdError::Invalid(format!("dt must be > 0, got {dt}")));
-    }
-    Ok(dt)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,7 +458,7 @@ mod tests {
     use crate::md::evaluator::FfEvaluator;
     use crate::md::fix_langevin::FixLangevin;
     use crate::md::verlet::VelocityVerlet;
-    use molrs::core::{Block, Frame};
+    use molrs::core::{Block, Frame, MetaValue};
     use molrs::ff::potential::{Accumulator, Potential};
     use molrs::op::F;
 
@@ -478,9 +518,9 @@ mod tests {
     #[test]
     fn an_empty_phase_is_still_walked() {
         let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let mut md = MD::new(UnitPreset::si()).unwrap();
-        md.set_integrator(VelocityVerlet::new(0.1).unwrap())
-            .unwrap();
+        let mut md = MD::new(UnitStyle::Si);
+        md.set_timestep(0.1).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
         md.set_evaluator(FfEvaluator::plain(Push { axis_force: 0.0 }))
             .unwrap();
         md.on(Phase::PostIntegrate, Counter { hits: hits.clone() }, 0);
@@ -492,7 +532,7 @@ mod tests {
 
     #[test]
     fn run_refuses_a_missing_integrator() {
-        let mut md = MD::new(UnitPreset::si()).unwrap();
+        let mut md = MD::new(UnitStyle::Si);
         md.set_evaluator(FfEvaluator::plain(Push { axis_force: 0.0 }))
             .unwrap();
         let err = md.run(&mut frame_at_rest(1, 1.0), 1).unwrap_err();
@@ -502,8 +542,9 @@ mod tests {
     #[test]
     fn constant_force_matches_the_velocity_verlet_step() {
         let dt = 0.1;
-        let mut md = MD::new(UnitPreset::si()).unwrap();
-        md.set_integrator(VelocityVerlet::new(dt).unwrap()).unwrap();
+        let mut md = MD::new(UnitStyle::Si);
+        md.set_timestep(dt).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
         md.set_evaluator(FfEvaluator::plain(Push { axis_force: 1.0 }))
             .unwrap();
         let mut frame = frame_at_rest(1, 1.0);
@@ -517,11 +558,10 @@ mod tests {
 
     #[test]
     fn a_second_integrator_replaces_the_first() {
-        let mut md = MD::new(UnitPreset::si()).unwrap();
-        md.set_integrator(VelocityVerlet::new(0.1).unwrap())
-            .unwrap();
-        md.set_integrator(VelocityVerlet::new(0.2).unwrap())
-            .unwrap();
+        let mut md = MD::new(UnitStyle::Si);
+        md.set_timestep(0.1).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
         md.set_evaluator(FfEvaluator::plain(Push { axis_force: 0.0 }))
             .unwrap();
         md.run(&mut frame_at_rest(1, 1.0), 0).unwrap();
@@ -556,18 +596,21 @@ mod tests {
     }
 
     /// One kick in `real`: m = 12 g/mol, f = 1 kcal/mol/Å, dt = 1 fs gives
-    /// Δv = dt·f/m·ftm2v = 4.184e-4/12 Å/fs (both half-kicks, the force
-    /// constant).
+    /// Δv = dt·f/m·ftm2v ≈ 4.184e-4/12 Å/fs (both half-kicks, the force
+    /// constant), with LAMMPS's `ftm2v = 1/48.88821291²` and its rounding:
+    /// two kicks of `dtfm = ½ dt ftm2v / m`.
     #[test]
     fn a_real_step_applies_ftm2v() {
-        let mut md = MD::new(UnitPreset::real()).unwrap();
-        md.set_integrator(VelocityVerlet::new(1.0).unwrap())
-            .unwrap();
+        let mut md = MD::new(UnitStyle::Real);
+        md.set_timestep(1.0).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
         md.set_evaluator(FfEvaluator::plain(Push { axis_force: 1.0 }))
             .unwrap();
         let mut frame = frame_at_rest(1, 12.0);
         md.run(&mut frame, 1).unwrap();
         let vx = column(&frame, "vx")[0];
+        let dtfm = 0.5 * 1.0 * (1.0 / 48.888_212_91 / 48.888_212_91) / 12.0;
+        assert_eq!(vx, dtfm + dtfm);
         assert!((vx - 4.184e-4 / 12.0).abs() < 1e-12, "{vx}");
     }
 
@@ -575,9 +618,9 @@ mod tests {
     /// Δv = 1/(12 · 1.036 426 9e-4) Å/ps.
     #[test]
     fn a_metal_step_applies_ftm2v() {
-        let mut md = MD::new(UnitPreset::metal()).unwrap();
-        md.set_integrator(VelocityVerlet::new(1.0).unwrap())
-            .unwrap();
+        let mut md = MD::new(UnitStyle::Metal);
+        md.set_timestep(1.0).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
         md.set_evaluator(FfEvaluator::plain(Push { axis_force: 1.0 }))
             .unwrap();
         let mut frame = frame_at_rest(1, 12.0);
@@ -593,8 +636,9 @@ mod tests {
     #[test]
     fn the_harmonic_step_and_its_shadow_energy() {
         let h = 0.1;
-        let mut md = MD::new(UnitPreset::si()).unwrap();
-        md.set_integrator(VelocityVerlet::new(h).unwrap()).unwrap();
+        let mut md = MD::new(UnitStyle::Si);
+        md.set_timestep(h).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
         md.set_evaluator(FfEvaluator::plain(Spring { k: 1.0 }))
             .unwrap();
         let mut frame = frame_at_rest(1, 1.0);
@@ -619,12 +663,12 @@ mod tests {
     #[test]
     fn chained_runs_are_one_run() {
         let langevin = || {
-            let mut md = MD::new(UnitPreset::real()).unwrap();
-            md.set_integrator(VelocityVerlet::new(1.0).unwrap())
-                .unwrap();
+            let mut md = MD::new(UnitStyle::Real);
+            md.set_timestep(1.0).unwrap();
+            md.set_integrator(VelocityVerlet::default()).unwrap();
             md.set_evaluator(FfEvaluator::plain(Spring { k: 0.5 }))
                 .unwrap();
-            md.set_thermostat(FixLangevin::new(300.0, 100.0, 1.0, 11).unwrap())
+            md.set_thermostat(FixLangevin::new(300.0, 100.0, 11).unwrap())
                 .unwrap();
             md
         };
@@ -643,12 +687,12 @@ mod tests {
     /// A barostat needs the step's virial; an external push has none.
     #[test]
     fn a_barostat_refuses_a_step_without_a_virial() {
-        let mut md = MD::new(UnitPreset::si()).unwrap();
-        md.set_integrator(VelocityVerlet::new(0.1).unwrap())
-            .unwrap();
+        let mut md = MD::new(UnitStyle::Si);
+        md.set_timestep(0.1).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
         md.set_evaluator(FfEvaluator::plain(Push { axis_force: 1.0 }))
             .unwrap();
-        md.set_barostat(crate::md::BerendsenBarostat::new(0.0, 10.0, 1.0, 0.1).unwrap())
+        md.set_barostat(crate::md::BerendsenBarostat::new(0.0, 10.0, 1.0).unwrap())
             .unwrap();
         let mut frame = frame_at_rest(1, 1.0);
         frame.simbox = Some(
@@ -659,17 +703,81 @@ mod tests {
         assert!(err.to_string().contains("virial"), "{err}");
     }
 
+    /// `units` sets the timestep in LAMMPS: 0.005 τ in `lj`, 1 fs in `real`,
+    /// 0.001 ps in `metal`, …, every style's `Update::set_units` value.
     #[test]
-    fn a_barostat_at_another_dt_is_refused() {
-        let mut md = MD::new(UnitPreset::si()).unwrap();
-        md.set_integrator(VelocityVerlet::new(0.1).unwrap())
+    fn the_timestep_starts_at_the_styles_default() {
+        let expected = [0.005, 1.0, 0.001, 1.0e-8, 1.0e-8, 0.001, 2.0, 0.00045];
+        for (style, dt) in UnitStyle::ALL.into_iter().zip(expected) {
+            assert_eq!(MD::new(style).timestep(), dt, "{style}");
+        }
+    }
+
+    #[test]
+    fn a_timestep_that_is_not_positive_is_refused() {
+        let mut md = MD::new(UnitStyle::Lj);
+        for dt in [0.0, -1.0, F::NAN, F::INFINITY] {
+            assert!(md.set_timestep(dt).is_err(), "{dt}");
+        }
+        assert_eq!(md.timestep(), 0.005);
+    }
+
+    /// A unit push from rest in `lj` (every constant 1) for one default step:
+    /// v = dt · f / m = 0.005. No σ, ε or m need defining.
+    #[test]
+    fn an_lj_run_steps_at_the_default_timestep() {
+        let mut md = MD::new(UnitStyle::Lj);
+        md.set_integrator(VelocityVerlet::default()).unwrap();
+        md.set_evaluator(FfEvaluator::plain(Push { axis_force: 1.0 }))
             .unwrap();
-        md.set_evaluator(FfEvaluator::plain(Push { axis_force: 0.0 }))
+        let mut frame = frame_at_rest(1, 1.0);
+        md.run(&mut frame, 1).unwrap();
+        assert_eq!(column(&frame, "vx")[0], 0.005);
+    }
+
+    /// A new timestep between runs reaches the integrator: the next run
+    /// builds again.
+    #[test]
+    fn a_new_timestep_takes_effect_at_the_next_run() {
+        let mut md = MD::new(UnitStyle::Si);
+        md.set_integrator(VelocityVerlet::default()).unwrap();
+        md.set_evaluator(FfEvaluator::plain(Push { axis_force: 1.0 }))
             .unwrap();
-        md.set_barostat(crate::md::BerendsenBarostat::new(0.0, 10.0, 1.0, 0.2).unwrap())
-            .unwrap();
-        let err = md.run(&mut frame_at_rest(1, 1.0), 1).unwrap_err();
-        assert!(err.to_string().contains("barostat dt"), "{err}");
+        md.set_timestep(0.1).unwrap();
+        let mut frame = frame_at_rest(1, 1.0);
+        md.run(&mut frame, 1).unwrap();
+        md.set_timestep(0.2).unwrap();
+        md.run(&mut frame, 1).unwrap();
+        let vx = column(&frame, "vx")[0];
+        assert!((vx - 0.3).abs() < 1e-15, "{vx}");
+    }
+
+    /// A frame that states its units — a data file's `units = metal` title,
+    /// or a `units` preset — must state the run's.
+    #[test]
+    fn a_frame_in_another_style_is_refused() {
+        let run = |meta: (&str, MetaValue)| {
+            let mut md = MD::new(UnitStyle::Real);
+            md.set_integrator(VelocityVerlet::default()).unwrap();
+            md.set_evaluator(FfEvaluator::plain(Push { axis_force: 0.0 }))
+                .unwrap();
+            let mut frame = frame_at_rest(1, 1.0);
+            frame.meta.insert(meta.0, meta.1);
+            md.run(&mut frame, 1)
+        };
+        let metal = run((LAMMPS_UNITS, MetaValue::String("metal".into()))).unwrap_err();
+        assert!(
+            matches!(&metal, MdError::UnitsMismatch { declared, .. } if declared == "metal"),
+            "{metal}"
+        );
+        let preset = MetaValue::Json(serde_json::json!({"preset": "lj"}));
+        let lj = run((keys::UNITS, preset)).unwrap_err();
+        assert!(lj.to_string().contains("'lj'"), "{lj}");
+        run((LAMMPS_UNITS, MetaValue::String("real".into()))).unwrap();
+        let real = MetaValue::Json(serde_json::json!({"preset": "real"}));
+        run((keys::UNITS, real)).unwrap();
+        let quantities = MetaValue::Json(serde_json::json!({"length": "nm"}));
+        assert!(run((keys::UNITS, quantities)).is_err());
     }
 
     /// A run resumed from the frame after step 5 continues the Langevin run of
@@ -678,12 +786,12 @@ mod tests {
     #[test]
     fn a_restart_at_the_restored_step_continues_the_run() {
         let langevin = || {
-            let mut md = MD::new(UnitPreset::real()).unwrap();
-            md.set_integrator(VelocityVerlet::new(1.0).unwrap())
-                .unwrap();
+            let mut md = MD::new(UnitStyle::Real);
+            md.set_timestep(1.0).unwrap();
+            md.set_integrator(VelocityVerlet::default()).unwrap();
             md.set_evaluator(FfEvaluator::plain(Spring { k: 0.5 }))
                 .unwrap();
-            md.set_thermostat(FixLangevin::new(300.0, 100.0, 1.0, 11).unwrap())
+            md.set_thermostat(FixLangevin::new(300.0, 100.0, 11).unwrap())
                 .unwrap();
             md
         };
@@ -704,9 +812,9 @@ mod tests {
 
     #[test]
     fn resuming_without_the_checkpoint_forces_is_refused() {
-        let mut md = MD::new(UnitPreset::si()).unwrap();
-        md.set_integrator(VelocityVerlet::new(0.1).unwrap())
-            .unwrap();
+        let mut md = MD::new(UnitStyle::Si);
+        md.set_timestep(0.1).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
         md.set_evaluator(FfEvaluator::plain(Push { axis_force: 0.0 }))
             .unwrap();
         md.resume(5);

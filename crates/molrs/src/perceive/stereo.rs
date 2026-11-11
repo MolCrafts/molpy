@@ -3,13 +3,11 @@
 use std::collections::HashMap;
 
 use crate::core::Atomistic;
-use crate::core::BondOrder;
 use crate::core::MolRsError;
-use crate::core::keys;
+use crate::core::bond_order::carries_ez;
+use crate::core::stereo::{TetrahedralSite, priority_substituent, tetrahedral_reference};
 use crate::core::{NodeId, RelationId};
 use crate::op::vec3::{cross, dot, norm, scale, sub};
-
-use super::valence::atomic_number;
 
 // ---------------------------------------------------------------------------
 // Public enums
@@ -30,17 +28,6 @@ pub enum TetrahedralStereo {
     CounterClockwise,
     /// No stereo information available or applicable.
     Unspecified,
-}
-
-/// One site of the tetrahedral reference order.
-///
-/// [`TetrahedralSite::Hydrogen`] is the implicit hydrogen of a stated
-/// `h_count` of 1, not an atom of the graph. An explicit hydrogen atom is
-/// [`TetrahedralSite::Atom`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum TetrahedralSite {
-    Atom(NodeId),
-    Hydrogen,
 }
 
 /// Double-bond stereochemistry.
@@ -130,65 +117,6 @@ pub fn perceive_chiral_centers(mol: &Atomistic) -> Vec<NodeId> {
 // Stereo assignment from 3D coordinates
 // ---------------------------------------------------------------------------
 
-/// The `h_count` an atom states, or `None` when the key is absent.
-///
-/// Absent is not zero. A bracket atom that omitted the count stores zero; an
-/// organic-subset atom stores nothing.
-pub(crate) fn stated_hydrogen_count(mol: &Atomistic, id: NodeId) -> Option<i32> {
-    mol.get_atom(id)
-        .ok()
-        .and_then(|atom| atom.get_int(keys::H_COUNT))
-}
-
-/// The order a tetrahedral `"CW"` / `"CCW"` is read against.
-///
-/// Four bond neighbors and a missing or zero `h_count` stand in bond order.
-/// Three bond neighbors and `h_count` 1 put the implicit hydrogen first. Any
-/// other count, including four neighbors together with a non-zero `h_count`,
-/// is not a reference this function names.
-pub(crate) fn tetrahedral_reference(mol: &Atomistic, id: NodeId) -> Option<[TetrahedralSite; 4]> {
-    let heavy: Vec<NodeId> = mol
-        .neighbors(id, NeighborKinds::BONDS)
-        .map(|(nb, _)| nb)
-        .collect();
-    match (heavy.len(), stated_hydrogen_count(mol, id)) {
-        (4, None) | (4, Some(0)) => Some([
-            TetrahedralSite::Atom(heavy[0]),
-            TetrahedralSite::Atom(heavy[1]),
-            TetrahedralSite::Atom(heavy[2]),
-            TetrahedralSite::Atom(heavy[3]),
-        ]),
-        (3, Some(1)) => Some([
-            TetrahedralSite::Hydrogen,
-            TetrahedralSite::Atom(heavy[0]),
-            TetrahedralSite::Atom(heavy[1]),
-            TetrahedralSite::Atom(heavy[2]),
-        ]),
-        _ => None,
-    }
-}
-
-/// The substituent perception and SMILES both treat as the representative.
-///
-/// Highest atomic number, then the earliest atom in the molecule. One CIP
-/// sphere: a wildcard (`Z = 0`) ranks below every element. The tie-break is
-/// the atom's own position, not its place in `subs`, so the answer does not
-/// follow bond-insertion order.
-pub(crate) fn priority_substituent(mol: &Atomistic, subs: &[NodeId]) -> Option<NodeId> {
-    subs.iter().copied().max_by_key(|&substituent| {
-        let z = mol
-            .get_atom(substituent)
-            .ok()
-            .map(|atom| atomic_number(&atom))
-            .unwrap_or(0);
-        let order = mol
-            .atoms()
-            .position(|(id, _)| id == substituent)
-            .unwrap_or(usize::MAX);
-        (z, std::cmp::Reverse(order))
-    })
-}
-
 /// Infer tetrahedral chirality for every potential stereocentre from 3-D
 /// coordinates.
 ///
@@ -257,7 +185,7 @@ pub fn perceive_bond_stereo(mol: &Atomistic) -> HashMap<RelationId, BondStereo> 
     for (bid, bond) in mol.bonds() {
         // A genuine double bond. An aromatic ring bond has no E/Z even when its
         // Kekulé phase is double — the ring is planar and the phase arbitrary.
-        if BondOrder::from_prop(bond.props.get(keys::BOND_TYPE)) != BondOrder::Double {
+        if !carries_ez(&bond.props) {
             result.insert(bid, BondStereo::None);
             continue;
         }
@@ -401,7 +329,7 @@ pub fn assign_stereo(mol: &mut Atomistic) -> Result<(), MolRsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{BondNumber, Element, Props};
+    use crate::core::{BondNumber, BondOrder, Element, Props, keys};
     use crate::props;
 
     /// An atom of element `el` at `(x, y, z)`.

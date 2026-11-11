@@ -30,16 +30,32 @@ pub struct PyOptimizationReport {
 
 #[pymethods]
 impl PyOptimizationReport {
-    /// Whether ``fmax`` convergence was reached within ``max_steps``.
+    /// Whether a tolerance stopped the run (``fmax``, ``etol`` or ``ftol``),
+    /// not a budget (``max_steps``, ``max_evals``) or a stuck line search.
     #[getter]
     fn converged(&self) -> bool {
         self.inner.converged
+    }
+
+    /// Which criterion stopped the run: ``"gradient"`` (``fmax``),
+    /// ``"energy_change"`` (``etol``), ``"force_norm"`` (``ftol``),
+    /// ``"max_iterations"``, ``"max_evaluations"``, ``"line_search"`` or
+    /// ``"empty"``.
+    #[getter]
+    fn stop_reason(&self) -> &'static str {
+        self.inner.stop_reason.as_str()
     }
 
     /// Number of outer L-BFGS iterations performed.
     #[getter]
     fn n_steps(&self) -> usize {
         self.inner.n_steps
+    }
+
+    /// Force/energy evaluations, line-search trials included.
+    #[getter]
+    fn n_evals(&self) -> usize {
+        self.inner.n_evals
     }
 
     /// Potential energy at the returned geometry (kcal/mol).
@@ -64,12 +80,13 @@ impl PyOptimizationReport {
 
     fn __repr__(&self) -> String {
         format!(
-            "OptimizationReport(converged={}, n_steps={}, final_energy={:.6}, final_fmax={:.6})",
+            "OptimizationReport(converged={}, stop_reason={:?}, n_steps={}, final_energy={:.6}, final_fmax={:.6})",
             if self.inner.converged {
                 "True"
             } else {
                 "False"
             },
+            self.inner.stop_reason.as_str(),
             self.inner.n_steps,
             self.inner.final_energy,
             self.inner.final_fmax
@@ -114,12 +131,19 @@ impl PyLbfgs {
     fn with_compiled<R>(
         &self,
         py: Python<'_>,
-        f: impl FnOnce(&Lbfgs<&Potentials>) -> Result<R, OptimizeError>,
-    ) -> PyResult<R> {
+        f: impl FnOnce(&Lbfgs<&Potentials>) -> Result<R, OptimizeError> + Send,
+    ) -> PyResult<R>
+    where
+        R: Send,
+    {
         let pots = self.potentials.borrow(py);
         let compiled = pots.compiled()?;
         compiled.require_pair_lists().map_err(ir::compile_err)?;
-        let out = f(&Lbfgs::new(compiled, self.settings));
+        // The descent is native work: release the GIL so other Python
+        // threads run meanwhile. A Python potential member re-takes it for
+        // its own evaluation.
+        let settings = self.settings;
+        let out = py.detach(|| f(&Lbfgs::new(compiled, settings)));
         take_err(&pots.err_slots)?;
         out.map_err(optimize_err)
     }
@@ -140,13 +164,20 @@ impl PyLbfgs {
         max_steps = LbfgsSettings::DEFAULT.max_steps,
         max_step = LbfgsSettings::DEFAULT.max_step,
         memory = LbfgsSettings::DEFAULT.memory,
+        etol = LbfgsSettings::DEFAULT.etol,
+        ftol = LbfgsSettings::DEFAULT.ftol,
+        max_evals = None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         potentials: Py<PyPotentials>,
         fmax: f64,
         max_steps: usize,
         max_step: f64,
         memory: usize,
+        etol: f64,
+        ftol: f64,
+        max_evals: Option<usize>,
     ) -> Self {
         Self {
             potentials,
@@ -155,6 +186,9 @@ impl PyLbfgs {
                 max_steps,
                 max_step,
                 memory,
+                etol,
+                ftol,
+                max_evals: max_evals.unwrap_or(usize::MAX),
             },
         }
     }
@@ -174,12 +208,15 @@ impl PyLbfgs {
     ///     atom, or the potentials were moved.
     fn minimize(&self, py: Python<'_>, frame: &PyFrame) -> PyResult<PyOptimizationReport> {
         let pots = self.potentials.borrow(py);
+        let settings = self.settings;
         let report = frame.with_frame_mut(|core| -> PyResult<OptimizationReport> {
             pots.bind_python(core)?;
             let pot = pots.compiled()?;
             pot.require_pair_lists().map_err(ir::compile_err)?;
-            Lbfgs::new(pot, self.settings)
-                .minimize(core)
+            // Native descent without the GIL (see ``with_compiled``); the
+            // frame stays write-locked, so another thread touching it gets
+            // ``FrameBusy`` instead of a torn read.
+            py.detach(|| Lbfgs::new(pot, settings).minimize(core))
                 .map_err(optimize_err)
         })??;
         take_err(&pots.err_slots)?;

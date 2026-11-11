@@ -67,18 +67,22 @@ impl PyCenterOfMass {
     #[pyo3(signature = (*, positions, simbox = None, partition, masses))]
     fn compute<'py>(
         &self,
+        py: Python<'py>,
         positions: ArrayArg2<'py, f64>,
         simbox: Option<PyRef<'py, PyBox>>,
         partition: &Bound<'py, PyAny>,
         masses: ArrayArg1<'py, f64>,
     ) -> Result<PyCenterOfMassResult> {
         let partition = args::PartitionArg::extract(partition)?;
-        let out = self.inner.compute(CenterOfMassInput {
-            positions: positions.as_array(),
-            simbox: simbox.as_ref().map(|simbox| &simbox.inner),
-            partition: partition.partition(),
-            masses: masses.as_array(),
-        })?;
+        let out = {
+            let input = CenterOfMassInput {
+                positions: positions.as_array(),
+                simbox: simbox.as_ref().map(|simbox| &simbox.inner),
+                partition: partition.partition(),
+                masses: masses.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -106,18 +110,22 @@ impl PyGyrationTensor {
     #[pyo3(signature = (*, positions, simbox = None, partition, weights))]
     fn compute<'py>(
         &self,
+        py: Python<'py>,
         positions: ArrayArg2<'py, f64>,
         simbox: Option<PyRef<'py, PyBox>>,
         partition: &Bound<'py, PyAny>,
         weights: ArrayArg1<'py, f64>,
     ) -> Result<PyGyrationTensorResult> {
         let partition = args::PartitionArg::extract(partition)?;
-        let out = self.inner.compute(GyrationTensorInput {
-            positions: positions.as_array(),
-            simbox: simbox.as_ref().map(|simbox| &simbox.inner),
-            partition: partition.partition(),
-            weights: weights.as_array(),
-        })?;
+        let out = {
+            let input = GyrationTensorInput {
+                positions: positions.as_array(),
+                simbox: simbox.as_ref().map(|simbox| &simbox.inner),
+                partition: partition.partition(),
+                weights: weights.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -145,18 +153,22 @@ impl PyInertiaTensor {
     #[pyo3(signature = (*, positions, simbox = None, partition, masses))]
     fn compute<'py>(
         &self,
+        py: Python<'py>,
         positions: ArrayArg2<'py, f64>,
         simbox: Option<PyRef<'py, PyBox>>,
         partition: &Bound<'py, PyAny>,
         masses: ArrayArg1<'py, f64>,
     ) -> Result<PyInertiaTensorResult> {
         let partition = args::PartitionArg::extract(partition)?;
-        let out = self.inner.compute(InertiaTensorInput {
-            positions: positions.as_array(),
-            simbox: simbox.as_ref().map(|simbox| &simbox.inner),
-            partition: partition.partition(),
-            masses: masses.as_array(),
-        })?;
+        let out = {
+            let input = InertiaTensorInput {
+                positions: positions.as_array(),
+                simbox: simbox.as_ref().map(|simbox| &simbox.inner),
+                partition: partition.partition(),
+                masses: masses.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

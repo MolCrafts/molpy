@@ -301,7 +301,9 @@ impl MolGraph {
         self.get_node(handle)?;
         if !self.is_bonded(anchor, handle) {
             return Err(MolRsError::validation(format!(
-                "port handle {handle:?} is not bonded to its anchor {anchor:?}"
+                "port handle {} is not bonded to its anchor {}",
+                u64::from(handle),
+                u64::from(anchor)
             )));
         }
         if order == BondNumber::Unknown {
@@ -311,7 +313,9 @@ impl MolGraph {
         }
         if self.port_on(anchor, handle).is_some() {
             return Err(MolRsError::validation(format!(
-                "the valence ({anchor:?}, {handle:?}) already carries a port"
+                "the valence ({}, {}) already carries a port",
+                u64::from(anchor),
+                u64::from(handle)
             )));
         }
         let ports = self.try_register_kind(PORTS, 2)?;
@@ -399,8 +403,9 @@ impl MolGraph {
     pub fn leaving_group(&self, port: &Port) -> Result<BTreeSet<NodeId>, MolRsError> {
         let cut = self.bond_between(port.handle, port.anchor).ok_or_else(|| {
             MolRsError::validation(format!(
-                "port handle {:?} is no longer bonded to its anchor {:?}",
-                port.handle, port.anchor
+                "port handle {} is no longer bonded to its anchor {}",
+                u64::from(port.handle),
+                u64::from(port.anchor)
             ))
         })?;
         let bonds = self.bonds_kind().expect("a bond was just found");
@@ -416,12 +421,12 @@ impl MolGraph {
         Ok(seen)
     }
 
-    /// [`port_ids`](Self::port_ids) under its former name.
-    pub fn ports(&self) -> impl Iterator<Item = RelationId> + '_ {
-        self.port_ids()
-    }
-
-    /// Iterate over the graph's port handles; empty without a `ports` kind.
+    /// Iterate over port handles in current port-table row order.
+    ///
+    /// This is the zero-based template port order used by assembly bonds.
+    /// Cloning, coordinate changes and hydrogen addition preserve it; deleting
+    /// ports may reorder rows. Do not change template port structure after
+    /// constructing a connection plan. Empty without a `ports` kind.
     pub fn port_ids(&self) -> impl Iterator<Item = RelationId> + '_ {
         self.ports_kind()
             .into_iter()
@@ -482,6 +487,64 @@ impl MolGraph {
                         .is_ok_and(|nodes| nodes[0] == anchor)
             })
             .map(|(_, rid, _)| rid)
+    }
+
+    /// The ports of every copy [`replicate`](Self::replicate) made of
+    /// `template`: per copy, in `template`'s [`port_ids`](Self::port_ids)
+    /// order. `handles` is what `replicate` returned for that template, copy
+    /// major: copy `c`'s node for template row `r` is `handles[c * n + r]`.
+    /// A template without nodes has no copies to report.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when `handles` is not whole copies of
+    /// `template`, when a template port names a node that is not a template
+    /// atom, or when a copy lacks the port its template has.
+    pub fn copied_ports(
+        &self,
+        template: &MolGraph,
+        handles: &[NodeId],
+    ) -> Result<Vec<Vec<RelationId>>, MolRsError> {
+        let n = template.n_nodes();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        if !handles.len().is_multiple_of(n) {
+            return Err(MolRsError::validation(format!(
+                "{} copied handles are not whole copies of a {n}-node template",
+                handles.len()
+            )));
+        }
+        let rows = template
+            .port_ids()
+            .map(|id| {
+                let port = template.get_port(id)?;
+                let row = |atom: NodeId| {
+                    template.node_table().row(atom).ok_or_else(|| {
+                        MolRsError::validation(format!(
+                            "port {} names node {}, which is no template node",
+                            u64::from(id),
+                            u64::from(atom)
+                        ))
+                    })
+                };
+                Ok((row(port.anchor)?, row(port.handle)?))
+            })
+            .collect::<Result<Vec<_>, MolRsError>>()?;
+        (0..handles.len() / n)
+            .map(|copy| {
+                rows.iter()
+                    .map(|&(anchor, handle)| {
+                        self.port_on(handles[copy * n + anchor], handles[copy * n + handle])
+                            .ok_or_else(|| {
+                                MolRsError::validation(format!(
+                                    "copy {copy} lacks the port between template rows {anchor} and {handle}"
+                                ))
+                            })
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     // ---- per-node unit membership ----

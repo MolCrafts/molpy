@@ -27,8 +27,9 @@ def _pair(edge: float = 10.0) -> mp.core.Frame:
 class TestDriver:
     def test_pair_lj_one_step_writes_the_frame(self) -> None:
         frame = _pair()
-        sim = MD("real")
-        sim.set_integrator(VelocityVerlet(0.001))
+        sim = MD(units="real")
+        sim.set_timestep(0.001)
+        sim.set_integrator(VelocityVerlet())
         sim.set_neighbor(NeighborList(3.0), skin=0.5)
         sim.set_evaluator(PairLjCut(1.0, 1.0, 2.5))
         sim.run(frame, 1)
@@ -40,16 +41,58 @@ class TestDriver:
         assert np.isfinite(fx).all()
 
     def test_a_missing_neighbor_list_is_named(self) -> None:
-        sim = MD("real")
-        sim.set_integrator(VelocityVerlet(0.001))
+        sim = MD(units="real")
+        sim.set_timestep(0.001)
+        sim.set_integrator(VelocityVerlet())
         sim.set_evaluator(PairLjCut(1.0, 1.0, 2.5))
         with pytest.raises(ValueError, match="set_neighbor"):
             sim.run(_pair(), 1)
 
 
+class TestUnits:
+    def test_the_default_style_is_lj_at_its_lammps_timestep(self) -> None:
+        sim = MD()
+        assert sim.units == "lj"
+        assert sim.timestep == 0.005
+
+    def test_a_style_sets_its_lammps_timestep(self) -> None:
+        assert MD(units="real").timestep == 1.0
+        assert MD(units="metal").timestep == 0.001
+
+    def test_units_is_keyword_only(self) -> None:
+        with pytest.raises(TypeError):
+            MD("real")  # type: ignore[misc]
+
+    def test_a_name_that_is_no_lammps_style_is_refused(self) -> None:
+        with pytest.raises(mp.core.UnitsError, match="openmm"):
+            MD(units="openmm")  # type: ignore[arg-type]
+
+    def test_a_force_field_in_another_style_is_refused(self) -> None:
+        def bonded(units: str) -> mp.ff.potential.WeightedTerms:
+            ff = mp.ff.forcefield.ForceField("pair", units=units)
+            a = ff.def_style("atom", "full").def_type("A", mass=1.0, charge=0.0)
+            ff.def_style("bond", "harmonic").def_type("A-A", a, a, k=100.0, r0=1.0)
+            frame = _pair()
+            frame["atoms"].insert("type", ["A", "A"])
+            bonds = mp.core.Block()
+            bonds.insert("atomi", np.array([0], dtype=np.uint32))
+            bonds.insert("atomj", np.array([1], dtype=np.uint32))
+            bonds.insert("type", ["A-A"])
+            frame["bonds"] = bonds
+            return mp.ff.PotentialCompiler(ff).compile_typed(frame)
+
+        sim = MD(units="real")
+        sim.set_evaluator(bonded("metal"))
+        sim.set_integrator(VelocityVerlet())
+        with pytest.raises(ValueError, match="'metal'.*'real'"):
+            sim.run(_pair(), 0)
+        sim.set_evaluator(bonded("real"))
+        sim.run(_pair(), 0)
+
+
 class TestMaxwellBoltzmann:
     def test_temperature_constructor(self) -> None:
-        mb = MaxwellBoltzmann(300.0, units=mp.core.UnitPreset("real"), seed=1)
+        mb = MaxwellBoltzmann(300.0, units="real", seed=1)
         assert mb.temperature == 300.0
         vel = mb.velocities(np.zeros((4, 3)), np.ones(4))
         assert vel.shape == (4, 3)

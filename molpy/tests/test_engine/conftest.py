@@ -56,7 +56,7 @@ def tip3p() -> mp.ff.forcefield.ForceField:
     ff.def_style("bond", "harmonic").def_type("OW-HW", ow, hw, k=450.0, r0=0.9572)
     # No style-level cutoff: that is a LAMMPS pair_style argument the GROMACS
     # writer rightly refuses (it has no .top directive); cutoffs live in the mdp.
-    pairs = ff.def_style("pair", "lj/cut")
+    pairs = ff.def_style("pair", "lj/cut", {"mixing": "arithmetic"})
     pairs.def_type("OW-OW", ow, ow, epsilon=0.1521, sigma=3.1507)
     pairs.def_type("HW-HW", hw, hw, epsilon=0.046, sigma=0.4)
     return ff

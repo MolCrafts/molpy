@@ -68,6 +68,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<molgraph::PyAtomistic>()?;
     m.add_class::<molgraph::PyCoarseGrain>()?;
     m.add_class::<molgraph::PyExtractedSubgraph>()?;
+    m.add_class::<molgraph::PyJunction>()?;
     m.add_class::<graph_views::PyNodeRef>()?;
     m.add_class::<graph_views::PyAtom>()?;
     m.add_class::<graph_views::PyVirtualSite>()?;

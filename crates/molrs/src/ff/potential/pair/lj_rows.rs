@@ -33,7 +33,7 @@ fn lj_row(
 pub(crate) fn lj_pair_params(
     style: &str,
     type_map: &HashMap<&str, &Params>,
-    mixing: CombiningRule,
+    mixing: Option<CombiningRule>,
     a: &str,
     b: &str,
 ) -> Result<(F, F), CompileError> {
@@ -46,17 +46,35 @@ pub(crate) fn lj_pair_params(
         lj_row(style, type_map, t)?
             .ok_or_else(|| format!("{style}: unknown atom type '{t}'").into())
     };
-    Ok(mixing.combine(own(a)?, own(b)?))
+    Ok(stated(style, mixing)?.combine(own(a)?, own(b)?))
+}
+
+/// The rule an unlike pair with no cross row is mixed by: the style's
+/// stated `mixing`. Engines disagree on the default, so none is refused.
+fn stated(style: &str, mixing: Option<CombiningRule>) -> Result<CombiningRule, IrError> {
+    mixing.ok_or_else(|| IrError::MissingParam {
+        style: style.to_owned(),
+        type_: String::new(),
+        param: "mixing".into(),
+    })
 }
 
 /// The `mixing` rule of the Lennard-Jones style `style`, from its params
 /// gathered under its spec ([`StyleSpec::gather`]: declared, else the
-/// spec's default).
+/// spec's default); `None` when it states none.
 ///
 /// [`StyleSpec::gather`]: crate::ff::ir::StyleSpec::gather
-pub(crate) fn mixing_of(style: &str, style_params: &Params) -> Result<CombiningRule, IrError> {
-    let name = param_reads::style_text(style, style_params, "mixing")?;
-    CombiningRule::parse(name).map_err(|e| param_reads::bad(style, "", "mixing", e))
+pub(crate) fn mixing_of(
+    style: &str,
+    style_params: &Params,
+) -> Result<Option<CombiningRule>, IrError> {
+    style_params
+        .get("mixing")
+        .and_then(|v| v.as_text())
+        .map(|name| {
+            CombiningRule::parse(name).map_err(|e| param_reads::bad(style, "", "mixing", e))
+        })
+        .transpose()
 }
 
 /// `((ε, σ), (ε₁₄, σ₁₄))`: a pair's regular and 1-4 Lennard-Jones parameters.
@@ -78,7 +96,7 @@ fn charmm_row(p: &Params, key: &str) -> Result<CharmmParams, IrError> {
 /// otherwise — LAMMPS's `init_one`.
 pub(crate) fn charmm_pair_params(
     rows: &HashMap<&str, &Params>,
-    mixing: CombiningRule,
+    mixing: Option<CombiningRule>,
     a: &str,
     b: &str,
 ) -> Result<CharmmParams, CompileError> {
@@ -96,6 +114,7 @@ pub(crate) fn charmm_pair_params(
     };
     let (ra, r14a) = own(a)?;
     let (rb, r14b) = own(b)?;
+    let mixing = stated("lj/charmm", mixing)?;
     Ok((mixing.combine(ra, rb), mixing.combine(r14a, r14b)))
 }
 
@@ -147,11 +166,13 @@ mod tests {
         let mut rows: HashMap<&str, &Params> = HashMap::new();
         rows.insert("A", &a);
         rows.insert("B", &b);
-        let (reg, r14) = charmm_pair_params(&rows, CombiningRule::Arithmetic, "A", "B").unwrap();
+        let (reg, r14) =
+            charmm_pair_params(&rows, Some(CombiningRule::Arithmetic), "A", "B").unwrap();
         assert_eq!(reg, ((0.1_f64 * 0.4).sqrt(), 3.3));
         assert_eq!(r14, ((0.05_f64 * 0.4).sqrt(), 0.5 * (2.8 + 3.6)));
         rows.insert(key.as_str(), &ab);
-        let (reg, r14) = charmm_pair_params(&rows, CombiningRule::Arithmetic, "B", "A").unwrap();
+        let (reg, r14) =
+            charmm_pair_params(&rows, Some(CombiningRule::Arithmetic), "B", "A").unwrap();
         assert_eq!(reg, (0.9, 2.0));
         assert_eq!(r14, (0.9, 2.0), "a 2-number cross row is its own 1-4 row");
     }

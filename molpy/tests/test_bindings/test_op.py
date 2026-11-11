@@ -164,3 +164,43 @@ class TestPlaceFromInternalCoords:
     def test_a_point_not_of_three_coordinates_is_rejected(self):
         with pytest.raises((TypeError, ValueError)):
             mp.op.place_from_internal_coords([0.0, 1.0], self.B, self.C, 1.0, 1.0, 1.0)
+
+
+class TestAxisAngle:
+    """``op::axis_angle`` / ``alignment_axis_angle`` / ``rotation_axis_angle``
+    cross: a ``(3, 3)`` float64 matrix out, ``(axis, angle)`` back, ``None``
+    and ``ValueError`` where the core has no answer."""
+
+    def test_a_quarter_turn_about_z_takes_x_to_y(self):
+        rotation = mp.op.axis_angle([0.0, 0.0, 2.0], np.pi / 2)
+        assert rotation.dtype == np.float64 and rotation.shape == (3, 3)
+        np.testing.assert_allclose(
+            rotation @ [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], atol=1e-12
+        )
+
+    def test_a_zero_axis_is_refused(self):
+        with pytest.raises(ValueError, match="no direction"):
+            mp.op.axis_angle([0.0, 0.0, 0.0], 1.0)
+
+    def test_rotation_axis_angle_inverts_axis_angle(self):
+        rotation = mp.op.axis_angle([1.0, 1.0, 0.0], 2.5)
+        axis, angle = mp.op.rotation_axis_angle(rotation)
+        np.testing.assert_allclose(
+            axis, np.array([1.0, 1.0, 0.0]) / np.sqrt(2.0), atol=1e-12
+        )
+        assert angle == pytest.approx(2.5, abs=1e-12)
+
+    def test_the_identity_has_no_axis(self):
+        assert mp.op.rotation_axis_angle(np.eye(3)) is None
+
+    def test_a_rotation_not_three_by_three_is_refused(self):
+        with pytest.raises(ValueError, match=r"\(3, 3\)"):
+            mp.op.rotation_axis_angle(np.eye(4))
+
+    def test_alignment_turns_x_onto_y(self):
+        axis, angle = mp.op.alignment_axis_angle([2.0, 0.0, 0.0], [0.0, 3.0, 0.0])
+        np.testing.assert_allclose(axis, [0.0, 0.0, 1.0], atol=1e-12)
+        assert angle == pytest.approx(np.pi / 2, abs=1e-12)
+
+    def test_aligned_directions_need_no_turn(self):
+        assert mp.op.alignment_axis_angle([1.0, 0.0, 0.0], [5.0, 0.0, 0.0]) is None

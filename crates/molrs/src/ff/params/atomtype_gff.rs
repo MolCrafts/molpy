@@ -1,6 +1,6 @@
 //! Antechamber atom-type definition rules — `ATOMTYPE_GFF.DEF`.
 //!
-//! DO NOT HAND-EDIT — regenerate with `scripts/gen_param_tables.py`, which emits
+//! DO NOT HAND-EDIT — regenerate with `crates/molrs/examples/gen_param_tables.py`, which emits
 //! this table from AmberTools' own `.DAT` / `.DEF` files. That is where the table
 //! came FROM; it is not what the table IS — this is ordinary source, not a build
 //! artefact.

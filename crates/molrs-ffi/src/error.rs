@@ -28,8 +28,9 @@ pub enum FfiError {
     },
 
     /// The frame's store is held by an operation still running on it — an
-    /// MD run reaching back into the frame it steps, from a callback. The
-    /// access is refused instead of aliasing the borrow.
+    /// MD run reaching back into the frame it steps, from a callback, or
+    /// native code on another thread. The access is refused instead of
+    /// aliasing the store or waiting on it.
     FrameBusy,
 }
 
@@ -45,7 +46,8 @@ impl fmt::Display for FfiError {
             FfiError::FrameBusy => write!(
                 f,
                 "the frame is in use by an operation still running on it (an MD run \
-                 calling back into the frame it steps); read it after that call returns"
+                 calling back into the frame it steps, or native code on another \
+                 thread); access it after that call returns"
             ),
             FfiError::DTypeMismatch {
                 key,

@@ -3,31 +3,11 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use super::{UnitRegistry, UnitsError};
+use super::{UnitRegistry, UnitStyle, UnitsError};
 use crate::op::F;
 
-use crate::core::constants::{
-    BOLTZMANN, COULOMB_CONSTANT, COULOMB_METAL, COULOMB_REAL, GAS_CONSTANT,
-};
-use crate::core::unit_factors::{J_TO_KCAL, J_TO_KJ, KCAL_ANGSTROM_TO_KJ_NM};
-
-/// The Boltzmann constant in `energy` per kelvin.
-fn boltzmann_in(energy: &str) -> F {
-    BOLTZMANN * registry_factor("J", energy)
-}
-
-/// The Coulomb constant `1/(4π ε₀)` in `energy · length / charge²`.
-fn coulomb_in(energy: &str, length: &str, charge: &str) -> F {
-    COULOMB_CONSTANT * registry_factor("J*m/C**2", &format!("({energy})*({length})/({charge})**2"))
-}
-
-/// [`UnitRegistry::factor`](super::UnitRegistry::factor) of the global
-/// registry over the presets' own (literal) unit expressions.
-fn registry_factor(from: &str, to: &str) -> F {
-    super::UnitRegistry::global()
-        .factor(from, to)
-        .unwrap_or_else(|e| panic!("unit preset factor {from} -> {to}: {e}"))
-}
+use crate::core::constants::{COULOMB_REAL, GAS_CONSTANT};
+use crate::core::unit_factors::{J_TO_KJ, KCAL_ANGSTROM_TO_KJ_NM};
 
 /// One of the ten named dimensions every [`UnitPreset`] reports.
 ///
@@ -99,11 +79,14 @@ impl PresetDim {
 /// One unit-system view: ten unit names plus the Boltzmann and Coulomb
 /// constants expressed in that system.
 ///
-/// A `UnitPreset` is a named view of the constants in [`crate::core::constants`]
-/// plus the ten base-unit names of a LAMMPS-style unit system. Preset **names**
-/// keep the familiar `"real"` / `"metal"` / `"lj"` tokens; the type names do not
-/// mention LAMMPS. Callers compose conversions themselves — there is no
-/// `convert(value, from, to)` façade.
+/// The presets named after a LAMMPS `units` style (`"real"`, `"metal"`,
+/// `"lj"`, …) carry that [`UnitStyle`]: their constants — `k_B`, the Coulomb
+/// constant, [`ftm2v`](Self::ftm2v), [`mvv2e`](Self::mvv2e),
+/// [`nktv2p`](Self::nktv2p) — are LAMMPS's own literals
+/// ([`UnitStyle::constants`]), not values derived from CODATA. Any other
+/// preset (`openmm`, one built with [`new`](Self::new)) derives the step
+/// factors from its unit names through the [`UnitRegistry`]. Callers compose
+/// conversions themselves — there is no `convert(value, from, to)` façade.
 ///
 /// Reference: LAMMPS `units` command,
 /// <https://docs.lammps.org/units.html>; Thompson et al.,
@@ -111,6 +94,9 @@ impl PresetDim {
 #[derive(Clone, Debug)]
 pub struct UnitPreset {
     name: String,
+    /// The LAMMPS style whose constants this preset carries; `None` for a
+    /// preset that is no LAMMPS style.
+    style: Option<UnitStyle>,
     units: HashMap<&'static str, String>,
     boltzmann: F,
     coulomb: F,
@@ -160,30 +146,30 @@ impl UnitPreset {
         }
         Ok(Self {
             name,
+            style: None,
             units: table,
             boltzmann,
             coulomb,
         })
     }
 
-    fn from_table(
-        name: &str,
-        units: [(&'static str, &'static str); 10],
-        boltzmann: F,
-        coulomb: F,
-    ) -> Self {
+    /// The preset of LAMMPS style `style`: its unit names, and its `boltz`
+    /// and `qqr2e` as the Boltzmann and Coulomb constants.
+    fn of_style(style: UnitStyle, units: [(&'static str, &'static str); 10]) -> Self {
+        let constants = style.constants();
         Self {
-            name: name.to_owned(),
+            name: style.name().to_owned(),
+            style: Some(style),
             units: units.into_iter().map(|(k, v)| (k, v.to_owned())).collect(),
-            boltzmann,
-            coulomb,
+            boltzmann: constants.boltz,
+            coulomb: constants.qqr2e,
         }
     }
 
     /// LAMMPS `real`: Å, kcal/mol, fs, e.
     pub fn real() -> Self {
-        Self::from_table(
-            "real",
+        Self::of_style(
+            UnitStyle::Real,
             [
                 ("mass", "gram_per_mole"),
                 ("length", "angstrom"),
@@ -196,17 +182,13 @@ impl UnitPreset {
                 ("force", "kilocalorie_per_mole / angstrom"),
                 ("density", "gram / centimeter ** 3"),
             ],
-            // k_B per mole of particles: R in kcal·mol⁻¹·K⁻¹ (exact under
-            // SI-2019, not LAMMPS `real`'s rounded `boltz` 0.0019872067).
-            GAS_CONSTANT * J_TO_KCAL.get(),
-            COULOMB_REAL,
         )
     }
 
     /// LAMMPS `metal`: Å, eV, ps, e.
     pub fn metal() -> Self {
-        Self::from_table(
-            "metal",
+        Self::of_style(
+            UnitStyle::Metal,
             [
                 ("mass", "gram_per_mole"),
                 ("length", "angstrom"),
@@ -219,15 +201,13 @@ impl UnitPreset {
                 ("force", "electron_volt / angstrom"),
                 ("density", "gram / centimeter ** 3"),
             ],
-            boltzmann_in("eV"),
-            COULOMB_METAL,
         )
     }
 
     /// SI: kg, m, s, J.
     pub fn si() -> Self {
-        Self::from_table(
-            "si",
+        Self::of_style(
+            UnitStyle::Si,
             [
                 ("mass", "kilogram"),
                 ("length", "meter"),
@@ -240,15 +220,13 @@ impl UnitPreset {
                 ("force", "newton"),
                 ("density", "kilogram / meter ** 3"),
             ],
-            BOLTZMANN,
-            COULOMB_CONSTANT,
         )
     }
 
     /// CGS.
     pub fn cgs() -> Self {
-        Self::from_table(
-            "cgs",
+        Self::of_style(
+            UnitStyle::Cgs,
             [
                 ("mass", "gram"),
                 ("length", "centimeter"),
@@ -261,16 +239,13 @@ impl UnitPreset {
                 ("force", "dyne"),
                 ("density", "gram / centimeter ** 3"),
             ],
-            boltzmann_in("erg"),
-            // Gaussian units define the statcoulomb by k_e = 1.
-            1.0,
         )
     }
 
     /// Atomic / `electron` units.
     pub fn electron() -> Self {
-        Self::from_table(
-            "electron",
+        Self::of_style(
+            UnitStyle::Electron,
             [
                 ("mass", "amu"),
                 ("length", "bohr"),
@@ -283,9 +258,6 @@ impl UnitPreset {
                 ("force", "hartree / bohr"),
                 ("density", "amu / bohr ** 3"),
             ],
-            boltzmann_in("hartree"),
-            // Atomic units define k_e = 1.
-            1.0,
         )
     }
 
@@ -293,8 +265,8 @@ impl UnitPreset {
     /// `lj_*` definitions (`UnitRegistry::define_lj_units`, or
     /// `define_lj_sigma` for the length scale alone).
     pub fn lj() -> Self {
-        Self::from_table(
-            "lj",
+        Self::of_style(
+            UnitStyle::Lj,
             [
                 ("mass", "lj_mass"),
                 ("length", "lj_sigma"),
@@ -307,15 +279,13 @@ impl UnitPreset {
                 ("force", "lj_epsilon / lj_sigma"),
                 ("density", "lj_mass / lj_sigma ** 3"),
             ],
-            1.0,
-            1.0,
         )
     }
 
     /// Microscopic (`micro`) style.
     pub fn micro() -> Self {
-        Self::from_table(
-            "micro",
+        Self::of_style(
+            UnitStyle::Micro,
             [
                 ("mass", "picogram"),
                 ("length", "micrometer"),
@@ -328,19 +298,13 @@ impl UnitPreset {
                 ("force", "picogram * micrometer / microsecond ** 2"),
                 ("density", "picogram / micrometer ** 3"),
             ],
-            boltzmann_in("picogram * micrometer ** 2 / microsecond ** 2"),
-            coulomb_in(
-                "picogram * micrometer ** 2 / microsecond ** 2",
-                "micrometer",
-                "picocoulomb",
-            ),
         )
     }
 
     /// Nanoscopic (`nano`) style.
     pub fn nano() -> Self {
-        Self::from_table(
-            "nano",
+        Self::of_style(
+            UnitStyle::Nano,
             [
                 ("mass", "attogram"),
                 ("length", "nanometer"),
@@ -353,12 +317,6 @@ impl UnitPreset {
                 ("force", "attogram * nanometer / nanosecond ** 2"),
                 ("density", "attogram / nanometer ** 3"),
             ],
-            boltzmann_in("attogram * nanometer ** 2 / nanosecond ** 2"),
-            coulomb_in(
-                "attogram * nanometer ** 2 / nanosecond ** 2",
-                "nanometer",
-                "elementary_charge",
-            ),
         )
     }
 
@@ -369,23 +327,25 @@ impl UnitPreset {
     /// [`COULOMB_REAL`] in kJ·nm·mol⁻¹·e⁻² (through the unit registry), so
     /// it prices charges exactly as the `real` preset does.
     pub fn openmm() -> Self {
-        Self::from_table(
-            "openmm",
-            [
-                ("mass", "gram_per_mole"),
-                ("length", "nanometer"),
-                ("time", "picosecond"),
-                ("energy", "kilojoule_per_mole"),
-                ("temperature", "kelvin"),
-                ("charge", "elementary_charge"),
-                ("pressure", "bar"),
-                ("velocity", "nanometer / picosecond"),
-                ("force", "kilojoule_per_mole / nanometer"),
-                ("density", "gram / centimeter ** 3"),
-            ],
-            GAS_CONSTANT * J_TO_KJ.get(),
-            COULOMB_REAL * KCAL_ANGSTROM_TO_KJ_NM.get(),
-        )
+        let units = [
+            ("mass", "gram_per_mole"),
+            ("length", "nanometer"),
+            ("time", "picosecond"),
+            ("energy", "kilojoule_per_mole"),
+            ("temperature", "kelvin"),
+            ("charge", "elementary_charge"),
+            ("pressure", "bar"),
+            ("velocity", "nanometer / picosecond"),
+            ("force", "kilojoule_per_mole / nanometer"),
+            ("density", "gram / centimeter ** 3"),
+        ];
+        Self {
+            name: "openmm".to_owned(),
+            style: None,
+            units: units.into_iter().map(|(k, v)| (k, v.to_owned())).collect(),
+            boltzmann: GAS_CONSTANT * J_TO_KJ.get(),
+            coulomb: COULOMB_REAL * KCAL_ANGSTROM_TO_KJ_NM.get(),
+        }
     }
 
     /// The names [`builtin`](Self::builtin) knows, in its order: the LAMMPS
@@ -417,6 +377,13 @@ impl UnitPreset {
         &self.name
     }
 
+    /// The LAMMPS style whose constants this preset carries: `Some` for the
+    /// built-in presets named after a style, `None` for `openmm` and for a
+    /// preset of the caller's own.
+    pub fn style(&self) -> Option<UnitStyle> {
+        self.style
+    }
+
     /// Boltzmann constant in this system's energy / temperature units.
     pub fn boltzmann(&self) -> F {
         self.boltzmann
@@ -434,56 +401,52 @@ impl UnitPreset {
 
     /// LAMMPS `force->ftm2v`: this system's force·time/mass → velocity.
     ///
-    /// One in a coherent system (SI); `1/48.88821291²` in `real`.
+    /// A LAMMPS style's is its literal ([`UnitConstants::ftm2v`](super::UnitConstants),
+    /// `1/48.88821291²` in `real`, 1 in `lj`); any other preset's is derived
+    /// from its unit names through the registry.
     ///
     /// # Errors
     ///
-    /// [`UnitsError`] when the registry does not know a unit of the preset
-    /// (reduced `lj` units before σ, ε and m are defined).
+    /// [`UnitsError`] when the registry does not know a unit of a preset
+    /// that is no LAMMPS style.
     pub fn ftm2v(&self) -> Result<F, UnitsError> {
+        if let Some(style) = self.style {
+            return Ok(style.constants().ftm2v);
+        }
         let from = format!("({})*({})/({})", self.force(), self.time(), self.mass());
         UnitRegistry::global().factor(&from, self.velocity())
     }
 
     /// LAMMPS `force->mvv2e`: this system's mass·velocity² → energy.
     ///
-    /// One in a coherent system (SI); `48.88821291²` in `real`.
+    /// A LAMMPS style's is its literal (`48.88821291²` in `real`); any other
+    /// preset's is derived from its unit names.
     ///
     /// # Errors
     ///
     /// As [`ftm2v`](Self::ftm2v).
     pub fn mvv2e(&self) -> Result<F, UnitsError> {
+        if let Some(style) = self.style {
+            return Ok(style.constants().mvv2e);
+        }
         let from = format!("({})*({})**2", self.mass(), self.velocity());
         UnitRegistry::global().factor(&from, self.energy())
     }
 
     /// LAMMPS `force->nktv2p`: this system's energy/length³ → pressure.
     ///
-    /// One in SI; 68568.415 in `real` (kcal/mol/Å³ → atm), 1.6021765e6 in
-    /// `metal` (eV/Å³ → bar).
+    /// A LAMMPS style's is its literal (68568.415 in `real`, 1.6021765e6 in
+    /// `metal`); any other preset's is derived from its unit names.
     ///
     /// # Errors
     ///
     /// As [`ftm2v`](Self::ftm2v).
     pub fn nktv2p(&self) -> Result<F, UnitsError> {
+        if let Some(style) = self.style {
+            return Ok(style.constants().nktv2p);
+        }
         let from = format!("({})/({})**3", self.energy(), self.length());
         UnitRegistry::global().factor(&from, self.pressure())
-    }
-
-    /// The factor that reads `other`'s `dimension` unit in this preset's:
-    /// eV → kcal/mol is `real.factor_from(&metal, PresetDim::Energy)`.
-    ///
-    /// # Errors
-    ///
-    /// [`UnitsError`] when the two units do not convert.
-    pub fn factor_from(&self, other: &UnitPreset, dimension: PresetDim) -> Result<F, UnitsError> {
-        let key = dimension.name();
-        let unit = |p: &UnitPreset| {
-            p.unit(key)
-                .expect("a preset defines every dimension")
-                .to_owned()
-        };
-        UnitRegistry::global().factor(&unit(other), &unit(self))
     }
 
     pub fn mass(&self) -> &str {
@@ -632,56 +595,35 @@ pub fn unit_preset_names() -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// LAMMPS `real`: `ftm2v = 1/48.88821291²`, `mvv2e = 48.88821291²`.
-    #[test]
-    fn real_has_the_lammps_step_constants() {
-        let real = UnitPreset::real();
-        let lammps = 48.888_212_91_f64 * 48.888_212_91;
-        assert!((real.ftm2v().unwrap() * lammps - 1.0).abs() < 1e-6);
-        assert!((real.mvv2e().unwrap() / lammps - 1.0).abs() < 1e-6);
-    }
-
-    /// LAMMPS `metal`: `ftm2v = 1/1.0364269e-4`, `mvv2e = 1.0364269e-4`.
-    #[test]
-    fn metal_has_the_lammps_step_constants() {
-        let metal = UnitPreset::metal();
-        assert!((metal.ftm2v().unwrap() * 1.036_426_9e-4 - 1.0).abs() < 1e-6);
-        assert!((metal.mvv2e().unwrap() / 1.036_426_9e-4 - 1.0).abs() < 1e-6);
-    }
-
     /// SI is coherent: both factors are one.
     #[test]
     fn si_is_coherent() {
         let si = UnitPreset::si();
-        assert!((si.ftm2v().unwrap() - 1.0).abs() < 1e-12);
-        assert!((si.mvv2e().unwrap() - 1.0).abs() < 1e-12);
+        assert_eq!(si.ftm2v().unwrap(), 1.0);
+        assert_eq!(si.mvv2e().unwrap(), 1.0);
     }
 
-    /// Reduced LJ units mean nothing until σ, ε and m are defined in the
-    /// registry, and the step constants say so.
+    /// Reduced LJ units need no σ, ε or m for the step constants: LAMMPS
+    /// sets every one of them to 1.
     #[test]
-    fn undefined_reduced_units_have_no_step_constants() {
-        let err = UnitPreset::lj().ftm2v().unwrap_err();
-        assert!(err.to_string().contains("lj_"), "{err}");
+    fn reduced_units_have_unit_step_constants() {
+        let lj = UnitPreset::lj();
+        assert_eq!(lj.ftm2v().unwrap(), 1.0);
+        assert_eq!(lj.mvv2e().unwrap(), 1.0);
+        assert_eq!(lj.nktv2p().unwrap(), 1.0);
     }
 
-    /// LAMMPS `nktv2p`: 68568.415 in `real`, 1.6021765e6 in `metal`, 1 in SI.
+    /// A preset that is no LAMMPS style derives its factors from its unit
+    /// names: openmm's kJ/mol/nm · ps / (g/mol) is 1 nm/ps, and its
+    /// kJ/mol/nm³ is 16.6054 bar.
     #[test]
-    fn nktv2p_matches_lammps() {
-        let real = UnitPreset::real().nktv2p().unwrap();
-        assert!((real / 68_568.415 - 1.0).abs() < 1e-6, "{real}");
-        let metal = UnitPreset::metal().nktv2p().unwrap();
-        assert!((metal / 1.602_176_5e6 - 1.0).abs() < 1e-6, "{metal}");
-        assert!((UnitPreset::si().nktv2p().unwrap() - 1.0).abs() < 1e-12);
-    }
-
-    /// eV → kcal/mol is 96485.332 / 4184 = 23.060548.
-    #[test]
-    fn a_metal_energy_reads_in_real() {
-        let f = UnitPreset::real()
-            .factor_from(&UnitPreset::metal(), PresetDim::Energy)
-            .unwrap();
-        assert!((f - 23.060_548).abs() < 1e-5, "{f}");
+    fn a_preset_that_is_no_style_derives_its_factors() {
+        let openmm = UnitPreset::openmm();
+        assert_eq!(openmm.style(), None);
+        assert!((openmm.ftm2v().unwrap() - 1.0).abs() < 1e-12);
+        assert!((openmm.mvv2e().unwrap() - 1.0).abs() < 1e-12);
+        let p = openmm.nktv2p().unwrap();
+        assert!((p - 16.605_390_4).abs() < 1e-6, "{p}");
     }
 
     /// The listed names are exactly the ones `builtin` builds.
@@ -693,32 +635,10 @@ mod tests {
         assert!(UnitPreset::builtin("furlong").is_none());
     }
 
+    /// `real`'s `k_B` is LAMMPS's `boltz` literal, not `R / 4184 J`.
     #[test]
-    fn micro_and_nano_constants_are_lammps_boltz_and_qqr2e() {
-        // LAMMPS `force.cpp`: micro boltz 1.3806504e-8, qqr2e 8.987556e6;
-        // nano boltz 0.013806504, qqr2e 230.7078669 (older CODATA, so 1e-5).
-        let close = |a: F, b: F| ((a - b) / b).abs() < 1e-5;
-        let micro = UnitPreset::micro();
-        assert!(
-            close(micro.boltzmann(), 1.380_650_4e-8),
-            "{}",
-            micro.boltzmann()
-        );
-        assert!(close(micro.coulomb(), 8.987_556e6), "{}", micro.coulomb());
-        let nano = UnitPreset::nano();
-        assert!(
-            close(nano.boltzmann(), 0.013_806_504),
-            "{}",
-            nano.boltzmann()
-        );
-        assert!(close(nano.coulomb(), 230.707_866_9), "{}", nano.coulomb());
-    }
-
-    #[test]
-    fn real_boltzmann_is_the_gas_constant_in_kcal() {
-        // k_B in kcal·mol⁻¹·K⁻¹ = R / 4184 J, correctly rounded
-        // (SI-2019 exact), not LAMMPS `real`'s rounded `boltz` (0.0019872067).
-        assert_eq!(UnitPreset::real().boltzmann(), 1.987_204_258_640_831_6e-3);
+    fn real_boltzmann_is_the_lammps_boltz() {
+        assert_eq!(UnitPreset::real().boltzmann(), 0.001_987_206_7);
     }
 
     #[test]
@@ -767,19 +687,11 @@ mod tests {
     }
 
     #[test]
-    fn openmm_constants_are_reals_in_kilojoules_and_nanometres() {
-        use crate::core::UnitRegistry;
+    fn openmm_constants_are_exact_r_and_reals_coulomb_in_kilojoules_and_nanometres() {
         let p = UnitPreset::openmm();
         assert_eq!(p.length(), "nanometer");
-        let units = UnitRegistry::new();
-        // k_B: the real preset's value, converted kcal → kJ.
-        let real = units
-            .quantity(UnitPreset::real().boltzmann(), "kilocalorie_per_mole")
-            .unwrap();
-        let kj = real
-            .to(&units.parse("kilojoule_per_mole").unwrap())
-            .unwrap();
-        assert!((p.boltzmann() - kj.value()).abs() < 1e-15);
+        // k_B: the exact molar gas constant N_A k_B (SI-2019), in kJ.
+        assert!((p.boltzmann() - 8.314_462_618_153_24e-3).abs() < 1e-15);
         assert!((p.coulomb() - 138.935_456).abs() < 1e-4, "{}", p.coulomb());
         assert!(lookup_unit_preset("openmm").is_some());
         assert!(unit_preset_names().contains(&"openmm".to_string()));

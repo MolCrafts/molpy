@@ -35,7 +35,7 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 from numpy.typing import NDArray
 
-from molpy.core import Box, Frame, UnitPreset
+from molpy.core import Box, Frame
 
 
 @runtime_checkable
@@ -43,16 +43,15 @@ class Potential(Protocol):
     """A Python potential: ``bind`` to a frame once, ``compute`` per call.
 
     Attributes:
-        units: The unit system of what ``compute`` returns: a preset name such
-            as ``"metal"``, or a :class:`~molpy.core.UnitPreset`. MD converts
-            the energy, the forces and the virial into the run's units once
-            per step. Lengths are not converted, so the length unit must be
+        units: The LAMMPS units style (``"real"``, ``"metal"``, …) of the
+            positions it reads and the energy, forces and virial it returns.
+            MD converts nothing: it refuses a potential whose style is not
             the run's.
         cutoff: The interaction cutoff of the potential's own neighbour
             search, or ``None`` when it searches none.
     """
 
-    units: str | UnitPreset
+    units: str
     cutoff: float | None
 
     def bind(

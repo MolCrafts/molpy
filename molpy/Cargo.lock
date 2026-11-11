@@ -834,7 +834,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "flate2",
  "futures-util",
@@ -846,6 +846,7 @@ dependencies = [
  "ndarray",
  "num-complex",
  "rand",
+ "rand_distr",
  "rayon",
  "rmp-serde",
  "roxmltree",
@@ -864,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ffi"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "molcrafts-molrs",
  "slotmap",
@@ -872,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "molpy"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "half",
  "molcrafts-molrs",
@@ -1306,6 +1307,16 @@ name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "rand_distr"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d431c2703ccf129de4d45253c03f49ebb22b97d6ad79ee3ecfc7e3f4862c1d8"
+dependencies = [
+ "num-traits",
+ "rand",
+]
 
 [[package]]
 name = "rawpointer"

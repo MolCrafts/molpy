@@ -352,9 +352,11 @@
 //! | `decomposition` | [`Pca`] of any [`FeatureMatrix`] |
 //! | `kmeans` | [`Kmeans`] over any [`FeatureMatrix`] |
 //! | `voronoi` | `RadicalVoronoi`, `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`, `VoronoiIntegration`, `FiniteFieldPolarizability` (feature `voronoi`) |
+//! | `porosity` | [`FreeVolume`], [`PoreSizeDistribution`] |
 
 mod binning;
 mod cluster;
+mod contacts;
 mod contract;
 mod decomposition;
 mod density;
@@ -373,7 +375,10 @@ mod kinetic;
 mod kmeans;
 mod named_enum;
 mod order;
+mod percolation;
+mod piercing;
 mod pmft;
+mod porosity;
 mod rdf;
 pub(crate) mod require;
 mod shape;
@@ -386,6 +391,7 @@ mod voronoi;
 // Re-exports
 pub use binning::{Axis, Histogram, UpperEdge};
 pub use cluster::{Cluster, ClusterInput, ClusterResult};
+pub use contacts::{CloseContacts, CloseContactsInput, CloseContactsResult};
 pub use contract::{Accumulate, Batch, Compute, FeatureMatrix, Partition, Stream, Verdict};
 pub use decomposition::{Pca, PcaInput, PcaResult};
 pub use density::{
@@ -437,7 +443,13 @@ pub use order::{
     NematicResult, QlmTable, SolidLiquid, SolidLiquidInput, SolidLiquidResult, Steinhardt,
     SteinhardtInput, SteinhardtResult,
 };
+pub use percolation::{Percolation, PercolationInput, PercolationResult};
+pub use piercing::{RingPiercing, RingPiercingInput, RingPiercingResult};
 pub use pmft::{PairCoordinate, Pmft, PmftInput, PmftResult, R12, Xy, Xyt, Xyz};
+pub use porosity::{
+    FreeVolume, FreeVolumeInput, FreeVolumeResult, PoreSizeDistribution, PoreSizeDistributionInput,
+    PoreSizeDistributionResult,
+};
 pub use rdf::{Rdf, RdfAccumulator, RdfResult};
 /// Crate-internal: the input guards every neighbor-consuming kernel calls
 /// before it reads `disp` (Å) or `dist_sq` (Å²), or before it updates both

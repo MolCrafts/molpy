@@ -2842,7 +2842,8 @@ pub(crate) mod tests {
 
     /// A style param one force field states at its spec default and the
     /// other leaves out is one style param: `coul/cut`'s `delta = 0`,
-    /// `lj/cut`'s `mixing = arithmetic`. A non-default value is another.
+    /// `lj/cut`'s `shift = 0`. A value stated against none (`mixing`, which
+    /// has no default) is another.
     #[test]
     fn merge_fills_spec_defaults_before_comparing_style_params() {
         let coulomb = Params::from_iter(
@@ -2852,14 +2853,14 @@ pub(crate) mod tests {
         );
         let mut stated = coulomb.clone();
         stated.set("delta", 0.0);
-        let mut arithmetic = Params::new();
-        arithmetic.set("mixing", "arithmetic");
+        let mut unshifted = Params::new();
+        unshifted.set("shift", 0.0);
         let mut ff = ForceField::new("target");
         ff.def_style("pair", "coul/cut", coulomb.clone()).unwrap();
         ff.def_style("pair", "lj/cut", Params::new()).unwrap();
         let mut other = ForceField::new("source");
         other.def_style("pair", "coul/cut", stated).unwrap();
-        other.def_style("pair", "lj/cut", arithmetic).unwrap();
+        other.def_style("pair", "lj/cut", unshifted).unwrap();
 
         ff.merge(&other).unwrap();
         assert_eq!(ff.styles().len(), 2);

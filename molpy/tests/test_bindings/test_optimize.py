@@ -148,3 +148,17 @@ def test_minimize_binds_a_python_potential_to_the_frame():
     assert tether.binds == 1
     np.testing.assert_allclose(tether.anchor, start)
     assert not np.allclose(_xyz(frame), start)
+
+
+def _mmff_ethoxybenzene() -> tuple[object, object]:
+    template = mp.io.smiles.read_smiles("CCOc1ccc(Br)cc1").to_atomistic()
+    molecule, _ = mp.conformer.Conformer(seed=1).generate(template)
+    typifier = mp.ff.typifier.Mmff94sTypifier()
+    frame = typifier.typify(molecule).to_frame()
+    return mp.ff.PotentialCompiler(typifier.forcefield()).compile(frame), frame
+
+
+def test_a_budget_stop_is_not_convergence() -> None:
+    potentials, frame = _mmff_ethoxybenzene()
+    report = mp.optimize.Lbfgs(potentials, fmax=0.0, max_steps=1).minimize(frame)
+    assert (report.stop_reason, report.converged) == ("max_iterations", False)

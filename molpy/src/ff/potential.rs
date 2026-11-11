@@ -201,6 +201,9 @@ fn forces_nx3(py: Python<'_>, forces: Vec<F>) -> PyResult<Bound<'_, PyArray2<f64
 pub struct PyWeightedTerms {
     /// Taken by the integrator that consumes it; `None` afterwards.
     pub(crate) members: Option<Vec<(ForceTerm, molrs::ff::potential::SpecialWeights)>>,
+    /// The `units` the compiled force field declared; an MD run refuses
+    /// another style.
+    pub(crate) units: Option<String>,
 }
 
 #[pymethods]
@@ -234,6 +237,9 @@ pub struct PyPotentials {
     pub(crate) err_slots: Vec<ErrSlot>,
     /// The Python potentials among the members, to bind to a caller's frame.
     pub(crate) python: Vec<SharedMember>,
+    /// The `units` the compiled force field declared; an MD run refuses
+    /// another style. `None` for a collection assembled by hand.
+    pub(crate) units: Option<String>,
 }
 
 pub(crate) fn potentials_moved_err() -> PyErr {
@@ -245,11 +251,12 @@ pub(crate) fn potentials_moved_err() -> PyErr {
 
 impl PyPotentials {
     /// Kernels compiled by a [`PotentialCompiler`] door, ready to evaluate.
-    pub(crate) fn of(potentials: Potentials) -> Self {
+    pub(crate) fn of(potentials: Potentials, units: Option<String>) -> Self {
         Self {
             inner: Some(potentials),
             err_slots: vec![crate::ff::style_registry::kernel_err_slot()],
             python: Vec::new(),
+            units,
         }
     }
 
@@ -332,6 +339,7 @@ impl PyPotentials {
             inner: Some(Potentials::new()),
             err_slots: Vec::new(),
             python: Vec::new(),
+            units: None,
         }
     }
 

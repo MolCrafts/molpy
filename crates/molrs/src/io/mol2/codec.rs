@@ -7,6 +7,7 @@ use std::io::{BufRead, Result, Seek, Write};
 
 use molrs::core::Block;
 use molrs::core::Frame;
+use molrs::core::SimBox;
 use molrs::core::schema::consts as keys;
 use molrs::op::{F, I, Idx};
 
@@ -112,6 +113,7 @@ enum Section {
     Molecule,
     Atom,
     Bond,
+    Crysin,
     Other,
 }
 
@@ -125,6 +127,7 @@ fn section_for(line: &str) -> Section {
         "MOLECULE" => Section::Molecule,
         "ATOM" => Section::Atom,
         "BOND" => Section::Bond,
+        "CRYSIN" => Section::Crysin,
         _ => Section::Other,
     }
 }
@@ -185,6 +188,7 @@ fn read_one_record<R: BufRead>(
     let mut current = Section::Molecule;
     let mut atoms_remaining = n_atoms;
     let mut bonds_remaining = n_bonds;
+    let mut crysin: Option<[F; 6]> = None;
 
     let mut line_no = 2usize;
     loop {
@@ -226,6 +230,9 @@ fn read_one_record<R: BufRead>(
                 bonds.push(parse_bond(&buf, line_no)?);
                 bonds_remaining -= 1;
             }
+            Section::Crysin if crysin.is_none() => {
+                crysin = Some(parse_crysin(trimmed, line_no)?);
+            }
             _ => {} // tolerate / skip
         }
     }
@@ -237,10 +244,51 @@ fn read_one_record<R: BufRead>(
         )));
     }
 
-    let frame = build_frame(name, atoms, bonds)?;
+    let mut frame = build_frame(name, atoms, bonds)?;
+    if let Some(cell) = crysin {
+        frame.simbox = Some(simbox_from_crysin(cell)?);
+    }
     // Every door reads through here, so every door checks here.
     crate::io::reader::check_read_frame(&frame)?;
     Ok(Some(frame))
+}
+
+/// The six cell numbers of a `CRYSIN` line: `a b c alpha beta gamma`, then
+/// the space group and setting, which molrs does not keep.
+fn parse_crysin(line: &str, line_no: usize) -> Result<[F; 6]> {
+    let toks: Vec<&str> = line.split_whitespace().collect();
+    if toks.len() < 6 {
+        return Err(invalid_data(format!(
+            "line {line_no}: CRYSIN needs a b c alpha beta gamma, got `{line}`"
+        )));
+    }
+    let mut cell = [0.0 as F; 6];
+    for (slot, tok) in cell.iter_mut().zip(&toks[..6]) {
+        *slot = tok.parse().map_err(|_| {
+            invalid_data(format!(
+                "line {line_no}: CRYSIN value `{tok}` is not a number"
+            ))
+        })?;
+    }
+    Ok(cell)
+}
+
+/// The periodic box a `CRYSIN` record states, in the standard orientation
+/// (`a` along x, `b` in the xy plane), as the PDB reader builds `CRYST1`.
+fn simbox_from_crysin(cell: [F; 6]) -> Result<SimBox> {
+    let lengths = [cell[0], cell[1], cell[2]];
+    let angles = [cell[3], cell[4], cell[5]];
+    SimBox::new(
+        crate::core::Cell::LengthsAngles { lengths, angles },
+        [0.0; 3],
+        [true; 3],
+    )
+    .map_err(|e| {
+        invalid_data(format!(
+            "CRYSIN a b c = {lengths:?}, alpha beta gamma = {angles:?}: no cell has these \
+             parameters ({e:?})"
+        ))
+    })
 }
 
 fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Result<Frame> {
@@ -279,7 +327,21 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
     insert_column(&mut block, "x", x)?;
     insert_column(&mut block, "y", y)?;
     insert_column(&mut block, "z", z)?;
+    let (elements, element_valid): (Vec<String>, Vec<bool>) = atoms
+        .iter()
+        .map(|a| match atom_element(&a.atom_type) {
+            Some(symbol) => (symbol.to_string(), true),
+            None => (String::new(), false),
+        })
+        .unzip();
     insert_column(&mut block, keys::TYPE, a_type)?;
+    // A row whose species the file does not spell is null, not guessed; a file
+    // that spells none at all gets no `element` column (as the PDB reader).
+    if element_valid.iter().all(|&v| v) {
+        insert_column(&mut block, keys::ELEMENT, elements)?;
+    } else if element_valid.iter().any(|&v| v) {
+        insert_column_masked(&mut block, keys::ELEMENT, elements, element_valid)?;
+    }
     if have_subst {
         // `res_id` is unsigned in the vocabulary; a negative `subst_id`
         // (unheard of in practice) is clamped to 0.
@@ -369,6 +431,31 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
     Ok(frame)
 }
 
+/// SYBYL atom types that name no element: lone pair, dummy (`Du`, `Du.C`)
+/// and the query wildcards.
+const SYBYL_NON_ATOMS: [&str; 6] = ["LP", "Du", "Any", "Hal", "Het", "Hev"];
+
+/// The element symbol a MOL2 atom row states, if it states one.
+///
+/// Only the SYBYL atom type states a species: its part before the dot
+/// (`C.ar` → `C`, `N.pl3` → `N`), or the whole token (`H`, `Br`, `Cl`), when
+/// that is an element symbol written in its own capitalization. Case is the
+/// evidence that the column holds SYBYL types: force-field types are written
+/// in lower case (GAFF `c3`, `ca`, `br`) or upper case (Amber `CT`, `CA`,
+/// `HO`) and state no element. A SYBYL non-atom (`LP`, `Du`, `Du.C`, `Any`,
+/// `Hal`, `Het`, `Hev`) has none either.
+///
+/// The atom name is a label and is never read as a species. `None` leaves
+/// the row without an element: the file did not state one.
+fn atom_element(atom_type: &str) -> Option<&'static str> {
+    let prefix = atom_type.split('.').next().unwrap_or("");
+    if SYBYL_NON_ATOMS.contains(&prefix) {
+        return None;
+    }
+    let element = molrs::core::Element::by_symbol(prefix)?;
+    (element.symbol() == prefix).then_some(element.symbol())
+}
+
 /// Read the first molecule of a `.mol2` file, checked as [`Mol2Reader`]
 /// checks every frame it reads.
 pub fn read_mol2<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
@@ -399,6 +486,12 @@ pub fn read_mol2<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
 ///   `atom_name`), `x`/`y`/`z` (F), `type` (str; the SYBYL `atom_type`),
 ///   `res_id` (uint; `subst_id`) and `res_name` (str; `subst_name`) when
 ///   present, `charge` (F) when present.
+/// - `element` (str): MOL2 has no element field, so it is derived — from a
+///   SYBYL atom type (`C.ar` → `C`, `Br` → `Br`), else from the atom name's
+///   leading letters (`C1` → `C`, `Br12` → `Br`) when the type is a force-field
+///   type (GAFF `c3`, Amber `CT`). A row neither spells unambiguously is null,
+///   not guessed (`CA` could be calcium or Cα); a file that spells no element
+///   has no `element` column. See `atom_element` for the exact rules.
 /// - `"bonds"` block (when present): `atomi`/`atomj` (uint, 0-based indices),
 ///   `bond_type` / `bond_number` (the chemical class and Kekulé number).
 ///   `type` is the SYBYL token only when the codes do not spell it (`am`,
@@ -474,9 +567,22 @@ impl<R: BufRead> FrameReader for Mol2Reader<R> {
 
 /// Write a Frame as a single-molecule `.mol2` file.
 ///
-/// A bond's SYBYL type is its `type` column when the frame has one, else the
-/// canonical `bond_type` / `bond_number` codes mapped back (`4` → `ar`), so a
-/// frame read from MOL2 keeps its aromatic and double bonds without `type`.
+/// The atom `type` column is written as given — SYBYL (`C.3`) or force-field
+/// (GAFF `c3`). A frame without the column is written with the bare element
+/// symbol as the atom type (`C`, `Br`), which SYBYL allows and [`read_mol2`]
+/// reads back as the element; the symbol comes from `element`, else from
+/// `atomic_number`, and a frame that states none of the three is refused. A
+/// hybridized type (`C.3`, `C.ar`) is never guessed from the element. The
+/// `element` column itself has no MOL2 field; [`read_mol2`] derives it back
+/// from the type or the name (a frame without `name` is written with
+/// element-based names, `C1`, `Br12`, which read back as their elements).
+///
+/// A bond's SYBYL type is its `type` cell when that cell is a SYBYL bond type
+/// (`1`, `2`, `3`, `am`, `ar`, `du`, `un`, `nc`), else the canonical
+/// `bond_type` / `bond_number` codes mapped back (`4` → `ar`). So a frame read
+/// from MOL2 keeps its aromatic and double bonds without `type`, and a
+/// force-field bond type name in `type` (GAFF `ca-ca`) never lands in the
+/// order field.
 pub fn write_mol2<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
     sink.into().put_with(|w| write_frame_to(w, frame))
 }
@@ -492,7 +598,6 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             "y",
             "z",
             "charge",
-            "name",
             "type",
             keys::RES_ID,
             keys::RES_NAME,
@@ -541,17 +646,12 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
 
     writeln!(writer, "@<TRIPOS>ATOM")?;
     let id_col = atoms.get("id").and_then(|c| c.get::<u64>());
-    // The atom name and the Tripos atom type (which is where mol2 spells the
-    // species, `C.3`, `O.2`) are both required: neither is made up.
-    let required_str =
-        |key: &str| {
-            atoms.get(key).and_then(|c| c.get::<String>()).ok_or_else(|| {
-            invalid_data(format!(
-                "MOL2 write: atoms block has no string '{key}' column; set it before writing"
-            ))
-        })
-        };
-    let name_col = required_str("name")?;
+    // The Tripos atom type is where mol2 spells the species (`C.3`, `O.2`, or
+    // a force-field type): `type` as given, else the bare element symbol. The
+    // atom name is a label: an absent column, or a null cell, is named as
+    // antechamber names atoms, element symbol then 1-based row (`C1`, `H7`).
+    let names = atom_names(atoms, n)?;
+    let types = atom_types(atoms, n)?;
     let xs = atoms
         .get("x")
         .and_then(|c| c.get::<f64>())
@@ -564,13 +664,22 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         .get("z")
         .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let type_col = required_str(keys::TYPE)?;
+    // CRYSIN records a, b, c and the angles, and nothing else: the cell it
+    // states sits at the origin. A frame whose box origin is elsewhere keeps
+    // that relationship only if the coordinates move with it, so each ATOM
+    // line is written at `r - origin`. The frame itself is not modified.
+    // Origin 0 subtracts nothing. A frame with no box shifts by zero too.
+    let shift = frame
+        .simbox
+        .as_ref()
+        .map(SimBox::origin)
+        .unwrap_or([0.0; 3]);
     let subst_id_col = atoms.get(keys::RES_ID).and_then(|c| c.get::<u64>());
     let subst_name_col = atoms.get(keys::RES_NAME).and_then(|c| c.get::<String>());
     for i in 0..n {
         let id = id_col.map(|c| c[[i]]).unwrap_or((i as Idx) + 1);
-        let name = name_col[[i]].as_str();
-        let atype = type_col[[i]].as_str();
+        let name = names[i].as_str();
+        let atype = types[i].as_str();
         let sid = subst_id_col.map(|c| c[[i]]).unwrap_or(1);
         let sname = subst_name_col.map(|c| c[[i]].as_str()).unwrap_or("MOL");
         write!(
@@ -578,9 +687,9 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             "{:>7} {:<8} {:>10.4} {:>10.4} {:>10.4} {:<6} {} {:<8}",
             id,
             name,
-            xs[[i]],
-            ys[[i]],
-            zs[[i]],
+            xs[[i]] - shift[0],
+            ys[[i]] - shift[1],
+            zs[[i]] - shift[2],
             atype,
             sid,
             sname
@@ -610,7 +719,10 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         for i in 0..n_bonds {
             let stated = btype_col.as_ref().and_then(|column| {
                 let live = type_valid.map(|mask| mask[i]).unwrap_or(true);
-                if live && !column[[i]].is_empty() {
+                // Only a SYBYL token is a MOL2 bond type: a force-field bond
+                // type name (GAFF `ca-ca`) says nothing about the order, so
+                // the codes speak for that bond instead.
+                if live && is_sybyl_bond_token(&column[[i]]) {
                     Some(column[[i]].clone())
                 } else {
                     None
@@ -634,7 +746,121 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             )?;
         }
     }
+    // The cell, when the frame has one: lengths and angles, space group P1
+    // (number 1), setting 1. CRYSIN has no origin; the ATOM coordinates
+    // above were shifted by `-origin` so this origin-0 cell is the same
+    // cell. A frame without a box writes no CRYSIN.
+    if let Some(simbox) = frame.simbox.as_ref() {
+        let (lengths, angles) = (simbox.lengths(), simbox.angles());
+        writeln!(writer, "@<TRIPOS>CRYSIN")?;
+        writeln!(
+            writer,
+            "{:.4} {:.4} {:.4} {:.4} {:.4} {:.4} 1 1",
+            lengths[0], lengths[1], lengths[2], angles[0], angles[1], angles[2]
+        )?;
+    }
     Ok(())
+}
+
+/// The MOL2 atom name of every row: the `name` cell where the frame states
+/// one, else the element symbol (the `element` column, or the symbol of
+/// `atomic_number`) followed by the 1-based row.
+///
+/// # Errors
+///
+/// `InvalidData` when a row needs a generated name and the frame states its
+/// species in neither column, or `atomic_number` holds no element's number.
+fn atom_names(atoms: &Block, n: usize) -> Result<Vec<String>> {
+    let stated = atoms.get("name").and_then(|c| c.get::<String>());
+    let valid = atoms.validity("name");
+    let symbol = species_symbol(atoms);
+    (0..n)
+        .map(|i| {
+            if let Some(column) = stated
+                && valid.is_none_or(|mask| mask[i])
+            {
+                return Ok(column[[i]].clone());
+            }
+            let symbol = symbol(i)?.ok_or_else(|| {
+                invalid_data(format!(
+                    "MOL2 write: atoms row {i} has no name and the frame states \
+                     no 'element' or 'atomic_number' to name it from"
+                ))
+            })?;
+            Ok(format!("{symbol}{}", i + 1))
+        })
+        .collect()
+}
+
+/// The MOL2 atom type of every row: the `type` cell where the frame has the
+/// column (SYBYL `C.3` or force-field `c3`, as given), else the bare element
+/// symbol (the `element` column, or the symbol of `atomic_number`), which
+/// SYBYL allows as an atom type and [`read_mol2`] reads back as the element.
+/// Hybridization is never guessed: a frame without types gets `C`, not `C.3`.
+///
+/// # Errors
+///
+/// `InvalidData` when the frame has no `type` column and a row states its
+/// species in neither column, or `atomic_number` holds no element's number.
+fn atom_types(atoms: &Block, n: usize) -> Result<Vec<String>> {
+    if let Some(column) = atoms.get(keys::TYPE).and_then(|c| c.get::<String>()) {
+        return Ok((0..n).map(|i| column[[i]].clone()).collect());
+    }
+    let symbol = species_symbol(atoms);
+    (0..n)
+        .map(|i| {
+            symbol(i)?.ok_or_else(|| {
+                invalid_data(format!(
+                    "MOL2 write: atoms block has no string 'type' column and row {i} \
+                     states no 'element' or 'atomic_number' to write as the atom type; \
+                     set one of them before writing"
+                ))
+            })
+        })
+        .collect()
+}
+
+/// The element symbol `atoms` states for a row, looked up on demand: the live,
+/// non-empty `element` cell, else the symbol of a live `atomic_number`; `None`
+/// for a row that states neither. What a missing name or type is spelled from.
+///
+/// # Errors
+///
+/// `InvalidData` when the row's `atomic_number` names no element.
+fn species_symbol(atoms: &Block) -> impl Fn(usize) -> Result<Option<String>> + '_ {
+    let symbols = atoms.get(keys::ELEMENT).and_then(|c| c.get::<String>());
+    let symbol_valid = atoms.validity(keys::ELEMENT);
+    let numbers = atoms.get(keys::ATOMIC_NUMBER).and_then(|c| c.get::<u64>());
+    let number_valid = atoms.validity(keys::ATOMIC_NUMBER);
+    move |i| {
+        if let Some(column) = symbols
+            && symbol_valid.is_none_or(|mask| mask[i])
+            && !column[[i]].is_empty()
+        {
+            return Ok(Some(column[[i]].clone()));
+        }
+        let Some(number) = numbers
+            .filter(|_| number_valid.is_none_or(|mask| mask[i]))
+            .map(|column| column[[i]])
+        else {
+            return Ok(None);
+        };
+        u8::try_from(number)
+            .ok()
+            .and_then(molrs::core::Element::by_number)
+            .map(|e| Some(e.symbol().to_string()))
+            .ok_or_else(|| {
+                invalid_data(format!(
+                    "MOL2 write: atoms row {i}: atomic_number {number} names no element"
+                ))
+            })
+    }
+}
+
+/// `true` when `token` is one of the SYBYL bond types a MOL2 `BOND` record
+/// may carry (`1`, `2`, `3`, `am`, `ar`, `du`, `un`, `nc`).
+fn is_sybyl_bond_token(token: &str) -> bool {
+    matches!(token, "1" | "2" | "3" | "am" | "ar" | "du" | "un" | "nc")
 }
 
 /// `true` when `token` is not the spelling of [`sybyl_bond_token`] on the
@@ -724,6 +950,94 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    #[test]
+    fn crysin_round_trips_the_box() {
+        let mut frame = read_mol2(ETHANE_MIN.as_bytes()).unwrap();
+        assert!(frame.simbox.is_none());
+        let cell = crate::core::Cell::LengthsAngles {
+            lengths: [68.105, 66.514, 102.898],
+            angles: [90.0, 90.0, 90.0],
+        };
+        frame.simbox = Some(SimBox::new(cell, [0.0; 3], [true; 3]).unwrap());
+        let mut out = Vec::new();
+        write_mol2(&mut out, &frame).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains(
+                "@<TRIPOS>CRYSIN\n68.1050 66.5140 102.8980 90.0000 90.0000 90.0000 1 1\n"
+            ),
+            "{text}"
+        );
+        let back = read_mol2(text.as_bytes()).unwrap();
+        let lengths = back
+            .simbox
+            .as_ref()
+            .expect("CRYSIN reads back as a box")
+            .lengths();
+        assert!((lengths[0] - 68.105).abs() < 1e-3 && (lengths[2] - 102.898).abs() < 1e-3);
+    }
+
+    /// CRYSIN cannot store an origin. Writing subtracts it from the
+    /// coordinates, so the origin-0 cell read back encloses the same
+    /// points. The frame passed to the writer is left unchanged.
+    #[test]
+    fn crysin_writes_coordinates_relative_to_a_nonzero_origin() {
+        let mut frame = read_mol2(ETHANE_MIN.as_bytes()).unwrap();
+        let cell = crate::core::Cell::LengthsAngles {
+            lengths: [10.0, 12.0, 14.0],
+            angles: [90.0, 90.0, 90.0],
+        };
+        let origin = [2.5, -1.25, 4.0];
+        frame.simbox = Some(SimBox::new(cell, origin, [true; 3]).unwrap());
+        let mut out = Vec::new();
+        write_mol2(&mut out, &frame).unwrap();
+
+        let kept = frame.get("atoms").unwrap();
+        let kept_x = kept.get("x").and_then(|c| c.get::<f64>()).unwrap();
+        assert!(
+            (kept_x[[0]] - 0.0).abs() < 1e-12,
+            "writer must not move the frame"
+        );
+        assert!((kept_x[[1]] - 1.5).abs() < 1e-12);
+
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("@<TRIPOS>CRYSIN\n10.0000 12.0000 14.0000 90.0000 90.0000 90.0000 1 1\n"),
+            "{text}"
+        );
+        let back = read_mol2(text.as_bytes()).unwrap();
+        let box_back = back.simbox.as_ref().expect("CRYSIN reads back as a box");
+        let back_origin = box_back.origin();
+        assert!(
+            back_origin.iter().all(|v| v.abs() < 1e-9),
+            "read origin {back_origin:?}"
+        );
+        let atoms = back.get("atoms").unwrap();
+        let xs = atoms.get("x").and_then(|c| c.get::<f64>()).unwrap();
+        let ys = atoms.get("y").and_then(|c| c.get::<f64>()).unwrap();
+        let zs = atoms.get("z").and_then(|c| c.get::<f64>()).unwrap();
+        // Written positions are the originals minus the origin. The C–C
+        // vector is unchanged, so the cell still holds the same geometry.
+        assert!((xs[[0]] - (0.0 - origin[0])).abs() < 1e-3);
+        assert!((ys[[0]] - (0.0 - origin[1])).abs() < 1e-3);
+        assert!((zs[[0]] - (0.0 - origin[2])).abs() < 1e-3);
+        assert!((xs[[1]] - xs[[0]] - 1.5).abs() < 1e-3);
+        assert!((ys[[1]] - ys[[0]]).abs() < 1e-3);
+        assert!((zs[[1]] - zs[[0]]).abs() < 1e-3);
+        let lengths = box_back.lengths();
+        assert!((lengths[0] - 10.0).abs() < 1e-3);
+        assert!((lengths[1] - 12.0).abs() < 1e-3);
+        assert!((lengths[2] - 14.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_frame_without_a_box_writes_no_crysin() {
+        let frame = read_mol2(ETHANE_MIN.as_bytes()).unwrap();
+        let mut out = Vec::new();
+        write_mol2(&mut out, &frame).unwrap();
+        assert!(!String::from_utf8(out).unwrap().contains("CRYSIN"));
+    }
+
     const ETHANE_MIN: &str = "@<TRIPOS>MOLECULE\nETH\n2 1 1 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n1 C1 0.0 0.0 0.0 c3 1 ETH 0.0\n2 C2 1.5 0.0 0.0 c3 1 ETH 0.0\n@<TRIPOS>BOND\n1 1 2 1\n";
 
     /// `Mol2Writer::create` writes one molecule per frame; `Mol2Reader::open`
@@ -759,6 +1073,213 @@ mod tests {
         let atomj = bonds.get("atomj").and_then(|c| c.get::<u64>()).unwrap();
         assert_eq!(atomi[[0]], 0);
         assert_eq!(atomj[[0]], 1);
+    }
+
+    /// A frame with no `name` column writes antechamber-style names built from
+    /// the species: `element` where stated, else the symbol of `atomic_number`.
+    #[test]
+    fn absent_atom_names_are_generated_from_the_species() {
+        use ndarray::Array1;
+        let mut atoms = Block::new();
+        for (key, v) in [("x", [0.0, 0.96]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])] {
+            atoms
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
+                .unwrap();
+        }
+        atoms
+            .insert(
+                keys::TYPE,
+                Array1::from_vec(vec!["o".to_string(), "ho".to_string()]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        atoms
+            .insert(
+                keys::ATOMIC_NUMBER,
+                Array1::from_vec(vec![8_u64, 1]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+
+        let mut buf = Vec::new();
+        write_frame_to(&mut buf, &frame).unwrap();
+        let back = Mol2Reader::new(Cursor::new(&buf)).read().unwrap().unwrap();
+        let names = back["atoms"]
+            .get("name")
+            .and_then(|c| c.get::<String>())
+            .unwrap();
+        assert_eq!((names[[0]].as_str(), names[[1]].as_str()), ("O1", "H2"));
+
+        // Without either species column there is nothing to name a row from.
+        frame
+            .get_mut("atoms")
+            .unwrap()
+            .remove(keys::ATOMIC_NUMBER)
+            .unwrap();
+        let err = write_frame_to(&mut Vec::new(), &frame).expect_err("no species");
+        assert!(err.to_string().contains("no name"), "{err}");
+    }
+
+    /// A frame that states its species but has no `type` column is written
+    /// with the bare element symbol as the SYBYL atom type (`C`, `Br`, never
+    /// a guessed `C.3`), which reads back as the element; one that states
+    /// neither `type`, `element` nor `atomic_number` is refused.
+    #[test]
+    fn absent_atom_types_are_the_bare_element_symbols() {
+        use ndarray::Array1;
+        let mut atoms = Block::new();
+        for (key, v) in [("x", [0.0, 1.9, 3.0]), ("y", [0.0; 3]), ("z", [0.0; 3])] {
+            atoms
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
+                .unwrap();
+        }
+        let symbols = ["C", "Br", "H"].map(str::to_string);
+        atoms
+            .insert(
+                keys::ELEMENT,
+                Array1::from_vec(symbols.to_vec()).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let mut bonds = Block::new();
+        for (key, v) in [("atomi", [0_u64, 0]), ("atomj", [1_u64, 2])] {
+            bonds
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
+                .unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+
+        let types_of = |frame: &Frame| -> Vec<String> {
+            let mut buf = Vec::new();
+            write_frame_to(&mut buf, frame).unwrap();
+            let text = String::from_utf8(buf).unwrap();
+            assert!(text.contains("@<TRIPOS>ATOM\n"), "{text}");
+            assert!(text.contains("@<TRIPOS>BOND\n"), "{text}");
+            let back = read_mol2(text.as_bytes()).unwrap();
+            assert_eq!(back["bonds"].n_rows(), Some(2));
+            assert_eq!(elements_of(&back), symbols.clone().map(Some));
+            let types = back["atoms"]
+                .get(keys::TYPE)
+                .and_then(|c| c.get::<String>())
+                .unwrap();
+            types.iter().cloned().collect()
+        };
+        assert_eq!(types_of(&frame), symbols);
+
+        // `atomic_number` spells the symbol when `element` is absent too.
+        let atoms = frame.get_mut("atoms").unwrap();
+        atoms.remove(keys::ELEMENT).unwrap();
+        atoms
+            .insert(
+                keys::ATOMIC_NUMBER,
+                Array1::from_vec(vec![6_u64, 35, 1]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(types_of(&frame), symbols);
+
+        // Neither column: nothing spells the type, so the write is refused
+        // (named atoms, so that the type is what is missing).
+        let atoms = frame.get_mut("atoms").unwrap();
+        atoms.remove(keys::ATOMIC_NUMBER).unwrap();
+        atoms
+            .insert(
+                "name",
+                Array1::from_vec(["C1", "Br2", "H3"].map(str::to_string).to_vec()).into_dyn(),
+                None,
+            )
+            .unwrap();
+        let err = write_frame_to(&mut Vec::new(), &frame).expect_err("no type");
+        assert!(err.to_string().contains("'type'"), "{err}");
+    }
+
+    /// The `element` column of a read frame, `None` for a null row.
+    fn elements_of(frame: &Frame) -> Vec<Option<String>> {
+        let atoms = &frame["atoms"];
+        let column = atoms
+            .get(keys::ELEMENT)
+            .and_then(|c| c.get::<String>())
+            .expect("an element column");
+        let valid = atoms.validity(keys::ELEMENT);
+        (0..column.len())
+            .map(|i| valid.is_none_or(|m| m[i]).then(|| column[[i]].clone()))
+            .collect()
+    }
+
+    /// A one-molecule MOL2 of `(name, type)` atoms, no bonds.
+    fn mol2_of(atoms: &[(&str, &str)]) -> String {
+        let mut text = format!(
+            "@<TRIPOS>MOLECULE\nM\n{} 0 0 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n",
+            atoms.len()
+        );
+        for (i, (name, atype)) in atoms.iter().enumerate() {
+            text += &format!("{} {name} {}.0 0.0 0.0 {atype} 1 MOL 0.0\n", i + 1, i);
+        }
+        text
+    }
+
+    /// GAFF types are not element symbols (`ca` is not calcium, `br` is not
+    /// read case-blind), and the antechamber-style name is a label: no element.
+    #[test]
+    fn a_gaff_typed_file_states_no_elements() {
+        // Force-field types state no species, and a name is a label.
+        let text = mol2_of(&[("C1", "c3"), ("H4", "ho"), ("Br12", "br"), ("ZN1", "zn")]);
+        let frame = read_mol2(text.as_bytes()).unwrap();
+        assert!(!frame["atoms"].contains_key(keys::ELEMENT));
+    }
+
+    /// SYBYL types spell the element before the dot, or as the whole token.
+    #[test]
+    fn a_sybyl_typed_file_takes_its_elements_from_the_types() {
+        // Names that say nothing (or the wrong thing) do not override the type.
+        let text = mol2_of(&[
+            ("CA", "C.3"),
+            ("X1", "C.ar"),
+            ("OXT", "O.3"),
+            ("HO", "H"),
+            ("BR", "Br"),
+            ("Q", "N.pl3"),
+            ("CL9", "Cl"),
+        ]);
+        let frame = read_mol2(text.as_bytes()).unwrap();
+        let want = ["C", "C", "O", "H", "Br", "N", "Cl"];
+        assert_eq!(elements_of(&frame), want.map(|s| Some(s.to_string())));
+    }
+
+    /// A row that spells no element unambiguously is null, never guessed; a
+    /// file that spells none has no column at all.
+    #[test]
+    fn an_unspelled_element_is_left_out_not_guessed() {
+        let text = mol2_of(&[
+            ("CA", "CT"),   // Amber type
+            ("HO1", "ho"),  // GAFF type
+            ("LP1", "LP"),  // SYBYL lone pair
+            ("C7", "Du.C"), // SYBYL dummy
+            ("Na2", "Na+"), // Amber ion type
+            ("X", "C.ar"),  // SYBYL type: the one stated species
+        ]);
+        let frame = read_mol2(text.as_bytes()).unwrap();
+        let want = [None, None, None, None, None, Some("C")];
+        assert_eq!(elements_of(&frame), want.map(|s| s.map(str::to_string)));
+
+        let none = read_mol2(mol2_of(&[("Q1", "CT"), ("Q2", "c3")]).as_bytes()).unwrap();
+        assert!(!none["atoms"].contains_key(keys::ELEMENT));
+    }
+
+    /// Writing and reading back keeps the elements a SYBYL-typed file states.
+    #[test]
+    fn elements_survive_a_write_read_round_trip() {
+        let text = mol2_of(&[("A", "C.ar"), ("B", "Br"), ("C", "H")]);
+        let frame = read_mol2(text.as_bytes()).unwrap();
+        let mut buf = Vec::new();
+        write_frame_to(&mut buf, &frame).unwrap();
+        let back = read_mol2(buf.as_slice()).unwrap();
+        assert_eq!(elements_of(&back), elements_of(&frame));
+        assert_eq!(elements_of(&back)[1].as_deref(), Some("Br"));
     }
 
     #[test]

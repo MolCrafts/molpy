@@ -4,15 +4,16 @@ use std::sync::LazyLock;
 
 use crate::compute::{
     AngularSeparationGlobal, AngularSeparationNeighbor, BondOrientationalOrder, CenterOfMass,
-    Cluster, CombinedDistribution, ComputeSpec, ConductivitySumRule, ContinuousCoordination,
-    CorrelationFunction, Correlator, Cubatic, CumulativeTrapezoid, CurrentAcf, DebyeFit,
-    Derivative, Described, DiffractionPattern, DipoleAcf, DipoleAutocorrelationSpectrum,
-    DipoleMoment, DipoleRateCrossSpectrum, DistributionFunction, EinsteinHelfandSpectrum,
-    EnergyDrift, EnvironmentMatch, GaussianDensity, GreenKuboSpectrum, GyrationTensor, HBonds,
-    Hexatic, InertiaTensor, InternalCoordinate, KineticEnergy, Kmeans, KramersKronig, LinearFit,
-    LocalBondProjection, LocalDensity, LocalDescriptors, Msd, Nematic, OnsagerCorrelation,
-    PairPresence, Pca, Plateau, Pmft, PolarizabilityParts, R12, RamanSpectrum, Rdf,
-    ReorientationAcf, RotationalAutocorrelation, RouteAgreement, SolidLiquid, SpatialDistribution,
+    CloseContacts, Cluster, CombinedDistribution, ComputeSpec, ConductivitySumRule,
+    ContinuousCoordination, CorrelationFunction, Correlator, Cubatic, CumulativeTrapezoid,
+    CurrentAcf, DebyeFit, Derivative, Described, DiffractionPattern, DipoleAcf,
+    DipoleAutocorrelationSpectrum, DipoleMoment, DipoleRateCrossSpectrum, DistributionFunction,
+    EinsteinHelfandSpectrum, EnergyDrift, EnvironmentMatch, FreeVolume, GaussianDensity,
+    GreenKuboSpectrum, GyrationTensor, HBonds, Hexatic, InertiaTensor, InternalCoordinate,
+    KineticEnergy, Kmeans, KramersKronig, LinearFit, LocalBondProjection, LocalDensity,
+    LocalDescriptors, Msd, Nematic, OnsagerCorrelation, PairPresence, Pca, Percolation, Plateau,
+    Pmft, PolarizabilityParts, PoreSizeDistribution, R12, RamanSpectrum, Rdf, ReorientationAcf,
+    RingPiercing, RotationalAutocorrelation, RouteAgreement, SolidLiquid, SpatialDistribution,
     Spectrum, SphereVoxelization, StaticDielectric, StaticStructureFactorDebye,
     StaticStructureFactorDirect, Steinhardt, Survival, Unwrap, Vacf, VanHove, Xy, Xyt, Xyz,
 };
@@ -86,11 +87,16 @@ static ALL: LazyLock<Vec<ComputeSpec>> = LazyLock::new(|| {
         Pmft::<Xyz>::spec(),
         // groups and features
         Cluster::spec(),
+        Percolation::spec(),
+        RingPiercing::spec(),
+        CloseContacts::spec(),
         CenterOfMass::spec(),
         GyrationTensor::spec(),
         InertiaTensor::spec(),
         Pca::spec(),
         Kmeans::spec(),
+        FreeVolume::spec(),
+        PoreSizeDistribution::spec(),
     ]
     .into_iter()
     .chain(voronoi_specs())

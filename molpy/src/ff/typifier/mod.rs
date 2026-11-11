@@ -17,6 +17,8 @@
 pub mod atd;
 pub mod gaff;
 
+use std::sync::Arc;
+
 use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -36,7 +38,7 @@ use crate::io::PySource;
 /// Where a [`PyTypifier`]'s typing state lives.
 enum TypifierState {
     /// A native typifier class: the Rust base owns the matcher and the output.
-    Native(Typing<Box<dyn Typifier + Send + Sync>>),
+    Native(Typing<Arc<dyn Typifier + Send + Sync>>),
     /// A Python subclass: the matcher is its ``assign`` method and this base
     /// holds the output, unset until first seeded (see [`PyTypifier::seed`]).
     Python(Option<ForceField>),
@@ -69,7 +71,16 @@ impl PyTypifier {
     /// whose output starts as `typifier.source_forcefield().empty_like()`.
     pub(crate) fn native(typifier: impl Typifier + Send + Sync + 'static) -> Self {
         Self {
-            state: TypifierState::Native(Typing::new(Box::new(typifier))),
+            state: TypifierState::Native(Typing::new(Arc::new(typifier))),
+        }
+    }
+
+    /// The native typifier, shared; `None` for a Python subclass, whose
+    /// matcher is its `assign` method.
+    pub(crate) fn shared(&self) -> Option<Arc<dyn Typifier + Send + Sync>> {
+        match &self.state {
+            TypifierState::Native(typing) => Some(Arc::clone(typing.typifier())),
+            TypifierState::Python(_) => None,
         }
     }
 
@@ -201,10 +212,11 @@ impl PyTypifier {
         match &self.state {
             TypifierState::Native(typing) => {
                 let graph = graph.cast::<PyAtomistic>()?;
-                let inner = typing
-                    .typifier()
-                    .assign(graph.borrow_mut().core_mut())
-                    .map_err(typing_err)?;
+                let py = graph.py();
+                let typifier = typing.typifier();
+                let mut graph = graph.borrow_mut();
+                let core = graph.core_mut();
+                let inner = py.detach(|| typifier.assign(core)).map_err(typing_err)?;
                 Ok(PyTypeAssignment { inner })
             }
             TypifierState::Python(_) => Err(PyNotImplementedError::new_err(
@@ -237,8 +249,12 @@ impl PyTypifier {
     fn typify(slf: &Bound<'_, Self>, mol: &Bound<'_, PyAtomistic>) -> PyResult<Py<PyAtomistic>> {
         let py = slf.py();
         let native = match &mut slf.borrow_mut().state {
+            // Native typing runs without the GIL, so other Python threads run
+            // meanwhile; the typifier and the graph stay borrowed.
             TypifierState::Native(typing) => {
-                Some(typing.typify(mol.borrow().core()).map_err(typing_err)?)
+                let mol = mol.borrow();
+                let core = mol.core();
+                Some(py.detach(|| typing.typify(core)).map_err(typing_err)?)
             }
             TypifierState::Python(_) => None,
         };

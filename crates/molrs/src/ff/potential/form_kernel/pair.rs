@@ -233,7 +233,10 @@ struct PairRows<'a> {
     paired: Vec<bool>,
     rows: HashMap<&'a str, &'a Params>,
     defaults: Params,
-    mixing: CombiningRule,
+    /// The style's stated rule; `None` when it states none, and then an
+    /// unlike pair it would have to mix is refused (engines disagree on the
+    /// default).
+    mixing: Option<CombiningRule>,
 }
 
 impl<'a> PairRows<'a> {
@@ -252,15 +255,18 @@ impl<'a> PairRows<'a> {
                 ),
             });
         }
-        let mixing = match style.get("mixing").and_then(|v| v.as_text()) {
-            Some(name) => CombiningRule::parse(name).map_err(|reason| IrError::BadValue {
-                style: spec.name.to_string(),
-                type_: String::new(),
-                param: "mixing".into(),
-                reason,
-            })?,
-            None => CombiningRule::UNDECLARED,
-        };
+        let mixing = style
+            .get("mixing")
+            .and_then(|v| v.as_text())
+            .map(|name| {
+                CombiningRule::parse(name).map_err(|reason| IrError::BadValue {
+                    style: spec.name.to_string(),
+                    type_: String::new(),
+                    param: "mixing".into(),
+                    reason,
+                })
+            })
+            .transpose()?;
         let cols = retain_form_inputs(spec, columns(spec, &spec.params, tp)?, reads);
         let paired = pair_valued(spec, &cols, reads);
         Ok(Self {
@@ -350,7 +356,12 @@ impl<'a> PairRows<'a> {
                     ParamCombination::LjEpsilon { .. }
                 );
                 let (e, s) = if is_eps { (c, s) } else { (s, c) };
-                let (eps, sig) = self.mixing.combine(
+                let rule = self.mixing.ok_or_else(|| IrError::MissingParam {
+                    style: self.spec.name.to_string(),
+                    type_: String::new(),
+                    param: "mixing".into(),
+                })?;
+                let (eps, sig) = rule.combine(
                     (self.own(a, e)?, self.own(a, s)?),
                     (self.own(b, e)?, self.own(b, s)?),
                 );

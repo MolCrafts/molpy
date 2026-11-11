@@ -12,6 +12,8 @@
 //! | [`SitePlacer`], [`GrowthPlacer`] (each a [`Placer`]) | one pose ([`Rigid`](crate::op::Rigid)) per site: centroid on the site, or grown onto the parent's port |
 //! | [`AxisOrienter`] (an [`Orienter`]) | one rotation per site, about the template's centroid: chain units onto the site axis and bond line, branch units by port-direction fit |
 //! | [`Assembler`] | one placed, linked world graph (of the library templates' graph type) from a site graph (`frag_id` per site, `mol_id` per connected component) |
+//! | [`System`], [`Molecule`], [`StochasticObject`] | polymer ensembles (generative BigSMILES): a site graph per sample, chain sizes drawn from a [`Distribution`] |
+//! | [`update_junctions`] | a linked graph's atom types (by [`Retype`]) and graph-derived terms brought up to its new bonds |
 //! | [`Coarsener`] | a coarse-grained graph from disjoint node groups of a source graph (any graph type): one site per group at its centre of mass, with its axis |
 //!
 //! The SARW path generator is a clean-room port of the kernel from the CAVS
@@ -23,10 +25,12 @@ mod carbon_tube;
 mod coarsen;
 mod graphene;
 mod growth_strategy;
+mod junction;
 mod lattice;
 mod occupancy;
 mod orient;
 mod place;
+mod polymer;
 mod self_avoiding_walk;
 
 pub use assemble::{AssembleError, Assembler};
@@ -34,8 +38,17 @@ pub use carbon_tube::{CarbonTubeBuilder, CarbonTubeError, TubeExtent};
 pub use coarsen::{CoarsenError, Coarsener};
 pub use graphene::{GrapheneBuilder, GrapheneError};
 pub use growth_strategy::{FccLattice, GrowthStrategy, OffLattice};
+#[cfg(feature = "ff")]
+pub use junction::Perceive;
+pub use junction::{
+    JunctionError, JunctionReport, Patch, Retype, Retyped, Settle, update_junctions,
+};
 pub use lattice::{Lattice, LatticeError, Site};
 pub use occupancy::OccupancyMode;
 pub use orient::{AxisOrienter, OrientError, Orienter, SiteLink, SiteView};
 pub use place::{GrowthPlacer, ParentJoin, PlaceError, PlaceSite, Placer, SitePlacer};
+pub use polymer::{
+    Amount, ChainSize, Distribution, Fragment, Measure, Molecule, MoleculeRecord, Part,
+    PolymerError, SiteWeight, StochasticObject, System, SystemSample, Terminal,
+};
 pub use self_avoiding_walk::{SelfAvoidingWalk, WalkError, WalkOutput};

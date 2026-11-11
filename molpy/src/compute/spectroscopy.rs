@@ -112,17 +112,21 @@ macro_rules! dielectric_route {
             #[pyo3(signature = (*, correlation, volume, temperature, boundary))]
             fn compute(
                 &self,
+                py: Python<'_>,
                 correlation: PyRef<'_, PyTimeCorrelation>,
                 volume: f64,
                 temperature: f64,
                 boundary: &str,
             ) -> Result<PyDielectricSpectrumResult> {
-                let out = self.inner.compute(DielectricSpectrumInput {
+                let out = {
+            let input = DielectricSpectrumInput {
                     correlation: &correlation.inner,
                     volume,
                     temperature,
                     boundary: boundary.parse()?,
-                })?;
+                };
+            py.detach(|| self.inner.compute(input))
+        }?;
                 Ok(out.into())
             }
         }
@@ -295,11 +299,15 @@ impl PyKramersKronig {
     #[pyo3(signature = (*, spectrum))]
     fn compute(
         &self,
+        py: Python<'_>,
         spectrum: PyRef<'_, PyDielectricSpectrumResult>,
     ) -> Result<PyKramersKronigCheck> {
-        let out = self.inner.compute(KramersKronigInput {
-            spectrum: &spectrum.inner,
-        })?;
+        let out = {
+            let input = KramersKronigInput {
+                spectrum: &spectrum.inner,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -338,19 +346,23 @@ impl PyConductivitySumRule {
     #[pyo3(signature = (*, frequencies, conductivity, current_sq_mean, volume, temperature))]
     fn compute(
         &self,
+        py: Python<'_>,
         frequencies: ArrayArg1<'_, f64>,
         conductivity: ArrayArg1<'_, f64>,
         current_sq_mean: f64,
         volume: f64,
         temperature: f64,
     ) -> Result<PySumRuleCheck> {
-        let out = self.inner.compute(SumRuleInput {
-            frequencies: frequencies.as_array(),
-            conductivity: conductivity.as_array(),
-            current_sq_mean,
-            volume,
-            temperature,
-        })?;
+        let out = {
+            let input = SumRuleInput {
+                frequencies: frequencies.as_array(),
+                conductivity: conductivity.as_array(),
+                current_sq_mean,
+                volume,
+                temperature,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -391,13 +403,15 @@ impl PyRouteAgreement {
     #[pyo3(signature = (*, spectra))]
     fn compute(
         &self,
+        py: Python<'_>,
         spectra: Vec<PyRef<'_, PyDielectricSpectrumResult>>,
     ) -> Result<PyRouteAgreementCheck> {
         let spectra: Vec<&DielectricSpectrumResult> =
             spectra.iter().map(|spectrum| &spectrum.inner).collect();
-        let out = self
-            .inner
-            .compute(RouteAgreementInput { spectra: &spectra })?;
+        let out = py.detach(|| {
+            self.inner
+                .compute(RouteAgreementInput { spectra: &spectra })
+        })?;
         Ok(out.into())
     }
 }
@@ -424,10 +438,17 @@ impl PyPolarizabilityParts {
     }
 
     #[pyo3(signature = (*, alpha))]
-    fn compute(&self, alpha: ArrayArg2<'_, f64>) -> Result<PyPolarizabilityPartsResult> {
-        let out = self.inner.compute(PolarizabilityPartsInput {
-            alpha: alpha.as_array(),
-        })?;
+    fn compute(
+        &self,
+        py: Python<'_>,
+        alpha: ArrayArg2<'_, f64>,
+    ) -> Result<PyPolarizabilityPartsResult> {
+        let out = {
+            let input = PolarizabilityPartsInput {
+                alpha: alpha.as_array(),
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }
@@ -486,15 +507,19 @@ impl PyRamanSpectrum {
     #[pyo3(signature = (*, isotropic, anisotropic, temperature = None))]
     fn compute(
         &self,
+        py: Python<'_>,
         isotropic: PyRef<'_, PyTimeCorrelation>,
         anisotropic: PyRef<'_, PyTimeCorrelation>,
         temperature: Option<f64>,
     ) -> Result<PyRamanSpectrumResult> {
-        let out = self.inner.compute(RamanSpectrumInput {
-            isotropic: &isotropic.inner,
-            anisotropic: &anisotropic.inner,
-            temperature,
-        })?;
+        let out = {
+            let input = RamanSpectrumInput {
+                isotropic: &isotropic.inner,
+                anisotropic: &anisotropic.inner,
+                temperature,
+            };
+            py.detach(|| self.inner.compute(input))
+        }?;
         Ok(out.into())
     }
 }

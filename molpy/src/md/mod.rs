@@ -5,16 +5,15 @@
 use crate::array::ArrayArg2;
 use crate::core::frame::PyFrame;
 use crate::core::neighborlist::PyNeighborList;
-use crate::core::units::preset_arg;
-use crate::error::ffi_error_to_pyerr;
+use crate::error::{ffi_error_to_pyerr, units_error};
 use crate::ff::potential::{
     ErrSlot, PyPairLjCut, PyPotentials, PyWeightedTerms, take_err, take_members,
 };
 use crate::ff::python_potential::PythonPotential;
-use molrs::core::{Frame, UnitPreset};
+use molrs::core::{Frame, UnitStyle};
 use molrs::md::{
     BerendsenBarostat, BoundPotential, FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError,
-    PotentialError, PotentialResult, PotentialStep, TimestepProvider, VelocityVerlet,
+    PotentialError, PotentialResult, PotentialStep, VelocityVerlet,
 };
 use molrs::op::F;
 use ndarray::Array1;
@@ -100,7 +99,8 @@ pub enum PyPhase {
     EndOfStep,
 }
 
-/// NVE velocity Verlet. `dt` only — mass, positions, and velocities are frame columns.
+/// NVE velocity Verlet (LAMMPS `fix nve`). It steps by the run's timestep;
+/// mass, positions, and velocities are frame columns.
 #[pyclass(
     name = "VelocityVerlet",
     module = "molpy.md",
@@ -114,22 +114,17 @@ pub struct PyVelocityVerlet {
 #[pymethods]
 impl PyVelocityVerlet {
     #[new]
-    fn new(dt: F) -> PyResult<Self> {
-        Ok(Self {
-            inner: VelocityVerlet::new(dt).map_err(md_err)?,
-        })
-    }
-
-    #[getter]
-    fn dt(&self) -> F {
-        self.inner.dt()
+    fn new() -> Self {
+        Self {
+            inner: VelocityVerlet::default(),
+        }
     }
 }
 
 /// LAMMPS `fix langevin` at one temperature, mounted at `post_force`.
 ///
-/// `temperature` is in the run's temperature unit, `damp` and `dt` in its
-/// time unit; Boltzmann's constant comes from the run's units.
+/// `temperature` is in the run's temperature unit and `damp` in its time
+/// unit; the timestep and Boltzmann's constant are the run's.
 #[pyclass(
     name = "FixLangevin",
     module = "molpy.md",
@@ -143,10 +138,10 @@ pub struct PyFixLangevin {
 #[pymethods]
 impl PyFixLangevin {
     #[new]
-    #[pyo3(signature = (temperature, damp, dt, *, seed))]
-    fn new(temperature: F, damp: F, dt: F, seed: u64) -> PyResult<Self> {
+    #[pyo3(signature = (temperature, damp, *, seed))]
+    fn new(temperature: F, damp: F, seed: u64) -> PyResult<Self> {
         Ok(Self {
-            inner: FixLangevin::new(temperature, damp, dt, seed).map_err(md_err)?,
+            inner: FixLangevin::new(temperature, damp, seed).map_err(md_err)?,
         })
     }
 
@@ -154,17 +149,13 @@ impl PyFixLangevin {
     fn temperature(&self) -> F {
         self.inner.temperature()
     }
-
-    #[getter]
-    fn dt(&self) -> F {
-        self.inner.dt()
-    }
 }
 
-/// Isotropic Berendsen pressure coupling, mounted at `end_of_step`.
+/// Isotropic Berendsen pressure coupling (LAMMPS `fix press/berendsen iso`),
+/// mounted at `end_of_step`.
 ///
 /// `pressure` and `bulk_modulus` are in the run's pressure unit (atm in
-/// `real`, bar in `metal`), `tau` and `dt` in its time unit.
+/// `real`, bar in `metal`), `tau` in its time unit; the timestep is the run's.
 #[pyclass(
     name = "BerendsenBarostat",
     module = "molpy.md",
@@ -178,21 +169,16 @@ pub struct PyBerendsenBarostat {
 #[pymethods]
 impl PyBerendsenBarostat {
     #[new]
-    #[pyo3(signature = (pressure, tau, bulk_modulus, dt))]
-    fn new(pressure: F, tau: F, bulk_modulus: F, dt: F) -> PyResult<Self> {
+    #[pyo3(signature = (pressure, tau, bulk_modulus))]
+    fn new(pressure: F, tau: F, bulk_modulus: F) -> PyResult<Self> {
         Ok(Self {
-            inner: BerendsenBarostat::new(pressure, tau, bulk_modulus, dt).map_err(md_err)?,
+            inner: BerendsenBarostat::new(pressure, tau, bulk_modulus).map_err(md_err)?,
         })
     }
 
     #[getter]
     fn pressure(&self) -> F {
         self.inner.pressure()
-    }
-
-    #[getter]
-    fn dt(&self) -> F {
-        self.inner.dt()
     }
 }
 
@@ -203,20 +189,45 @@ pub struct PyMD {
     /// Where a Python pair style among the evaluator's kernels parks its
     /// exception (the `Potential` trait has no error channel).
     err_slots: Vec<ErrSlot>,
+    /// Whether the evaluator is a Python potential, which runs Python every
+    /// step: `run` then keeps the GIL rather than re-taking it per step.
+    python_evaluator: bool,
 }
 
 #[pymethods]
 impl PyMD {
-    /// A driver in ``units`` (a preset name such as ``"real"`` or a
-    /// :class:`molpy.core.UnitPreset`): ``dt`` is in its time unit, masses,
-    /// energies and forces in its units.
+    /// A driver in LAMMPS units style ``units`` (``"lj"``, ``"real"``,
+    /// ``"metal"``, ``"si"``, ``"cgs"``, ``"electron"``, ``"micro"``,
+    /// ``"nano"``; default ``"lj"``, as in LAMMPS). Every input is in it, and
+    /// nothing is converted: a potential, force field or frame stating
+    /// another style is refused. The timestep starts at the style's LAMMPS
+    /// default.
     #[new]
-    fn new(units: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let preset = preset_arg(units)?;
+    #[pyo3(signature = (*, units = "lj"))]
+    fn new(units: &str) -> PyResult<Self> {
         Ok(Self {
-            inner: MD::new(preset).map_err(md_err)?,
+            inner: MD::new(units.parse().map_err(units_error)?),
             err_slots: Vec::new(),
+            python_evaluator: false,
         })
+    }
+
+    /// The run's LAMMPS units style.
+    #[getter]
+    fn units(&self) -> &'static str {
+        self.inner.units().name()
+    }
+
+    /// The timestep, in the run style's time unit (fs in ``real``, ps in
+    /// ``metal``).
+    #[getter]
+    fn timestep(&self) -> F {
+        self.inner.timestep()
+    }
+
+    /// Set the timestep (LAMMPS ``timestep``), in the run style's time unit.
+    fn set_timestep(&mut self, dt: F) -> PyResult<()> {
+        self.inner.set_timestep(dt).map_err(md_err)
     }
 
     /// The step index of the last force evaluation; it counts across runs.
@@ -251,7 +262,8 @@ impl PyMD {
     /// its own cutoff; pairs within ``cutoff - skin`` reach the pair kernels,
     /// and it is searched again once an atom has moved half the ``skin``
     /// (``0`` searches every step). The frame box supplies the periodicity.
-    #[pyo3(signature = (list, *, skin=0.0))]
+    /// The list's cutoff holds the skin, so ``skin`` has no default.
+    #[pyo3(signature = (list, *, skin))]
     fn set_neighbor(&mut self, mut list: PyRefMut<'_, PyNeighborList>, skin: F) -> PyResult<()> {
         let list = list.take()?;
         self.inner.set_neighbor(list, skin).map_err(md_err)
@@ -262,21 +274,24 @@ impl PyMD {
     /// :class:`molpy.ff.potential.Potential`.
     ///
     /// ``skin`` is for a Python potential: the margin its own neighbour search
-    /// builds at beyond its ``cutoff``, the driver saying when to search again.
-    /// Native pair kernels read the run's neighbour list (:meth:`set_neighbor`),
-    /// whose skin is that list's.
-    #[pyo3(signature = (potential, *, skin=0.0))]
-    fn set_evaluator(&mut self, potential: &Bound<'_, PyAny>, skin: F) -> PyResult<()> {
+    /// builds at beyond its ``cutoff``, the driver saying when to search again;
+    /// ``None`` is the run style's LAMMPS default (2 Å in ``real``). Native
+    /// pair kernels read the run's neighbour list (:meth:`set_neighbor`),
+    /// whose skin is that list's. Compiled force-field kernels carry the
+    /// force field's declared ``units``, which must be the run's.
+    #[pyo3(signature = (potential, *, skin=None))]
+    fn set_evaluator(&mut self, potential: &Bound<'_, PyAny>, skin: Option<F>) -> PyResult<()> {
         let native = potential.is_instance_of::<PyPairLjCut>()
             || potential.is_instance_of::<PyPotentials>()
             || potential.is_instance_of::<PyWeightedTerms>();
         if !native {
             let python = PythonPotential::new(potential)?;
             self.err_slots.clear();
-            return self
-                .inner
+            self.inner
                 .set_bound_potential(MountedPython(python), skin)
-                .map_err(md_err);
+                .map_err(md_err)?;
+            self.python_evaluator = true;
+            return Ok(());
         }
         if potential
             .cast::<PyPotentials>()
@@ -288,25 +303,52 @@ impl PyMD {
                  and an error that stops the run",
             ));
         }
-        if skin != 0.0 {
+        if skin.is_some() {
             return Err(PyValueError::new_err(
                 "skin is a Python potential's; native pair kernels read the neighbour \
                  list of set_neighbor, whose skin is that list's",
             ));
         }
+        // A compiled force field's declared `units`; a hand-built kernel
+        // (`PairLjCut`) states none and is taken in the run's style.
+        let declared = if let Ok(terms) = potential.cast::<PyWeightedTerms>() {
+            terms.borrow().units.clone()
+        } else if let Ok(potentials) = potential.cast::<PyPotentials>() {
+            potentials.borrow().units.clone()
+        } else {
+            None
+        };
+        let declared: Option<UnitStyle> = declared
+            .map(|units| units.parse().map_err(units_error))
+            .transpose()?;
         let (members, slots) = take_members(potential)?;
         self.err_slots = slots;
-        self.inner
-            .set_evaluator(FfEvaluator::from_members(members))
-            .map_err(md_err)
+        let mut evaluator = FfEvaluator::from_members(members);
+        if let Some(units) = declared {
+            evaluator = evaluator.with_units(units);
+        }
+        self.inner.set_evaluator(evaluator).map_err(md_err)?;
+        self.python_evaluator = false;
+        Ok(())
     }
 
     /// Advance `frame` for `n_steps`. Coordinates, velocities, forces, image
     /// flags, and `meta["energy"]` / `meta["kinetic"]` are written on `frame`.
-    fn run(&mut self, frame: &PyFrame, n_steps: usize) -> PyResult<()> {
+    ///
+    /// A native run releases the GIL, so other Python threads run meanwhile;
+    /// the frame stays write-locked, so one touching it gets ``FrameBusy``.
+    fn run(&mut self, py: Python<'_>, frame: &PyFrame, n_steps: usize) -> PyResult<()> {
+        let python = self.python_evaluator;
+        let md = &mut self.inner;
         frame
             .inner
-            .with_mut(|f| self.inner.run(f, n_steps))
+            .with_mut(|f| {
+                if python {
+                    md.run(f, n_steps)
+                } else {
+                    py.detach(|| md.run(f, n_steps))
+                }
+            })
             .map_err(ffi_error_to_pyerr)?
             .map_err(md_err)?;
         take_err(&self.err_slots)
@@ -321,17 +363,15 @@ pub struct PyMaxwellBoltzmann {
 #[pymethods]
 impl PyMaxwellBoltzmann {
     #[new]
-    /// Velocities at ``temperature`` in ``units`` (a preset name or a
-    /// :class:`molpy.core.UnitPreset`), in its velocity unit.
-    #[pyo3(signature = (temperature, *, units, seed=0, remove_com=true))]
-    fn new(
-        temperature: F,
-        units: &Bound<'_, PyAny>,
-        seed: u64,
-        remove_com: bool,
-    ) -> PyResult<Self> {
+    /// Velocities at exactly ``temperature`` in LAMMPS units style ``units``
+    /// (default ``"lj"``), in its velocity unit: LAMMPS ``velocity all create
+    /// T seed dist gaussian``, the temperature counted over ``3N - 3``
+    /// degrees of freedom.
+    #[pyo3(signature = (temperature, *, units = "lj", seed=0, remove_com=true))]
+    fn new(temperature: F, units: &str, seed: u64, remove_com: bool) -> PyResult<Self> {
         let mut inner =
-            MaxwellBoltzmann::new(temperature, &preset_arg(units)?, seed).map_err(md_err)?;
+            MaxwellBoltzmann::new(temperature, units.parse().map_err(units_error)?, seed)
+                .map_err(md_err)?;
         if !remove_com {
             inner = inner.keep_com();
         }
@@ -349,6 +389,10 @@ impl PyMaxwellBoltzmann {
     #[getter]
     fn remove_com(&self) -> bool {
         self.inner.remove_com()
+    }
+    #[getter]
+    fn units(&self) -> &'static str {
+        self.inner.units().name()
     }
 
     fn velocities<'py>(
@@ -374,7 +418,7 @@ impl BoundPotential for MountedPython {
         self.0.name()
     }
 
-    fn units(&self) -> &UnitPreset {
+    fn units(&self) -> UnitStyle {
         self.0.units()
     }
 

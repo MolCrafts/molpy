@@ -598,9 +598,14 @@ fn build_block_from_props(
                 // canonical key's dtype is fixed by the vocabulary — `id` is
                 // unsigned there, and an Int column under that name would be
                 // invisible to every consumer reading it as unsigned.
-                if molrs::core::schema::column(&name).map(|c| c.dtype)
-                    == Some(molrs::core::DType::Uint)
-                {
+                let declared = molrs::core::schema::column(&name).map(|c| c.dtype);
+                if declared == Some(molrs::core::DType::I64) {
+                    // `formal_charge` is i64 in the vocabulary; widening an
+                    // i32 is exact.
+                    let wide: Vec<i64> = v.iter().map(|&x| i64::from(x)).collect();
+                    let arr = shaped(wide, n, width)?;
+                    block.insert(name, arr, None).map_err(|e| e.to_string())?;
+                } else if declared == Some(molrs::core::DType::Uint) {
                     let unsigned: Vec<molrs::op::Idx> = v
                         .iter()
                         .map(|&x| {
@@ -1346,6 +1351,32 @@ mod tests {
         let mut whole =
             XyzReader::new(std::io::Cursor::new(&b"1\n\nO 0 0 0\n\n1\n\nH 0 0 0\n"[..]));
         assert_eq!(whole.len().unwrap(), 2);
+    }
+
+    /// `formal_charge` is i64 in the vocabulary: an extended-XYZ `I` column
+    /// under that name reads back as i64, so a written frame round-trips.
+    #[test]
+    fn formal_charge_reads_back_as_the_vocabulary_i64() {
+        let text =
+            "2\nProperties=species:S:1:pos:R:3:formal_charge:I:1\nO 0 0 0 -1\nH 0.96 0 0 0\n";
+        let frame = parse_frame_str(text).unwrap();
+        let charges: Vec<i64> = frame["atoms"]
+            .get("formal_charge")
+            .and_then(|c| c.get::<i64>())
+            .expect("an i64 formal_charge column")
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(charges, [-1, 0]);
+        let mut out = Vec::new();
+        write_xyz(&mut out, &frame).unwrap();
+        let again = read_xyz(&out[..]).unwrap();
+        assert!(
+            again["atoms"]
+                .get("formal_charge")
+                .and_then(|c| c.get::<i64>())
+                .is_some()
+        );
     }
 
     /// The single-frame door checks the Frame schema as the streaming writer

@@ -58,17 +58,18 @@ def test_define_lj_sigma_refuses_a_sigma_that_is_not_a_length():
         units.define_lj_sigma(units.quantity(1.0, "second"))
 
 
-def test_openmm_preset_is_native_with_molrs_boltzmann():
+def test_openmm_preset_boltzmann_is_the_exact_gas_constant():
     preset = mp.core.UnitPreset("openmm")
     assert preset.length() == "nanometer"
     assert preset.energy() == "kilojoule_per_mole"
-    real = mp.core.UnitPreset("real")
-    units = mp.core.UnitRegistry()
-    kj = units.quantity(real.boltzmann(), "kilocalorie_per_mole").to(
-        "kilojoule_per_mole"
-    )
-    assert preset.boltzmann() == pytest.approx(kj.value, rel=1e-14)
+    assert preset.boltzmann() == pytest.approx(8.31446261815324e-3, rel=1e-14)
     assert "openmm" in mp.core.UnitPreset.names()
+
+
+def test_a_lammps_preset_carries_the_lammps_literals():
+    real = mp.core.UnitPreset("real")
+    assert real.boltzmann() == 0.0019872067
+    assert real.coulomb() == 332.06371
 
 
 def test_boltzmann_constant_is_a_registry_unit():

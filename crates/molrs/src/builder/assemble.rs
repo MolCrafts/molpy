@@ -4,12 +4,14 @@
 //! 2026-09-27): it supersedes the 2026-09-26 "primitives only" ruling for
 //! this one concern.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::builder::orient::direction_fit;
+use crate::builder::{JunctionError, JunctionReport, Retype, Settle};
 use crate::builder::{OrientError, Orienter, SiteLink, SiteView};
 use crate::builder::{ParentJoin, PlaceError, PlaceSite, Placer};
+use crate::core::Atomistic;
 use crate::core::CenterError;
 use crate::core::CoarseGrain;
 use crate::core::LinkManyError;
@@ -18,11 +20,14 @@ use crate::core::MolRsError;
 use crate::core::NodeId;
 use crate::core::Port;
 use crate::core::RelationId;
+use crate::core::SimBox;
 use crate::core::keys;
+use crate::core::{BatchConflict, BatchPair, LinkRequest, PortPlan, batch_conflicts};
+use crate::core::{BondNumber, BondOrder};
 use crate::core::{Graph, GraphAccess};
-use crate::op::I;
 use crate::op::Vec3;
 use crate::op::vec3::sub;
+use crate::op::{F, I};
 use crate::op::{Rigid, transform_point};
 
 /// The most port assignments tried at one site before it is refused.
@@ -68,6 +73,17 @@ pub enum AssembleError {
         /// What is missing.
         reason: String,
     },
+    /// An explicit connection is invalid; ordinals identify its input row.
+    Connection {
+        /// Bond row in the input site graph.
+        bond: usize,
+        /// Endpoint site ordinals, in input endpoint order.
+        sites: [usize; 2],
+        /// Requested template port rows.
+        ports: [Option<usize>; 2],
+        /// Why the connection was refused.
+        reason: String,
+    },
     /// The orienter refused the copies of template `name`; `site` is the
     /// site it names, or the group's first site when the error names none.
     Orient {
@@ -88,7 +104,9 @@ pub enum AssembleError {
         /// The placer's refusal.
         source: PlaceError,
     },
-    /// The finished world is not a valid graph of the requested output type.
+    /// The assembled world was refused as a whole: by the batch join, for a
+    /// stereochemical reference at no site bond's anchor, or as a graph of
+    /// the requested output type.
     Output(MolRsError),
     /// The world refused the copies of template `name` (for example a column
     /// type that contradicts another template's), or a copy lost a port.
@@ -101,14 +119,21 @@ pub enum AssembleError {
     /// The batch join refused the bond between sites `site` and `partner`
     /// (for a two-pair refusal, its `first` pair).
     Link {
+        /// Input bond row.
+        bond: usize,
+        /// Selected template port rows in endpoint order.
+        ports: [usize; 2],
         /// One end of the bond.
         site: usize,
         /// The other end.
         partner: usize,
         /// The batch join's refusal; its pair indices count site bonds in
         /// the site graph's bond order.
-        source: LinkManyError,
+        source: Box<LinkManyError>,
     },
+    /// The junction stage refused the linked world
+    /// ([`update_junctions`](crate::builder::update_junctions)).
+    Junction(JunctionError),
 }
 
 impl fmt::Display for AssembleError {
@@ -135,21 +160,42 @@ impl fmt::Display for AssembleError {
                     "site {site} ('{name}') has no port for every bond: {reason}"
                 )
             }
+            Self::Connection {
+                bond,
+                sites,
+                ports,
+                reason,
+            } => {
+                let [src, dst] =
+                    ports.map(|p| p.map_or_else(|| "unspecified".to_owned(), |p| p.to_string()));
+                write!(
+                    f,
+                    "bond {bond} (site {} port {src}, site {} port {dst}): {reason}",
+                    sites[0], sites[1]
+                )
+            }
             Self::Orient { name, site, source } => {
                 write!(f, "site {site} ('{name}') cannot be oriented: {source}")
             }
             Self::Place { name, site, source } => {
                 write!(f, "site {site} ('{name}') cannot be placed: {source}")
             }
-            Self::Output(e) => write!(f, "the world is not a graph of the requested type: {e}"),
+            Self::Output(e) => write!(f, "the assembled world is refused: {e}"),
             Self::Replicate { name, source } => {
                 write!(f, "the copies of template '{name}' were refused: {source}")
             }
             Self::Link {
+                bond,
+                ports,
                 site,
                 partner,
                 source,
-            } => write!(f, "site {site} cannot join site {partner}: {source}"),
+            } => write!(
+                f,
+                "bond {bond} (site {site} port {}, site {partner} port {}): {source}",
+                ports[0], ports[1]
+            ),
+            Self::Junction(e) => write!(f, "the junctions of the world: {e}"),
         }
     }
 }
@@ -164,7 +210,11 @@ impl std::error::Error for AssembleError {
             Self::Orient { source, .. } => Some(source),
             Self::Place { source, .. } => Some(source),
             Self::Link { source, .. } => Some(source),
-            Self::TooManyUnits { .. } | Self::UnknownName { .. } | Self::Ports { .. } => None,
+            Self::Junction(source) => Some(source),
+            Self::TooManyUnits { .. }
+            | Self::UnknownName { .. }
+            | Self::Ports { .. }
+            | Self::Connection { .. } => None,
         }
     }
 }
@@ -173,10 +223,10 @@ impl std::error::Error for AssembleError {
 struct TemplatePort {
     id: RelationId,
     port: Port,
-    anchor_row: usize,
-    handle_row: usize,
     /// Anchor and handle positions in the template (Å), when both have them.
     atoms: Option<(Vec3, Vec3)>,
+    /// The anchor element's covalent radius (Å), when the anchor has one.
+    anchor_radius: Option<f64>,
     /// Centre of mass → handle (Å); `None` when the template has no centre.
     direction: Option<Vec3>,
 }
@@ -198,8 +248,15 @@ struct SiteGraph {
     axes: Option<Vec<Vec3>>,
     /// Site bonds as ordinal pairs, in the site graph's bond order.
     bonds: Vec<(usize, usize)>,
-    /// Per site, its `(partner, bond)` incidences.
-    incident: Vec<Vec<(usize, usize)>>,
+    /// Fixed port ordinals per ordered bond end; absent for automatic bonds.
+    fixed: Vec<[Option<usize>; 2]>,
+    /// Explicit output chemistry, independent of coarse edge multiplicity.
+    classes: Vec<Option<(BondOrder, BondNumber)>>,
+    /// The periodic image of each bond's second end, seen from its first
+    /// (`ix`, `iy`, `iz`; zero for a bond inside the cell).
+    images: Vec<[i32; 3]>,
+    /// Per site, its `(partner, bond, end)` incidences, including both self ends.
+    incident: Vec<Vec<(usize, usize, usize)>>,
 }
 
 impl SiteGraph {
@@ -226,10 +283,60 @@ impl SiteGraph {
             ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
         let mut bonds = Vec::with_capacity(sites.n_bonds());
         let mut incident = vec![Vec::new(); n];
+        let mut fixed = Vec::with_capacity(sites.n_bonds());
+        let mut classes = Vec::with_capacity(sites.n_bonds());
+        let mut images = Vec::with_capacity(sites.n_bonds());
         for (_, bond) in sites.bonds() {
             let (u, v) = (ordinal[&bond.nodes[0]], ordinal[&bond.nodes[1]]);
-            incident[u].push((v, bonds.len()));
-            incident[v].push((u, bonds.len()));
+            let row = bonds.len();
+            // The schema already keeps these keys unsigned integers; what is
+            // checked here is that each pair of keys comes together.
+            let read_pair = |a: &str, b: &str| -> Result<Option<[usize; 2]>, AssembleError> {
+                let refuse = |reason: String| AssembleError::Connection {
+                    bond: row,
+                    sites: [u, v],
+                    ports: [None, None],
+                    reason,
+                };
+                match (bond.props.get_int(a), bond.props.get_int(b)) {
+                    (None, None) => Ok(None),
+                    (Some(x), Some(y)) => match (usize::try_from(x), usize::try_from(y)) {
+                        (Ok(x), Ok(y)) => Ok(Some([x, y])),
+                        _ => Err(refuse(format!("{a} and {b} must be nonnegative"))),
+                    },
+                    _ => Err(refuse(format!("{a} and {b} are supplied together"))),
+                }
+            };
+            fixed.push(
+                read_pair(keys::SRC_PORT, keys::DST_PORT)?
+                    .map_or([None, None], |[a, b]| [Some(a), Some(b)]),
+            );
+            // Whether the class fits the ports it joins is the join's rule
+            // (`BondNumber::accepts_class`), applied once the ports are chosen.
+            classes.push(
+                read_pair(keys::BOND_TYPE, keys::BOND_NUMBER)?.map(|[t, n]| {
+                    let code = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+                    (
+                        BondOrder::from_code(code(t)),
+                        BondNumber::from_code(code(n)),
+                    )
+                }),
+            );
+            let image = keys::IMAGES.map(|key| bond.props.get_int(key));
+            images.push(match image {
+                [None, None, None] => [0; 3],
+                [Some(x), Some(y), Some(z)] => [x, y, z],
+                _ => {
+                    return Err(AssembleError::Connection {
+                        bond: row,
+                        sites: [u, v],
+                        ports: [None, None],
+                        reason: "ix, iy and iz are supplied together".to_owned(),
+                    });
+                }
+            });
+            incident[u].push((v, row, 0));
+            incident[v].push((u, row, 1));
             bonds.push((u, v));
         }
         Ok(Self {
@@ -237,6 +344,9 @@ impl SiteGraph {
             positions,
             axes,
             bonds,
+            fixed,
+            classes,
+            images,
             incident,
         })
     }
@@ -285,6 +395,12 @@ enum PortChoice {
 ///
 /// # Ports
 ///
+/// A bond with `src_port` and `dst_port` fixes both template port rows. All
+/// fixed ports are reserved before automatic matching; retries never replace
+/// them. Missing, reused or incompatible ports are refused. Reversing an edge
+/// requires swapping its two port fields. Parallel edges and a self edge between
+/// distinct anchors each consume their own two ports.
+///
 /// Every site bond joins one port of each end's copy, the two ports
 /// accepting each other ([`Port::accepts`]: `<` with `>`, `$` with `$`,
 /// equal label and order). Each connected component is walked breadth-first
@@ -313,6 +429,9 @@ enum PortChoice {
 /// - `frag_id` = the site's ordinal (0-based).
 /// - `mol_id` = the ordinal of the site's connected component + 1,
 ///   components numbered by their lowest site ordinal.
+/// - `template` = the library name the site's copy was made from, and
+///   `template_atom` = the atom's row in that template; with `frag_id` they
+///   locate the copy of any template atom, and no later edit renumbers them.
 ///
 /// # World layout
 ///
@@ -399,6 +518,17 @@ pub struct Assembler<G: Graph> {
     library: HashMap<String, G>,
     placer: Box<dyn Placer<G>>,
     orienter: Option<Box<dyn Orienter<G>>>,
+    retype: Retype,
+    cell: Option<SimBox>,
+}
+
+impl Assembler<Atomistic> {
+    /// Type the junctions of every assembled world by `retype` (default
+    /// [`Retype::Keep`]); see [`update_junctions`](crate::builder::update_junctions).
+    pub fn with_retype(mut self, retype: Retype) -> Self {
+        self.retype = retype;
+        self
+    }
 }
 
 impl<G: Graph> Assembler<G> {
@@ -415,9 +545,22 @@ impl<G: Graph> Assembler<G> {
             library,
             placer,
             orienter,
+            retype: Retype::Keep,
+            cell: None,
         }
     }
 
+    /// The periodic cell a site bond's image (`ix`, `iy`, `iz`) is counted
+    /// in: across such a bond the far site is joined in the image
+    /// `H · (ix, iy, iz)` away, so a chain or network can close through the
+    /// cell's faces.
+    pub fn with_cell(mut self, cell: SimBox) -> Self {
+        self.cell = Some(cell);
+        self
+    }
+}
+
+impl<G: Graph + Settle> Assembler<G> {
     /// One copy of `library[bead_type]` per site of `sites`, turned, placed
     /// and joined along the site bonds; returns the world as a `G`, the
     /// library's graph type. See the type docs for the rules. An empty site
@@ -447,7 +590,43 @@ impl<G: Graph> Assembler<G> {
     /// port choices tried at a site (one along a `<`/`>` chain, at most 5040)
     /// and the walks retried per component (two for a `<`/`>` chain).
     pub fn assemble(&self, sites: &CoarseGrain) -> Result<G, AssembleError> {
+        self.assemble_with_report(sites).map(|(world, _)| world)
+    }
+
+    /// [`assemble`](Self::assemble), and what its junction stage did: the
+    /// new bonds with their anchors and charge folds, the terms it added and
+    /// the pairs it reclassified. Every link of one assembly is one batch, so
+    /// the report covers them all.
+    ///
+    /// # Errors
+    ///
+    /// As [`assemble`](Self::assemble).
+    pub fn assemble_with_report(
+        &self,
+        sites: &CoarseGrain,
+    ) -> Result<(G, JunctionReport), AssembleError> {
         let graph = SiteGraph::read(sites)?;
+        // The translation of each bond's second end, seen from its first.
+        let shifts: Vec<Vec3> = graph
+            .images
+            .iter()
+            .enumerate()
+            .map(|(b, image)| match (image, &self.cell) {
+                ([0, 0, 0], _) => Ok([0.0; 3]),
+                (image, Some(cell)) => Ok(std::array::from_fn(|axis| {
+                    (0..3)
+                        .map(|k| F::from(image[k]) * cell.lattice(k)[axis])
+                        .sum()
+                })),
+                (_, None) => Err(AssembleError::Connection {
+                    bond: b,
+                    sites: [graph.bonds[b].0, graph.bonds[b].1],
+                    ports: [None, None],
+                    reason: "a bond with a periodic image needs the assembler's cell (with_cell)"
+                        .to_owned(),
+                }),
+            })
+            .collect::<Result<_, _>>()?;
         let n = graph.names.len();
 
         // ---- group sites by template ----
@@ -479,7 +658,35 @@ impl<G: Graph> Assembler<G> {
         }
 
         // ---- ports: one per bond end, each component walked breadth-first ----
-        let mut chosen: Vec<[Option<usize>; 2]> = vec![[None, None]; graph.bonds.len()];
+        // Read every explicit port before any component starts choosing; a
+        // port named by two bonds is refused with the rest of the plan.
+        for (b, &(u, v)) in graph.bonds.iter().enumerate() {
+            let [Some(p), Some(q)] = graph.fixed[b] else {
+                continue;
+            };
+            let refuse = |reason| AssembleError::Connection {
+                bond: b,
+                sites: [u, v],
+                ports: graph.fixed[b],
+                reason,
+            };
+            let mut selected = Vec::with_capacity(2);
+            for (site, port) in [(u, p), (v, q)] {
+                let ports = &groups[group_of[site].0].ports;
+                let tp = ports.get(port).ok_or_else(|| {
+                    refuse(format!(
+                        "site {site} template '{}' has {} ports, no port {port}",
+                        graph.names[site],
+                        ports.len()
+                    ))
+                })?;
+                selected.push(&tp.port);
+            }
+            if !selected[0].accepts(selected[1]) {
+                return Err(refuse("the selected ports are incompatible".to_owned()));
+            }
+        }
+        let mut chosen = graph.fixed.clone();
         let mut mol_of = vec![usize::MAX; n];
         let mut walks: Vec<Walk> = Vec::new();
         for start in 0..n {
@@ -495,10 +702,17 @@ impl<G: Graph> Assembler<G> {
                 &mut chosen,
             )?);
         }
-        let port_of = |u: usize, b: usize| -> &TemplatePort {
-            let p = chosen[b][graph.end(b, u)].expect("every bond end was chosen");
+        let port_of = |b: usize, end: usize| -> &TemplatePort {
+            let u = if end == 0 {
+                graph.bonds[b].0
+            } else {
+                graph.bonds[b].1
+            };
+            let p = chosen[b][end].expect("every bond end was chosen");
             &groups[group_of[u].0].ports[p]
         };
+
+        Self::validate_connections(&graph, &groups, &group_of, &chosen)?;
 
         // ---- orient: one call per name ----
         let mut turns = vec![Rigid::IDENTITY; n];
@@ -515,8 +729,8 @@ impl<G: Graph> Assembler<G> {
                     .map(|&u| {
                         graph.incident[u]
                             .iter()
-                            .map(|&(v, b)| SiteLink {
-                                port: port_of(u, b).id,
+                            .map(|&(v, b, end)| SiteLink {
+                                port: port_of(b, end).id,
                                 toward: positions[v],
                             })
                             .collect()
@@ -556,6 +770,7 @@ impl<G: Graph> Assembler<G> {
 
         // ---- place: parents before children ----
         let mut poses = vec![Rigid::IDENTITY; n];
+        let mut placed = vec![false; n];
         for walk in &walks {
             for &(u, parent) in walk {
                 let group = &groups[group_of[u].0];
@@ -564,30 +779,53 @@ impl<G: Graph> Assembler<G> {
                     site: u,
                     source,
                 };
-                let parent = match parent {
-                    None => None,
+                // One join per site bond to a placed site: the walk's bond to
+                // the parent first, then every other — a ladder's parallel
+                // bond, a ring, crosslink or periodic closure — each with the
+                // placed site taken in the image its bond names.
+                let join_through = |p: usize, b: usize| -> Result<ParentJoin, AssembleError> {
+                    let (anchor, handle) = port_of(b, graph.end(b, p)).atoms.ok_or_else(|| {
+                        place_err(PlaceError::Port(format!(
+                            "the port of site {p} toward site {u} has an atom without x/y/z"
+                        )))
+                    })?;
+                    // `shifts[b]` moves the bond's second end; seen from `u`,
+                    // `p` is shifted forward when it is that end, back otherwise.
+                    let sign = if graph.end(b, p) == 1 { 1.0 } else { -1.0 };
+                    let shift = |x: Vec3| -> Vec3 {
+                        std::array::from_fn(|axis| x[axis] + sign * shifts[b][axis])
+                    };
+                    Ok(ParentJoin {
+                        port: port_of(b, graph.end(b, u)).id,
+                        anchor: shift(transform_point(&poses[p], anchor)),
+                        handle: shift(transform_point(&poses[p], handle)),
+                        anchor_radius: port_of(b, graph.end(b, p)).anchor_radius,
+                    })
+                };
+                let (parent, extra_joins) = match parent {
+                    None => (None, Vec::new()),
                     Some((p, b)) => {
-                        let (anchor, handle) = port_of(p, b).atoms.ok_or_else(|| {
-                            place_err(PlaceError::Port(format!(
-                                "the port of site {p} toward site {u} has an atom without x/y/z"
-                            )))
-                        })?;
-                        Some(ParentJoin {
-                            port: port_of(u, b).id,
-                            anchor: transform_point(&poses[p], anchor),
-                            handle: transform_point(&poses[p], handle),
-                        })
+                        let extra = graph.incident[u]
+                            .iter()
+                            .filter(|&&(partner, other, _)| {
+                                partner != u && placed[partner] && other != b
+                            })
+                            .map(|&(partner, other, _)| join_through(partner, other))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        (Some(join_through(p, b)?), extra)
                     }
                 };
                 let site = PlaceSite {
                     position: graph.positions.as_ref().map(|ps| ps[u]),
                     turn: turns[u],
                     parent,
+                    extra_joins,
                 };
                 poses[u] = self
                     .placer
                     .place(group.template, &site)
                     .map_err(place_err)?;
+                placed[u] = true;
             }
         }
 
@@ -617,62 +855,183 @@ impl<G: Graph> Assembler<G> {
             for (c, &u) in group.sites.iter().enumerate() {
                 let mol_id =
                     I::try_from(mol_of[u] + 1).expect("TooManyUnits bounds every component");
-                for &atom in &atoms[c * per_copy..(c + 1) * per_copy] {
+                // A copy's atoms follow its template's rows (`replicate`).
+                for (row, &atom) in atoms[c * per_copy..(c + 1) * per_copy].iter().enumerate() {
+                    let row = I::try_from(row).map_err(|_| {
+                        replicate_err(MolRsError::validation(format!(
+                            "template '{}' has more atoms than an i32 '{}' holds",
+                            group.name,
+                            keys::TEMPLATE_ATOM
+                        )))
+                    })?;
                     world
                         .set_node(atom, keys::MOL_ID, mol_id)
+                        .and_then(|()| world.set_node(atom, keys::TEMPLATE, group.name))
+                        .and_then(|()| world.set_node(atom, keys::TEMPLATE_ATOM, row))
                         .map_err(replicate_err)?;
                 }
             }
             copies.push(atoms);
         }
 
-        // ---- one scan of the world's ports ----
-        let mut world_ports: HashMap<(NodeId, NodeId), RelationId> =
-            HashMap::with_capacity(world.n_ports());
-        for id in world.port_ids() {
-            if let Ok(port) = world.get_port(id) {
-                world_ports.insert((port.anchor, port.handle), id);
-            }
-        }
-        let world_port = |u: usize, b: usize| -> Result<RelationId, AssembleError> {
+        // ---- the copies' ports: per group, copy and template port ----
+        let ports_of: Vec<Vec<Vec<RelationId>>> = groups
+            .iter()
+            .zip(&copies)
+            .map(|(group, atoms)| {
+                world
+                    .copied_ports(group.template.graph(), atoms)
+                    .map_err(|source| AssembleError::Replicate {
+                        name: group.name.to_owned(),
+                        source,
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let world_port = |b: usize, end: usize| -> RelationId {
+            let u = if end == 0 {
+                graph.bonds[b].0
+            } else {
+                graph.bonds[b].1
+            };
             let (g, c) = group_of[u];
-            let group = &groups[g];
-            let tp = port_of(u, b);
-            let base = c * group.template.graph().n_nodes();
-            let key = (
-                copies[g][base + tp.anchor_row],
-                copies[g][base + tp.handle_row],
-            );
-            world_ports
-                .get(&key)
-                .copied()
-                .ok_or_else(|| AssembleError::Replicate {
-                    name: group.name.to_owned(),
-                    source: MolRsError::validation(format!("copy {c} lost a port in the world")),
-                })
+            ports_of[g][c][chosen[b][end].expect("every bond end was chosen")]
         };
 
-        // ---- one batch join along the site bonds ----
-        let mut pairs: Vec<(RelationId, RelationId)> = Vec::with_capacity(graph.bonds.len());
-        for (b, &(u, v)) in graph.bonds.iter().enumerate() {
-            pairs.push((world_port(u, b)?, world_port(v, b)?));
-        }
-        world.link_many(&pairs).map_err(|source| {
+        // ---- one batch join along the site bonds, each bond classed as resolved ----
+        let requests: Vec<LinkRequest> = (0..graph.bonds.len())
+            .map(|b| LinkRequest {
+                a: world_port(b, 0),
+                b: world_port(b, 1),
+                class: graph.classes[b],
+            })
+            .collect();
+        let junctions = world.link_many(&requests).map_err(|source| {
+            let source = match source {
+                LinkManyError::Graph(error) => return AssembleError::Output(error),
+                source => source,
+            };
             let pair = match &source {
                 LinkManyError::Pair { pair, .. } => *pair,
                 LinkManyError::PortReused { first, .. }
                 | LinkManyError::DuplicateBond { first, .. }
                 | LinkManyError::BranchesOverlap { first, .. } => *first,
+                LinkManyError::Graph(_) => unreachable!("returned above"),
             };
             let (site, partner) = graph.bonds[pair];
             AssembleError::Link {
+                bond: pair,
+                ports: chosen[pair].map(|p| p.expect("selected before copying")),
                 site,
                 partner,
-                source,
+                source: Box::new(source),
             }
         })?;
+        let mut world = G::from_graph(world).map_err(AssembleError::Output)?;
+        let report = world
+            .settle(&junctions, &self.retype)
+            .map_err(AssembleError::Junction)?;
+        Ok((world, report))
+    }
 
-        G::from_graph(world).map_err(AssembleError::Output)
+    /// Check the chosen connections on instance-qualified template identities,
+    /// before an orienter or placer can observe an invalid plan. The rules are
+    /// the batch join's own ([`MolGraph::port_plan`], [`MolGraph::check_pair`]
+    /// and [`batch_conflicts`]); this adds only what the join cannot know: the
+    /// resolved class against the port order, and the cap an unpaired
+    /// multiple-bond port would need.
+    fn validate_connections(
+        graph: &SiteGraph,
+        groups: &[Group<'_, G>],
+        group_of: &[(usize, usize)],
+        chosen: &[[Option<usize>; 2]],
+    ) -> Result<(), AssembleError> {
+        let refuse = |b: usize, reason: String| AssembleError::Connection {
+            bond: b,
+            sites: [graph.bonds[b].0, graph.bonds[b].1],
+            ports: chosen[b],
+            reason,
+        };
+        // One read per template port in use: the port and its leaving group.
+        let mut plans: HashMap<(usize, usize), PortPlan> = HashMap::new();
+        let mut batch = Vec::with_capacity(graph.bonds.len());
+        for (b, &(u, v)) in graph.bonds.iter().enumerate() {
+            let [p, q] = chosen[b].map(|p| p.expect("all ends have been chosen"));
+            for (site, port) in [(u, p), (v, q)] {
+                let g = group_of[site].0;
+                if let std::collections::hash_map::Entry::Vacant(entry) = plans.entry((g, port)) {
+                    let template = groups[g].template.graph();
+                    let plan = template
+                        .port_plan(groups[g].ports[port].id)
+                        .and_then(|plan| plan.check_branch().map(|()| plan))
+                        .map_err(|e| refuse(b, format!("site {site} port {port}: {e}")))?;
+                    entry.insert(plan);
+                }
+            }
+            let a = &plans[&(group_of[u].0, p)];
+            let z = &plans[&(group_of[v].0, q)];
+            if u == v {
+                groups[group_of[u].0]
+                    .template
+                    .graph()
+                    .check_pair(a, z)
+                    .map_err(|e| refuse(b, e.to_string()))?;
+            }
+            if let Some((kind, number)) = graph.classes[b]
+                && !a.port.order.accepts_class(kind, number)
+            {
+                return Err(refuse(
+                    b,
+                    format!(
+                        "resolved bond class (type {}, number {}) contradicts the selected ports",
+                        kind.code(),
+                        number.code()
+                    ),
+                ));
+            }
+            batch.push(BatchPair {
+                ports: [(u, p), (v, q)],
+                anchors: [(u, a.port.anchor), (v, z.port.anchor)],
+                branches: [
+                    a.branch.iter().map(|&atom| (u, atom)).collect(),
+                    z.branch.iter().map(|&atom| (v, atom)).collect(),
+                ],
+            });
+        }
+        batch_conflicts(&batch).map_err(|conflict| match conflict {
+            BatchConflict::PortReused {
+                port: (site, port),
+                first,
+                second,
+            } => refuse(
+                second,
+                format!("site {site} port {port} already used by bond {first}"),
+            ),
+            BatchConflict::DuplicateBond { first, second } => refuse(
+                second,
+                format!("bond {first} already joins these two anchors"),
+            ),
+            BatchConflict::BranchesOverlap { first, second } => {
+                refuse(second, format!("leaving group overlaps bond {first}"))
+            }
+        })?;
+        for (site, &(g, _)) in group_of.iter().enumerate() {
+            let used: HashSet<usize> = graph.incident[site]
+                .iter()
+                .map(|&(_, b, end)| chosen[b][end].expect("selected port"))
+                .collect();
+            for (p, tp) in groups[g].ports.iter().enumerate() {
+                if tp.port.order.needs_explicit_cap() && !used.contains(&p) {
+                    return Err(AssembleError::Ports {
+                        site,
+                        name: graph.names[site].clone(),
+                        reason: format!(
+                            "unused non-single port {p} requires an explicit cap fragment"
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Every site of `start`'s connected component, each stamped `mol` in
@@ -682,7 +1041,7 @@ impl<G: Graph> Assembler<G> {
         mol_of[start] = mol;
         let mut i = 0;
         while i < members.len() {
-            for &(v, _) in &graph.incident[members[i]] {
+            for &(v, _, _) in &graph.incident[members[i]] {
                 if mol_of[v] == usize::MAX {
                     mol_of[v] = mol;
                     members.push(v);
@@ -712,8 +1071,8 @@ impl<G: Graph> Assembler<G> {
         let mut first_error: Option<AssembleError> = None;
         for pick in 0.. {
             for &u in members {
-                for &(_, b) in &graph.incident[u] {
-                    chosen[b] = [None, None];
+                for &(_, b, _) in &graph.incident[u] {
+                    chosen[b] = graph.fixed[b];
                 }
             }
             match Self::try_walk(root, pick, groups, group_of, graph, chosen) {
@@ -744,8 +1103,7 @@ impl<G: Graph> Assembler<G> {
         chosen: &mut [[Option<usize>; 2]],
     ) -> Result<Walk, Option<AssembleError>> {
         let mut walk: Walk = vec![(root, None)];
-        let mut seen = vec![false; graph.names.len()];
-        seen[root] = true;
+        let mut seen = HashSet::from([root]);
         let mut i = 0;
         while i < walk.len() {
             let u = walk[i].0;
@@ -755,9 +1113,8 @@ impl<G: Graph> Assembler<G> {
                 Err(PortChoice::Missing) => return Err(None),
                 Err(PortChoice::Refused(e)) => return Err(Some(e)),
             }
-            for &(v, b) in &graph.incident[u] {
-                if !seen[v] {
-                    seen[v] = true;
+            for &(v, b, _) in &graph.incident[u] {
+                if seen.insert(v) {
                     walk.push((v, Some((u, b))));
                 }
             }
@@ -805,19 +1162,38 @@ impl<G: Graph> Assembler<G> {
         // end's port when the partner has not chosen yet.
         let partner: Vec<Partner<'_>> = links
             .iter()
-            .map(|&(v, b)| {
+            .map(|&(v, b, end)| {
                 let theirs = &groups[group_of[v].0].ports;
-                match chosen[b][graph.end(b, v)] {
+                match chosen[b][1 - end] {
                     Some(p) => Partner::Chosen(&theirs[p].port),
                     None => Partner::Open(theirs),
                 }
             })
             .collect();
 
+        let fixed: Vec<Option<usize>> = links
+            .iter()
+            .map(|&(_, b, end)| graph.fixed[b][end])
+            .collect();
+        if fixed.iter().all(Option::is_some) {
+            return if pick.unwrap_or(0) == 0 {
+                Ok(())
+            } else {
+                Err(PortChoice::Missing)
+            };
+        }
         let mut candidates: Vec<Vec<usize>> = Vec::new();
         let mut used = vec![false; ports.len()];
         let mut current = Vec::with_capacity(links.len());
-        if !enumerate(&partner, ports, &mut used, &mut current, &mut candidates) {
+        if !enumerate(
+            &partner,
+            ports,
+            &fixed,
+            links,
+            &mut used,
+            &mut current,
+            &mut candidates,
+        ) {
             return Err(refuse(format!(
                 "more than {MAX_ASSIGNMENTS} port choices; label the ports to narrow them"
             )));
@@ -836,7 +1212,7 @@ impl<G: Graph> Assembler<G> {
                 let targets: Option<Vec<Vec3>> = graph
                     .positions
                     .as_ref()
-                    .map(|ps| links.iter().map(|&(v, _)| sub(ps[v], ps[u])).collect());
+                    .map(|ps| links.iter().map(|&(v, _, _)| sub(ps[v], ps[u])).collect());
                 let mut best: Option<(f64, usize)> = None;
                 for (i, cand) in candidates.iter().enumerate() {
                     let rmsd = targets
@@ -855,8 +1231,8 @@ impl<G: Graph> Assembler<G> {
                 candidates.swap_remove(best.expect("two or more candidates").1)
             }
         };
-        for (&(_, b), p) in links.iter().zip(best) {
-            chosen[b][graph.end(b, u)] = Some(p);
+        for (&(_, b, end), p) in links.iter().zip(best) {
+            chosen[b][end] = Some(p);
         }
         Ok(())
     }
@@ -868,14 +1244,6 @@ impl<G: Graph> Assembler<G> {
             name: name.to_owned(),
             source,
         };
-        let row = |atom: NodeId| {
-            template.node_table().row(atom).ok_or_else(|| {
-                refuse(MolRsError::validation(format!(
-                    "a port names {atom:?}, which is no live atom"
-                )))
-            })
-        };
-        let position = |atom: NodeId| template.get_node(atom).ok().and_then(|a| a.position());
         // A template without coordinates has no geometry, so no centre.
         let center = match template.centroid(&template.node_ids().collect::<Vec<_>>()) {
             Ok(c) => Some(c),
@@ -887,12 +1255,16 @@ impl<G: Graph> Assembler<G> {
         let mut out = Vec::new();
         for id in template.port_ids() {
             let port = template.get_port(id).map_err(refuse)?;
-            let handle = position(port.handle);
+            let anchor_props = template.get_node(port.anchor).map_err(refuse)?;
+            let handle_props = template.get_node(port.handle).map_err(refuse)?;
+            let handle = handle_props.position();
             out.push(TemplatePort {
                 id,
-                anchor_row: row(port.anchor)?,
-                handle_row: row(port.handle)?,
-                atoms: position(port.anchor).zip(handle),
+                atoms: anchor_props.position().zip(handle),
+                anchor_radius: anchor_props
+                    .atomic_number()
+                    .and_then(crate::core::Element::by_number)
+                    .map(|element| f64::from(element.covalent_radius())),
                 direction: center.zip(handle).map(|(c, h)| sub(h, c)),
                 port,
             });
@@ -926,6 +1298,8 @@ impl Partner<'_> {
 fn enumerate(
     partner: &[Partner<'_>],
     ports: &[TemplatePort],
+    fixed: &[Option<usize>],
+    links: &[(usize, usize, usize)],
     used: &mut [bool],
     current: &mut Vec<usize>,
     out: &mut Vec<Vec<usize>>,
@@ -939,12 +1313,28 @@ fn enumerate(
         return true;
     }
     for (p, tp) in ports.iter().enumerate() {
-        if used[p] || !partner[k].admits(&tp.port) {
+        if used[p]
+            || fixed[k].is_some_and(|f| p != f)
+            || fixed
+                .iter()
+                .enumerate()
+                .any(|(i, f)| i != k && *f == Some(p))
+            || !partner[k].admits(&tp.port)
+        {
+            continue;
+        }
+        // A self connection has two incidences here; once its first end is
+        // chosen, the second must accept that exact port, not any template port.
+        if links[..k]
+            .iter()
+            .enumerate()
+            .any(|(i, link)| link.1 == links[k].1 && !tp.port.accepts(&ports[current[i]].port))
+        {
             continue;
         }
         used[p] = true;
         current.push(p);
-        let ok = enumerate(partner, ports, used, current, out);
+        let ok = enumerate(partner, ports, fixed, links, used, current, out);
         current.pop();
         used[p] = false;
         if !ok {
@@ -966,11 +1356,11 @@ mod tests {
     use crate::builder::{AxisOrienter, OrientError, Orienter, SiteView};
     use crate::builder::{GrowthPlacer, PlaceError, PlaceSite, Placer, SitePlacer};
     use crate::core::Atomistic;
-    use crate::core::BondNumber;
     use crate::core::CoarseGrain;
     use crate::core::NodeId;
     use crate::core::PortKind;
     use crate::core::keys;
+    use crate::core::{BondNumber, BondOrder};
     use crate::op::I;
     use crate::op::Vec3;
     use crate::op::{Rigid, rotation_about};
@@ -1122,6 +1512,224 @@ mod tests {
             .collect()
     }
 
+    /// A straight unit along x: C0 (row 0, `<` with H0 at −x), C1 (row 1,
+    /// `>` with H1 at +x).
+    fn straight_unit() -> Atomistic {
+        let mut m = Atomistic::new();
+        let c0 = atom(&mut m, Element::C, [0.0, 0.0, 0.0], 12.0);
+        let c1 = atom(&mut m, Element::C, [1.54, 0.0, 0.0], 12.0);
+        let h0 = atom(&mut m, Element::H, [-1.09, 0.0, 0.0], 1.0);
+        let h1 = atom(&mut m, Element::H, [2.63, 0.0, 0.0], 1.0);
+        for (a, b) in [(c0, c1), (c0, h0), (c1, h1)] {
+            m.add_bond(a, b, props! {}).unwrap();
+        }
+        m.add_port(c0, h0, PortKind::Left, "", BondNumber::Single)
+            .unwrap();
+        m.add_port(c1, h1, PortKind::Right, "", BondNumber::Single)
+            .unwrap();
+        m
+    }
+
+    /// `n` units in a ring whose last bond (last → first) crosses the +x face.
+    fn periodic_ring(n: usize) -> CoarseGrain {
+        let mut cg = CoarseGrain::new();
+        let ids: Vec<_> = (0..n)
+            .map(|_| cg.add_bead(props! { keys::BEAD_TYPE => "U" }).unwrap())
+            .collect();
+        // Each bond joins its first site's `>` (port 1) to its second's `<`
+        // (port 0), so the chain grows along +x and closes through +x.
+        for pair in ids.windows(2) {
+            cg.add_bond(
+                pair[0],
+                pair[1],
+                props! { keys::SRC_PORT => 1, keys::DST_PORT => 0 },
+            )
+            .unwrap();
+        }
+        cg.add_bond(
+            ids[n - 1],
+            ids[0],
+            props! {
+                keys::SRC_PORT => 1,
+                keys::DST_PORT => 0,
+                keys::IX => 1,
+                keys::IY => 0,
+                keys::IZ => 0,
+            },
+        )
+        .unwrap();
+        cg
+    }
+
+    /// The length one unit adds along x as it grows: C0→C1 plus a C–C bond.
+    fn period() -> f64 {
+        1.54 + 2.0 * f64::from(Element::C.covalent_radius())
+    }
+
+    fn cell(lx: f64) -> crate::core::SimBox {
+        crate::core::SimBox::new(
+            crate::core::Cell::Lengths([lx, 20.0, 20.0]),
+            [0.0; 3],
+            [true; 3],
+        )
+        .unwrap()
+    }
+
+    fn grower_within(max: f64) -> Assembler<Atomistic> {
+        Assembler::new(
+            HashMap::from([("U".to_owned(), straight_unit())]),
+            Box::new(GrowthPlacer::new().with_max_fit_rmsd(max).unwrap()),
+            None,
+        )
+    }
+
+    /// Five units closed through the x faces of a cell five periods long: the
+    /// closing unit fits both its parent and the first unit's image, the
+    /// closing bond is one C–C length by minimum image, and the bonded
+    /// network percolates along x.
+    #[test]
+    fn a_ring_closed_through_the_cell_faces_is_periodic() {
+        let n = 5;
+        let lx = n as f64 * period();
+        let world = grower_within(1e-6)
+            .with_cell(cell(lx))
+            .assemble(&periodic_ring(n))
+            .unwrap();
+        // Each unit keeps its C0–C1 bond; each of the n site bonds adds one.
+        assert_eq!((world.n_bonds(), world.n_ports()), (2 * n, 0));
+        let points = world.coords().unwrap();
+        let row: HashMap<NodeId, usize> = world
+            .atom_ids()
+            .enumerate()
+            .map(|(r, id)| (id, r))
+            .collect();
+        let bonds: Vec<[usize; 2]> = world
+            .bonds()
+            .map(|(_, b)| [row[&b.nodes[0]], row[&b.nodes[1]]])
+            .collect();
+        let simbox = cell(lx);
+        let cc = 2.0 * f64::from(Element::C.covalent_radius());
+        let longest = bonds
+            .iter()
+            .map(|&[i, j]| {
+                let d = simbox
+                    .mic()
+                    .apply(std::array::from_fn(|a| points[[j, a]] - points[[i, a]]));
+                (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+            })
+            .fold(0.0, f64::max);
+        assert!(
+            (longest - 1.54).abs() < 1e-6 || (longest - cc).abs() < 1e-6,
+            "{longest}"
+        );
+        #[cfg(feature = "compute")]
+        {
+            use crate::compute::{Compute, Percolation, PercolationInput};
+            let out = Percolation::new()
+                .compute(PercolationInput {
+                    positions: points.view(),
+                    simbox: &simbox,
+                    bonds: &bonds,
+                })
+                .unwrap();
+            assert_eq!(out.percolation_dims, vec![1]);
+            assert_eq!(out.translations, vec![vec![[1, 0, 0]]]);
+        }
+    }
+
+    /// The same ring in a cell one ångström too long: no rigid pose closes
+    /// the last unit onto both neighbours, and the misfit refuses it.
+    #[test]
+    fn a_periodic_closure_that_cannot_be_made_is_refused() {
+        let n = 5;
+        let err = grower_within(0.1)
+            .with_cell(cell(n as f64 * period() + 1.0))
+            .assemble(&periodic_ring(n))
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssembleError::Place {
+                    source: PlaceError::Misfit { .. },
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_bond_image_needs_a_cell() {
+        let err = grower_within(0.1).assemble(&periodic_ring(3)).unwrap_err();
+        assert!(
+            matches!(err, AssembleError::Connection { bond: 2, .. }),
+            "{err}"
+        );
+    }
+
+    /// Without a tolerance the closure the cell cannot make is still placed:
+    /// the closing unit takes the best rigid fit to both neighbours, and a
+    /// minimisation relaxes the rest.
+    #[test]
+    fn without_a_tolerance_the_best_fit_is_taken() {
+        let n = 5;
+        let world = Assembler::new(
+            HashMap::from([("U".to_owned(), straight_unit())]),
+            Box::new(GrowthPlacer::new()),
+            None,
+        )
+        .with_cell(cell(n as f64 * period() + 1.0))
+        .assemble(&periodic_ring(n))
+        .unwrap();
+        assert_eq!((world.n_bonds(), world.n_ports()), (2 * n, 0));
+    }
+
+    /// Every atom names its template and its row there, and with `frag_id`
+    /// the copy: three copies of one template stay apart, and the rows of
+    /// the atoms that survive the links still name the template's atoms.
+    #[test]
+    fn every_atom_names_its_template_row_and_copy() {
+        let sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("M", [3.0, 0.0, 0.0]),
+                ("M", [6.0, 0.0, 0.0]),
+            ],
+            &[(0, 1), (1, 2)],
+            None,
+        );
+        let world = assembler().assemble(&sites).unwrap();
+        let template = monomer_labelled("", "");
+        let template_z: Vec<u8> = template
+            .atoms()
+            .map(|(_, a)| a.atomic_number().unwrap())
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        for (_, atom) in world.atoms() {
+            assert_eq!(atom.get_str(keys::TEMPLATE), Some("M"));
+            let row = atom.get_int(keys::TEMPLATE_ATOM).unwrap() as usize;
+            assert_eq!(atom.atomic_number(), Some(template_z[row]), "row {row}");
+            let copy = atom.get_int(keys::FRAG_ID).unwrap();
+            assert!(seen.insert((copy, row)), "copy {copy} row {row} twice");
+        }
+        // Rows 2 and 3 are the handles: the middle copy lost both, each end
+        // one, and the two ends different ones (the chain runs `<` to `>`).
+        let rows_of = |copy| -> Vec<usize> {
+            let mut rows: Vec<usize> = seen
+                .iter()
+                .filter(|(c, _)| *c == copy)
+                .map(|&(_, r)| r)
+                .collect();
+            rows.sort_unstable();
+            rows
+        };
+        assert_eq!(rows_of(1), [0, 1, 4]);
+        let (first, last) = (rows_of(0), rows_of(2));
+        assert_eq!((first.len(), last.len()), (4, 4));
+        let kept = |rows: &[usize]| rows.iter().copied().find(|r| [2, 3].contains(r));
+        assert_ne!(kept(&first), kept(&last));
+    }
+
     /// Placement reads geometry and topology only: a template carrying a
     /// mass — even a nonsensical one — assembles the world it assembles
     /// without one.
@@ -1148,6 +1756,316 @@ mod tests {
     }
 
     // ---- builds --------------------------------------------------------------
+
+    #[test]
+    fn explicit_ports_select_the_requested_anchor() {
+        let mut sites = graph(&[("M", [0.0; 3]), ("M", [5.0, 0.0, 0.0])], &[], None);
+        let ids: Vec<_> = sites.bead_ids().collect();
+        sites
+            .add_bond(ids[0], ids[1], props! { "src_port" => 1, "dst_port" => 0 })
+            .unwrap();
+        let world = assembler().assemble(&sites).unwrap();
+        // M's port 0 carbon has an oxygen neighbor; port 1 carbon does not.
+        // Thus the requested bridge runs from the oxygen-free carbon in
+        // instance 0 to the oxygen-bearing carbon in instance 1.
+        for (_, bond) in world.bonds() {
+            let (a, b) = (bond.nodes[0], bond.nodes[1]);
+            let fa = world.get_atom(a).unwrap().get_int(keys::FRAG_ID).unwrap();
+            let fb = world.get_atom(b).unwrap().get_int(keys::FRAG_ID).unwrap();
+            if fa == fb {
+                continue;
+            }
+            let oxygen_neighbor = |id| {
+                world
+                    .neighbors(id, crate::core::NeighborKinds::BONDS)
+                    .any(|(n, _)| {
+                        world.get_atom(n).unwrap().atomic_number() == Some(Element::O.z())
+                    })
+            };
+            assert_eq!(oxygen_neighbor(a), fa == 1);
+            assert_eq!(oxygen_neighbor(b), fb == 1);
+        }
+        assert_eq!(world.n_bonds(), 7);
+    }
+
+    #[test]
+    fn explicit_connections_are_independent_of_edge_order_and_direction() {
+        for reverse_order in [false, true] {
+            for reverse_ends in [false, true] {
+                let mut sites = graph(
+                    &[
+                        ("M", [0.0; 3]),
+                        ("M", [5.0, 0.0, 0.0]),
+                        ("M", [10.0, 0.0, 0.0]),
+                    ],
+                    &[],
+                    None,
+                );
+                let ids: Vec<_> = sites.bead_ids().collect();
+                let edges = if reverse_order {
+                    [(1, 2), (0, 1)]
+                } else {
+                    [(0, 1), (1, 2)]
+                };
+                for (a, b) in edges {
+                    let (a, b, p, q) = if reverse_ends {
+                        (b, a, 0, 1)
+                    } else {
+                        (a, b, 1, 0)
+                    };
+                    sites
+                        .add_bond(ids[a], ids[b], props! { "src_port" => p, "dst_port" => q })
+                        .unwrap();
+                }
+                let builder = assembler();
+                let world = builder.assemble(&sites).unwrap();
+                let identity = |id| {
+                    let f = world.get_atom(id).unwrap().get_int(keys::FRAG_ID).unwrap();
+                    let has_o =
+                        world
+                            .neighbors(id, crate::core::NeighborKinds::BONDS)
+                            .any(|(n, _)| {
+                                world.get_atom(n).unwrap().atomic_number() == Some(Element::O.z())
+                            });
+                    (f, has_o)
+                };
+                let mut connections = Vec::new();
+                for (_, bond) in world.bonds() {
+                    let (a, b) = (identity(bond.nodes[0]), identity(bond.nodes[1]));
+                    if a.0 != b.0 {
+                        connections.push(if a.0 < b.0 { (a, b) } else { (b, a) });
+                    }
+                }
+                connections.sort_unstable();
+                assert_eq!(
+                    connections,
+                    [((0, false), (1, true)), ((1, false), (2, true))]
+                );
+                // Reusing the held template library cannot consume its ports.
+                assert_eq!(builder.library["M"].n_ports(), 2);
+                assert_eq!(builder.assemble(&sites).unwrap().n_ports(), 2);
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_ports_refuse_out_of_range_and_incompatible_pairs() {
+        for (src, dst) in [(9, 0), (0, 0)] {
+            let mut sites = graph(&[("M", [0.0; 3]), ("M", [5.0, 0.0, 0.0])], &[], None);
+            let ids: Vec<_> = sites.bead_ids().collect();
+            sites
+                .add_bond(
+                    ids[0],
+                    ids[1],
+                    props! { "src_port" => src, "dst_port" => dst },
+                )
+                .unwrap();
+            let err = assembler()
+                .assemble(&sites)
+                .expect_err("fixed ports cannot be replaced");
+            assert!(err.to_string().contains("bond 0"), "{err}");
+            assert_eq!(sites.n_bonds(), 1);
+        }
+    }
+
+    #[test]
+    fn assembly_revalidates_connections_after_property_edits() {
+        let mut sites = graph(&[("M", [0.0; 3]), ("M", [5.0, 0.0, 0.0])], &[(0, 1)], None);
+        let bid = sites.bonds().next().unwrap().0;
+        sites.set_bond(bid, keys::SRC_PORT, 1).unwrap();
+        assert!(
+            assembler()
+                .assemble(&sites)
+                .unwrap_err()
+                .to_string()
+                .contains("dst_port")
+        );
+        sites.set_bond(bid, keys::DST_PORT, 0).unwrap();
+        sites
+            .set_bond(bid, keys::BOND_TYPE, BondOrder::Double)
+            .unwrap();
+        sites
+            .set_bond(bid, keys::BOND_NUMBER, BondNumber::Double)
+            .unwrap();
+        assert!(
+            assembler()
+                .assemble(&sites)
+                .unwrap_err()
+                .to_string()
+                .contains("contradicts")
+        );
+    }
+
+    #[test]
+    fn explicit_ports_reserve_before_automatic_connections() {
+        let mut sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("M", [5.0, 0.0, 0.0]),
+                ("M", [10.0, 0.0, 0.0]),
+            ],
+            &[],
+            None,
+        );
+        let ids: Vec<_> = sites.bead_ids().collect();
+        sites.add_bond(ids[0], ids[1], props! {}).unwrap();
+        sites
+            .add_bond(ids[1], ids[2], props! { "src_port" => 1, "dst_port" => 0 })
+            .unwrap();
+        let sites = CoarseGrain::from_frame(&sites.to_frame().unwrap()).unwrap();
+        let world = assembler().assemble(&sites).unwrap();
+        assert_eq!(world.n_atoms(), 11);
+        for id in world.port_ids() {
+            let p = world.get_port(id).unwrap();
+            let frag = world
+                .get_atom(p.anchor)
+                .unwrap()
+                .get_int(keys::FRAG_ID)
+                .unwrap();
+            assert!(
+                (frag == 0 && p.kind == PortKind::Left) || (frag == 2 && p.kind == PortKind::Right)
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_ports_refuse_reuse() {
+        let mut sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("M", [5.0, 0.0, 0.0]),
+                ("M", [10.0, 0.0, 0.0]),
+            ],
+            &[],
+            None,
+        );
+        let ids: Vec<_> = sites.bead_ids().collect();
+        for target in [ids[1], ids[2]] {
+            sites
+                .add_bond(ids[0], target, props! { "src_port" => 1, "dst_port" => 0 })
+                .unwrap();
+        }
+        let err = assembler().assemble(&sites).expect_err("port reused");
+        assert!(err.to_string().contains("already used"), "{err}");
+    }
+
+    #[test]
+    fn explicit_parallel_connections_close_a_four_carbon_ring() {
+        let mut sites = graph(&[("M", [0.0; 3]), ("M", [5.0, 0.0, 0.0])], &[], None);
+        let ids: Vec<_> = sites.bead_ids().collect();
+        for (p, q) in [(1, 0), (0, 1)] {
+            sites
+                .add_bond(ids[0], ids[1], props! { "src_port" => p, "dst_port" => q })
+                .unwrap();
+        }
+        let world = assembler().assemble(&sites).unwrap();
+        assert_eq!(world.n_atoms(), 6); // four C and two O
+        assert_eq!(world.n_bonds(), 6); // four ring bonds plus two C–O
+        assert_eq!(world.n_ports(), 0);
+    }
+
+    #[test]
+    fn eight_explicit_connections_do_not_enumerate_port_permutations() {
+        // An eight-carbon ring offers one distinct H handle per carbon.
+        // Eight identical labels would admit 8! assignments without constraints.
+        let mut ring = Atomistic::new();
+        let mut carbons = Vec::new();
+        for i in 0..8 {
+            let c = atom(&mut ring, Element::C, [i as f64, 0.0, 0.0], 12.0);
+            let h = atom(&mut ring, Element::H, [i as f64, 1.0, 0.0], 1.0);
+            ring.add_bond(c, h, props! {}).unwrap();
+            ring.add_port(c, h, PortKind::Symmetric, "", BondNumber::Single)
+                .unwrap();
+            carbons.push(c);
+        }
+        for i in 0..8 {
+            ring.add_bond(carbons[i], carbons[(i + 1) % 8], props! {})
+                .unwrap();
+        }
+        let builder = Assembler::new(
+            HashMap::from([("R".to_owned(), ring), ("E".to_owned(), hub(1))]),
+            Box::new(SitePlacer::new()),
+            None,
+        );
+        let mut sites = CoarseGrain::new();
+        let center = sites
+            .add_bead(
+                props! { keys::BEAD_TYPE => "R", keys::X => 0.0, keys::Y => 0.0, keys::Z => 0.0 },
+            )
+            .unwrap();
+        for p in 0..8 {
+            let end = sites.add_bead(props! { keys::BEAD_TYPE => "E", keys::X => p as f64, keys::Y => 5.0, keys::Z => 0.0 }).unwrap();
+            sites
+                .add_bond(center, end, props! { "src_port" => p, "dst_port" => 0 })
+                .unwrap();
+        }
+        let world = builder.assemble(&sites).unwrap();
+        assert_eq!(world.n_atoms(), 16);
+        assert_eq!(world.n_bonds(), 16);
+        assert_eq!(world.n_ports(), 0);
+    }
+
+    #[test]
+    fn resolved_quadruple_bond_keeps_its_class_and_number() {
+        // Synthetic Cr anchors exercise the stored quadruple vocabulary:
+        // the core represents number 4 with chemical class Double, not Aromatic.
+        let mut template = Atomistic::new();
+        let cr = atom(&mut template, Element::Cr, [0.0; 3], 52.0);
+        let h = atom(&mut template, Element::H, [1.0, 0.0, 0.0], 1.0);
+        template.add_bond(cr, h, props! {}).unwrap();
+        template
+            .add_port(cr, h, PortKind::Symmetric, "", BondNumber::Quadruple)
+            .unwrap();
+        let builder = Assembler::new(
+            HashMap::from([("M".to_owned(), template)]),
+            Box::new(SitePlacer::new()),
+            None,
+        );
+        let mut sites = graph(&[("M", [0.0; 3]), ("M", [2.0, 0.0, 0.0])], &[], None);
+        let ids: Vec<_> = sites.bead_ids().collect();
+        sites.add_bond(ids[0],ids[1],props! {
+            keys::SRC_PORT => 0, keys::DST_PORT => 0,
+            keys::BOND_TYPE => BondOrder::Double, keys::BOND_NUMBER => BondNumber::Quadruple,
+        }).unwrap();
+        let world = builder.assemble(&sites).unwrap();
+        assert_eq!(world.n_atoms(), 2);
+        assert_eq!(world.n_bonds(), 1);
+        let id = world.bonds().next().unwrap().0;
+        assert_eq!(world.bond_type(id).unwrap(), BondOrder::Double);
+        assert_eq!(world.bond_number(id).unwrap(), BondNumber::Quadruple);
+    }
+
+    #[test]
+    fn explicit_self_connection_joins_two_distinct_ports() {
+        let mut m = Atomistic::new();
+        let c0 = atom(&mut m, Element::C, [0.0; 3], 12.0);
+        let c1 = atom(&mut m, Element::C, [1.5, 0.0, 0.0], 12.0);
+        let c2 = atom(&mut m, Element::C, [0.75, 1.2, 0.0], 12.0);
+        let h0 = atom(&mut m, Element::H, [-1.0, 0.0, 0.0], 1.0);
+        let h2 = atom(&mut m, Element::H, [0.75, 2.2, 0.0], 1.0);
+        for (a, b) in [(c0, c1), (c1, c2), (c0, h0), (c2, h2)] {
+            m.add_bond(a, b, props! {}).unwrap();
+        }
+        m.add_port(c0, h0, PortKind::Left, "", BondNumber::Single)
+            .unwrap();
+        m.add_port(c2, h2, PortKind::Right, "", BondNumber::Single)
+            .unwrap();
+        let builder = Assembler::new(
+            HashMap::from([("M".to_owned(), m)]),
+            Box::new(SitePlacer::new()),
+            None,
+        );
+        let mut sites = graph(&[("M", [0.0; 3])], &[], None);
+        let id = sites.bead_ids().next().unwrap();
+        sites
+            .add_bond(id, id, props! { "src_port" => 0, "dst_port" => 1 })
+            .unwrap();
+        let world = builder.assemble(&sites).unwrap();
+        assert_eq!(world.n_atoms(), 3);
+        assert_eq!(world.n_bonds(), 3);
+        assert_eq!(world.n_ports(), 0);
+        assert_eq!(mol_ids(&world), [1, 1, 1]);
+    }
 
     #[test]
     fn assemble_links_a_three_site_chain_into_one_molecule() {
@@ -1320,6 +2238,68 @@ mod tests {
     }
 
     #[test]
+    fn connection_conflicts_are_refused_before_placement() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let builder = Assembler::new(
+            HashMap::from([("M".to_owned(), hub(2))]),
+            Box::new(CountingPlacer(calls.clone())),
+            None,
+        );
+        let mut sites = graph(&[("M", [0.0; 3]), ("M", [5.0, 0.0, 0.0])], &[], None);
+        let ids: Vec<_> = sites.bead_ids().collect();
+        for p in [0, 1] {
+            sites
+                .add_bond(ids[0], ids[1], props! { "src_port" => p, "dst_port" => p })
+                .unwrap();
+        }
+        assert!(builder.assemble(&sites).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn overlapping_leaving_groups_are_refused_before_placement() {
+        let mut template = Atomistic::new();
+        let a = atom(&mut template, Element::C, [0.0; 3], 12.0);
+        let h = atom(&mut template, Element::C, [1.5, 0.0, 0.0], 12.0);
+        let b = atom(&mut template, Element::C, [3.0, 0.0, 0.0], 12.0);
+        template.add_bond(a, h, props! {}).unwrap();
+        template.add_bond(h, b, props! {}).unwrap();
+        for anchor in [a, b] {
+            template
+                .add_port(anchor, h, PortKind::Symmetric, "", BondNumber::Single)
+                .unwrap();
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let builder = Assembler::new(
+            HashMap::from([("M".to_owned(), template), ("E".to_owned(), hub(1))]),
+            Box::new(CountingPlacer(calls.clone())),
+            None,
+        );
+        let mut sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("E", [5.0, 0.0, 0.0]),
+                ("E", [-5.0, 0.0, 0.0]),
+            ],
+            &[],
+            None,
+        );
+        let ids: Vec<_> = sites.bead_ids().collect();
+        for p in [0, 1] {
+            sites
+                .add_bond(
+                    ids[0],
+                    ids[p + 1],
+                    props! { "src_port" => p as i32, "dst_port" => 0 },
+                )
+                .unwrap();
+        }
+        let err = builder.assemble(&sites).unwrap_err();
+        assert!(err.to_string().contains("overlaps"), "{err}");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
     fn assemble_places_each_site_once() {
         let calls = Arc::new(AtomicUsize::new(0));
         let assembler = Assembler::new(library(), Box::new(CountingPlacer(calls.clone())), None);
@@ -1355,13 +2335,15 @@ mod tests {
     }
 
     #[test]
-    fn a_grown_chain_joins_each_copy_at_the_parent_handle_distance() {
+    fn a_grown_chain_joins_each_copy_at_the_covalent_bond_length() {
         let world = grower()
             .assemble(&topology(&["M", "M", "M"], &[(0, 1), (1, 2)]))
             .expect("a grown M chain");
 
         assert_eq!(world.n_atoms(), 3 * 5 - 4);
-        // Each inter-unit C–C bond takes the parent's C–H length, 1.0 Å.
+        // Each inter-unit C–C bond is two carbon covalent radii long, not the
+        // parent's C–H length (1.0 Å) the leaving hydrogen sat at.
+        let length = 2.0 * f64::from(crate::core::Element::C.covalent_radius());
         let mut joins = Vec::new();
         for (_, bond) in world.bonds() {
             let (a, b) = (bond.nodes[0], bond.nodes[1]);
@@ -1374,7 +2356,7 @@ mod tests {
         }
         assert_eq!(joins.len(), 2);
         for d in joins {
-            assert!((d - 1.0).abs() < TOL, "join length {d}");
+            assert!((d - length).abs() < 1e-9, "join length {d}, want {length}");
         }
     }
 

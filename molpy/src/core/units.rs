@@ -467,16 +467,15 @@ impl PyUnitPreset {
         crate::pickle::reduce_via_type(slf.as_any(), (slf.borrow().name().to_owned(),))
     }
 
-    /// Boltzmann constant **in this preset's energy / temperature units**
-    /// (`"real"` gives kcal/mol/K), not in the amu / angstrom / fs system
-    /// `molpy.md` integrates in. Convert it the same way you convert an
-    /// energy, or the temperature the engine sees is off by the ratio.
+    /// Boltzmann constant in this preset's energy / temperature units
+    /// (`"real"` gives kcal/mol/K). A LAMMPS style's is LAMMPS's own
+    /// `boltz` literal (`0.0019872067` in `real`).
     fn boltzmann(&self) -> f64 {
         self.inner.boltzmann()
     }
 
-    /// Coulomb constant in this preset's own units — same caveat as
-    /// [`boltzmann`](Self::boltzmann).
+    /// Coulomb constant in this preset's energy · length / charge² units. A
+    /// LAMMPS style's is LAMMPS's `qqr2e` literal (`332.06371` in `real`).
     fn coulomb(&self) -> f64 {
         self.inner.coulomb()
     }

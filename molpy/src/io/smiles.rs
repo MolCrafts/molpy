@@ -1,7 +1,8 @@
 //! SMILES (`molrs::io::smiles`): `read_smiles(text)` reads SMILES into a
 //! [`PySmilesIr`], `write_smiles(mol)` writes a molecule as SMILES text, and
 //! `read_smiles_fragment(body)` reads a fragment body with bonding descriptors
-//! into a [`PyFragmentIr`]. An IR is only ever handed out, never constructed
+//! into a [`PyFragmentIr`], as `read_psmiles(unit)` does a PSMILES repeat
+//! unit. An IR is only ever handed out, never constructed
 //! by the caller.
 //! SMARTS — parsing, matching, and a pattern written from a molecule — is
 //! `molpy.perceive`'s.
@@ -164,6 +165,40 @@ fn read_smiles(smiles: &str) -> PyResult<PySmilesIr> {
 #[pyfunction]
 fn read_smiles_fragment(body: &str) -> PyResult<PyFragmentIr> {
     let inner = SmilesIr::from_fragment(body).map_err(smiles_error_to_pyerr)?;
+    Ok(PyFragmentIr { inner })
+}
+
+/// Read a PSMILES repeat unit — SMILES whose two ``*`` are joining sites
+/// (``[*]CC[*]``) — into its fragment IR.
+///
+/// A ``*`` has no head or tail: it is read as the unlabelled ``$``
+/// descriptor on the atom it is bonded to, so ``read_psmiles("[*]CC[*]")``
+/// is the IR ``read_smiles_fragment("[$]CC[$]")`` gives.
+///
+/// Parameters
+/// ----------
+/// unit : str
+///     The repeat unit.
+///
+/// Returns
+/// -------
+/// FragmentIr
+///
+/// Raises
+/// ------
+/// SmilesError
+///     (a ``ValueError``, ``notation == "psmiles"``) for text that is not a
+///     PSMILES repeat unit: a ``*`` bonded to anything but one atom
+///     (``PsmilesStarNotTerminal``), a unit without exactly two ``*``
+///     (``PsmilesStarCount``), or anything ``read_smiles_fragment`` refuses.
+///
+/// Examples
+/// --------
+/// >>> molpy.io.smiles.read_psmiles("[*]CC([*])c1ccccc1").to_template().n_ports
+/// 2
+#[pyfunction]
+fn read_psmiles(unit: &str) -> PyResult<PyFragmentIr> {
+    let inner = SmilesIr::from_psmiles(unit).map_err(smiles_error_to_pyerr)?;
     Ok(PyFragmentIr { inner })
 }
 
@@ -426,12 +461,13 @@ impl PyFragmentIr {
     }
 }
 
-/// Register `SmilesError`, `SmilesIr`, `FragmentIr` and the three doors
-/// `read_smiles`, `read_smiles_fragment` and `write_smiles`.
+/// Register `SmilesError`, `SmilesIr`, `FragmentIr` and the four doors
+/// `read_smiles`, `read_smiles_fragment`, `read_psmiles` and `write_smiles`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     for door in [
         wrap_pyfunction!(read_smiles, m)?,
         wrap_pyfunction!(read_smiles_fragment, m)?,
+        wrap_pyfunction!(read_psmiles, m)?,
         wrap_pyfunction!(write_smiles, m)?,
     ] {
         crate::add_function(m, "molpy.io.smiles", door)?;

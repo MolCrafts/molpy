@@ -1,5 +1,5 @@
-//! Groups and features — the WASM face of `molrs::compute::{cluster, shape,
-//! decomposition, kmeans}`.
+//! Groups and features — the WASM face of `molrs::compute::{cluster,
+//! percolation, piercing, contacts, shape, decomposition, kmeans}`.
 //!
 //! A `Partition` field takes a label array or any result that groups items
 //! (`ClusterResult`, `KmeansResult`, …); a `FeatureMatrix` field takes a
@@ -26,6 +26,23 @@ output! {
     /// Connected components: `cluster_idx` (−1 for an item in no cluster),
     /// `n_clusters`, `cluster_sizes`, `cluster_keys`. A `Partition`.
     ClusterResult => mc::ClusterResult
+}
+
+output! {
+    /// How a bonded network percolates: `component_idx`, `n_components`,
+    /// `component_sizes`, `percolation_dims` (0–3), `translations` (each
+    /// component's lattice basis) and `unwrap_images` (`N × 3`).
+    PercolationResult => mc::PercolationResult
+}
+
+output! {
+    /// Ring piercings: bond `bond_idx[k]` passes through ring `ring_idx[k]`.
+    RingPiercingResult => mc::RingPiercingResult
+}
+
+output! {
+    /// Close contacts: `pairs` (`n × 2`, `i < j`, sorted) and `distances` (Å).
+    CloseContactsResult => mc::CloseContactsResult
 }
 
 output! {
@@ -89,6 +106,114 @@ impl Cluster {
         };
         Ok(self.inner.compute(input)?.into())
     }
+}
+
+/// Percolation of a bonded network in a periodic cell (Livraghi et al.,
+/// J. Chem. Theory Comput. 17, 6449 (2021)).
+#[wasm_bindgen]
+pub struct Percolation {
+    inner: mc::Percolation,
+}
+
+#[wasm_bindgen]
+impl Percolation {
+    #[wasm_bindgen(constructor)]
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Percolation {
+        Self {
+            inner: mc::Percolation::new(),
+        }
+    }
+
+    /// `{ positions, simbox, bonds }`: `bonds` a flat `Uint32Array` of
+    /// `(i, j)` pairs, each read by minimum image.
+    pub fn compute(&self, data: &JsValue) -> Result<PercolationResult, JsError> {
+        let data = Fields::new(data, "Percolation")?;
+        let positions = data.matrix("positions", Some(3))?;
+        let simbox = data.simbox("simbox")?;
+        let bonds = index_pairs(&data, "bonds")?;
+        let input = mc::PercolationInput {
+            positions: positions.view(),
+            simbox: &simbox,
+            bonds: &bonds,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// Bonds that pass through a ring, read by minimum image.
+#[wasm_bindgen]
+pub struct RingPiercing {
+    inner: mc::RingPiercing,
+}
+
+#[wasm_bindgen]
+impl RingPiercing {
+    /// A crossing closer than `radius_fraction` of a ring's mean radius to
+    /// its centroid pierces it.
+    #[wasm_bindgen(constructor)]
+    pub fn new(radius_fraction: F) -> Result<RingPiercing, JsError> {
+        Ok(Self {
+            inner: mc::RingPiercing::new(radius_fraction)?,
+        })
+    }
+
+    /// `{ positions, simbox, bonds, rings }`: `bonds` a flat `Uint32Array` of
+    /// `(i, j)` pairs, `rings` an array of atom index lists.
+    pub fn compute(&self, data: &JsValue) -> Result<RingPiercingResult, JsError> {
+        let data = Fields::new(data, "RingPiercing")?;
+        let positions = data.matrix("positions", Some(3))?;
+        let simbox = data.simbox("simbox")?;
+        let bonds = index_pairs(&data, "bonds")?;
+        let rings = data.index_lists("rings")?;
+        let input = mc::RingPiercingInput {
+            positions: positions.view(),
+            simbox: &simbox,
+            bonds: &bonds,
+            rings: &rings,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// Neighbour pairs the bond graph does not join within `exclude_bonds` bonds.
+#[wasm_bindgen]
+pub struct CloseContacts {
+    inner: mc::CloseContacts,
+}
+
+#[wasm_bindgen]
+impl CloseContacts {
+    /// Pairs at most `exclude_bonds` bonds apart are not contacts.
+    #[wasm_bindgen(constructor)]
+    pub fn new(exclude_bonds: usize) -> CloseContacts {
+        Self {
+            inner: mc::CloseContacts::new(exclude_bonds),
+        }
+    }
+
+    /// `{ pairs, bonds }`: `pairs` a half-shell self-query `Neighbors` with
+    /// `dist_sq`, `bonds` a flat `Uint32Array` of `(i, j)` pairs.
+    pub fn compute(&self, data: &JsValue) -> Result<CloseContactsResult, JsError> {
+        let data = Fields::new(data, "CloseContacts")?;
+        let pairs = data.neighbors("pairs")?;
+        let bonds = index_pairs(&data, "bonds")?;
+        let input = mc::CloseContactsInput {
+            pairs: &pairs,
+            bonds: &bonds,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// The flat `(i, j)` pairs of field `key`, as the core's `[usize; 2]` rows.
+fn index_pairs(data: &Fields<'_>, key: &str) -> Result<Vec<[usize; 2]>, mc::ComputeError> {
+    Ok(data
+        .tuples(key, 2)?
+        .rows()
+        .into_iter()
+        .map(|row| [row[0], row[1]])
+        .collect())
 }
 
 /// Mass-weighted centre of every group, unwrapped across the box.
@@ -245,6 +370,9 @@ impl Kmeans {
 
 described!(
     Cluster => mc::Cluster,
+    Percolation => mc::Percolation,
+    RingPiercing => mc::RingPiercing,
+    CloseContacts => mc::CloseContacts,
     CenterOfMass => mc::CenterOfMass,
     GyrationTensor => mc::GyrationTensor,
     InertiaTensor => mc::InertiaTensor,

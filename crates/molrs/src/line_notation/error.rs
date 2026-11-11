@@ -1,10 +1,10 @@
-//! Error types shared by the three line notations this module family reads
-//! and writes: SMILES, SMARTS and `CGsmiles`.
+//! Error types shared by the line notations this module family reads and
+//! writes: SMILES, SMARTS, `CGsmiles` and PSMILES.
 //!
 //! There is one error struct, [`SmilesError`], one list of reasons,
 //! [`SmilesErrorKind`], and one field, [`Notation`], saying which language the
 //! offending text was meant to be — because many reasons (`UnclosedBracket`
-//! and friends) are raised by all three, and the entry point is the only place
+//! and friends) are raised by all of them, and the entry point is the only place
 //! that knows which was being parsed.
 
 use std::fmt;
@@ -14,7 +14,7 @@ use molrs::core::MolRsError;
 
 /// Which line notation was being read or written when an error was raised.
 ///
-/// One error type serves all three notations, so the notation is a *fact owned
+/// One error type serves every notation, so the notation is a *fact owned
 /// by the entry point* rather than something a reader could infer from the
 /// variant name: `UnclosedBracket` is raised by the SMILES, SMARTS and
 /// CGsmiles parsers alike, and only the entry point knows which language
@@ -33,6 +33,11 @@ pub enum Notation {
     Smarts,
     /// `CGsmiles`, the coarse-grained resolution notation.
     CgSmiles,
+    /// PSMILES, a polymer repeat unit whose `*` atoms are joining sites.
+    Psmiles,
+    /// `BigSMILES` and its generative extension (stochastic objects, weights,
+    /// size distributions).
+    BigSmiles,
 }
 
 impl fmt::Display for Notation {
@@ -41,6 +46,8 @@ impl fmt::Display for Notation {
             Notation::Smiles => "SMILES",
             Notation::Smarts => "SMARTS",
             Notation::CgSmiles => "CGsmiles",
+            Notation::Psmiles => "PSMILES",
+            Notation::BigSmiles => "BigSMILES",
         };
         f.write_str(name)
     }
@@ -62,7 +69,7 @@ pub struct SmilesError {
     pub input: String,
     /// Which notation was being parsed or written, as the rendered message
     /// names it. Stamped by the entry point, never derived from [`kind`]:
-    /// several kinds are shared by all three notations.
+    /// several kinds are shared by every notation.
     ///
     /// [`kind`]: SmilesError::kind
     pub notation: Notation,
@@ -72,7 +79,7 @@ pub struct SmilesError {
 /// text as payload where naming it helps.
 ///
 /// A variant says *what* went wrong, never *which notation* was being read —
-/// most of the first group below is raised by all three — so a caller that
+/// most of the first group below is raised by all of them — so a caller that
 /// wants the language reads [`SmilesError::notation`] instead. The variants
 /// fall into three groups: the shared grammar rules, the bonding-descriptor
 /// rules of the SMILES fragment dialect (`DescriptorInPlainSmiles` onwards),
@@ -183,6 +190,48 @@ pub enum SmilesErrorKind {
     /// only; `SmilesIr::parse("[C;0.5]")` still reports
     /// [`SmilesErrorKind::UnclosedBracket`].
     AtomAnnotationUnsupported(String),
+    /// A PSMILES `*` is bonded to something other than exactly one atom: a
+    /// star between two atoms (`C*C`), two stars in a row (`**C`), a star
+    /// opening a branch chain (`C(*C)`) or carrying a ring digit (`C*1CC1`).
+    /// A star is a joining site, so it has exactly one neighbour.
+    PsmilesStarNotTerminal,
+    /// A PSMILES repeat unit carries a number of `*` other than two; the
+    /// payload is the number written.
+    PsmilesStarCount(usize),
+
+    // -- BigSMILES kinds ------------------------------------------------------
+    /// Valid `BigSMILES` this implementation does not model; the payload
+    /// names the feature (nested stochastic objects, an object inside a
+    /// branch, fragment declarations, ladder or non-covalent descriptors).
+    BigUnsupported(String),
+    /// Generation weights `|…|` that are not one or more non-negative
+    /// numbers; the payload is the text between the bars.
+    BigInvalidWeights(String),
+    /// A stochastic object `{…}` that is not a terminal, units and a
+    /// terminal; the payload says what is missing.
+    BigMalformedObject(String),
+    /// A size distribution `|name(…)|` whose name is not one of the six
+    /// generative-`BigSMILES` distributions; the payload is the name.
+    BigUnknownDistribution(String),
+    /// A size distribution with the wrong number of arguments.
+    BigDistributionArity {
+        /// The distribution's name.
+        name: String,
+        /// How many arguments it takes.
+        expected: usize,
+        /// How many were written.
+        found: usize,
+    },
+    /// A number that does not parse, or a distribution whose parameters are
+    /// out of range; the payload is the offending text or reason.
+    BigInvalidNumber(String),
+    /// A system amount `.|…|` that is not a positive number or a percentage
+    /// below 100; the payload is the text between the bars.
+    BigInvalidAmount(String),
+    /// Turning a parsed string into a polymer model failed; the payload is
+    /// the model's reason (parts that do not join, an end group with two
+    /// ports, …).
+    BigBuild(String),
 
     // -- CGsmiles coarse-graph kinds ----------------------------------------
     /// A `CGsmiles` block contains nothing: `{}`. The reference implementation
@@ -262,6 +311,13 @@ pub enum SmilesErrorKind {
     /// fragment name is ASCII alphanumeric, or the single wildcard `*`, the
     /// same alphabet `[#NAME]` accepts).
     CgMalformedFragmentDef,
+    /// A fragment name — in a node `[#NAME]` or a definition `#NAME=` —
+    /// holds a character the notation does not allow: `[#p_single]`,
+    /// `{#pbix-br=CC}`. A name is ASCII letters and digits, or the single
+    /// wildcard `*`. `name` is the name as written up to the next `;`, `]`
+    /// or `=`, and `ch` is its first character outside that alphabet, so the
+    /// message says what to rename rather than where the grammar gave up.
+    CgInvalidFragmentName { name: String, ch: char },
     /// A fragment entry defines an empty body: `{[#A]}.{#A=}`. The name is
     /// written, the `=` is written, and nothing follows it before the `,` or
     /// the `}`.
@@ -403,6 +459,37 @@ impl SmilesErrorKind {
             SmilesErrorKind::AtomAnnotationUnsupported(s) => {
                 format!("atom annotation ';{s}' is unsupported")
             }
+            SmilesErrorKind::PsmilesStarNotTerminal => {
+                "a PSMILES '*' must be bonded to exactly one atom".to_owned()
+            }
+            SmilesErrorKind::PsmilesStarCount(n) => {
+                format!("a PSMILES repeat unit has exactly two '*', found {n}")
+            }
+            SmilesErrorKind::BigUnsupported(feature) => {
+                format!("{feature} are not supported")
+            }
+            SmilesErrorKind::BigInvalidWeights(text) => {
+                format!("generation weights '|{text}|' are not non-negative numbers")
+            }
+            SmilesErrorKind::BigMalformedObject(reason) => {
+                format!("malformed stochastic object: {reason}")
+            }
+            SmilesErrorKind::BigUnknownDistribution(name) => format!(
+                "unknown size distribution '{name}' — one of flory_schulz, schulz_zimm, \
+                 gauss, uniform, log_normal, poisson"
+            ),
+            SmilesErrorKind::BigDistributionArity {
+                name,
+                expected,
+                found,
+            } => format!("{name} takes {expected} arguments, found {found}"),
+            SmilesErrorKind::BigInvalidNumber(text) => format!("invalid number: {text}"),
+            SmilesErrorKind::BigInvalidAmount(text) => format!(
+                "system amount '|{text}|' is not a positive number or a percentage below 100"
+            ),
+            SmilesErrorKind::BigBuild(reason) => {
+                format!("cannot build the polymer model: {reason}")
+            }
             SmilesErrorKind::CgEmptyBlock
             | SmilesErrorKind::CgMalformedAnnotation(_)
             | SmilesErrorKind::CgUnsupportedAnnotation { .. }
@@ -416,6 +503,7 @@ impl SmilesErrorKind {
             | SmilesErrorKind::CgInvalidRingMarker
             | SmilesErrorKind::CgExpectedBlock
             | SmilesErrorKind::CgMalformedFragmentDef
+            | SmilesErrorKind::CgInvalidFragmentName { .. }
             | SmilesErrorKind::CgEmptyFragmentBody
             | SmilesErrorKind::CgDuplicateFragment(_)
             | SmilesErrorKind::CgUndefinedFragment(_)
@@ -488,6 +576,13 @@ impl SmilesErrorKind {
             SmilesErrorKind::CgMalformedFragmentDef => {
                 "malformed fragment entry — write '#NAME=body', entries separated by ','".to_owned()
             }
+            SmilesErrorKind::CgInvalidFragmentName { name, ch } => format!(
+                "fragment name '{name}' contains {ch:?} — a fragment name is ASCII letters \
+                 and digits only (or the wildcard '*'), e.g. '{}'",
+                name.chars()
+                    .filter(char::is_ascii_alphanumeric)
+                    .collect::<String>()
+            ),
             SmilesErrorKind::CgEmptyFragmentBody => {
                 "empty fragment body — '#NAME=' defines nothing".to_owned()
             }
@@ -539,7 +634,8 @@ impl SmilesErrorKind {
 }
 
 /// Renders as one message line, `<notation> parse error at position <n>:
-/// <reason>`, optionally followed by two context lines: the input, and a caret
+/// <reason>` (`<notation> error at …` for [`SmilesErrorKind::BigBuild`], which
+/// is raised after the parse), optionally followed by two context lines: the input, and a caret
 /// under the byte the span starts at. The prefix is [`SmilesError::notation`]
 /// as the entry point stamped it — `SMILES`, `SMARTS` or `CGsmiles`.
 ///
@@ -551,7 +647,13 @@ impl fmt::Display for SmilesError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let pos = self.span.start;
         let msg = self.kind.message();
-        write!(f, "{} parse error at position {pos}: {msg}", self.notation)?;
+        // A string that parsed and was then refused by the polymer model is
+        // not a parse error.
+        let what = match self.kind {
+            SmilesErrorKind::BigBuild(_) => "error",
+            _ => "parse error",
+        };
+        write!(f, "{} {what} at position {pos}: {msg}", self.notation)?;
 
         // Caret-style context line, when there is an input to point into and
         // it is short enough to be useful. Errors raised away from the scanner
@@ -901,6 +1003,17 @@ mod tests {
     }
 
     #[test]
+    fn test_display_cg_invalid_fragment_name_names_the_character_and_a_fix() {
+        let msg = cg_message(SmilesErrorKind::CgInvalidFragmentName {
+            name: "p_single".to_owned(),
+            ch: '_',
+        });
+        assert!(msg.contains("'p_single'"), "message was {msg:?}");
+        assert!(msg.contains("'_'"), "message was {msg:?}");
+        assert!(msg.contains("'psingle'"), "message was {msg:?}");
+    }
+
+    #[test]
     fn test_display_cg_empty_fragment_body_names_the_empty_body() {
         let msg = cg_message(SmilesErrorKind::CgEmptyFragmentBody);
         assert!(msg.to_lowercase().contains("empty"), "message was {msg:?}");
@@ -1065,6 +1178,10 @@ mod tests {
             cg_message(SmilesErrorKind::CgInvalidRingMarker),
             cg_message(SmilesErrorKind::CgExpectedBlock),
             cg_message(SmilesErrorKind::CgMalformedFragmentDef),
+            cg_message(SmilesErrorKind::CgInvalidFragmentName {
+                name: "p_single".to_owned(),
+                ch: '_',
+            }),
             cg_message(SmilesErrorKind::CgEmptyFragmentBody),
             cg_message(SmilesErrorKind::CgDuplicateFragment("PEO".to_owned())),
             cg_message(SmilesErrorKind::CgUndefinedFragment("PEO".to_owned())),

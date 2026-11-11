@@ -9,7 +9,7 @@
 use std::ops::Deref;
 
 use super::lbfgs::{Converge, minimize_core};
-use super::{LbfgsSettings, OptimizationReport, OptimizeError, Optimizer};
+use super::{LbfgsSettings, OptimizationReport, OptimizeError, Optimizer, StopReason};
 use crate::core::Frame;
 use crate::core::keys::FREE;
 use crate::core::schema::block_names::ATOMS;
@@ -85,16 +85,17 @@ where
             return Ok(OptimizationReport::EMPTY);
         }
         let potential = &*self.potential;
-        let (energy, grad, n_steps, converged) = minimize_core(
+        let (energy, grad, n_steps, n_evals, stop) = minimize_core(
             coords,
             self.settings.max_steps,
             Converge::Fmax(self.settings.fmax),
+            self.settings.limits(),
             self.settings.max_step,
             self.settings.memory,
             |c| energy_forces(potential, c),
         );
         Ok(OptimizationReport::from_gradient(
-            converged, n_steps, energy, &grad,
+            stop, n_steps, n_evals, energy, &grad,
         ))
     }
 
@@ -154,7 +155,13 @@ where
         if free_idx.is_empty() {
             let (e, forces) = energy_forces(&*self.potential, full);
             let grad: Vec<F> = forces.iter().map(|f| -f).collect();
-            return Ok(OptimizationReport::from_gradient(true, 0, e, &grad));
+            return Ok(OptimizationReport::from_gradient(
+                StopReason::Empty,
+                0,
+                1,
+                e,
+                &grad,
+            ));
         }
         if free_idx.len() == n {
             return self.minimize_coords(full);
@@ -169,10 +176,11 @@ where
         let free_idx_c = free_idx.clone();
         let mut full_buf = full.to_vec();
 
-        let (final_energy, grad_free, n_steps, converged) = minimize_core(
+        let (final_energy, grad_free, n_steps, n_evals, stop) = minimize_core(
             &mut x_free,
             self.settings.max_steps,
             Converge::Fmax(self.settings.fmax),
+            self.settings.limits(),
             self.settings.max_step,
             self.settings.memory,
             |xf| {
@@ -199,8 +207,9 @@ where
         }
 
         Ok(OptimizationReport::from_gradient(
-            converged,
+            stop,
             n_steps,
+            n_evals,
             final_energy,
             &grad_free,
         ))
@@ -366,6 +375,7 @@ mod tests {
                 max_steps: 1,
                 max_step: 0.2,
                 memory: 8,
+                ..LbfgsSettings::DEFAULT
             },
         )
         .minimize_coords(&mut coords)
@@ -417,6 +427,80 @@ mod tests {
         assert_eq!(r.n_steps, 0);
     }
 
+    fn bond(settings: LbfgsSettings) -> Lbfgs<Arc<HarmonicBond>> {
+        Lbfgs::new(Arc::new(HarmonicBond { k: 100.0, r0: 1.0 }), settings)
+    }
+
+    #[test]
+    fn the_energy_change_stops_a_run() {
+        let settings = LbfgsSettings {
+            etol: 1e-2,
+            ftol: 0.0,
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
+        };
+        let mut coords = vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0];
+        let report = bond(settings).minimize_coords(&mut coords).unwrap();
+        assert_eq!(report.stop_reason, StopReason::EnergyChange, "{report:?}");
+        assert!(report.converged);
+    }
+
+    #[test]
+    fn the_global_force_norm_stops_a_run() {
+        let settings = LbfgsSettings {
+            etol: 0.0,
+            ftol: 1e-3,
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
+        };
+        let mut coords = vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0];
+        let report = bond(settings).minimize_coords(&mut coords).unwrap();
+        assert_eq!(report.stop_reason, StopReason::ForceNorm, "{report:?}");
+        // Two atoms, equal and opposite forces: the norm is sqrt(2) * fmax.
+        assert!(report.final_fmax * 2f64.sqrt() <= 1e-3 + 1e-12);
+    }
+
+    #[test]
+    fn budgets_stop_a_run_without_converging() {
+        let tight = LbfgsSettings {
+            etol: 0.0,
+            ftol: 0.0,
+            max_steps: 1,
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
+        };
+        let mut coords = vec![0.0, 0.0, 0.0, 3.0, 0.0, 0.0];
+        let report = bond(tight).minimize_coords(&mut coords).unwrap();
+        assert_eq!(report.stop_reason, StopReason::MaxIterations);
+        assert!(!report.converged);
+
+        let evals = LbfgsSettings {
+            etol: 0.0,
+            ftol: 0.0,
+            max_evals: 2,
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
+        };
+        let mut coords = vec![0.0, 0.0, 0.0, 3.0, 0.0, 0.0];
+        let report = bond(evals).minimize_coords(&mut coords).unwrap();
+        assert_eq!(report.stop_reason, StopReason::MaxEvaluations);
+        assert!(!report.converged && report.n_evals >= 2);
+    }
+
+    #[test]
+    fn a_zero_iteration_run_reads_the_start() {
+        let settings = LbfgsSettings {
+            max_steps: 0,
+            fmax: 0.0,
+            ..LbfgsSettings::DEFAULT
+        };
+        let mut coords = vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0];
+        let report = bond(settings).minimize_coords(&mut coords).unwrap();
+        assert_eq!((report.n_steps, report.n_evals), (0, 1));
+        assert_eq!(coords[3], 1.5);
+        assert!((report.final_fmax - 50.0).abs() < 1e-9);
+    }
+
     #[test]
     fn trust_region_caps_step() {
         let pot = HarmonicBond { k: 500.0, r0: 1.0 };
@@ -429,6 +513,7 @@ mod tests {
                 max_steps: 1,
                 max_step: 0.01,
                 memory: 8,
+                ..LbfgsSettings::DEFAULT
             },
         )
         .minimize_coords(&mut coords)
@@ -526,6 +611,7 @@ mod tests {
                 max_steps: 500,
                 max_step: 0.2,
                 memory: 8,
+                ..LbfgsSettings::DEFAULT
             },
         )
         .minimize(&mut frame)

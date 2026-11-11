@@ -3,15 +3,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::core::NeighborKinds;
+use crate::core::stereo::{TetrahedralSite, priority_substituent, tetrahedral_reference};
 use crate::io::smiles::bond_stereo;
-use crate::io::smiles::chirality::{
-    Substituent, chirality_in, emission_order, opensmiles_order, reference_order,
-};
+use crate::io::smiles::chirality::{chirality_in, emission_order, opensmiles_order};
 use crate::io::smiles::{AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use crate::line_notation::ast::*;
 use crate::line_notation::atom_keys::{self, H_COUNT, ISOTOPE, STEREO, WILDCARD_Z};
-use crate::perceive::priority_substituent;
 use molrs::core::Atomistic;
 use molrs::core::Element;
 use molrs::core::NodeId;
@@ -728,7 +726,7 @@ fn emitted_stereo(
     {
         return Ok((Some(glyph), true));
     }
-    let Some(reference) = reference_order(mol, id) else {
+    let Some(reference) = tetrahedral_reference(mol, id) else {
         return Ok((None, false));
     };
     let Some(emission) = emission_order(mol, id, parent, ring_partners, children) else {
@@ -781,11 +779,11 @@ fn folded_lone_hydrogen(
     if degree != 1 {
         return None;
     }
-    let mut reference = reference_order(mol, id)?;
+    let mut reference = tetrahedral_reference(mol, id)?;
     let mut found = false;
     for slot in &mut reference {
-        if *slot == Substituent::Atom(hydrogen) {
-            *slot = Substituent::Hydrogen;
+        if *slot == TetrahedralSite::Atom(hydrogen) {
+            *slot = TetrahedralSite::Hydrogen;
             found = true;
             break;
         }

@@ -525,10 +525,12 @@ pub(super) fn pair(
         ));
     }
     // Bare names: the pair value, by its mixing rule of the two self rows.
-    let rule = match style.params().get("mixing").and_then(|v| v.as_text()) {
-        Some(m) => CombiningRule::parse(m)?,
-        None => CombiningRule::UNDECLARED,
-    };
+    let rule = style
+        .params()
+        .get("mixing")
+        .and_then(|v| v.as_text())
+        .map(CombiningRule::parse)
+        .transpose()?;
     let mut bare: BTreeMap<String, Expr> = BTreeMap::new();
     let mut per_particle: Vec<&str> = Vec::new();
     let one = |n: &str, i: u8| Expr::var(format!("{n}{i}"));
@@ -571,21 +573,28 @@ pub(super) fn pair(
             (ParamCombination::Geometric, _)
             | (
                 ParamCombination::LjEpsilon { .. },
-                CombiningRule::Arithmetic | CombiningRule::Geometric,
+                Some(CombiningRule::Arithmetic | CombiningRule::Geometric),
             ) => geometric(),
-            (ParamCombination::LjSigma { .. }, CombiningRule::Arithmetic) => mul(
+            (ParamCombination::LjSigma { .. }, Some(CombiningRule::Arithmetic)) => mul(
                 Expr::num(0.5),
                 Expr::bin(BinOp::Add, one(name, 1), one(name, 2)),
             ),
-            (ParamCombination::LjSigma { .. }, CombiningRule::Geometric) => geometric(),
-            (ParamCombination::LjSigma { .. }, CombiningRule::SixthPower) => pow(
+            (ParamCombination::LjSigma { .. }, Some(CombiningRule::Geometric)) => geometric(),
+            (ParamCombination::LjSigma { .. }, Some(CombiningRule::SixthPower)) => pow(
                 mul(
                     Expr::num(0.5),
                     Expr::bin(BinOp::Add, pow(one(name, 1), 6.0), pow(one(name, 2), 6.0)),
                 ),
                 1.0 / 6.0,
             ),
-            (ParamCombination::LjEpsilon { sigma }, CombiningRule::SixthPower) => {
+            (ParamCombination::LjEpsilon { .. } | ParamCombination::LjSigma { .. }, None) => {
+                return Err(refuse(
+                    style,
+                    "it mixes its per-type rows and states no `mixing` rule \
+                     (arithmetic | geometric | sixthpower)",
+                ));
+            }
+            (ParamCombination::LjEpsilon { sigma }, Some(CombiningRule::SixthPower)) => {
                 let s = sigma.as_ref();
                 if !per_particle.contains(&s) && c.spec.param(s).is_some() {
                     per_particle.push(c.spec.param(s).unwrap().name.as_ref());

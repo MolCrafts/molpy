@@ -246,6 +246,7 @@ impl PyInputSpec {
             InputKind::Count => "count",
             InputKind::Indices => "indices",
             InputKind::IndexPairs => "index_pairs",
+            InputKind::IndexLists => "index_lists",
             InputKind::Tuples => "tuples",
             InputKind::TuplesList => "tuples_list",
             InputKind::Mask => "mask",

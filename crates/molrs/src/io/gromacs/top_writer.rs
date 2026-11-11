@@ -246,9 +246,18 @@ impl GromacsTopForcefieldWriter {
             Some(style) => {
                 let (params, _) =
                     crate::ff::compile::gathered(ff, style).map_err(|e| e.to_string())?;
-                mixing_of(style.name(), &params).map_err(|e| e.to_string())?
+                mixing_of(style.name(), &params)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| {
+                        format!(
+                            "style `{}`: states no `mixing` rule for [ defaults ] comb-rule",
+                            style.name()
+                        )
+                    })?
             }
-            None => CombiningRule::UNDECLARED,
+            // No van der Waals style: nothing mixes, and the row still
+            // names a rule.
+            None => CombiningRule::Arithmetic,
         };
         let comb = match mixing {
             CombiningRule::Arithmetic => 2,
@@ -389,7 +398,13 @@ impl GromacsTopForcefieldWriter {
                 .map_err(|e| e.to_string())?
                 .0,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| {
+            format!(
+                "style `{}`: states no `mixing` rule for [ defaults ] comb-rule",
+                lj.name()
+            )
+        })?;
         let has_14 = |p: &Params| {
             p.get("epsilon14").and_then(|v| v.as_num()).is_some()
                 || p.get("sigma14").and_then(|v| v.as_num()).is_some()
@@ -458,7 +473,7 @@ impl GromacsTopForcefieldWriter {
                     continue;
                 }
                 let (regular, one_four) =
-                    charmm_pair_params(&by_key, mixing, a, b).map_err(|e| e.to_string())?;
+                    charmm_pair_params(&by_key, Some(mixing), a, b).map_err(|e| e.to_string())?;
                 if !same_lj(regular, one_four) {
                     pairtypes.push_str(&line(a, b, (one_four.0 * weight, one_four.1)));
                 }
@@ -1595,11 +1610,13 @@ mod tests {
         assert_eq!(section_rows(&text, "defaults")[0][..3], ["1", "2", "yes"]);
     }
 
-    /// No declared rule is `CombiningRule::UNDECLARED`, Lorentz-Berthelot: comb-rule 2.
+    /// `[ defaults ]` must name a comb-rule, and a field whose Lennard-Jones
+    /// style states no `mixing` has none to name: refused, not written as
+    /// Lorentz-Berthelot.
     #[test]
-    fn undeclared_mixing_writes_comb_rule_2() {
-        let text = write(&opls_ff(None));
-        assert_eq!(section_rows(&text, "defaults")[0][..3], ["1", "2", "yes"]);
+    fn undeclared_mixing_is_refused() {
+        let err = write_err(&opls_ff(None));
+        assert!(err.contains("mixing"), "{err}");
     }
 
     #[test]
@@ -2043,8 +2060,9 @@ mod tests {
     fn a_pair_cutoff_is_a_run_setting_and_not_written() {
         let mut ff = ForceField::new("t");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds::EXCLUDE_12_13);
-        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
-            .unwrap();
+        let mut lj = Params::from_iter([("cutoff", 10.0)]);
+        lj.set("mixing", "geometric");
+        ff.def_style("pair", "lj/cut", lj).unwrap();
         ff.def_style("pair", "coul/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         let text = write(&ff);

@@ -859,4 +859,187 @@ mod tests {
         m.hydrogens(c5, 1, "opls_546");
         m.assert_typed();
     }
+
+    /// Drug-sized molecules — atenolol, 5-MeO-DMT, ibuprofen, read from
+    /// SMILES and given explicit hydrogens — type atom for atom as the
+    /// shipped rules typed them (`-`: no rule types the atom), so a change
+    /// to how the rules are searched cannot move an assignment.
+    #[test]
+    fn drug_sized_molecules_type_as_the_rules_typed_them() {
+        let golden: [(&str, &[&str]); 3] = [
+            (
+                "CC(C)NCC(O)COc1ccc(CC(N)=O)cc1",
+                &[
+                    "opls_135", "-", "opls_135", "opls_901", "-", "opls_158", "opls_154",
+                    "opls_182", "opls_180", "opls_145", "opls_145", "opls_145", "opls_145",
+                    "opls_149", "opls_235", "opls_237", "opls_236", "opls_145", "opls_145",
+                    "opls_140", "opls_140", "opls_140", "opls_140", "opls_140", "opls_140",
+                    "opls_140", "opls_910", "opls_140", "opls_140", "opls_140", "opls_155",
+                    "opls_185", "opls_185", "opls_146", "opls_146", "opls_140", "opls_140",
+                    "opls_240", "opls_240", "opls_146", "opls_146",
+                ],
+            ),
+            (
+                "COc1ccc2[nH]cc(CCN(C)C)c2c1",
+                &[
+                    "opls_181", "opls_180", "-", "-", "-", "opls_543", "opls_542", "opls_543",
+                    "opls_544", "opls_136", "-", "-", "-", "-", "opls_544", "-", "opls_185",
+                    "opls_185", "opls_185", "-", "-", "opls_545", "opls_546", "opls_140",
+                    "opls_140", "opls_140", "opls_140", "opls_140", "opls_140", "opls_140",
+                    "opls_140", "opls_140", "opls_140", "-",
+                ],
+            ),
+            (
+                "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+                &[
+                    "opls_135", "opls_137", "opls_135", "opls_149", "opls_145", "opls_145",
+                    "opls_145", "opls_145", "opls_145", "opls_145", "opls_137", "opls_135",
+                    "opls_267", "opls_269", "opls_268", "opls_140", "opls_140", "opls_140",
+                    "opls_140", "opls_140", "opls_140", "opls_140", "opls_140", "opls_140",
+                    "opls_146", "opls_146", "opls_146", "opls_146", "opls_140", "opls_140",
+                    "opls_140", "opls_140", "opls_270",
+                ],
+            ),
+        ];
+        for (smiles, want) in golden {
+            let mol = crate::io::smiles::SmilesIr::parse(smiles)
+                .unwrap()
+                .to_atomistic()
+                .unwrap();
+            let mol = crate::perceive::add_hydrogens(&mol).unwrap();
+            let typed = Typing::new(OplsAaTypifier::oplsaa().with_strict(false))
+                .typify(&mol)
+                .unwrap();
+            let got: Vec<String> = typed
+                .atoms()
+                .map(|(_, a)| a.get_str("type").unwrap_or("-").to_owned())
+                .collect();
+            assert_eq!(got, want, "{smiles}");
+        }
+    }
+
+    /// The bonded terms of the same molecules take, term for term, the
+    /// bonded types the ranking gave them before it was memoised per type
+    /// tuple (`-`: no row covers the term).
+    #[test]
+    fn drug_sized_molecules_take_the_bonded_types_they_took() {
+        let golden: [(&str, &str, &str, &str); 3] = [
+            (
+                "CC(C)NCC(O)COc1ccc(CC(N)=O)cc1",
+                concat!(
+                    "-,-,-,-,-,CT-OH,CT-CT,CT-OS,CA-OS,CA-CA,CA-CA,CA-CA,CA-CT,C-CT,C-N,",
+                    "C-O,CA-CA,CA-CA,CA-CA,CT-HC,CT-HC,CT-HC,-,CT-HC,CT-HC,CT-HC,H-NT,-,-,",
+                    "CT-HC,HO-OH,CT-HC,CT-HC,CA-HA,CA-HA,CT-HC,CT-HC,H-N,H-N,CA-HA,CA-HA",
+                ),
+                concat!(
+                    "-,-,-,HC-CT-HC,HC-CT-HC,HC-CT-HC,-,-,-,-,-,-,-,-,-,HC-CT-HC,HC-CT-HC,",
+                    "HC-CT-HC,-,-,-,-,-,-,-,-,-,-,-,-,CT-CT-OH,HC-CT-OH,CT-CT-HC,CT-OH-HO,",
+                    "CT-CT-OS,CT-CT-HC,CT-CT-HC,HC-CT-OS,HC-CT-OS,HC-CT-HC,CT-OS-CA,",
+                    "CA-CA-OS,CA-CA-OS,CA-CA-CA,CA-CA-CA,CA-CA-HA,CA-CA-HA,CA-CA-CA,",
+                    "CA-CA-HA,CA-CA-HA,CA-CA-CT,CA-CA-CA,CA-CA-CT,CA-CT-C,CA-CT-HC,",
+                    "CA-CT-HC,C-CT-HC,C-CT-HC,HC-CT-HC,CT-C-N,CT-C-O,N-C-O,C-N-H,C-N-H,",
+                    "H-N-H,CA-CA-CA,CA-CA-HA,CA-CA-HA,CA-CA-CA,CA-CA-HA,CA-CA-HA",
+                ),
+                concat!(
+                    "-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,",
+                    "-,-,-,-,-,CT-CT-OH-HO,HC-CT-OH-HO,-,-,-,OH-CT-CT-OS,HC-CT-CT-OH,",
+                    "HC-CT-CT-OH,HC-CT-CT-OS,HC-CT-CT-HC,HC-CT-CT-HC,CA-OS-CT-CT,",
+                    "CA-OS-CT-HC,CA-OS-CT-HC,CA-CA-OS-CT,CA-CA-OS-CT,-CA-CA-,-CA-CA-,",
+                    "-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,",
+                    "-CA-CA-,-CA-CA-,CA-CA-CT-,CA-CA-CT-HC,CA-CA-CT-HC,CA-CA-CT-,",
+                    "CA-CA-CT-HC,CA-CA-CT-HC,-,CA-CT-C-O,HC-CT-C-N,HC-CT-C-O,HC-CT-C-N,",
+                    "HC-CT-C-O,CT-C-N-H,CT-C-N-H,H-N-C-O,H-N-C-O,-CA-CA-,-CA-CA-,-CA-CA-,",
+                    "-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,",
+                    "-CA-CA-",
+                ),
+            ),
+            (
+                "COc1ccc2[nH]cc(CCN(C)C)c2c1",
+                concat!(
+                    "CT-OS,-,-,-,-,CW-NA,CW-NA,CS-CW,CS-CT,-,-,-,-,CS-CS,CS-CW,-,-,CT-HC,",
+                    "CT-HC,CT-HC,-,-,H-NA,CW-HA,CT-HC,CT-HC,-,-,-,-,-,-,-,-,-",
+                ),
+                concat!(
+                    "HC-CT-OS,HC-CT-OS,HC-CT-OS,HC-CT-HC,HC-CT-HC,HC-CT-HC,-,-,-,-,-,-,-,-,",
+                    "-,-,-,-,NA-CW-CS,CW-NA-CW,CW-NA-H,CW-NA-H,NA-CW-CS,HA-CW-NA,CS-CW-HA,",
+                    "CT-CS-CW,CW-CS-CS,-,-,CS-CT-HC,CS-CT-HC,-,-,HC-CT-HC,-,-,-,-,-,-,-,-,",
+                    "-,-,-,-,-,-,-,-,-,-,-,-,-,CW-CS-CS,-,-,-,-,-",
+                ),
+                concat!(
+                    "-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,CS-CW-NA-CW,H-NA-CW-,",
+                    "CS-CW-NA-CW,CW-NA-CW-HA,H-NA-CW-,H-NA-CW-HA,-CS-CW-,-CS-CW-,-CS-CW-,",
+                    "-CS-CW-,-,CW-CS-CT-HC,CW-CS-CT-HC,-,HC-CT-CS-,HC-CT-CS-,-,-,-,-,-,-,-,",
+                    "-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-CS-CS-,-,-CS-CS-,-,-,-,",
+                    "-CS-CW-,-,-,-,-,-,-,-,-,-",
+                ),
+            ),
+            (
+                "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+                concat!(
+                    "CT-CT,CT-CT,CT-CT,CA-CT,CA-CA,CA-CA,CA-CA,CA-CA,CA-CA,CA-CA,CA-CT,",
+                    "CT-CT,C-CT,C-O_3,C-OH,CT-HC,CT-HC,CT-HC,CT-HC,CT-HC,CT-HC,CT-HC,CT-HC,",
+                    "CT-HC,CA-HA,CA-HA,CA-HA,CA-HA,CT-HC,CT-HC,CT-HC,CT-HC,HO-OH",
+                ),
+                concat!(
+                    "CT-CT-HC,CT-CT-HC,CT-CT-HC,HC-CT-HC,HC-CT-HC,HC-CT-HC,CT-CT-CT,",
+                    "CT-CT-CT,CT-CT-HC,CT-CT-CT,CT-CT-HC,CT-CT-HC,CT-CT-HC,CT-CT-HC,",
+                    "CT-CT-HC,HC-CT-HC,HC-CT-HC,HC-CT-HC,CA-CT-CT,CT-CT-HC,CT-CT-HC,",
+                    "CA-CT-HC,CA-CT-HC,HC-CT-HC,CA-CA-CT,CA-CA-CT,CA-CA-CA,CA-CA-CA,",
+                    "CA-CA-HA,CA-CA-HA,CA-CA-CA,CA-CA-HA,CA-CA-HA,CA-CA-CA,CA-CA-CT,",
+                    "CA-CA-CT,CA-CA-CA,CA-CA-HA,CA-CA-HA,CA-CA-CA,CA-CA-HA,CA-CA-HA,",
+                    "CA-CT-CT,CA-CT-C,CA-CT-HC,C-CT-CT,CT-CT-HC,C-CT-HC,CT-CT-HC,CT-CT-HC,",
+                    "CT-CT-HC,HC-CT-HC,HC-CT-HC,HC-CT-HC,CT-C-O_3,CT-C-OH,O_3-C-OH,C-OH-HO",
+                ),
+                concat!(
+                    "CT-CT-CT-HC,CT-CT-CT-HC,HC-CT-CT-HC,CT-CT-CT-HC,CT-CT-CT-HC,",
+                    "HC-CT-CT-HC,CT-CT-CT-HC,CT-CT-CT-HC,HC-CT-CT-HC,CT-CT-CT-HC,",
+                    "CT-CT-CT-HC,CT-CT-CT-HC,CT-CT-CT-HC,CT-CT-CT-HC,CT-CT-CT-HC,",
+                    "HC-CT-CT-HC,HC-CT-CT-HC,HC-CT-CT-HC,CA-CT-CT-CT,CT-CT-CT-HC,",
+                    "CT-CT-CT-HC,CA-CT-CT-CT,CT-CT-CT-HC,CT-CT-CT-HC,CA-CT-CT-HC,",
+                    "HC-CT-CT-HC,HC-CT-CT-HC,CA-CA-CT-CT,CA-CA-CT-CT,CA-CA-CT-HC,",
+                    "CA-CA-CT-HC,CA-CA-CT-HC,CA-CA-CT-HC,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,",
+                    "-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,",
+                    "-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,",
+                    "-CA-CA-,-CA-CA-,-CA-CA-,-CA-CA-,CA-CA-CT-CT,CA-CA-CT-,CA-CA-CT-HC,",
+                    "CA-CA-CT-CT,CA-CA-CT-,CA-CA-CT-HC,CA-CT-CT-HC,CA-CT-CT-HC,CA-CT-CT-HC,",
+                    "C-CT-CT-HC,C-CT-CT-HC,C-CT-CT-HC,HC-CT-CT-HC,HC-CT-CT-HC,HC-CT-CT-HC,",
+                    "CA-CT-C-O_3,-,CT-CT-C-O_3,CT-CT-C-OH,HC-CT-C-O_3,HC-CT-C-OH,",
+                    "CT-C-OH-HO,HO-OH-C-O_3",
+                ),
+            ),
+        ];
+        for (smiles, bonds, angles, dihedrals) in golden {
+            let mol = crate::io::smiles::SmilesIr::parse(smiles)
+                .unwrap()
+                .to_atomistic()
+                .unwrap();
+            let mol = crate::perceive::add_hydrogens(&mol).unwrap();
+            let typed = Typing::new(OplsAaTypifier::oplsaa().with_strict(false))
+                .typify(&mol)
+                .unwrap();
+            let names = |terms: Vec<Option<String>>| {
+                terms
+                    .into_iter()
+                    .map(|t| t.unwrap_or_else(|| "-".to_owned()))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            let ty = |p: &molrs::core::Props| p.get_str("type").map(str::to_owned);
+            assert_eq!(
+                names(typed.bonds().map(|(_, x)| ty(&x.props)).collect()),
+                bonds,
+                "{smiles} bonds"
+            );
+            assert_eq!(
+                names(typed.angles().map(|(_, x)| ty(&x.props)).collect()),
+                angles,
+                "{smiles} angles"
+            );
+            assert_eq!(
+                names(typed.dihedrals().map(|(_, x)| ty(&x.props)).collect()),
+                dihedrals,
+                "{smiles} dihedrals"
+            );
+        }
+    }
 }

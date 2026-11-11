@@ -46,7 +46,9 @@ for port in eo.ports:
 
 `read_smiles_fragment(body).to_template()` returns the fragment body as a ported
 `mp.Atomistic`; `read_cgsmiles(s).templates()` returns a dict from fragment name to one
-such template for every fragment a CGsmiles string defines. Whether two ports may join is decided by their kind, label and order:
+such template for every fragment a CGsmiles string defines. A fragment name is ASCII
+letters and digits only (or the wildcard `*`): write `psingle` or `PBIXBr`, not `p_single`
+or `pbix-br`; the parser names the character it refused. Whether two ports may join is decided by their kind, label and order:
 
 | Port | Joins |
 |------|-------|
@@ -57,8 +59,9 @@ such template for every fragment a CGsmiles string defines. Whether two ports ma
 
 A label restricts a port further: `[>g]` joins only `[<g]`, which is how a comb keeps its
 grafts off the backbone. The bond orders must agree as well. When a bond forms, both
-handles are removed and their partial charges fold onto the anchors, so the net charge of
-the product is the sum of the units' charges. A molecule you already have gets ports with
+handles are removed and their partial charges fold onto the anchors. This does not
+infer formal charge changes: a quaternary ammonium product must already carry its
+positive formal charge in the fragment definition. A molecule you already have gets ports with
 `add_port(anchor, handle_atom, kind, label="", order=1)`.
 
 ## Topologies are site graphs
@@ -86,8 +89,9 @@ From a CG model, the sites come from groups of beads (see
 
 With a topology from notation there are no coordinates to honour, so `mp.builder.GrowthPlacer`
 grows each molecule breadth-first: the first copy keeps its conformer pose, and every later
-copy is turned and moved so that the anchor of its port lands on its parent's leaving
-handle, pointing back along that bond.
+copy is turned and moved along its parent's port direction. The initial bond length is
+estimated from the joining atoms' covalent radii. Parallel connections to the same parent
+are fitted together; geometry does not change which ports join.
 
 ```python
 sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|10}").to_coarsegrain()
@@ -140,21 +144,90 @@ A realistic model has several species: collect the groups of every pattern (one 
 pattern, one per solvent or ion) into one `coarsen` call with one name per group. A template
 without ports is fine for a site with no bonds, such as a solvent molecule or an ion.
 
-## How ports are assigned
+## Deterministic connections
 
-You never pick ports. For every bond of the site graph the assembler chooses one port on
-each end that accepts the other, walking each molecule breadth-first and giving every bond of
-a site a distinct port. Labels are the tool for steering the choice: a port labelled `g`
-can only meet another `g`. If no assignment exists the build is refused before anything is
-returned, and the error names the site:
+A descriptor label names a compatibility class; its position in the template's port table
+identifies an actual site. A fragment can have two `[<x]` ports at different atoms. A
+connection must specify their ordinals when that distinction matters. Port ordinals are
+zero-based in `template.ports` order, which follows descriptor order for CGsmiles templates.
+Conformer generation and copying preserve the correspondence. Editing the template's port
+structure after writing a connection plan can change its meaning, so complete that editing
+first.
 
-```text
-site 0 ('X2') has no port for every bond: 3 bonds but the template has 2 ports
+The two optional fields on `add_bond` belong to the templates named by the two beads.
+They are supplied together; the assembler refuses a connection carrying one without the
+other. This example fixes the carbon-to-oxygen connection of two EO units, independent of
+any later connections added to the graph:
+
+```python
+exact = mp.CoarseGrain()
+left = exact.add_bead(bead_type="EO")
+right = exact.add_bead(bead_type="EO")
+exact.add_bond(left, right, src_port=1, dst_port=0)
+dimer = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(exact)
+assert dimer.n_ports == 2
 ```
 
-Ports that no bond uses stay on the result, handle atoms included. A linear chain therefore
-keeps a hydrogen and an open port at each end; cap them with end-group units (the
-[telechelic](topology/06_telechelic.md) page) when the ends should be something else.
+The assembler reserves all explicitly chosen ports before assigning any unspecified
+connections. A nonexistent, incompatible or reused port raises an error rather than being
+replaced by another port. Reversing a connection's bead endpoints also requires swapping
+its port fields. Multiple relations between the same beads represent separate atomistic
+bonds, such as the two bonds between successive units of a ladder polymer. Two distinct
+ports on one bead can also close a ring inside that instance.
+
+For ordinary graphs without these fields, the assembler chooses compatible free ports
+while walking each component. Labels steer that choice, but do not select one of two ports
+with the same label. Unused single-bond ports stay on the result with their handle atoms.
+A chain can therefore retain its end hydrogens. An unused port declaring a multiple bond
+is refused: one capping hydrogen cannot represent that unsatisfied bond order. Add an
+explicit end-group fragment to complete that chemistry before assembling.
+
+## Resolved CGsmiles connections
+
+A complete CGsmiles string already resolves the ports. Repeating that selection during
+assembly could connect different atoms when a template has equivalent labels at distinct
+positions. Use `to_assembly_graph()` to transfer the resolved choices, together with their
+bond classes and all connections expanded from higher levels:
+
+```python
+ir = mp.io.cgsmiles.read_cgsmiles("{[#A]=[#A]}.{#A=[$]CCC[$]}")
+resolved_library = {
+    name: conformer.generate(template)[0]
+    for name, template in ir.templates().items()
+}
+resolved_sites = ir.to_assembly_graph()
+assert resolved_sites.n_bonds == 2  # Coarse '=' means two connections.
+ring = mp.builder.Assembler(resolved_library, mp.builder.GrowthPlacer()).assemble(resolved_sites)
+assert ring.n_ports == 0
+```
+
+The graph uses the deepest coarse layer, whose beads directly name the atomistic templates.
+Every resolved pair becomes one relation, including parallel pairs and connections derived
+from an upper layer. Aromatic and explicit numeric bond classes are retained. A base-only
+string has no fragment definitions to resolve and cannot use this conversion.
+`to_coarsegrain()` remains useful for base-only topologies and graph matching, but projects
+only the coarsest layer and drops pairings and multiplicity.
+
+Final product fragments also express charged connections. Here the nitrogen has its
+positive formal charge before the new carbon–nitrogen bond forms:
+
+```python
+charged_ir = mp.io.cgsmiles.read_cgsmiles(
+    "{[#M][#Q]}.{#M=C[>x],#Q=[<x][N+](C)(C)C}"
+)
+charged_library = {
+    name: conformer.generate(template)[0]
+    for name, template in charged_ir.templates().items()
+}
+ammonium = mp.builder.Assembler(charged_library, mp.builder.GrowthPlacer()).assemble(
+    charged_ir.to_assembly_graph()
+)
+assert sum(int(atom.get("formal_charge", 0)) for atom in ammonium.atoms) == 1
+```
+
+This is assembly of a declared product, not prediction of a quaternization reaction.
+Partial charge assignment, force-field typing and structural optimization are independent
+operations performed afterwards.
 
 ## Ids on the result
 
@@ -182,25 +255,35 @@ to use next; the typifiers, writers and minimisers take an `mp.Atomistic`.
 
 ## Polydisperse systems
 
-`SystemPlanner` and its distributions (see [Polydisperse Systems](05_polydisperse_systems.md))
-still plan the chains. Each planned chain's monomer sequence becomes a CGsmiles path,
-`"{" + "".join(f"[#{m}]" for m in chain.monomers) + "}"`, which one reusable assembler builds.
+A polydisperse ensemble is the polymer model of `mp.builder` (see
+[Polydisperse Systems](05_polydisperse_systems.md)): fragments grown into chains of random
+size by a `StochasticObject`, sampled to a total by a `System`, or read from one
+generative-BigSMILES string with `mp.io.bigsmiles.read_bigsmiles(text).to_system()`. A sample
+is already a site graph — one site per placed fragment, `bead_type` its name — so one
+reusable assembler over `library()` builds every chain.
 
 ## Relax before use
 
-Neither placer asks a force field anything. Growth leaves inter-unit bonds at whatever length
-the parent's leaving bond had, and ring closures at whatever distance the open path grew;
+Neither placer asks a force field anything. Growth estimates inter-unit bond lengths from covalent radii, while
+ring closures retain whatever distance the open path grew;
 backmapping leaves each copy rigid in its conformer shape. Type the world and minimise it
 before a simulation — see [Geometry Optimization](08_geometry_optimization.md) — and expect
 a short equilibration to finish the job for a dense backmapped system.
 
-## Not available yet: crosslinking and gels
+## A finite crosslinked network
 
-Statistical crosslinking of a melt — gels, end-linked networks, dual networks, curing with
-an agent — needs sites to be joined by proximity, and that is not yet a site-graph primitive.
-MolPy does not currently build such networks. Every architecture whose connectivity you can
-write down as a site graph (chains, blocks, rings, stars, combs, capped chains, backmapped
-CG models) is covered.
+A crosslinked network is the same site graph with more connections: chains of ladder
+units joined by two bonds per backbone step, bridge fragments whose two ports consume one
+side site on each of two chains, and single-ended fragments on the sites left over. The
+example `molpy/examples/pbix_deterministic.py` builds such a network for a PBIX
+anion-exchange membrane, adds hydroxide counterions on a shell around the polymer, checks
+every new bond against the fragment pair and template anchors that requested it, and
+writes the structures with the connection table, fragment definitions and atom
+provenance. What comes out is an initial topology and geometry for optimization, not a
+sampled microscopic network.
+
+Deterministic crosslinks require an explicit connection table. Proximity-based curing,
+random network sampling and reaction kinetics remain separate from this builder.
 
 ## See also
 

@@ -68,7 +68,10 @@ def _styled(lines):
 def test_minimize_keeps_the_force_fields_own_pair_style(tmp_path, monkeypatch):
     """A 12 Å ``lj/cut/coul/cut`` force field minimises at 12 Å with a cut
     Coulomb: the deck writes the force field's pair style, not one of its own."""
-    ff = _ct_forcefield(("lj/cut", {"cutoff": 12.0}), ("coul/cut", {"cutoff": 12.0}))
+    ff = _ct_forcefield(
+        ("lj/cut", {"cutoff": 12.0, "mixing": "arithmetic"}),
+        ("coul/cut", {"cutoff": 12.0}),
+    )
     script = _minimize_deck(tmp_path, monkeypatch, ff, _ct_dimer())
     init = (tmp_path / "system.in.init").read_text(encoding="utf-8").splitlines()
     settings = (tmp_path / "system.in.settings").read_text(encoding="utf-8")
@@ -87,7 +90,8 @@ def test_minimize_keeps_a_buckingham_pair_style(tmp_path, monkeypatch):
 
 def test_a_long_range_force_field_gets_its_kspace_solver(tmp_path, monkeypatch):
     ff = _ct_forcefield(
-        ("lj/cut", {"cutoff": 10.0}), ("coul/long/pme", {"cutoff": 10.0})
+        ("lj/cut", {"cutoff": 10.0, "mixing": "arithmetic"}),
+        ("coul/long/pme", {"cutoff": 10.0}),
     )
     script = _minimize_deck(tmp_path, monkeypatch, ff, _ct_dimer())
     settings = (tmp_path / "system.in.settings").read_text(encoding="utf-8")
@@ -99,7 +103,8 @@ def test_a_long_range_force_field_gets_its_kspace_solver(tmp_path, monkeypatch):
 
 def test_an_explicit_pair_style_replaces_the_force_fields(tmp_path, monkeypatch):
     ff = _ct_forcefield(
-        ("lj/cut", {"cutoff": 10.0}), ("coul/long/pme", {"cutoff": 10.0})
+        ("lj/cut", {"cutoff": 10.0, "mixing": "arithmetic"}),
+        ("coul/long/pme", {"cutoff": 10.0}),
     )
     script = _minimize_deck(
         tmp_path, monkeypatch, ff, _ct_dimer(), pair_style="lj/cut/coul/cut 8.0"
@@ -120,7 +125,7 @@ def test_relaxation_styles_come_from_the_molrs_include(tmp_path, monkeypatch):
     ff.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     ct = ff.def_style("atom", "full").def_type("CT", mass=12.011)
     ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=1.0, r0=1.5)
-    ff.def_style("pair", "lj/cut", {"cutoff": 10.0}).def_type(
+    ff.def_style("pair", "lj/cut", {"cutoff": 10.0, "mixing": "arithmetic"}).def_type(
         "CT", ct, epsilon=0.1, sigma=3.0
     )
     frame = mp.Frame(

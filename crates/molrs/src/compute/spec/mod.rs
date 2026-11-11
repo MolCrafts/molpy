@@ -221,6 +221,8 @@ pub enum InputKind {
     Indices,
     /// A list of `(i, j)` index pairs.
     IndexPairs,
+    /// A list of index lists of any lengths (rings, residues).
+    IndexLists,
     /// A `M × k` table of item tuples (pairs, triples, quadruples).
     Tuples,
     /// One tuple table per axis.

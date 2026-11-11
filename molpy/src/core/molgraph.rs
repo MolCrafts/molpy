@@ -29,7 +29,6 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3::{PyTraverseError, PyVisit};
 
-use molrs::core::keys;
 use molrs::core::keys::VSITE;
 use molrs::core::{
     Adjacent, Atomistic, BondNumber, BondOrder, CenterError, CoarseGrain, EntityCell,
@@ -126,80 +125,16 @@ fn kind_id_checked(mol: &MolGraph, kind: &str) -> PyResult<KindId> {
         .ok_or_else(|| PyValueError::new_err(format!("kind '{kind}' is not registered")))
 }
 
-/// Render a [`CenterError`] as a Python `ValueError`, through
-/// [`center_error_message`].
+/// Render a [`CenterError`] as a Python `ValueError`; the core's message
+/// already shows node ids as the `int` handles a view carries.
 fn center_error_to_pyerr(e: CenterError) -> PyErr {
-    PyValueError::new_err(center_error_message(e))
+    PyValueError::new_err(e.to_string())
 }
 
-/// The message of a [`CenterError`] as Python sees it.
-///
-/// Node ids cross as the `int` handles a view carries (`view.handle`), never
-/// as the Rust debug form `NodeId(3v1)`. Every variant is matched by name, so
-/// a new variant is a compile error here rather than a silent fallback.
-pub(crate) fn center_error_message(e: CenterError) -> String {
-    match e {
-        CenterError::Empty => "center of an empty node set".to_owned(),
-        CenterError::NotFound { node } => {
-            format!("node {} is not in this graph", u64::from(node))
-        }
-        CenterError::BadPosition { node } => format!(
-            "node {} has a missing or non-finite '{}'/'{}'/'{}'",
-            u64::from(node),
-            keys::X,
-            keys::Y,
-            keys::Z
-        ),
-        CenterError::BadMass { node } => format!(
-            "node {} has a missing, negative or non-finite '{}'",
-            u64::from(node),
-            keys::MASS
-        ),
-        CenterError::ZeroMass => "total mass is not positive and finite".to_owned(),
-    }
-}
-
-/// Render a [`LinkError`] as a Python `ValueError`, through
-/// [`link_error_message`].
+/// Render a [`LinkError`] as a Python `ValueError`; the core's message
+/// already shows port and atom ids as `int` handles.
 fn link_error_to_pyerr(e: LinkError) -> PyErr {
-    PyValueError::new_err(link_error_message(e))
-}
-
-/// The message of a [`LinkError`] as Python sees it.
-///
-/// Port and atom ids cross as the `int` handles a view carries, never as
-/// `RelationId(..)` / `NodeId(..)`. Every variant is matched by name, with no
-/// catch-all arm.
-pub(crate) fn link_error_message(e: LinkError) -> String {
-    let port = u64::from;
-    let atom = u64::from;
-    match e {
-        LinkError::Port(inner) => format!("port does not read back: {inner}"),
-        LinkError::StalePort { port: p } => format!(
-            "port {} is stale: its anchor–handle bond no longer exists",
-            port(p)
-        ),
-        LinkError::Incompatible { a, b } => {
-            format!("ports {} and {} are not compatible", port(a), port(b))
-        }
-        LinkError::SameAnchor { a, b } => format!(
-            "ports {} and {} share one anchor; a bond cannot join an atom to itself",
-            port(a),
-            port(b)
-        ),
-        LinkError::AlreadyBonded { a, b } => {
-            format!("anchors {} and {} are already bonded", atom(a), atom(b))
-        }
-        LinkError::BranchReachesAnchor { port: p } => {
-            format!("port {}'s handle branch reaches its own anchor", port(p))
-        }
-        LinkError::BranchesOverlap => "the two ports' handle branches overlap".to_owned(),
-        LinkError::OneSidedCharge { anchor } => format!(
-            "charge is present on only part of anchor {} and its handle branch",
-            atom(anchor)
-        ),
-        LinkError::Graph(inner) => format!("graph refused a read: {inner}"),
-    }
+    PyValueError::new_err(e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,7 +1005,7 @@ impl PyMolGraph {
     fn link(&mut self, a: u64, b: u64) -> PyResult<u64> {
         self.inner
             .link(RelationId::from(a), RelationId::from(b))
-            .map(u64::from)
+            .map(|junction| u64::from(junction.bond))
             .map_err(link_error_to_pyerr)
     }
 
@@ -1109,6 +1044,49 @@ fn replicate_args(
         Err(_) => frag_ids.extract::<Vec<i32>>()?,
     };
     Ok((transforms, frag_ids))
+}
+
+/// One join made by ``link`` (``molrs::core::Junction``): the new bond, the
+/// two anchors it joins (in the order of the ports given) and the
+/// leaving-group charge (e) folded onto each anchor, ``None`` for a side that
+/// carried no charges. Views of the graph it was made on.
+#[pyclass(module = "molpy.core", name = "Junction", frozen)]
+pub(crate) struct PyJunction {
+    pub(crate) world: Py<PyAny>,
+    pub(crate) inner: molrs::core::Junction,
+}
+
+#[pymethods]
+impl PyJunction {
+    /// The new bond.
+    #[getter]
+    fn bond<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Leaf::of(self.world.bind(py))?.relation("bonds", u64::from(self.inner.bond))
+    }
+
+    /// The anchors of the two ports, in the order they were given.
+    #[getter]
+    fn anchors<'py>(&self, py: Python<'py>) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
+        let leaf = Leaf::of(self.world.bind(py))?;
+        Ok((
+            leaf.node(u64::from(self.inner.anchors[0]))?,
+            leaf.node(u64::from(self.inner.anchors[1]))?,
+        ))
+    }
+
+    /// The charge (e) folded onto each anchor.
+    #[getter]
+    fn folds(&self) -> (Option<f64>, Option<f64>) {
+        (self.inner.folds[0], self.inner.folds[1])
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Junction(bond={}, folds={:?})",
+            u64::from(self.inner.bond),
+            self.inner.folds
+        )
+    }
 }
 
 /// Emits the `#[pymethods]` both leaves share. `$noun` is what the leaf's
@@ -1400,15 +1378,18 @@ macro_rules! leaf_impl {
                 slf: &Bound<'py, Self>,
                 a: &Bound<'py, PyAny>,
                 b: &Bound<'py, PyAny>,
-            ) -> PyResult<Bound<'py, PyAny>> {
+            ) -> PyResult<PyJunction> {
                 let leaf = Leaf::of(slf.as_any())?;
                 let (a, b) = (own_relation(&leaf, a, "ports")?, own_relation(&leaf, b, "ports")?);
-                let bond = slf
+                let junction = slf
                     .try_borrow_mut()?
                     .inner
                     .link(a, b)
                     .map_err(link_error_to_pyerr)?;
-                leaf.relation("bonds", u64::from(bond))
+                Ok(PyJunction {
+                    world: slf.clone().into_any().unbind(),
+                    inner: junction,
+                })
             }
 
             #[doc = concat!("Propagate each ``frag_id`` to the unlabelled degree-1 ", $noun, "s bonded")]
@@ -1422,6 +1403,33 @@ macro_rules! leaf_impl {
             #[doc = concat!("Translate every ", $noun, " that has coordinates by ``delta`` (Å).")]
             fn translate(&mut self, delta: [f64; 3]) {
                 self.inner.translate(delta);
+            }
+
+            #[doc = concat!("Every ", $noun, "'s position, ``(N, 3)`` float64 (Å), rows in ", $noun, " row order.")]
+            ///
+            /// Assigning an ``(N, 3)`` array writes ``x`` / ``y`` / ``z`` of
+            /// every one of them; a copy is returned, so editing it changes
+            /// nothing until it is assigned back.
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            #[doc = concat!("    Reading, when a ", $noun, " lacks ``x``, ``y`` or ``z``; assigning, an")]
+            ///     array that is not ``(N, 3)``. Nothing is written then.
+            #[getter]
+            fn coords<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+                self.inner
+                    .coords()
+                    .map(|xyz| xyz.into_pyarray(py))
+                    .map_err(molrs_error_to_pyerr)
+            }
+
+            #[setter]
+            fn set_coords(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+                let xyz = crate::core::block::coords_array(value)?;
+                self.inner
+                    .set_coords(xyz.view())
+                    .map_err(molrs_error_to_pyerr)
             }
 
             #[doc = concat!("Rotate every ", $noun, " that has coordinates by ``angle`` radians about")]
@@ -2255,6 +2263,23 @@ impl PyAtomistic {
 }
 
 leaf_impl!(PyAtomistic, "Atomistic", "atom");
+
+#[pymethods]
+impl PyAtomistic {
+    /// The molecular formula in Hill order: carbon, then hydrogen, then every
+    /// other element alphabetically; with no carbon, every element
+    /// alphabetically. A count of one is not written (``"C2H6O"``,
+    /// ``"H2O"``); an empty graph is ``""``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an atom is the wildcard (atomic number 0); the message gives
+    ///     its row.
+    fn formula(&self) -> PyResult<String> {
+        self.inner.formula().map_err(molrs_error_to_pyerr)
+    }
+}
 
 impl PyAtomistic {
     /// A new `Atomistic` holding `inner`, with no props: the graph-out door

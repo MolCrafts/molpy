@@ -821,7 +821,8 @@ impl Block {
     fn with<R>(&self, f: impl FnOnce(&RsBlock) -> R) -> Result<R, JsValue> {
         self.inner
             .arena
-            .borrow()
+            .read()
+            .map_err(js_err)?
             .with_block(&self.inner.handle, f)
             .map_err(js_err)
     }
@@ -832,7 +833,8 @@ impl Block {
     ) -> Result<R, JsValue> {
         self.inner
             .arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .with_block_mut(&mut self.inner.handle, f)
             .map_err(js_err)?
     }
@@ -850,12 +852,17 @@ impl Block {
     /// `readCsvBlock` returns).
     pub(crate) fn from_rs(block: RsBlock) -> Result<Block, JsValue> {
         let arena = molrs_ffi::FrameArenaCell::default();
-        let fid = arena.borrow_mut().frame_new();
+        let fid = arena.write().map_err(js_err)?.frame_new();
         arena
-            .borrow_mut()
+            .write()
+            .map_err(js_err)?
             .set_block(fid, "temp", block)
             .map_err(js_err)?;
-        let handle = arena.borrow().get_block(fid, "temp").map_err(js_err)?;
+        let handle = arena
+            .read()
+            .map_err(js_err)?
+            .get_block(fid, "temp")
+            .map_err(js_err)?;
         Ok(Block {
             inner: BlockRef::new(arena, handle),
         })

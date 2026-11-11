@@ -15,6 +15,7 @@ use crate::core::{BondNumber, BondOrder};
 use crate::core::{CenterError, EntityTable, LinkError, Port, PortKind};
 use crate::core::{GraphAccess, KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
 use crate::op::I;
+use crate::op::{Fnx3, Fnx3View};
 
 /// Result of [`Atomistic::extract_subgraph`].
 #[derive(Debug, Clone)]
@@ -1106,14 +1107,30 @@ impl Atomistic {
         self.graph.leaving_group(port)
     }
 
-    /// Join port `a` to port `b` and return the new anchor–anchor bond; see
+    /// Join port `a` to port `b` and return the [`Junction`](crate::core::Junction)
+    /// (the new bond, its anchors, the charge folded onto each); see
     /// [`MolGraph::link`] for the charge fold and the refusals.
     ///
     /// # Errors
     ///
     /// The [`LinkError`] of the first refusal; the molecule is unchanged then.
-    pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
+    pub fn link(
+        &mut self,
+        a: RelationId,
+        b: RelationId,
+    ) -> Result<crate::core::Junction, LinkError> {
         self.graph.link(a, b)
+    }
+
+    /// Atomically join a batch of ports with the core's shared chemistry and
+    /// stereochemical substitution rules, each new bond classed as its
+    /// request says.
+    #[cfg(feature = "smiles")]
+    pub(crate) fn link_many(
+        &mut self,
+        requests: &[crate::core::LinkRequest],
+    ) -> Result<Vec<crate::core::Junction>, crate::core::LinkManyError> {
+        self.graph.link_many(requests)
     }
 
     /// Propagate each [`keys::FRAG_ID`] to the unlabelled degree-1 atoms
@@ -1162,11 +1179,94 @@ impl Atomistic {
         self.graph.center(atoms)
     }
 
+    /// Every atom's position, `N × 3` (Å), in atom row order — see
+    /// [`MolGraph::coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::coords`]: an atom without `x`, `y` or `z`.
+    pub fn coords(&self) -> Result<Fnx3, MolRsError> {
+        self.graph.coords()
+    }
+
+    /// Write every atom's position from `coords` (`N × 3`, Å) — see
+    /// [`MolGraph::set_coords`].
+    ///
+    /// # Errors
+    ///
+    /// As [`MolGraph::set_coords`]: a shape other than `N × 3`.
+    pub fn set_coords(&mut self, coords: Fnx3View<'_>) -> Result<(), MolRsError> {
+        self.graph.set_coords(coords)
+    }
+
+    // ---- composition ----
+
+    /// The molecular formula in Hill order: carbon first, then hydrogen,
+    /// then every other element alphabetically by symbol; with no carbon,
+    /// every element alphabetically, hydrogen included. A count of one is
+    /// not written (`"C2H6O"`, `"H2O"`, `"ClNa"`). An empty graph is `""`.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when an atom is the wildcard (atomic
+    /// number 0), which names no element; the message gives its row.
+    pub fn formula(&self) -> Result<String, MolRsError> {
+        let mut counts: std::collections::BTreeMap<&'static str, usize> =
+            std::collections::BTreeMap::new();
+        for (row, (_, props)) in self.atoms().enumerate() {
+            let element = props
+                .atomic_number()
+                .and_then(crate::core::Element::by_number)
+                .ok_or_else(|| {
+                    MolRsError::validation(format!(
+                        "atom row {row} is the wildcard and names no element"
+                    ))
+                })?;
+            *counts.entry(element.symbol()).or_default() += 1;
+        }
+        let hill_first: &[&str] = if counts.contains_key("C") {
+            &["C", "H"]
+        } else {
+            &[]
+        };
+        let rest = counts.keys().filter(|s| !hill_first.contains(s));
+        Ok(hill_first
+            .iter()
+            .filter(|s| counts.contains_key(*s))
+            .chain(rest)
+            .map(|symbol| match counts[symbol] {
+                1 => (*symbol).to_string(),
+                n => format!("{symbol}{n}"),
+            })
+            .collect())
+    }
+
     // ---- frame conversion ----
 
     /// Export to a tabular [`Frame`] (atoms / bonds / angles / dihedrals /
     /// impropers blocks, and one block per other non-empty relation kind,
     /// `drudes` or `virtual_sites` say, named by the kind).
+    ///
+    /// # Species
+    ///
+    /// Every atom of an `Atomistic` carries [`keys::ATOMIC_NUMBER`], so the
+    /// `atoms` block always states both spellings of the species: the
+    /// `atomic_number` column and the [`keys::ELEMENT`] symbol column derived
+    /// from it ([`Element::fill_symbols`](crate::core::Element::fill_symbols)).
+    /// The symbols are written from the numbers on every export, replacing an
+    /// `element` property the atoms may carry, so the two columns cannot
+    /// disagree, and a symbol-spelling writer (PDB, XYZ, CIF) takes the frame
+    /// as it comes.
+    ///
+    /// # Model defaults
+    ///
+    /// Two atom keys have one exact meaning when an atom does not carry them:
+    /// no [`keys::FORMAL_CHARGE`] is a formal charge of 0 (what
+    /// [`Props::formal_charge`] reads) and no [`keys::IS_AROMATIC`] is not
+    /// aromatic. A line notation states them only on the atoms that need them
+    /// (`[N+]`, `c`), so where some atoms carry the key the column is written
+    /// dense with that value rather than null on the rest. Keys whose absence
+    /// says "not stated" ([`keys::H_COUNT`], a declared count) stay nullable.
     ///
     /// # Errors
     ///
@@ -1176,7 +1276,13 @@ impl Atomistic {
     /// any value under a key the graph has no column for, so a string written
     /// under `"x"` is legal in the graph and only refused here.
     pub fn to_frame(&self) -> Result<Frame, MolRsError> {
-        self.graph.to_frame()
+        let mut frame = self.graph.to_frame()?;
+        if let Some(atoms) = frame.get_mut("atoms") {
+            fill_null_cells(atoms, keys::FORMAL_CHARGE, 0_i64)?;
+            fill_null_cells(atoms, keys::IS_AROMATIC, false)?;
+            crate::core::Element::fill_symbols(&mut frame)?;
+        }
+        Ok(frame)
     }
 
     /// Build from a [`Frame`], registering the standard kinds first so bond /
@@ -1544,6 +1650,28 @@ fn require_atomic_number(atom: &Props, what: &str) -> Result<(), MolRsError> {
         "{what} has no valid '{}' (0..=118, 0 = wildcard){hint}",
         keys::ATOMIC_NUMBER
     )))
+}
+
+/// Replace the null cells of column `key` by `value` and drop its validity
+/// mask; a column that is absent, or has no null cell, is left as it is.
+fn fill_null_cells<T>(atoms: &mut crate::core::Block, key: &str, value: T) -> Result<(), MolRsError>
+where
+    T: crate::core::block::BlockDtype + Clone,
+{
+    let Some(mask) = atoms.validity(key).map(<[bool]>::to_vec) else {
+        return Ok(());
+    };
+    let Some(column) = atoms.get(key).and_then(|c| c.get::<T>()) else {
+        return Ok(());
+    };
+    let dense: Vec<T> = column
+        .iter()
+        .zip(&mask)
+        .map(|(v, &held)| if held { v.clone() } else { value.clone() })
+        .collect();
+    atoms
+        .insert(key, ndarray::Array1::from_vec(dense).into_dyn(), None)
+        .map_err(|e| MolRsError::validation(e.to_string()))
 }
 
 #[cfg(test)]
@@ -2282,6 +2410,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `to_frame` states the species as symbols beside the numbers, written
+    /// from the numbers: a stale `element` property is replaced, never kept.
+    #[test]
+    fn to_frame_writes_element_symbols_from_atomic_numbers() {
+        let mut mol = Atomistic::new();
+        let o = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
+        let h = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H, keys::ELEMENT => "Xx" })
+            .unwrap();
+        mol.add_bond(o, h, props! {}).unwrap();
+
+        let frame = mol.to_frame().unwrap();
+        let symbols: Vec<String> = frame["atoms"]
+            .get(keys::ELEMENT)
+            .and_then(|c| c.get::<String>())
+            .expect("a string element column")
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(symbols, ["O", "H"]);
+    }
+
+    /// An ion read from SMILES states its charge on one atom only; the frame
+    /// states the model's 0 on the rest instead of a null cell.
+    #[test]
+    fn to_frame_writes_formal_charge_and_aromaticity_dense() {
+        let mut mol = Atomistic::new();
+        let n = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::N, keys::FORMAL_CHARGE => 1 as I })
+            .unwrap();
+        let c = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C, keys::IS_AROMATIC => true })
+            .unwrap();
+        mol.add_bond(n, c, props! {}).unwrap();
+
+        let frame = mol.to_frame().unwrap();
+        let atoms = &frame["atoms"];
+        assert_eq!(atoms.validity(keys::FORMAL_CHARGE), None);
+        assert_eq!(atoms.validity(keys::IS_AROMATIC), None);
+        let charges: Vec<i64> = atoms
+            .get(keys::FORMAL_CHARGE)
+            .and_then(|c| c.get::<i64>())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(charges, [1, 0]);
+        let aromatic: Vec<bool> = atoms
+            .get(keys::IS_AROMATIC)
+            .and_then(|c| c.get::<bool>())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(aromatic, [false, true]);
     }
 
     /// A graph relation names every endpoint: a row with a null endpoint (a
@@ -3346,7 +3533,7 @@ mod tests {
         };
         let (c0, p0) = unit(PortKind::Left);
         let (c1, p1) = unit(PortKind::Right);
-        let bond = mol.link(p0, p1).unwrap();
+        let bond = mol.link(p0, p1).unwrap().bond;
         assert_eq!(mol.bond_between(c0, c1), Some(bond));
         assert_eq!((mol.n_atoms(), mol.n_ports()), (2, 0));
     }
@@ -3409,5 +3596,61 @@ mod tests {
         assert_eq!(a.structural_hash(), b.structural_hash());
         assert!(a.is_isomorphic(&b));
         assert_eq!(a.canonical_order().len(), 4);
+    }
+
+    fn atoms_of(numbers: &[Element]) -> Atomistic {
+        let mut mol = Atomistic::new();
+        for &z in numbers {
+            mol.add_atom(props! { keys::ATOMIC_NUMBER => z }).unwrap();
+        }
+        mol
+    }
+
+    #[test]
+    fn formula_is_in_hill_order() {
+        use Element::{C, Cl, H, Na, O};
+        assert_eq!(
+            atoms_of(&[O, C, H, H, C, H, H, H, H]).formula().unwrap(),
+            "C2H6O"
+        );
+        assert_eq!(atoms_of(&[H, C, H, H, H]).formula().unwrap(), "CH4");
+        // No carbon: every element alphabetically, hydrogen included.
+        assert_eq!(atoms_of(&[O, H, H]).formula().unwrap(), "H2O");
+        assert_eq!(atoms_of(&[Na, Cl]).formula().unwrap(), "ClNa");
+        assert_eq!(atoms_of(&[]).formula().unwrap(), "");
+    }
+
+    #[test]
+    fn formula_refuses_the_wildcard() {
+        let mut mol = atoms_of(&[Element::C]);
+        mol.add_atom(props! { keys::ATOMIC_NUMBER => 0_u8 })
+            .unwrap();
+        let err = mol.formula().unwrap_err().to_string();
+        assert!(err.contains("row 1"), "{err}");
+    }
+
+    #[test]
+    fn coords_round_trip_in_atom_row_order() {
+        let mut mol = atoms_of(&[Element::C, Element::O]);
+        let points = ndarray::array![[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]];
+        mol.set_coords(points.view()).unwrap();
+        assert_eq!(mol.coords().unwrap(), points);
+        let second = mol.atom_ids().nth(1).unwrap();
+        assert_eq!(mol.get_atom(second).unwrap().get_f64(keys::Y), Some(4.0));
+    }
+
+    #[test]
+    fn coords_refuse_a_missing_coordinate_and_a_wrong_shape() {
+        let mut mol = atoms_of(&[Element::C, Element::O]);
+        let first = mol.atom_ids().next().unwrap();
+        for key in keys::COORDS {
+            mol.set_atom(first, key, 1.0).unwrap();
+        }
+        let err = mol.coords().unwrap_err().to_string();
+        assert!(err.contains("'x' is absent on 1 of 2"), "{err}");
+        let wrong = ndarray::Array2::<f64>::zeros((3, 3));
+        assert!(mol.set_coords(wrong.view()).is_err());
+        assert_eq!(mol.get_atom(first).unwrap().get_f64(keys::X), Some(1.0));
+        assert_eq!(atoms_of(&[]).coords().unwrap().dim(), (0, 3));
     }
 }

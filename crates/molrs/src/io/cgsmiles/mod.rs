@@ -244,12 +244,14 @@
 //!     crate::io::smiles::SmilesErrorKind::CgSquashUnsupported
 
 mod ast;
+mod connections;
 #[cfg(test)]
 pub(super) mod fixtures;
 mod instantiate;
 mod parser;
 mod resolve;
-mod templates;
+pub(crate) mod templates;
+mod to_assembly_graph;
 mod to_atomistic;
 mod to_coarsegrain;
 mod validate;
@@ -361,6 +363,8 @@ impl CgSmilesIr {
     /// [`CgInvalidRingMarker`] (`%` with no digits after it, or a number past
     /// 65535), [`CgExpectedBlock`] (`{[#A]}.#A=CC`, `{[#A]}{#A=CC}`, or anything
     /// after the last `}`), [`CgMalformedFragmentDef`] (`{[#A]}.{#A}`),
+    /// [`CgInvalidFragmentName`] (`{[#p_single]}`, `{[#A]}.{#a-1=CC}`: a name is
+    /// ASCII letters and digits, or `*`),
     /// [`CgEmptyFragmentBody`] (`{[#A]}.{#A=}`), [`CgDuplicateFragment`]
     /// (`{[#A]}.{#A=CC,#A=CCC}`), [`CgUndefinedFragment`] (`{[#A][#B]}.{#A=CC}`),
     /// [`CgSquashUnsupported`] (the squash operator `[!]` at any level, the
@@ -408,6 +412,7 @@ impl CgSmilesIr {
     /// [`CgEmptyBlock`]: crate::io::smiles::SmilesErrorKind::CgEmptyBlock
     /// [`CgExpectedBlock`]: crate::io::smiles::SmilesErrorKind::CgExpectedBlock
     /// [`CgMalformedFragmentDef`]: crate::io::smiles::SmilesErrorKind::CgMalformedFragmentDef
+    /// [`CgInvalidFragmentName`]: crate::io::smiles::SmilesErrorKind::CgInvalidFragmentName
     /// [`CgEmptyFragmentBody`]: crate::io::smiles::SmilesErrorKind::CgEmptyFragmentBody
     /// [`CgDuplicateFragment`]: crate::io::smiles::SmilesErrorKind::CgDuplicateFragment
     /// [`CgUndefinedFragment`]: crate::io::smiles::SmilesErrorKind::CgUndefinedFragment

@@ -141,6 +141,26 @@ impl PyElement {
             .map_err(molrs_error_to_pyerr)
     }
 
+    /// Write ``atoms.mass`` (amu) from ``atoms.atomic_number``, in place:
+    /// each atom's standard atomic mass.
+    ///
+    /// For a frame whose masses are its elements'. An existing ``mass``
+    /// column is replaced; ``atomic_number`` is kept.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the frame has no ``atoms`` block, the block has no unsigned
+    ///     ``atomic_number`` column, or a row holds the wildcard 0 or a number
+    ///     outside ``1..=118``, neither of which has a mass (the message names
+    ///     the row). Nothing is written then.
+    #[staticmethod]
+    fn fill_masses(frame: &PyFrame) -> PyResult<()> {
+        frame
+            .with_frame_mut(Element::fill_masses)?
+            .map_err(molrs_error_to_pyerr)
+    }
+
     /// Atomic number.
     #[getter]
     fn z(&self) -> u8 {

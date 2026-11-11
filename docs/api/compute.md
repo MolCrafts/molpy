@@ -79,6 +79,7 @@ analysis family has its own page under [Compute](../compute/index.md).
 | neighbour search | `mp.core.NeighborList`, `mp.core.Neighbors` (core, not on `molpy.compute`) | [NeighborList](../compute/neighborlist.md) |
 | rdf | `Rdf`, `CorrelationFunction` | [RDF](../compute/rdf.md) |
 | density | `LocalDensity`, `GaussianDensity`, `SphereVoxelization` | [Density](../compute/density.md) |
+| porosity | `FreeVolume`, `PoreSizeDistribution` | [Porosity](../compute/porosity.md) |
 | diffraction | `StaticStructureFactorDebye`, `StaticStructureFactorDirect`, `DiffractionPattern` | [Diffraction](../compute/diffraction.md) |
 | pmft | `PmftXy`, `PmftXyt`, `PmftXyz`, `PmftR12` | [PMFT](../compute/pmft.md) |
 | distribution | `DistributionFunction`, `CombinedDistribution`, `Axis` | [Distribution](../compute/distribution.md) |
@@ -87,6 +88,7 @@ analysis family has its own page under [Compute](../compute/index.md).
 | environment | `BondOrientationalOrder`, `LocalDescriptors`, `EnvironmentMatch`, `AngularSeparationNeighbor`, `AngularSeparationGlobal`, `LocalBondProjection` | [Environment](../compute/environment.md) |
 | shape | `CenterOfMass`, `GyrationTensor`, `InertiaTensor`, `KineticEnergy` | [Shape](../compute/shape.md) |
 | cluster | `Cluster` | [Cluster](../compute/cluster.md) |
+| built-structure checks | `Percolation`, `RingPiercing`, `CloseContacts` (on bonded, periodic snapshots: does the network span the cell, does a bond thread a ring, which unbonded atoms overlap) | — |
 | decomposition | `Pca`, `Kmeans` | [Decomposition](../compute/decomposition.md) |
 | hbond | `HBonds` | [HBond](../compute/hbond.md) |
 | voronoi | `RadicalVoronoi`, `VoronoiIntegration`, `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`, `MolecularMoments`, `FiniteFieldPolarizability` | [Voronoi](../compute/voronoi.md) |

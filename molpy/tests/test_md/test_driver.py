@@ -26,8 +26,9 @@ def _pair() -> mp.Frame:
 
 def test_one_step_writes_energy_and_forces_onto_the_frame():
     frame = _pair()
-    sim = mp.md.MD("real")
-    sim.set_integrator(mp.md.VelocityVerlet(0.001))
+    sim = mp.md.MD(units="real")
+    sim.set_timestep(0.001)
+    sim.set_integrator(mp.md.VelocityVerlet())
     sim.set_neighbor(mp.core.NeighborList(3.0), skin=0.5)
     sim.set_evaluator(mp.ff.potential.PairLjCut(1.0, 1.0, 2.5))
     sim.run(frame, 1)
@@ -38,7 +39,7 @@ def test_one_step_writes_energy_and_forces_onto_the_frame():
 @pytest.mark.parametrize("dt", [0.0, -1.0, np.nan, np.inf])
 def test_a_non_positive_timestep_is_refused(dt):
     with pytest.raises(ValueError, match="dt"):
-        mp.md.VelocityVerlet(dt)
+        mp.md.MD(units="real").set_timestep(dt)
 
 
 def _argon() -> mp.Frame:
@@ -58,11 +59,12 @@ def _argon() -> mp.Frame:
 
 
 def _langevin_md() -> mp.md.MD:
-    sim = mp.md.MD("real")
-    sim.set_integrator(mp.md.VelocityVerlet(2.0))
+    sim = mp.md.MD(units="real")
+    sim.set_timestep(2.0)
+    sim.set_integrator(mp.md.VelocityVerlet())
     sim.set_neighbor(mp.core.NeighborList(5.5), skin=1.0)
     sim.set_evaluator(mp.ff.potential.PairLjCut(0.238, 3.405, 4.5))
-    sim.set_thermostat(mp.md.FixLangevin(120.0, 100.0, 2.0, seed=3))
+    sim.set_thermostat(mp.md.FixLangevin(120.0, 100.0, seed=3))
     return sim
 
 

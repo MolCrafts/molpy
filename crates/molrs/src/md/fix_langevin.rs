@@ -2,14 +2,19 @@
 //!
 //! The drag and the random kick are forces, added after every physical
 //! evaluator and before `final_integrate` consumes `f`. In the run's units
-//! ([`UnitPreset`]), as LAMMPS `FixLangevin::post_force_templated` forms them:
+//! style, as LAMMPS `FixLangevin::init` and `post_force_templated` form them
+//! (`gfactor1`, `gfactor2`):
 //!
 //! ```text
-//! F_drag = −m v / (damp · ftm2v)
-//! F_rand = sqrt(2 m k_B T / (damp · dt · mvv2e)) / ftm2v · ξ
+//! F_drag = −m / damp / ftm2v · v
+//! F_rand = sqrt(m) · sqrt(2 boltz / damp / dt / mvv2e) / ftm2v · sqrt(T) · ξ
 //! ```
 //!
-//! `T` is in the preset's temperature unit, `damp` and `dt` in its time unit.
+//! `T` is in the style's temperature unit, `damp` (LAMMPS `damp`) and the
+//! run's `dt` in its time unit; `boltz`, `ftm2v` and `mvv2e` are the style's
+//! LAMMPS constants. LAMMPS writes the kick as `sqrt(24 boltz / …)·(u − ½)`
+//! with `u` uniform on [0, 1), which has the variance of `sqrt(2 boltz / …)·ξ`;
+//! here `ξ` is a standard normal, so the kick has the same mean and variance.
 //! The noise is a counter stream keyed by `(seed, step, atom id)`, drawn on
 //! the host; `step` is the run's absolute step, so chained runs draw new noise.
 
@@ -17,31 +22,33 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 use super::columns::{self, read_force, read_mass, read_tags, read_vel};
-use super::component::{Component, Thermostat, TimestepProvider};
+use super::component::{Component, Thermostat};
 use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
-use molrs::core::UnitPreset;
+use molrs::core::UnitStyle;
 
 /// Langevin thermostat as an additive post-force kick at one temperature.
 #[derive(Clone, Copy, Debug)]
 pub struct FixLangevin {
     temperature: F,
     damp: F,
-    dt: F,
     seed: u64,
-    /// `(k_B, ftm2v, mvv2e)` of the run, set at `build`.
-    constants: Option<(F, F, F)>,
+    /// `(ftm2v, sqrt(2 boltz / damp / dt / mvv2e) / ftm2v)` of the run, set
+    /// at `build`.
+    factors: Option<(F, F)>,
 }
 
 impl FixLangevin {
-    /// A bath at `temperature` with relaxation time `damp`.
+    /// A bath at `temperature` (the run style's temperature unit) with
+    /// relaxation time `damp` (its time unit), LAMMPS
+    /// `fix langevin Tstart Tstop damp seed` at `Tstart = Tstop`.
     ///
     /// # Errors
     ///
     /// [`MdError::Invalid`] for a negative temperature or a non-positive
-    /// `damp` or `dt`.
-    pub fn new(temperature: F, damp: F, dt: F, seed: u64) -> Result<Self, MdError> {
+    /// `damp`.
+    pub fn new(temperature: F, damp: F, seed: u64) -> Result<Self, MdError> {
         if !temperature.is_finite() || temperature < 0.0 {
             return Err(MdError::Invalid(format!(
                 "temperature must be >= 0, got {temperature}"
@@ -50,27 +57,17 @@ impl FixLangevin {
         if !damp.is_finite() || damp <= 0.0 {
             return Err(MdError::Invalid(format!("damp must be > 0, got {damp}")));
         }
-        if !dt.is_finite() || dt <= 0.0 {
-            return Err(MdError::Invalid(format!("dt must be > 0, got {dt}")));
-        }
         Ok(Self {
             temperature,
             damp,
-            dt,
             seed,
-            constants: None,
+            factors: None,
         })
     }
 
     /// The bath temperature.
     pub fn temperature(&self) -> F {
         self.temperature
-    }
-}
-
-impl TimestepProvider for FixLangevin {
-    fn dt(&self) -> F {
-        self.dt
     }
 }
 
@@ -83,8 +80,10 @@ impl Component for FixLangevin {
         vec![(Phase::PostForce, 500)]
     }
 
-    fn build(&mut self, _frame: &mut Frame, units: &UnitPreset) -> Result<(), MdError> {
-        self.constants = Some((units.boltzmann(), units.ftm2v()?, units.mvv2e()?));
+    fn build(&mut self, _frame: &mut Frame, units: UnitStyle, dt: F) -> Result<(), MdError> {
+        let c = units.constants();
+        let noise = (2.0 * c.boltz / self.damp / dt / c.mvv2e).sqrt() / c.ftm2v;
+        self.factors = Some((c.ftm2v, noise));
         Ok(())
     }
 
@@ -97,8 +96,8 @@ impl Component for FixLangevin {
         if phase != Phase::PostForce {
             return Ok(());
         }
-        let (kb, ftm2v, mvv2e) = self
-            .constants
+        let (ftm2v, noise) = self
+            .factors
             .ok_or_else(|| MdError::Invalid("fix_langevin was launched before build".into()))?;
         let vel = read_vel(frame)?;
         let mass = read_mass(frame)?;
@@ -110,13 +109,13 @@ impl Component for FixLangevin {
                 "langevin requires mass, velocity, force, and id to share the atom count".into(),
             ));
         }
-        let drag = 1.0 / (self.damp * ftm2v);
-        let scale = (2.0 * kb * self.temperature / (self.damp * self.dt * mvv2e)).sqrt() / ftm2v;
+        let tsqrt = self.temperature.sqrt();
         for i in 0..n {
-            let sigma = scale * mass[i].sqrt();
+            let gamma1 = -mass[i] / self.damp / ftm2v;
+            let gamma2 = mass[i].sqrt() * noise * tsqrt;
             for axis in 0..3 {
                 let xi = standard_normal(self.seed, scratch.step(), tags[i], axis as u64);
-                force[[i, axis]] += -mass[i] * vel[[i, axis]] * drag + sigma * xi;
+                force[[i, axis]] += gamma1 * vel[[i, axis]] + gamma2 * xi;
             }
         }
         columns::write_force(frame, &force)
@@ -159,10 +158,10 @@ fn splitmix64(mut x: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::{Block, UnitPreset};
+    use molrs::core::Block;
     use ndarray::Array1;
 
-    /// At T = 0 only the drag acts: `−m v / (damp · ftm2v)`. In `real`,
+    /// At T = 0 only the drag acts: `−m / damp / ftm2v · v`. In `real`,
     /// m = 12 g/mol, v = 0.01 Å/fs, damp = 100 fs gives
     /// −0.12 / (100 · 4.184e-4) = −2.868 069 kcal/mol/Å.
     #[test]
@@ -185,14 +184,14 @@ mod tests {
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        let units = UnitPreset::real();
-        let mut fix = FixLangevin::new(0.0, 100.0, 1.0, 0).unwrap();
-        fix.build(&mut frame, &units).unwrap();
+        let units = UnitStyle::Real;
+        let mut fix = FixLangevin::new(0.0, 100.0, 0).unwrap();
+        fix.build(&mut frame, units, 1.0).unwrap();
         fix.launch(Phase::PostForce, &mut frame, &mut Scratch::new())
             .unwrap();
         let fx = frame["atoms"].get("fx").unwrap().get::<F>().unwrap()[0];
-        let expected = -12.0 * 0.01 / (100.0 * units.ftm2v().unwrap());
-        assert!((fx - expected).abs() < 1e-12, "{fx}");
+        let expected = -12.0 / 100.0 / units.constants().ftm2v * 0.01;
+        assert_eq!(fx, expected);
         assert!((fx + 2.868_069).abs() < 1e-5, "{fx}");
     }
 
@@ -211,6 +210,6 @@ mod tests {
 
     #[test]
     fn a_negative_temperature_is_refused() {
-        assert!(FixLangevin::new(-1.0, 100.0, 1.0, 0).is_err());
+        assert!(FixLangevin::new(-1.0, 100.0, 0).is_err());
     }
 }

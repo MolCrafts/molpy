@@ -93,6 +93,7 @@ nav = [
       { "NeighborList" = "compute/neighborlist.md" },
       { "RDF" = "compute/rdf.md" },
       { "Density" = "compute/density.md" },
+      { "Porosity" = "compute/porosity.md" },
       { "Diffraction" = "compute/diffraction.md" },
       { "PMFT" = "compute/pmft.md" },
     ] },
@@ -143,6 +144,7 @@ nav = [
     { "Builder" = "api/builder.md" },
     { "Packing" = "api/pack.md" },
     { "Conformer" = "api/conformer.md" },
+    { "Depict" = "api/depict.md" },
     # Parameterization
     { "Typifier" = "api/typifier.md" },
     { "Potentials" = "api/potential.md" },

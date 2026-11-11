@@ -2,7 +2,7 @@
 
 use crate::core::MolRsError;
 use crate::core::keys;
-use crate::core::{KindId, MolGraph, PropValue, RelationId};
+use crate::core::{KindId, MolGraph, PropValue, Props, RelationId};
 
 /// The chemical class of a bond.
 ///
@@ -95,6 +95,23 @@ impl BondOrder {
         matches!(self, BondOrder::Aromatic)
     }
 
+    /// Whether `number` is a bond number this class can carry: for a plain
+    /// class, the number that implies it back ([`BondNumber::implied_type`],
+    /// so a quadruple is a `Double`); for an aromatic class, an unassigned,
+    /// single or double Kekulé number. `Unknown` admits nothing.
+    pub fn admits(self, number: BondNumber) -> bool {
+        match self {
+            BondOrder::Unknown => false,
+            BondOrder::Aromatic => matches!(
+                number,
+                BondNumber::Unknown | BondNumber::Single | BondNumber::Double
+            ),
+            BondOrder::Single | BondOrder::Double | BondOrder::Triple => {
+                number.implied_type() == self
+            }
+        }
+    }
+
     /// The bond number a non-aromatic class implies.
     ///
     /// Single is one bond, double is two — the two facts agree by construction
@@ -165,6 +182,34 @@ impl BondNumber {
             _ => self.code(),
         }
     }
+
+    /// Whether a port of this order, left unpaired, needs an explicit cap
+    /// fragment: a leaving hydrogen handle stands for exactly one single
+    /// bond, so any higher order cannot be capped by the handle it has.
+    pub fn needs_explicit_cap(self) -> bool {
+        self != BondNumber::Single
+    }
+
+    /// Whether a bond of class `kind` and number `number` may stand where a
+    /// port of this order joins: the class must admit the number
+    /// ([`BondOrder::admits`]), and the number must be this order — or be
+    /// unassigned under an aromatic class on a single port, whose Kekulé
+    /// phase is decided later.
+    pub fn accepts_class(self, kind: BondOrder, number: BondNumber) -> bool {
+        kind.admits(number)
+            && (number == self
+                || (kind == BondOrder::Aromatic
+                    && number == BondNumber::Unknown
+                    && self == BondNumber::Single))
+    }
+}
+
+/// Whether a bond is one `E` / `Z` geometry attaches to: its class is
+/// [`BondOrder::Double`]. The class decides, as perception labels by it; the
+/// localized number is not consulted, so a Kekulé-numbered aromatic bond is
+/// not an alkene and a double bond whose number was never assigned still is.
+pub(crate) fn carries_ez(props: &Props) -> bool {
+    BondOrder::from_prop(props.get(keys::BOND_TYPE)) == BondOrder::Double
 }
 
 // Graph props are `Int`; the schema declares the *frame* columns `UInt`, and
@@ -188,9 +233,10 @@ impl From<BondNumber> for PropValue {
 /// The two keys are written together because they are only meaningful together:
 /// a class without a number leaves the bond un-standardized, and a number
 /// without a class leaves a renderer no way to tell aromatic from double. It
-/// lives here, beside the vocabulary, because two leaves write it —
+/// lives here, beside the vocabulary, because two writers share it —
 /// [`Atomistic::set_bond_class`](crate::core::Atomistic::set_bond_class)
-/// and the port join's new bonds (`MolGraph::link`).
+/// and `MolGraph::add_classed_bond`, which the port join uses for its new
+/// bonds.
 ///
 /// # Errors
 ///
@@ -214,6 +260,52 @@ mod tests {
     use crate::core::MolGraph;
     use crate::core::keys;
     use crate::props;
+
+    #[test]
+    fn a_class_admits_the_numbers_that_imply_it() {
+        for (kind, number, admitted) in [
+            (BondOrder::Single, BondNumber::Single, true),
+            (BondOrder::Double, BondNumber::Double, true),
+            (BondOrder::Double, BondNumber::Quadruple, true),
+            (BondOrder::Triple, BondNumber::Triple, true),
+            (BondOrder::Aromatic, BondNumber::Unknown, true),
+            (BondOrder::Aromatic, BondNumber::Double, true),
+            (BondOrder::Single, BondNumber::Double, false),
+            (BondOrder::Aromatic, BondNumber::Triple, false),
+            (BondOrder::Unknown, BondNumber::Unknown, false),
+            (BondOrder::Double, BondNumber::Unknown, false),
+        ] {
+            assert_eq!(kind.admits(number), admitted, "{kind:?} / {number:?}");
+        }
+    }
+
+    #[test]
+    fn a_port_order_accepts_its_own_number_and_an_unphased_aromatic_class() {
+        let single = BondNumber::Single;
+        assert!(single.accepts_class(BondOrder::Single, BondNumber::Single));
+        assert!(single.accepts_class(BondOrder::Aromatic, BondNumber::Unknown));
+        assert!(single.accepts_class(BondOrder::Aromatic, BondNumber::Single));
+        assert!(!single.accepts_class(BondOrder::Aromatic, BondNumber::Double));
+        assert!(!single.accepts_class(BondOrder::Double, BondNumber::Double));
+        assert!(!single.accepts_class(BondOrder::Unknown, BondNumber::Unknown));
+        let double = BondNumber::Double;
+        assert!(double.accepts_class(BondOrder::Double, BondNumber::Double));
+        assert!(!double.accepts_class(BondOrder::Aromatic, BondNumber::Unknown));
+        assert!(!double.accepts_class(BondOrder::Single, BondNumber::Double));
+        assert!(BondNumber::Quadruple.accepts_class(BondOrder::Double, BondNumber::Quadruple));
+    }
+
+    #[test]
+    fn ez_geometry_follows_the_double_class_not_the_number() {
+        let double = props! { keys::BOND_TYPE => BondOrder::Double };
+        let aromatic = props! {
+            keys::BOND_TYPE => BondOrder::Aromatic,
+            keys::BOND_NUMBER => BondNumber::Double,
+        };
+        assert!(carries_ez(&double));
+        assert!(!carries_ez(&aromatic));
+        assert!(!carries_ez(&props! {}));
+    }
 
     /// The two-key write is one function because a class without a number
     /// leaves the bond un-standardized: both keys land, or neither does.

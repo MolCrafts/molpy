@@ -3,8 +3,10 @@
 Guide: docs/user-guide/topology/03_ring.md
 Run:   python topology/03_ring.py
 
-The growth placer lays the ring out as an open chain; the closing bond joins
-its two ends at whatever distance they grew to, and a minimisation closes it.
+The growth placer grows the ring from both ends; the unit that closes it is
+placed by one rigid fit to both of its neighbours. Six rigid EO units cannot
+close a ring exactly — the fit misses by about 0.66 Å rms — and a
+minimisation closes the rest.
 """
 
 import molpy as mp

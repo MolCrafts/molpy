@@ -1,4 +1,4 @@
-# stubtest allowlist for molpy._core (scripts/check.sh types).
+# stubtest allowlist for molpy._core (molci run types).
 #
 # Only structural exemptions belong here: a name the stub must spell
 # differently from the runtime because a single-file stub cannot spell it
@@ -24,6 +24,7 @@ molpy._core.ColumnMapping
 molpy._core.FeatureMatrix
 molpy._core.FrozenMetaValue
 molpy._core.GaffParameterSet
+molpy._core.Measure
 molpy._core.ParamInput
 molpy._core.ParamValue
 molpy._core.Partition

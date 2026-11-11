@@ -1,5 +1,6 @@
 //! `molpy.op` — the pure numeric base (`molrs::op`): weighted superposition,
-//! centroids and NeRF placement over `float64` numpy arrays.
+//! centroids, NeRF placement and axis–angle rotations over `float64` numpy
+//! arrays.
 //!
 //! Registered as a submodule of `_core`, like `md`. Points cross as `(k, 3)`
 //! arrays and rotations as `(3, 3)` row-major matrices. A
@@ -309,11 +310,83 @@ fn py_place_from_internal_coords<'py>(
 }
 
 /// Populate the `molpy.op` submodule.
+/// The rotation matrix by ``angle`` radians (right-handed) about ``axis``
+/// (Rodrigues' formula); only the direction of ``axis`` matters.
+///
+/// Returns
+/// -------
+/// ndarray, shape (3, 3), float64
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``axis`` is zero or not finite.
+#[pyfunction(name = "axis_angle")]
+fn py_axis_angle<'py>(
+    py: Python<'py>,
+    axis: [f64; 3],
+    angle: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    op::axis_angle(axis, angle)
+        .map(|m| matrix_to_py(py, &m))
+        .ok_or_else(|| PyValueError::new_err(format!("axis {axis:?} has no direction")))
+}
+
+/// The unit axis and the angle in ``[0, π]`` (radians) that turn ``source``
+/// onto ``target``; antiparallel directions give a half turn about a
+/// perpendicular.
+///
+/// Returns
+/// -------
+/// tuple[ndarray, float] or None
+///     ``None`` when the two already point the same way, or either is not a
+///     direction.
+#[pyfunction(name = "alignment_axis_angle")]
+fn py_alignment_axis_angle<'py>(
+    py: Python<'py>,
+    source: [f64; 3],
+    target: [f64; 3],
+) -> Option<(Bound<'py, PyArray1<f64>>, f64)> {
+    op::alignment_axis_angle(source, target).map(|(axis, angle)| (vector_to_py(py, &axis), angle))
+}
+
+/// The unit axis and the angle in ``[0, π]`` (radians) of a proper rotation
+/// matrix — the inverse of :func:`axis_angle`.
+///
+/// Returns
+/// -------
+/// tuple[ndarray, float] or None
+///     ``None`` for the identity, which turns about no axis, and for a
+///     non-finite entry.
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``rotation`` is not shape ``(3, 3)``.
+#[pyfunction(name = "rotation_axis_angle")]
+fn py_rotation_axis_angle<'py>(
+    py: Python<'py>,
+    rotation: ArrayArgDyn<'_, f64>,
+) -> PyResult<Option<(Bound<'py, PyArray1<f64>>, f64)>> {
+    let view = rotation.as_array();
+    if view.shape() != [3, 3] {
+        return Err(PyValueError::new_err(format!(
+            "rotation must have shape (3, 3), got {:?}",
+            view.shape()
+        )));
+    }
+    let matrix: Mat3 = std::array::from_fn(|i| std::array::from_fn(|j| view[[i, j]]));
+    Ok(op::rotation_axis_angle(matrix).map(|(axis, angle)| (vector_to_py(py, &axis), angle)))
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySuperposition>()?;
     m.add("DEFAULT_GAP_TOL", DEFAULT_GAP_TOL)?;
     m.add_function(wrap_pyfunction!(py_superpose, m)?)?;
     m.add_function(wrap_pyfunction!(py_centroid, m)?)?;
     m.add_function(wrap_pyfunction!(py_place_from_internal_coords, m)?)?;
+    m.add_function(wrap_pyfunction!(py_axis_angle, m)?)?;
+    m.add_function(wrap_pyfunction!(py_alignment_axis_angle, m)?)?;
+    m.add_function(wrap_pyfunction!(py_rotation_axis_angle, m)?)?;
     Ok(())
 }

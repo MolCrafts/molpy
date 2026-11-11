@@ -68,10 +68,11 @@ still succeeds.
 the wire encodings (``"msgpack"``, ``"json"``) a
 :class:`molpy.stream.Publisher` streams.
 
-SMILES and CGsmiles are :mod:`molpy.io.smiles`
-(``read_smiles(text).to_atomistic()``,
-``write_smiles(mol)``) and :mod:`molpy.io.cgsmiles`
-(``read_cgsmiles(text).to_atomistic()``).
+SMILES, PSMILES, CGsmiles and BigSMILES are :mod:`molpy.io.smiles`
+(``read_smiles(text).to_atomistic()``, ``write_smiles(mol)``,
+``read_psmiles(unit)``), :mod:`molpy.io.cgsmiles`
+(``read_cgsmiles(text).to_atomistic()``) and :mod:`molpy.io.bigsmiles`
+(``read_bigsmiles(text).to_system()``).
 
 :mod:`molpy.io.mlp_jsonl` reads the ``*.mlp.jsonl`` metric logs molexp writes
 while a run is in flight; its metric reader is published in the
@@ -87,6 +88,7 @@ from molpy._core import (
     read_cif,
     read_clpol_alpha,
     read_csv_block,
+    read_cp2k_input,
     read_cube,
     read_dcd,
     read_gro,
@@ -99,6 +101,7 @@ from molpy._core import (
     read_mol2,
     read_pdb,
     read_poscar,
+    read_qe_input,
     read_prep,
     read_prmtop,
     read_sdf,
@@ -133,6 +136,7 @@ from molpy._core import (
 
 from molpy.io import (
     amber,
+    bigsmiles,
     cgsmiles,
     cif,
     cube,
@@ -157,6 +161,7 @@ from molpy.io import mlp_jsonl
 __all__ = [
     "Text",
     "amber",
+    "bigsmiles",
     "cgsmiles",
     "cif",
     "cube",
@@ -172,6 +177,7 @@ __all__ = [
     "read_cif",
     "read_clpol_alpha",
     "read_csv_block",
+    "read_cp2k_input",
     "read_cube",
     "read_dcd",
     "read_gro",
@@ -184,6 +190,7 @@ __all__ = [
     "read_mol2",
     "read_pdb",
     "read_poscar",
+    "read_qe_input",
     "read_prep",
     "read_prmtop",
     "read_sdf",

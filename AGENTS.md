@@ -1,9 +1,9 @@
 # AGENTS.md — molpy
 
 The single instruction file for every coding agent in this repository (Claude
-Code reads it natively; Codex and others read it by name). Evolving decisions
-live in `.claude/NOTES.md`; stable ones are promoted here. Specs live in
-`.claude/specs/`, indexed by `.claude/specs/INDEX.md`.
+Code reads it natively; Codex and others read it by name). The repository
+carries no `.claude/` tree: stable decisions live here, and the operator's
+agent skills and agents live in the mol plugin, outside the repository.
 
 ## What this is
 
@@ -20,7 +20,7 @@ manual, gates); the Python binding is one of the bindings.
 | `molc/` | C API, header `molc.h`, symbols `molc_*` / `Molc*` / `MOLC_*` | — |
 | `molcxx/` | CXX bridge for Atomiverse C++ (`FrameView`, zero-copy) | — |
 | `docs/` + `zensical.toml` | the molpy manual (Zensical). The first page is molpy; the manual then navigates to molrs. Other bindings are documented by their own tools | — |
-| `scripts/check.sh` | the one definition of every gate | — |
+| `molci` in MolCrafts CI | the one definition of every gate | — |
 
 There is no Python `molrs` package and no `molrs-python`. Python code imports
 `molpy`; the native module is `molpy._core` (the only module whose name starts
@@ -31,16 +31,18 @@ maturin reads `molpy/Cargo.toml`, and `molpy.version` re-exports
 
 **Releases** are cut from `master` of MolCrafts/molpy, the project
 repository (MolCrafts/molrs is retired). 0.20.0 is the first release of the
-unified project and precedes the downstream migration (see
-`.claude/specs/molpy-unification.md`). Push no `v*` tag, and push nothing,
-without the operator confirming the target remote and branch.
+unified project and precedes the downstream migration. Push no `v*` tag,
+and push nothing, without the operator confirming the target remote and
+branch.
 
-**ABI.** The minor line is the ABI contract. Capsule names
-(`molrs.FrameRef/<major.minor>+<fingerprint>`, …) are defined only in
+**FFI capsules.** There are no internal version numbers: no ABI line, no
+wire/protocol version, no handshake. Capsule names
+(`molrs.FrameRef/<fingerprint>`, …) are defined only in
 `crates/molrs-ffi/src/abi.rs`; the fingerprint hashes the compiler and the
-handle layout, so builds that may disagree on a layout refuse each other's
-capsules. A layout change fails the `ffi` gate's snapshot test
-(`abi::tests::layout_matches_the_snapshot`): bump the minor line with it.
+layout of the handles and of what a consumer reaches and drops through them
+(frame, blocks, columns and their storage, meta values), so builds that may
+disagree on a layout refuse each other's capsules. A layout change fails the `ffi` gate's snapshot test
+(`abi::tests::layout_matches_the_snapshot`): update the snapshot with it.
 A binding never hands out a view into storage the core may reallocate: a
 column crosses the seam as a copy, or over a reference-counted column array
 the numpy base keeps alive (`Block`), never as a raw pointer into a `Vec`.
@@ -137,8 +139,9 @@ engine produced for it. A test never stages, prints or rewrites files.
 
 ## Build and gates
 
-Every gate is `scripts/check.sh <gate…>`; prek hooks and CI call the same
-script. `scripts/check.sh verify` is the pre-push gate (every check once).
+Every gate is `molci run <gate>`; hooks and CI call the same pinned
+MolCrafts CI implementation. `molci verify` is the pre-push gate: every
+applicable check must pass or have a valid cached success. `--full` reruns all checks.
 Never bypass hooks (`--no-verify`); fix the failure.
 
 Gates: `fmt ruff partners clippy doc test ffi cxx capi python types wasm mrec
@@ -149,8 +152,8 @@ pytest; `types`, `mrec` and `docs` reuse that wheel.
 cargo mrs-test                         # core unit tests (alias, one feature set)
 cargo mrs-test -- ff::potential        # one module, no rebuild
 cargo mrs-doctest                      # rustdoc examples
-scripts/check.sh python                # wheel + molpy pytest
-scripts/check.sh docs                  # strict manual build (zensical)
+molci run python                # wheel + molpy pytest
+molci run docs                  # strict manual build (zensical)
 uv --directory molpy run --no-sync pytest tests/test_bindings/test_md.py   # one file, after `python`
 ```
 
@@ -197,21 +200,13 @@ A site-packages check uses `python -I`.
 ## Documentation
 
 The manual is executable: every ```python block runs, top to bottom per page,
-against the current API (`scripts/run_doc_blocks.py`, in the `docs` gate). A
+against the current API (`molci run docs`, in the `docs` gate). A
 block that cannot run in the docs environment starts with `# docs: skip — <reason>`. Tutorials and guides are textbook
 prose (concept → motivation → mechanics), not bullet lists; no visionary
 claims. Public Python API has type hints and Google-style docstrings; Rust
-uses rustdoc with runnable examples. Figures come from real runs
-(`molpy/scripts/docs_series`, writing `docs/series/`), never hand-typed
-points.
+uses rustdoc with runnable examples. Figures come from real runs, never hand-typed points.
 
 ## Workflow
-
-Project skills in `.claude/skills/` (prefix `mp-`): `mp-spec`, `mp-impl`,
-`mp-fix`, `mp-refactor`, `mp-debug`, `mp-review` (+ single-axis `mp-arch`,
-`mp-science`, `mp-perf`, `mp-bindings`, `mp-test`), `mp-docs`, `mp-note`.
-Agents in `.claude/agents/`: `mp-architect`, `mp-science`, `mp-perf`,
-`mp-bindings`, `mp-tester`, `mp-documenter`.
 
 Git: PRs target `dev`; feature branches stay local and are deleted after
 merge; the fork keeps only `master`/`dev`/`nightly`.

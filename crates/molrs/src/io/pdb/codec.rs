@@ -205,8 +205,8 @@ fn parse_atom_or_hetatm_impl(
     }))
 }
 
-/// A PDB formal-charge field (columns 79-80): blank for none, else a digit
-/// and its sign (`2+`, `1-`).
+/// A PDB formal-charge field (columns 79-80): blank for none (a neutral
+/// atom), else a digit and its sign (`2+`, `1-`).
 fn parse_formal_charge(field: &str) -> Result<Option<i64>, String> {
     let field = field.trim();
     if field.is_empty() {
@@ -493,14 +493,15 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, HashMap<i3
             )
             .map_err(invalid_data)?;
     }
+    // A blank charge field is a neutral atom: PDB states only nonzero
+    // charges, and the writer spells 0 as a blank, so the column is dense.
     if atoms.iter().any(|a| a.formal_charge.is_some()) {
-        let valid: Vec<bool> = atoms.iter().map(|a| a.formal_charge.is_some()).collect();
         let charges: Vec<i64> = atoms.iter().map(|a| a.formal_charge.unwrap_or(0)).collect();
         block
             .insert(
                 keys::FORMAL_CHARGE,
                 ndarray::Array1::from_vec(charges).into_dyn(),
-                Some(valid),
+                None,
             )
             .map_err(invalid_data)?;
     }
@@ -1690,10 +1691,15 @@ END\n";
             .copied()
             .collect();
         assert_eq!(hetero, [false, true, true]);
-        assert_eq!(
-            atoms.validity(keys::FORMAL_CHARGE),
-            Some(&[true, true, false][..])
-        );
+        assert_eq!(atoms.validity(keys::FORMAL_CHARGE), None);
+        let charges: Vec<i64> = atoms
+            .get(keys::FORMAL_CHARGE)
+            .and_then(|c| c.get::<i64>())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(charges, [1, 1, 0], "a blank charge field is neutral");
         let z = atoms.get("z").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(z[[1]], 3.001);
 

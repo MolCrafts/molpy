@@ -89,6 +89,7 @@ mod link;
 mod molgraph;
 mod molgraph_geometry;
 mod port;
+pub(crate) mod stereo;
 mod topology;
 
 // Space.
@@ -132,7 +133,8 @@ pub use entity_table::{EntityCell, EntityColumn, EntityDtype, EntityTable, Valid
 pub use extract::{ExtractedBall, InducedSubgraph};
 pub use graph::Graph;
 pub(crate) use graph::GraphAccess;
-pub use link::{LinkError, LinkManyError};
+pub(crate) use link::{BatchConflict, BatchPair, LinkRequest, PortPlan, batch_conflicts};
+pub use link::{Junction, LinkError, LinkManyError};
 pub use molgraph::{KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
 pub use molgraph_geometry::CenterError;
 pub use port::{Port, PortKind};
@@ -160,9 +162,9 @@ pub use math::{
 #[cfg(feature = "compute")]
 pub(crate) use math::{FOUR_PI, FOUR_THIRDS_PI};
 pub use units::{
-    Dimension, PresetDim, Quantity, Unit, UnitDef, UnitFactor, UnitPreset, UnitPresetRegistry,
-    UnitRegistry, UnitsError, lookup_unit_preset, register_unit_preset, replace_unit_preset,
-    unit_preset_names,
+    Dimension, PresetDim, Quantity, Unit, UnitConstants, UnitDef, UnitFactor, UnitPreset,
+    UnitPresetRegistry, UnitRegistry, UnitStyle, UnitsError, lookup_unit_preset,
+    register_unit_preset, replace_unit_preset, unit_preset_names,
 };
 
 #[cfg(test)]

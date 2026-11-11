@@ -5,7 +5,7 @@
 Every architecture here is a **short guide page** paired with a **runnable script** of the same name under `molpy/examples/topology/`. They all compose the same three native primitives:
 
 1. **Units** — a CGsmiles fragment per repeat unit, with bonding descriptors as its **ports** (`[<]OCC[>]`), turned into a 3D `mp.Atomistic` carrying its ports by `mp.conformer.Conformer`.
-2. **Topology** — a CGsmiles string (`{[#EO]|10}`), turned into a **site graph** by `mp.io.cgsmiles.read_cgsmiles(...).to_coarsegrain()`: one site per unit, one bond per join.
+2. **Topology** — a CGsmiles string (`{[#EO]|10}`), turned into a **site graph** by `mp.io.cgsmiles.read_cgsmiles(...).to_coarsegrain()`: one site per unit, one bond per join. A bead name — the `EO` of `[#EO]` and of a fragment table's `#EO=` — is ASCII letters and digits only (`*` is the wildcard bead); `pbix-br` or `p_single` is refused, so name it `pbixbr`. The name is also the key of the assembler's library.
 3. **Assembly** — `mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites)`: one copy of `library[bead_type]` per site, each bond joining one port of each end, handed back as the graph type of the library's templates.
 
 ```bash
@@ -43,7 +43,11 @@ The assembler chooses the ports itself: it walks each molecule breadth-first fro
 
 ## Growing without coordinates
 
-A CGsmiles topology has no coordinates, so the examples use `mp.builder.GrowthPlacer`: the first unit keeps its conformer pose and every later unit is joined onto its parent's port, pointing back along the parent's leaving bond. Bond lengths, ring closures and overlaps are left to a later minimisation. With coordinates, for example a site graph coarsened from a CG model by `mp.builder.Coarsener`, use `mp.builder.SitePlacer` and `mp.builder.AxisOrienter` instead.
+A CGsmiles topology has no coordinates, so the examples use `mp.builder.GrowthPlacer`: the first unit keeps its conformer pose and every later unit is joined onto its parent's port, pointing back along the parent's leaving bond. The new bond is as long as the two joining atoms' covalent radii (1.52 Å for C–C), not the length of the leaving bond it replaces. Bond angles and overlaps are left to a later minimisation. A unit with more than one bond to units already placed — a ring closure, a ladder, a crosslink or a bridge — is placed by one rigid fit closing all of them: the best geometry a rigid unit gives, which a minimisation then relaxes. When the geometry must close, `GrowthPlacer(max_fit_rmsd=...)` turns a fit that misses by more than that (Å, root mean square) into an error. A site bond can also cross the faces of a periodic cell: give it `ix` / `iy` / `iz` and the assembler a `cell=`, and the far unit is joined in that image. With coordinates, for example a site graph coarsened from a CG model by `mp.builder.Coarsener`, use `mp.builder.SitePlacer` and `mp.builder.AxisOrienter` instead.
+
+## Ladders: two bonds between neighbours
+
+A ladder polymer joins neighbouring units by two bonds (a fused ring), so its site graph carries two bonds between each pair of neighbours, and each unit has two ports per side; labels (`[<a]`, `[<b]`, `[>a]`, `[>b]`) pair the rails. `GrowthPlacer` then places each copy so that every bond to its parent closes at once (a least-squares rigid fit of all joining ports), instead of joining through one port and leaving the other bond open; a consistent ladder geometry closes exactly.
 
 ## The kit (`eo_kit.py`)
 

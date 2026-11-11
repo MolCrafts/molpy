@@ -11,8 +11,12 @@
 //! The driver owns the rebuild decision. A potential that searches on its
 //! own device builds at `cutoff + skin`, and the driver's [`VerletCadence`]
 //! says when that list is stale, so the policy exists once.
+//!
+//! A potential declares the LAMMPS units style of the numbers it returns, and
+//! it must be the run's: nothing is converted, so a potential in `metal`
+//! cannot drive a run in `real`.
 
-use molrs::core::{Frame, NeighborPolicy, PresetDim, SimBox, UnitPreset, VerletCadence, Virial};
+use molrs::core::{Frame, NeighborPolicy, SimBox, UnitStyle, VerletCadence, Virial};
 use molrs::op::F;
 use ndarray::ArrayView2;
 
@@ -41,8 +45,8 @@ pub struct PotentialStep<'a> {
     pub cell: Option<&'a SimBox>,
 }
 
-/// What a potential returns from one evaluation, in its own
-/// [`units`](BoundPotential::units).
+/// What a potential returns from one evaluation, in the run's units style
+/// (which is its own [`units`](BoundPotential::units)).
 #[derive(Clone, Copy, Debug)]
 pub struct PotentialResult {
     /// Potential energy.
@@ -60,9 +64,10 @@ pub trait BoundPotential: Send {
     /// Timing and error name.
     fn name(&self) -> &str;
 
-    /// The unit system of the numbers it returns. The driver converts its
-    /// energies, forces and virial into the run's units once per step.
-    fn units(&self) -> &UnitPreset;
+    /// The LAMMPS units style of the numbers it takes and returns. It must be
+    /// the run's: [`MD::build`](super::MD::build) refuses any other, and
+    /// converts nothing.
+    fn units(&self) -> UnitStyle;
 
     /// The interaction cutoff of its own neighbour search, in the run's
     /// length unit; `None` for a potential that searches for no neighbours
@@ -85,9 +90,13 @@ pub trait BoundPotential: Send {
 }
 
 /// A [`BoundPotential`] mounted on the `force` phase, with the rebuild cadence
-/// and the unit conversion the driver owns.
+/// the driver owns.
 pub(crate) struct Mounted {
     potential: Box<dyn BoundPotential>,
+    /// The skin asked for; `None` takes the run style's default
+    /// ([`UnitConstants::skin`](molrs::core::UnitConstants)) at `build`.
+    requested_skin: Option<F>,
+    /// The skin of the current build.
     skin: F,
     name: String,
     /// Built at `build`; `None` for a potential with no cutoff.
@@ -96,15 +105,18 @@ pub(crate) struct Mounted {
     sent_cell: Option<SimBox>,
     /// No evaluation since the bind.
     fresh: bool,
-    energy_scale: F,
-    force_scale: F,
     positions: Vec<F>,
     forces: Vec<F>,
 }
 
 impl Mounted {
-    pub(crate) fn new(potential: Box<dyn BoundPotential>, skin: F) -> Result<Self, MdError> {
-        if !(skin >= 0.0 && skin.is_finite()) {
+    pub(crate) fn new(
+        potential: Box<dyn BoundPotential>,
+        skin: Option<F>,
+    ) -> Result<Self, MdError> {
+        if let Some(skin) = skin
+            && !(skin >= 0.0 && skin.is_finite())
+        {
             return Err(MdError::Invalid(format!(
                 "skin must be a finite length >= 0, got {skin}"
             )));
@@ -112,13 +124,12 @@ impl Mounted {
         let name = potential.name().to_owned();
         Ok(Self {
             potential,
-            skin,
+            requested_skin: skin,
+            skin: 0.0,
             name,
             cadence: None,
             sent_cell: None,
             fresh: true,
-            energy_scale: 1.0,
-            force_scale: 1.0,
             positions: Vec::new(),
             forces: Vec::new(),
         })
@@ -160,19 +171,16 @@ impl Component for Mounted {
         vec![(Phase::Force, 0)]
     }
 
-    fn build(&mut self, frame: &mut Frame, units: &UnitPreset) -> Result<(), MdError> {
-        let declared = self.potential.units().clone();
-        if declared.length() != units.length() {
-            return Err(MdError::Invalid(format!(
-                "potential {} returns lengths in {} and the run is in {}; positions \
-                 are not converted, so the two must agree",
-                self.name,
-                declared.length(),
-                units.length()
-            )));
+    fn build(&mut self, frame: &mut Frame, units: UnitStyle, _dt: F) -> Result<(), MdError> {
+        let declared = self.potential.units();
+        if declared != units {
+            return Err(MdError::UnitsMismatch {
+                what: format!("potential {}", self.name),
+                declared: declared.name().to_owned(),
+                run: units,
+            });
         }
-        self.energy_scale = units.factor_from(&declared, PresetDim::Energy)?;
-        self.force_scale = units.factor_from(&declared, PresetDim::Force)?;
+        self.skin = self.requested_skin.unwrap_or(units.constants().skin);
         self.potential
             .bind(frame, self.skin)
             .map_err(|e| self.failed(0, e))?;
@@ -242,18 +250,7 @@ impl Component for Mounted {
             ));
         }
         self.fresh = false;
-        for f in &mut self.forces {
-            *f *= self.force_scale;
-        }
-        let virial = result.virial.map(|w| Virial {
-            components: w.components.map(|c| c * self.energy_scale),
-        });
-        columns::add_force_terms(
-            frame,
-            &self.forces,
-            result.energy * self.energy_scale,
-            virial,
-        )
+        columns::add_force_terms(frame, &self.forces, result.energy, result.virial)
     }
 }
 
@@ -275,22 +272,22 @@ mod tests {
     }
 
     /// `E = k (r − r0)²` between atoms 0 and 1, a virial, and a failure on
-    /// request — a hand-written bound potential in `preset` units.
+    /// request — a hand-written bound potential in units style `units`.
     struct Bond {
         k: F,
         r0: F,
-        preset: UnitPreset,
+        units: UnitStyle,
         cutoff: Option<F>,
         fail_at: Option<u64>,
         seen: Arc<Mutex<Seen>>,
     }
 
     impl Bond {
-        fn new(preset: UnitPreset) -> Self {
+        fn new(units: UnitStyle) -> Self {
             Self {
                 k: 100.0,
                 r0: 1.0,
-                preset,
+                units,
                 cutoff: Some(3.0),
                 fail_at: None,
                 seen: Arc::default(),
@@ -302,8 +299,8 @@ mod tests {
         fn name(&self) -> &str {
             "bond"
         }
-        fn units(&self) -> &UnitPreset {
-            &self.preset
+        fn units(&self) -> UnitStyle {
+            self.units
         }
         fn cutoff(&self) -> Option<F> {
             self.cutoff
@@ -366,10 +363,10 @@ mod tests {
     }
 
     fn md(potential: Bond) -> MD {
-        let mut md = MD::new(UnitPreset::real()).unwrap();
-        md.set_integrator(VelocityVerlet::new(0.5).unwrap())
-            .unwrap();
-        md.set_bound_potential(potential, 0.5).unwrap();
+        let mut md = MD::new(UnitStyle::Real);
+        md.set_timestep(0.5).unwrap();
+        md.set_integrator(VelocityVerlet::default()).unwrap();
+        md.set_bound_potential(potential, Some(0.5)).unwrap();
         md
     }
 
@@ -383,7 +380,7 @@ mod tests {
     #[test]
     fn the_potential_prices_the_bond_by_hand() {
         let mut frame = two_atoms(0.8);
-        let mut md = md(Bond::new(UnitPreset::real()));
+        let mut md = md(Bond::new(UnitStyle::Real));
         md.run(&mut frame, 0).unwrap();
         assert!((columns::meta_f64(&frame, "energy") - 16.0).abs() < 1e-9);
         assert!((fx(&frame) + 80.0).abs() < 1e-9, "{}", fx(&frame));
@@ -393,30 +390,75 @@ mod tests {
         assert!((w[0] - 48.0).abs() < 1e-9, "{w:?}");
     }
 
-    /// A potential in `metal` driving a `real` run is read through the exact
-    /// eV → kcal/mol factor.
+    /// A potential in `metal` cannot drive a `real` run: nothing converts its
+    /// eV into kcal/mol, and the refusal names both styles.
     #[test]
-    fn a_metal_potential_is_converted_into_a_real_run() {
-        let mut frame = two_atoms(0.8);
-        let mut md = md(Bond::new(UnitPreset::metal()));
-        md.run(&mut frame, 0).unwrap();
-        let ev = md
-            .units()
-            .factor_from(&UnitPreset::metal(), PresetDim::Energy)
+    fn a_potential_in_another_style_is_refused() {
+        let calc = Bond::new(UnitStyle::Metal);
+        let seen = Arc::clone(&calc.seen);
+        let mut md = md(calc);
+        let err = md.run(&mut two_atoms(0.8), 0).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                MdError::UnitsMismatch { declared, run: UnitStyle::Real, .. } if declared == "metal"
+            ),
+            "{err}"
+        );
+        let text = err.to_string();
+        assert!(
+            text.contains("'metal'") && text.contains("'real'"),
+            "{text}"
+        );
+        assert_eq!(seen.lock().unwrap().binds, 0);
+    }
+
+    /// Without a skin the potential builds at the run style's default:
+    /// LAMMPS `neighbor 2.0 bin` in `real`.
+    #[test]
+    fn the_default_skin_is_the_styles() {
+        struct Skin(Arc<Mutex<Option<F>>>);
+        impl BoundPotential for Skin {
+            fn name(&self) -> &str {
+                "skin"
+            }
+            fn units(&self) -> UnitStyle {
+                UnitStyle::Real
+            }
+            fn cutoff(&self) -> Option<F> {
+                Some(3.0)
+            }
+            fn bind(&mut self, _frame: &Frame, skin: F) -> Result<(), PotentialError> {
+                *self.0.lock().unwrap() = Some(skin);
+                Ok(())
+            }
+            fn compute(
+                &mut self,
+                _step: &PotentialStep<'_>,
+                _x: &[F],
+                forces: &mut [F],
+            ) -> Result<PotentialResult, PotentialError> {
+                forces.fill(0.0);
+                Ok(PotentialResult {
+                    energy: 0.0,
+                    virial: None,
+                })
+            }
+        }
+        let skin = Arc::new(Mutex::new(None));
+        let mut md = MD::new(UnitStyle::Real);
+        md.set_integrator(VelocityVerlet::default()).unwrap();
+        md.set_bound_potential(Skin(Arc::clone(&skin)), None)
             .unwrap();
-        assert!((columns::meta_f64(&frame, "energy") - 16.0 * ev).abs() < 1e-9);
-        assert!((fx(&frame) + 80.0 * ev).abs() < 1e-9);
-        let Some(MetaValue::F64x6(w)) = frame.meta.get(columns::VIRIAL) else {
-            panic!("a virial");
-        };
-        assert!((w[0] - 48.0 * ev).abs() < 1e-9, "{w:?}");
+        md.run(&mut two_atoms(1.2), 1).unwrap();
+        assert_eq!(*skin.lock().unwrap(), Some(2.0));
     }
 
     /// A failure at step 3 stops the run there, with the step and the
     /// potential's own error.
     #[test]
     fn a_failure_stops_the_run_at_its_step() {
-        let mut calc = Bond::new(UnitPreset::real());
+        let mut calc = Bond::new(UnitStyle::Real);
         calc.fail_at = Some(3);
         let seen = Arc::clone(&calc.seen);
         let mut md = md(calc);
@@ -433,7 +475,7 @@ mod tests {
     /// neither again. Two runs bind once.
     #[test]
     fn rebuild_and_cell_are_reported_once_until_they_change() {
-        let calc = Bond::new(UnitPreset::real());
+        let calc = Bond::new(UnitStyle::Real);
         let seen = Arc::clone(&calc.seen);
         let mut md = md(calc);
         let mut frame = two_atoms(1.2);
@@ -448,7 +490,7 @@ mod tests {
     /// A changed cell is passed once, at the evaluation after the change.
     #[test]
     fn a_changed_cell_is_passed_at_the_next_evaluation() {
-        let calc = Bond::new(UnitPreset::real());
+        let calc = Bond::new(UnitStyle::Real);
         let seen = Arc::clone(&calc.seen);
         let mut md = md(calc);
         let mut frame = two_atoms(1.2);
@@ -458,22 +500,15 @@ mod tests {
         assert_eq!(seen.lock().unwrap().cells, [true, false, true, false]);
     }
 
-    #[test]
-    fn a_potential_in_another_length_unit_is_refused() {
-        let mut md = md(Bond::new(UnitPreset::si()));
-        let err = md.run(&mut two_atoms(1.2), 1).unwrap_err();
-        assert!(err.to_string().contains("lengths"), "{err}");
-    }
-
     /// Under a barostat the rescaled cell reaches the potential at the next
     /// evaluation. Step 1's force precedes its own rescale (at `end_of_step`),
     /// so the cell is new at the setup evaluation and from step 2 on.
     #[test]
     fn a_barostat_cell_reaches_the_potential_each_step() {
-        let calc = Bond::new(UnitPreset::real());
+        let calc = Bond::new(UnitStyle::Real);
         let seen = Arc::clone(&calc.seen);
         let mut md = md(calc);
-        md.set_barostat(crate::md::BerendsenBarostat::new(1.0, 500.0, 2.2e4, 0.5).unwrap())
+        md.set_barostat(crate::md::BerendsenBarostat::new(1.0, 500.0, 2.2e4).unwrap())
             .unwrap();
         let mut frame = two_atoms(0.8);
         let before = frame.simbox.as_ref().unwrap().volume();
@@ -491,7 +526,7 @@ mod tests {
         impl molrs::ff::potential::Potential for Nothing {
             fn evaluate(&self, _coords: &[F], _acc: &mut molrs::ff::potential::Accumulator<'_>) {}
         }
-        let potential = Bond::new(UnitPreset::real());
+        let potential = Bond::new(UnitStyle::Real);
         let seen = Arc::clone(&potential.seen);
         let mut md = md(potential);
         md.set_evaluator(crate::md::FfEvaluator::plain(Nothing))

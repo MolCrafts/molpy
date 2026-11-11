@@ -1601,6 +1601,8 @@ impl MolGraph {
     /// - **Relations.** Every relation kind of `template` is registered on
     ///   `self` by name, its endpoints offset into each copy and its props
     ///   copied. Ports are a relation kind, so they are kept.
+    /// - **Stereo.** Tetrahedral markers are restated in the copy's bond-row
+    ///   order, preserving configuration after a template's row deletions.
     /// - **`frag_id`.** The `i32` node column `frag_id` holds `frag_ids[c]` on
     ///   every node of copy `c`, overwriting any template value.
     ///
@@ -1616,6 +1618,7 @@ impl MolGraph {
     ///
     /// [`MolRsError::Validation`] when
     /// - `transforms.len() != frag_ids.len()`;
+    /// - rebasing a tetrahedral marker would require an incomplete reference;
     /// - a node column of `template` has an element type other than the one
     ///   `self` holds for that key;
     /// - `frag_id` is held, by `self` or `template`, as a non-`i32` column;
@@ -1642,6 +1645,7 @@ impl MolGraph {
         if transforms.is_empty() {
             return Ok(Vec::new());
         }
+        let stereo = template.bond_row_stereo()?;
         self.nodes.check_extend(&template.nodes)?;
         if self.guard.is_some() {
             for (tid, node) in template.nodes() {
@@ -1756,6 +1760,13 @@ impl MolGraph {
                 self.kinds[skid.0 as usize].endpoints.insert(rid, eps);
             }
         }
+        for (center, label) in stereo {
+            let row = template.nodes.row(center).expect("a stereo center is live");
+            for copy in 0..copies {
+                self.set_node(handles[copy * n + row], keys::STEREO, label)
+                    .expect("the copied stereo column is a string and its center is live");
+            }
+        }
         Ok(handles)
     }
 
@@ -1790,6 +1801,9 @@ impl MolGraph {
     /// column in the `"atoms"` block; every non-empty relation kind becomes a
     /// block (named by the kind) with `atomi`/`atomj`/… columns referencing node
     /// row order plus one column per relation property — registry-driven.
+    /// Tetrahedral markers are restated in that bond-row order without
+    /// changing this graph, whose adjacency can retain a different order
+    /// after row deletions.
     ///
     /// # Errors
     ///
@@ -1812,6 +1826,13 @@ impl MolGraph {
         let mut atoms_block = Block::new();
         for key in self.nodes.columns() {
             emit_column(&mut atoms_block, &self.nodes, key)?;
+        }
+        for (center, label) in self.bond_row_stereo()? {
+            let row = self.nodes.row(center).expect("a stereo center is live");
+            atoms_block
+                .get_mut(keys::STEREO)
+                .and_then(|column| column.get_mut::<String>())
+                .expect("declared stereo was emitted as a string column")[[row]] = label.to_owned();
         }
         if n > 0 {
             frame.insert("atoms", atoms_block);
