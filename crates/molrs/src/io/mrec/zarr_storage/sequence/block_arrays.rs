@@ -210,6 +210,12 @@ pub(super) struct IndexArrays {
 impl IndexArrays {
     /// Create both arrays and backfill the `history` regular updates of
     /// `rows` rows each — the updates the hints describe.
+    ///
+    /// `offset` is published first and `step_index` second, each already
+    /// holding that history: `step_index` is the array a reader switches on,
+    /// so from the instant it exists the pair resolves exactly the updates
+    /// the hints did. With no history, `step_index` stays unpublished until
+    /// the caller lands the first ordinal.
     pub(super) fn materialize(
         store: &ReadableWritableListableStorage,
         path: &str,
@@ -218,22 +224,20 @@ impl IndexArrays {
         rows: u64,
         options: &CodecOptions,
     ) -> Result<Self, MolRsError> {
-        let mut offset = GrowthArray::create(
+        let mut offset = GrowthArray::create_unpublished(
             store,
             &join_path(path, OFFSET_ARRAY),
             DType::Uint,
             &[],
             knobs.dense(),
-            serde_json::Map::new(),
             DENSE_PIPELINE,
         )?;
-        let mut step_index = GrowthArray::create(
+        let mut step_index = GrowthArray::create_unpublished(
             store,
             &join_path(path, STEP_INDEX_ARRAY),
             DType::Uint,
             &[],
             knobs.dense(),
-            serde_json::Map::new(),
             DENSE_PIPELINE,
         )?;
         // The CSR row pointer opens at zero; every regular update added

@@ -207,13 +207,12 @@ impl<T: Series> Track<T> {
             return Ok(());
         }
         if let Self::Regular { progression, count } = self {
-            let mut array = GrowthArray::create(
+            let mut array = GrowthArray::create_unpublished(
                 store,
                 path,
                 T::DTYPE,
                 &[],
                 knobs.dense(),
-                serde_json::Map::new(),
                 DENSE_PIPELINE,
             )?;
             if *count > 0 {
