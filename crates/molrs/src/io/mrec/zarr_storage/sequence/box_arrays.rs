@@ -1,5 +1,6 @@
 use crate::io::mrec::zarr_storage::frame_io::{
     BOX_GROUP, assemble_cell, cell_defined_attribute, join_path, json_flags, json_numbers,
+    node_prefix,
 };
 use molrs::core::DType;
 use molrs::core::MolRsError;
@@ -43,10 +44,19 @@ pub(super) struct BoxArrays {
 }
 
 impl BoxArrays {
+    /// The arrays of a cell that is about to land its first updates. Nothing
+    /// is published here: [`land`](Self::land) publishes each array already
+    /// holding its rows, `vectors` — the array a reader switches on — last.
     pub(super) fn create(
         store: &ReadableWritableListableStorage,
         knobs: Knobs,
     ) -> Result<Self, MolRsError> {
+        // An optional array a cut flush published is not this cell's: it
+        // would be read beside the new `vectors`.
+        let prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
+        for stray in [STEP_INDEX_ARRAY, ORIGIN_ARRAY, BOUNDARY_ARRAY] {
+            store.erase_prefix(&node_prefix(&join_path(&prefix, stray))?)?;
+        }
         Ok(Self {
             step_index: None,
             vectors: Self::create_optional(store, VECTORS_ARRAY, DType::Float, &[3, 3], knobs)?,
@@ -63,13 +73,12 @@ impl BoxArrays {
         knobs: Knobs,
     ) -> Result<GrowthArray, MolRsError> {
         let prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
-        GrowthArray::create(
+        GrowthArray::create_unpublished(
             store,
             &join_path(&prefix, name),
             dtype,
             trailing,
             knobs.dense(),
-            serde_json::Map::new(),
             DENSE_PIPELINE,
         )
     }
@@ -135,6 +144,11 @@ impl BoxArrays {
     }
 
     /// Land `cells` — `(ordinal, cell)` pairs — as updates.
+    ///
+    /// `step_index`, `origin` and `boundary` first, `vectors` last: a reader
+    /// counts the cell's updates from `vectors` (and switches on its
+    /// existence), so until it grows the other three hold a tail nothing
+    /// reads.
     pub(super) fn land(
         &mut self,
         store: &ReadableWritableListableStorage,
@@ -159,7 +173,6 @@ impl BoxArrays {
         let ordinals: Vec<u64> = cells.iter().map(|(ordinal, _)| *ordinal).collect();
         let trivial_index = previous == 0 && matches!(ordinals.as_slice(), [0]);
 
-        land_values!(self.vectors, count, vectors, options);
         if need_origin {
             let origin = self.ensure_origin(store, knobs, previous, options)?;
             land_values!(origin, count, origins, options);
@@ -172,6 +185,7 @@ impl BoxArrays {
             let step_index = self.ensure_step_index(store, knobs, previous, options)?;
             land_values!(step_index, count, ordinals, options);
         }
+        land_values!(self.vectors, count, vectors, options);
         Ok(())
     }
 

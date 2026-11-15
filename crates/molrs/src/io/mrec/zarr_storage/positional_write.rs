@@ -103,12 +103,45 @@ fn write_positional(file: &File, buf: &[u8], offset: u64) -> std::io::Result<()>
 /// - **Durability on request.** Every path this store writes is remembered
 ///   until [`sync_dirty`](Self::sync_dirty) fsyncs it (and its directory).
 ///   The writer calls that around the commit marker when a flush is durable.
+/// - **A shard is replaced, never removed and rewritten.** When a partial
+///   write covers every inner chunk a shard holds — a shard whose only chunk
+///   is the partly filled tail, which is every short trajectory and the start
+///   of every shard — the sharding codec `erase`s the shard and writes it
+///   again from offset 0. Applied as asked, the committed rows are gone from
+///   the disk between the two calls, and a writer killed there leaves a
+///   missing shard that reads as fill values. So an `erase` of a data key is
+///   **deferred** until the store sees what follows: a write to the same key
+///   becomes one atomic replacement (temporary file, rename), and anything
+///   else — a read of the key, a listing, a sync, the store going away —
+///   applies the erase first.
+/// - **The index lands after its chunks.** The pairs of one partial write go
+///   to the disk highest offset first ([`landing_order`]), so the shard index
+///   at offset 0 is the last thing to change.
 #[derive(Debug)]
 pub(in crate::io::mrec::zarr_storage) struct PositionalWriteStorage {
     inner: FilesystemStore,
     bytes_written: AtomicU64,
     /// Paths written since the last `sync_dirty`.
     dirty: Mutex<BTreeSet<PathBuf>>,
+    /// Keys whose `erase` is deferred until the next operation on them.
+    erasing: Mutex<BTreeSet<String>>,
+}
+
+/// The suffix of every metadata key. Metadata is replaced atomically by
+/// `set` and its erase is never deferred.
+const METADATA_KEY: &str = "zarr.json";
+
+/// The order the pairs of one partial write reach the disk in: highest offset
+/// first, so whatever sits at the lowest — a shard's index, at offset 0 —
+/// lands after everything it points at.
+fn landing_order<V>(pairs: impl Iterator<Item = (u64, V)>) -> Vec<(u64, V)> {
+    let mut pairs: Vec<(u64, V)> = pairs.collect();
+    pairs.sort_by_key(|pair| std::cmp::Reverse(pair.0));
+    pairs
+}
+
+fn poisoned() -> StorageError {
+    StorageError::Other("store erase set is poisoned".to_string())
 }
 
 impl PositionalWriteStorage {
@@ -134,7 +167,62 @@ impl PositionalWriteStorage {
                 .map_err(|e| MolRsError::zarr(e.to_string()))?,
             bytes_written: AtomicU64::new(0),
             dirty: Mutex::new(BTreeSet::new()),
+            erasing: Mutex::new(BTreeSet::new()),
         })
+    }
+
+    /// Forget a deferred erase of `key`; true when there was one.
+    fn take_erase(&self, key: &StoreKey) -> Result<bool, StorageError> {
+        Ok(self
+            .erasing
+            .lock()
+            .map_err(|_| poisoned())?
+            .remove(key.as_str()))
+    }
+
+    /// Apply a deferred erase of `key`, if one is waiting: what every
+    /// operation that is not a write to `key` does first.
+    fn settle(&self, key: &StoreKey) -> Result<(), StorageError> {
+        if self.take_erase(key)? {
+            self.inner.erase(key)?;
+        }
+        Ok(())
+    }
+
+    /// Apply every deferred erase: before an operation that looks at more
+    /// than one key, before a sync, and when the store goes away.
+    fn settle_all(&self) -> Result<(), StorageError> {
+        let keys = std::mem::take(&mut *self.erasing.lock().map_err(|_| poisoned())?);
+        for key in keys {
+            self.inner
+                .erase(&StoreKey::new(&key).map_err(|e| {
+                    StorageError::Other(format!("deferred erase of {key:?}: {e}"))
+                })?)?;
+        }
+        Ok(())
+    }
+
+    /// Replace the value of `key` with `pairs` laid over an empty file: one
+    /// temporary file, one rename, so the old value is whole until the new
+    /// one is.
+    fn replace(&self, path: &Path, pairs: &[(u64, Bytes)]) -> std::io::Result<()> {
+        let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+        let written = (|| {
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&temporary)?;
+            for (offset, value) in pairs {
+                write_positional(&file, value, *offset)?;
+            }
+            std::fs::rename(&temporary, path)
+        })();
+        if written.is_err() {
+            // Best effort: the failure being reported is the write's.
+            let _ = std::fs::remove_file(&temporary);
+        }
+        written
     }
 
     /// Remember `path` as touched since the last sync.
@@ -154,6 +242,8 @@ impl PositionalWriteStorage {
     /// cannot be opened or synced. A path that has since been erased is
     /// skipped.
     pub(in crate::io::mrec::zarr_storage) fn sync_dirty(&self) -> Result<(), MolRsError> {
+        self.settle_all()
+            .map_err(|e| MolRsError::zarr(e.to_string()))?;
         let paths: Vec<PathBuf> = match self.dirty.lock() {
             Ok(mut dirty) => std::mem::take(&mut *dirty).into_iter().collect(),
             Err(_) => return Err(MolRsError::zarr("store dirty set is poisoned")),
@@ -203,6 +293,7 @@ impl PositionalWriteStorage {
 
 impl ReadableStorageTraits for PositionalWriteStorage {
     fn get(&self, key: &StoreKey) -> Result<MaybeBytes, StorageError> {
+        self.settle(key)?;
         self.inner.get(key)
     }
 
@@ -211,6 +302,7 @@ impl ReadableStorageTraits for PositionalWriteStorage {
         key: &StoreKey,
         byte_range: ByteRange,
     ) -> Result<MaybeBytes, StorageError> {
+        self.settle(key)?;
         self.inner.get_partial(key, byte_range)
     }
 
@@ -219,10 +311,12 @@ impl ReadableStorageTraits for PositionalWriteStorage {
         key: &StoreKey,
         byte_ranges: ByteRangeIterator<'a>,
     ) -> Result<MaybeBytesIterator<'a>, StorageError> {
+        self.settle(key)?;
         self.inner.get_partial_many(key, byte_ranges)
     }
 
     fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
+        self.settle(key)?;
         self.inner.size_key(key)
     }
 
@@ -233,23 +327,37 @@ impl ReadableStorageTraits for PositionalWriteStorage {
 
 impl ListableStorageTraits for PositionalWriteStorage {
     fn list(&self) -> Result<StoreKeys, StorageError> {
+        self.settle_all()?;
         self.inner.list()
     }
 
     fn list_prefix(&self, prefix: &StorePrefix) -> Result<StoreKeys, StorageError> {
+        self.settle_all()?;
         self.inner.list_prefix(prefix)
     }
 
     fn list_dir(&self, prefix: &StorePrefix) -> Result<StoreKeysPrefixes, StorageError> {
+        self.settle_all()?;
         self.inner.list_dir(prefix)
     }
 
     fn size(&self) -> Result<u64, StorageError> {
+        self.settle_all()?;
         self.inner.size()
     }
 
     fn size_prefix(&self, prefix: &StorePrefix) -> Result<u64, StorageError> {
+        self.settle_all()?;
         self.inner.size_prefix(prefix)
+    }
+}
+
+impl Drop for PositionalWriteStorage {
+    /// An erase nothing replaced is still an erase. Errors have nowhere to
+    /// go from here; a caller that needs them calls
+    /// [`sync_dirty`](Self::sync_dirty) first.
+    fn drop(&mut self) {
+        let _ = self.settle_all();
     }
 }
 
@@ -264,7 +372,9 @@ impl WritableStorageTraits for PositionalWriteStorage {
     fn set(&self, key: &StoreKey, value: Bytes) -> Result<(), StorageError> {
         let len = value.len() as u64;
         let path = self.inner.key_to_fspath(key);
-        if key.as_str().ends_with("zarr.json") {
+        // A whole-value write is itself the replacement of an erased value.
+        self.take_erase(key)?;
+        if key.as_str().ends_with(METADATA_KEY) {
             if let Some(parent) = path.parent()
                 && !parent.exists()
             {
@@ -298,6 +408,21 @@ impl WritableStorageTraits for PositionalWriteStorage {
         {
             std::fs::create_dir_all(parent)?;
         }
+        let offset_values = landing_order(offset_values);
+
+        // The write that follows an erase replaces the value in one rename.
+        // The erase is forgotten either way: a replacement that fails leaves
+        // the old value, which is what a failed replacement means.
+        if self.take_erase(key)? {
+            self.replace(&path, &offset_values)?;
+            let written: u64 = offset_values
+                .iter()
+                .map(|(_, value)| value.len() as u64)
+                .sum();
+            self.mark_dirty(path);
+            self.bytes_written.fetch_add(written, Ordering::Relaxed);
+            return Ok(());
+        }
 
         // `truncate(false)` is the whole point: the bytes already on disk are
         // the context of a positional write. A write past the end extends the
@@ -320,11 +445,22 @@ impl WritableStorageTraits for PositionalWriteStorage {
         Ok(())
     }
 
+    /// Deferred for a data key (see the type's doc): the erase is applied by
+    /// the next operation that is not a write to `key`, and a write to `key`
+    /// turns the pair into one atomic replacement. Metadata is erased at once.
     fn erase(&self, key: &StoreKey) -> Result<(), StorageError> {
-        self.inner.erase(key)
+        if key.as_str().ends_with(METADATA_KEY) {
+            return self.inner.erase(key);
+        }
+        self.erasing
+            .lock()
+            .map_err(|_| poisoned())?
+            .insert(key.as_str().to_string());
+        Ok(())
     }
 
     fn erase_prefix(&self, prefix: &StorePrefix) -> Result<(), StorageError> {
+        self.settle_all()?;
         self.inner.erase_prefix(prefix)
     }
 
@@ -644,5 +780,96 @@ mod tests {
 
         assert_eq!(storage.get(&key()).unwrap().as_deref(), Some(&value[..]));
         assert_eq!(storage.list().unwrap(), vec![key()]);
+    }
+
+    /// What the sharding codec does to a shard whose every inner chunk it is
+    /// rewriting: `erase`, then a partial write of the new index and chunks.
+    fn replace(store: &PositionalWriteStorage, bytes: &[u8]) {
+        store.erase(&key()).unwrap();
+        store
+            .set_partial(&key(), 0, Bytes::from(bytes.to_vec()))
+            .unwrap();
+    }
+
+    /// An erase is not applied until the store knows what follows it: the
+    /// committed bytes are still on disk when the replacing write arrives, so
+    /// there is no instant at which the shard is missing.
+    #[test]
+    fn an_erase_waits_for_the_write_that_replaces_the_shard() {
+        let dir = TempDir::new().unwrap();
+        let store = storage_in(&dir);
+        let original = patterned(VALUE_LEN);
+        store.set(&key(), Bytes::from(original.clone())).unwrap();
+
+        store.erase(&key()).unwrap();
+        assert_eq!(
+            on_disk(&dir),
+            original,
+            "the old shard is still whole while its replacement is unwritten"
+        );
+
+        store.set_partial(&key(), 0, Bytes::from(patch())).unwrap();
+        assert_eq!(
+            on_disk(&dir),
+            patch(),
+            "the replacement is the new bytes alone, not a patch over the old shard"
+        );
+        let strays: Vec<_> = std::fs::read_dir(dir.path().join("traj/c"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name != "0")
+            .collect();
+        assert!(strays.is_empty(), "no temporary file is left: {strays:?}");
+    }
+
+    /// The same sequence through the store API reads as an erase followed by a
+    /// write: nothing of the old value survives.
+    #[test]
+    fn a_replaced_shard_reads_as_the_new_value() {
+        let dir = TempDir::new().unwrap();
+        let store = storage_in(&dir);
+        store
+            .set(&key(), Bytes::from(patterned(VALUE_LEN)))
+            .unwrap();
+        replace(&store, &patch());
+        assert_eq!(store.get(&key()).unwrap().unwrap().to_vec(), patch());
+        assert_eq!(store.size_key(&key()).unwrap(), Some(PATCH_LEN as u64));
+    }
+
+    /// An erase nothing replaces is an erase: the next look at the key, a
+    /// sync, or the store going away applies it.
+    #[test]
+    fn an_erase_nothing_replaces_is_applied() {
+        for settle in ["get", "size", "list", "sync", "drop"] {
+            let dir = TempDir::new().unwrap();
+            let store = storage_in(&dir);
+            store.set(&key(), Bytes::from(patterned(64))).unwrap();
+            store.erase(&key()).unwrap();
+            match settle {
+                "get" => assert!(store.get(&key()).unwrap().is_none()),
+                "size" => assert_eq!(store.size_key(&key()).unwrap(), None),
+                "list" => assert!(store.list().unwrap().is_empty()),
+                "sync" => store.sync_dirty().unwrap(),
+                _ => drop(store),
+            }
+            assert!(
+                !dir.path().join(KEY).exists(),
+                "{settle}: the erased shard is gone from the disk"
+            );
+        }
+    }
+
+    /// A partial write hands the disk its highest offset first, so the shard
+    /// index at offset 0 lands after the chunks it points at: a writer killed
+    /// between the two leaves the old index, which still names the old chunks.
+    #[test]
+    fn the_lowest_offset_lands_last() {
+        let landed = super::landing_order(
+            [(0u64, "index"), (4096, "chunk b"), (128, "chunk a")].into_iter(),
+        );
+        assert_eq!(
+            landed,
+            vec![(4096, "chunk b"), (128, "chunk a"), (0, "index")]
+        );
     }
 }
