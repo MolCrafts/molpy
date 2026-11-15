@@ -599,9 +599,7 @@ fn an_override_beside_a_non_lj_style_is_refused() {
 /// the LAMMPS reader and writer are the identity on `lj/charmm/coul/charmm`.
 #[test]
 fn lammps_round_trip_and_override_refusal() {
-    use crate::io::lammps::forcefield_writer::{
-        LammpsForcefieldWriter, refuse_inexpressible_pairs,
-    };
+    use crate::io::lammps::{LammpsForcefieldWriter, refuse_inexpressible_pairs};
     use molrs::core::TypeLabels;
 
     let ff = read(CHARMM, "0.5");

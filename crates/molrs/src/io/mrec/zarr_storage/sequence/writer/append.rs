@@ -243,8 +243,11 @@ impl MrecWriter {
         };
         let base = *committed;
 
-        // 1. Block sections: columns first, then — for a block that is no
-        //    longer regular — its own index, then its hints.
+        // 1. Block sections: for a block that is no longer regular its own
+        //    index first (`offset`, then `step_index`), then the columns,
+        //    then its hints. A reader counts a regular block's updates from
+        //    its column lengths, so rows that landed before the index existed
+        //    would read as an update at the next ordinal.
         for (name, declared) in &schema.blocks {
             let Some(section) = arrays.blocks.get_mut(name) else {
                 continue;
@@ -268,34 +271,6 @@ impl MrecWriter {
                 .iter()
                 .map(|block| block.n_rows().unwrap_or(0) as u64)
                 .sum();
-            if added > 0 {
-                for (column, pinned) in &declared.columns {
-                    let Some(array) = section.columns.get_mut(column) else {
-                        continue;
-                    };
-                    let values: Vec<&Column> = landed
-                        .iter()
-                        .map(|block| {
-                            block.get(column).ok_or_else(|| {
-                                MolRsError::zarr(format!(
-                                    "block {name:?} lost its declared column {column:?} between \
-                                     append and flush"
-                                ))
-                            })
-                        })
-                        .collect::<Result<_, MolRsError>>()?;
-                    let subset = array.reserve(added)?;
-                    array.store_columns(
-                        &subset,
-                        dtype_from_tag(&pinned.dtype)?,
-                        &values,
-                        &options,
-                    )?;
-                    array.commit_shape()?;
-                }
-                section.land_masks(&landed, added, &options)?;
-            }
-
             let mut hints = section.hints;
             for (k, (ordinal, block)) in updates.iter().enumerate() {
                 hints.observe(
@@ -334,6 +309,34 @@ impl MrecWriter {
                 land_values!(index.offset, count, offsets, &options);
                 let count = ordinals.len() as u64;
                 land_values!(index.step_index, count, ordinals, &options);
+            }
+
+            if added > 0 {
+                for (column, pinned) in &declared.columns {
+                    let Some(array) = section.columns.get_mut(column) else {
+                        continue;
+                    };
+                    let values: Vec<&Column> = landed
+                        .iter()
+                        .map(|block| {
+                            block.get(column).ok_or_else(|| {
+                                MolRsError::zarr(format!(
+                                    "block {name:?} lost its declared column {column:?} between \
+                                     append and flush"
+                                ))
+                            })
+                        })
+                        .collect::<Result<_, MolRsError>>()?;
+                    let subset = array.reserve(added)?;
+                    array.store_columns(
+                        &subset,
+                        dtype_from_tag(&pinned.dtype)?,
+                        &values,
+                        &options,
+                    )?;
+                    array.commit_shape()?;
+                }
+                section.land_masks(&landed, added, &options)?;
             }
 
             section.hints = hints;

@@ -1,4 +1,4 @@
-use crate::io::mrec::zarr_storage::frame_io::{insert_column_into_block, zarr_dtype};
+use crate::io::mrec::zarr_storage::frame_io::{insert_column_into_block, node_prefix, zarr_dtype};
 use crate::io::mrec::zarr_storage::record_io::zerr;
 use molrs::core::MetaValue;
 use molrs::core::MolRsError;
@@ -38,13 +38,63 @@ pub(super) struct GrowthArray {
 }
 
 impl GrowthArray {
-    /// Create the array at `path`, zero rows long, extents frozen.
+    /// Create the array at `path`, zero rows long, extents frozen, and
+    /// publish it: its `zarr.json` is on disk when this returns.
+    ///
+    /// For the arrays a sequence has from its first append. An array a later
+    /// flush adds in place of an elided form is
+    /// [`create_unpublished`](Self::create_unpublished) instead.
+    pub(super) fn create(
+        store: &ReadableWritableListableStorage,
+        path: &str,
+        dtype: DType,
+        trailing: &[u64],
+        extents: Extents,
+        attributes: serde_json::Map<String, serde_json::Value>,
+        pipeline: Pipeline,
+    ) -> Result<Self, MolRsError> {
+        let created = Self::build(store, path, dtype, trailing, extents, attributes, pipeline)?;
+        created.array.store_metadata()?;
+        Ok(created)
+    }
+
+    /// Create the array at `path` **without publishing it**: nothing names it
+    /// on disk until its first [`commit_shape`](Self::commit_shape), which
+    /// publishes it already holding whatever was landed before.
+    ///
+    /// A reader picks an elided form or its arrays by which arrays exist
+    /// (molrec `docs/spec/chunking.md`, materialization order), so an array
+    /// that replaces an elided form must never be seen empty: the history it
+    /// restates is landed first and the `zarr.json` that makes it exist
+    /// carries that length. Whatever a flush cut short left at `path` — chunks
+    /// with no metadata, or an array no reader switched on — is cleared.
+    pub(super) fn create_unpublished(
+        store: &ReadableWritableListableStorage,
+        path: &str,
+        dtype: DType,
+        trailing: &[u64],
+        extents: Extents,
+        pipeline: Pipeline,
+    ) -> Result<Self, MolRsError> {
+        store.erase_prefix(&node_prefix(path)?)?;
+        Self::build(
+            store,
+            path,
+            dtype,
+            trailing,
+            extents,
+            serde_json::Map::new(),
+            pipeline,
+        )
+    }
+
+    /// The array at `path`, zero rows long, extents frozen; nothing written.
     ///
     /// Every growth array is a `sharding_indexed` array with its index at the
     /// **start** of the shard, so appending a chunk is a tail write plus an
     /// in-place index rewrite. The inner chunk carries the codecs `pipeline`
     /// names ([`inner_codecs`]), ending in `crc32c`.
-    pub(super) fn create(
+    fn build(
         store: &ReadableWritableListableStorage,
         path: &str,
         dtype: DType,
@@ -80,7 +130,6 @@ impl GrowthArray {
         let array = builder
             .build(store.clone(), path)?
             .with_codec_specific_options(&deterministic_shard_layout());
-        array.store_metadata()?;
         Ok(Self { array, rows: 0 })
     }
 
