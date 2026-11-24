@@ -5874,6 +5874,17 @@ class CurrentAcf:
     def tunables(self) -> list[tuple[str, Any]]: ...
 
 @final
+class Ttcf:
+    """Transient correlation of scalar switch-on trajectories (frames, trajectories)."""
+    def __new__(cls, max_lag: int) -> Self: ...
+    def compute(
+        self, *, flux: ArrayF, observable: ArrayF | None = None, dt: float
+    ) -> TimeCorrelation: ...
+    @staticmethod
+    def spec() -> ComputeSpec: ...
+    def tunables(self) -> list[tuple[str, Any]]: ...
+
+@final
 class DebyeFit:
     """Single-exponential (Debye) relaxation fit of one channel of a correlation
     (``molrs::compute::DebyeFit``)."""

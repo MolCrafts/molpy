@@ -15,7 +15,7 @@ use crate::compute::{
     Pmft, PolarizabilityParts, PoreSizeDistribution, R12, RamanSpectrum, Rdf, ReorientationAcf,
     RingPiercing, RotationalAutocorrelation, RouteAgreement, SolidLiquid, SpatialDistribution,
     Spectrum, SphereVoxelization, StaticDielectric, StaticStructureFactorDebye,
-    StaticStructureFactorDirect, Steinhardt, Survival, Unwrap, Vacf, VanHove, Xy, Xyt, Xyz,
+    StaticStructureFactorDirect, Steinhardt, Survival, Ttcf, Unwrap, Vacf, VanHove, Xy, Xyt, Xyz,
 };
 
 static ALL: LazyLock<Vec<ComputeSpec>> = LazyLock::new(|| {
@@ -27,6 +27,7 @@ static ALL: LazyLock<Vec<ComputeSpec>> = LazyLock::new(|| {
         OnsagerCorrelation::spec(),
         DipoleAcf::spec(),
         CurrentAcf::spec(),
+        Ttcf::spec(),
         ReorientationAcf::spec(),
         RotationalAutocorrelation::spec(),
         Survival::spec(),

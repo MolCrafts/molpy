@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pickle
 
+import molpy as mp
 import numpy as np
 import pytest
 
@@ -297,6 +298,33 @@ class TestSurfaces:
             for lag in range(9)
         ]
         np.testing.assert_allclose(c.channel(0), want, atol=1e-10)
+
+
+class TestTtcf:
+    def test_switch_on_current_and_its_integral(self):
+        # A strided current-density column for each driven trajectory.
+        j = np.array([[2.0, 3.0, 1.0], [-2.0, 1.0, 3.0]]).T
+        raw = mp.compute.Ttcf(2).compute(flux=j, dt=0.5)
+        np.testing.assert_array_equal(raw.lag_times, [0.0, 0.5, 1.0])
+        np.testing.assert_array_equal(raw.channel(0), [4.0, 2.0, -2.0])
+        running = mp.compute.CumulativeTrapezoid().compute(correlation=raw, channel=0)
+        np.testing.assert_array_equal(running.channel(0), [0.0, 1.5, 1.5])
+
+    def test_cross_observable_and_invalid_input(self):
+        flux = np.array([[2.0, -2.0], [3.0, 1.0], [1.0, 3.0]])
+        obs = np.array([[1.0, -1.0], [0.0, 4.0], [5.0, 2.0]])
+        ttcf = mp.compute.Ttcf(2)
+        cross = ttcf.compute(flux=flux, observable=obs, dt=1.0)
+        np.testing.assert_array_equal(cross.channel(0), [2.0, -4.0, 3.0])
+        with pytest.raises(ValueError):
+            ttcf.compute(flux=flux, observable=obs[:, :1], dt=1.0)
+        with pytest.raises(ValueError):
+            ttcf.compute(flux=flux, dt=0.0)
+        with pytest.raises(ValueError):
+            ttcf.compute(flux=flux[:2], dt=1.0)
+        flux[1, 0] = np.nan
+        with pytest.raises(ValueError):
+            ttcf.compute(flux=flux, dt=1.0)
 
 
 class TestReorientationAcf:

@@ -22,6 +22,7 @@
 //! | [`Vacf`] | product, auto | mean-subtracted, mean over degrees of freedom |
 //! | [`OnsagerCorrelation`] | squared displacement, cross | `T × 3` collective coordinates |
 //! | [`DipoleAcf`] | product, auto | mean-subtracted, summed over Cartesian components |
+//! | [`Ttcf`] | product, auto or cross | switch-on origin only; mean over trajectories |
 //! | [`CurrentAcf`] | product, auto | summed over Cartesian components |
 //! | [`ReorientationAcf`] | Legendre `P_l`, auto | unit vectors; reduction and stride tunable |
 //! | [`RotationalAutocorrelation`] | Wigner-D `χ_l`, auto | first origin |
@@ -70,6 +71,7 @@ mod rotational_autocorrelation;
 mod spectrum;
 mod survival;
 mod time_correlation;
+mod ttcf;
 mod unwrap;
 mod vacf;
 
@@ -90,6 +92,7 @@ pub use survival::{
     SurvivalNormalization, SurvivalOrigin,
 };
 pub use time_correlation::TimeCorrelation;
+pub use ttcf::{Ttcf, TtcfInput};
 pub use unwrap::{Unwrap, UnwrapInput};
 pub use vacf::Vacf;
 
