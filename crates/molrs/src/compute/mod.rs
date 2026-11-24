@@ -489,7 +489,8 @@ pub use time_series::{
     OnsagerInput, Origins, Reduction, ReorientationAcf, ReorientationAcfInput,
     RotationalAutocorrelation, RotationalAutocorrelationInput, Spectrum, SpectrumInput, Stencil,
     Survival, SurvivalAccumulator, SurvivalFrame, SurvivalInput, SurvivalKind,
-    SurvivalNormalization, SurvivalOrigin, TimeCorrelation, Unwrap, UnwrapInput, Vacf, Window,
+    SurvivalNormalization, SurvivalOrigin, TimeCorrelation, Ttcf, TtcfInput, Unwrap, UnwrapInput,
+    Vacf, Window,
 };
 #[cfg(feature = "voronoi")]
 pub use voronoi::{

@@ -156,6 +156,53 @@ page, because of the $1/3$ against $1/6$. The $1/3$ is already inside it.
     "integrate to the plateau" figure with real data. A dedicated figure follows
     a charged reference trajectory in `molpy/scripts/docs_series/`.
 
+## Conductivity after switching on a field (TTCF)
+
+For a uniform constant field along $x$, start an ensemble at equilibrium and
+apply the same field at frame zero of each trajectory. For each saved frame
+use the **collective current density** $j_x = \sum_i q_i v_{ix}/V$.
+With charge in coulombs, velocities in m/s and constant volume in m³, this
+gives A/m². Align the samples as (frames, trajectories); row zero contains
+the initial equilibrium currents. Each column has the same weight. For
+velocities stored as `vx[frame, trajectory, atom]` in Å/fs and a consistent
+atom order, `np.einsum("tra,a->tr", vx, q_e) * (1e5 * ELEMENTARY_CHARGE / volume_m3)`
+gives this matrix, where `q_e` is in elementary charges and
+`ELEMENTARY_CHARGE` comes from `molpy.core.constants`.
+
+The transient time-correlation function uses one origin per trajectory:
+$C_E(t)=\langle j_x(0)j_x(t;E)\rangle_0$. Pair the two samples within each
+trajectory before averaging, keeping the means. The field enters through the
+driven dynamics. For the thermostatted response in
+[Delhommelle et al. (2005)](https://doi.org/10.1063/1.2035085),
+$\sigma(E,t)=V/(k_{\rm B}T)\int_0^t C_E(s)\,ds$ and
+$\langle j_x(t)\rangle_E=E\,\sigma(E,t)$ for an initially zero ensemble mean.
+The projected current density already selects one direction, so its integral
+has no isotropic factor of three.
+
+```python
+import molpy as mp
+import numpy as np
+from molpy.core.constants import BOLTZMANN
+
+# Two illustrative switch-on trajectories, one per column (A/m²).
+j_x = np.array([[2., -2.], [3., 1.], [1., 3.]])
+dt_s, volume_m3, temperature_k = 1.0e-15, 8.0e-27, 1500.0
+raw = mp.compute.Ttcf(max_lag=2).compute(flux=j_x, dt=dt_s)
+running = mp.compute.CumulativeTrapezoid().compute(correlation=raw, channel=0)
+sigma_s_m = volume_m3 / (BOLTZMANN * temperature_k) * running.channel(0)
+np.testing.assert_array_equal(raw.channel(0), [4., 2., -2.])
+np.testing.assert_allclose(running.channel(0) / dt_s, [0., 3., 3.])
+```
+
+The example checks normalization and integration on hand-written numbers.
+For an MD run, choose the steady value from a time window where the integral
+has converged. When estimating uncertainty, keep symmetry-related daughter
+trajectories together and block by their parent equilibrium trajectory.
+To correlate a different driven scalar with the initial flux, pass
+`observable=` with the same shape. All lags retain the original switch-on
+frame; cutting a driven steady-state run into pieces supplies a different
+initial ensemble.
+
 ## When it goes wrong
 
 **The running integral never flattens; it drifts linearly.**

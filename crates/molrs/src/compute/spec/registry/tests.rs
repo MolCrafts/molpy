@@ -146,6 +146,7 @@ fn cases() -> Result<Vec<Case>, ComputeError> {
         case(OnsagerCorrelation::new(8)),
         case(DipoleAcf::new(8)),
         case(CurrentAcf::new(8)),
+        case(Ttcf::new(8)),
         case(ReorientationAcf::new(2, 8)),
         case(RotationalAutocorrelation::new(2, 8)),
         case(Survival::new(SurvivalKind::Continuous, 8)),

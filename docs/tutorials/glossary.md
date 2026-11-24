@@ -111,7 +111,7 @@ Acronyms used across the [Compute](../compute/index.md) analyses.
 : `C_ℓ(t) = ⟨P_ℓ(û(0)·û(t))⟩` of a molecular unit vector, computed by `ReorientationAcf`; `ℓ = 1` is what dielectric relaxation sees, `ℓ = 2` what NMR and Raman see. See [Reorientation](../compute/reorientation.md).
 
 **Correlator**
-: The one time-correlation estimator. `Msd`, `Vacf`, `OnsagerCorrelation`, `DipoleAcf`, `CurrentAcf`, `ReorientationAcf`, `RotationalAutocorrelation` and `Survival` are configurations of it; a correlation with no named class is a `Correlator` built directly. See [Spectra](../compute/spectra.md).
+: The one time-correlation estimator. `Msd`, `Vacf`, `OnsagerCorrelation`, `DipoleAcf`, `CurrentAcf`, `Ttcf`, `ReorientationAcf`, `RotationalAutocorrelation` and `Survival` are configurations of it; a correlation with no named class is a `Correlator` built directly. See [Spectra](../compute/spectra.md).
 
 **TimeCorrelation**
 : The one object every correlation returns: the curve `values[lag, channel]` on its lag axis `lag_times`, and nothing derived. Fits (`LinearFit`, `Plateau`, `DebyeFit`, `CumulativeTrapezoid`) are computes that read it. See [VACF](../compute/vacf.md).

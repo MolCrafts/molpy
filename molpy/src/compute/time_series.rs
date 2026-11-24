@@ -12,7 +12,7 @@ use molrs::compute::{
     EnergyDrift, EnergyDriftAccumulator, EnergyDriftResult, EnergyDriftSample, LagKernel, Msd,
     OneSidedSpectrum, OnsagerCorrelation, OnsagerInput, ReorientationAcf, ReorientationAcfInput,
     RotationalAutocorrelation, RotationalAutocorrelationInput, Spectrum, SpectrumInput, Stream,
-    Survival, SurvivalInput, TimeCorrelation, Unwrap, UnwrapInput, Vacf,
+    Survival, SurvivalInput, TimeCorrelation, Ttcf, TtcfInput, Unwrap, UnwrapInput, Vacf,
 };
 use numpy::{IntoPyArray, PyArray2, PyArray3};
 use pyo3::IntoPyObjectExt;
@@ -513,6 +513,50 @@ impl PyCurrentAcf {
 
 described!(PyCurrentAcf, CurrentAcf);
 
+/// Transient time-correlation function of switch-on trajectories.
+///
+/// Args:
+///     max_lag: Last lag to include, in frames (inclusive).
+#[pyclass(module = "molpy.compute", name = "Ttcf", frozen)]
+pub(crate) struct PyTtcf {
+    inner: Ttcf,
+}
+
+#[pymethods]
+impl PyTtcf {
+    #[new]
+    fn new(max_lag: usize) -> Self {
+        Self {
+            inner: Ttcf::new(max_lag),
+        }
+    }
+
+    /// Return the raw, single-channel ensemble correlation on the lag grid.
+    ///
+    /// Args:
+    ///     flux: Float64 (frames, trajectories) array. Row zero is the
+    ///         equilibrium sample at switch-on for each trajectory.
+    ///     observable: Driven scalar on the same grid; defaults to flux.
+    ///     dt: Positive spacing of the saved samples.
+    #[pyo3(signature = (*, flux, observable = None, dt))]
+    fn compute(
+        &self,
+        py: Python<'_>,
+        flux: ArrayArg2<'_, f64>,
+        observable: Option<ArrayArg2<'_, f64>>,
+        dt: f64,
+    ) -> Result<PyTimeCorrelation> {
+        let input = TtcfInput {
+            flux: flux.as_array(),
+            observable: observable.as_ref().map(|obs| obs.as_array()),
+            dt,
+        };
+        Ok(py.detach(|| self.inner.compute(input))?.into())
+    }
+}
+
+described!(PyTtcf, Ttcf);
+
 /// Legendre reorientation correlation ``⟨P_l(u(0)·u(t))⟩`` of ``(T, N, D)``
 /// vectors, each normalised (``molrs::compute::ReorientationAcf``) — the
 /// orientational autocorrelation (OACF); ``l <= 2`` runs by FFT.
@@ -889,6 +933,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOnsagerCorrelation>()?;
     m.add_class::<PyDipoleAcf>()?;
     m.add_class::<PyCurrentAcf>()?;
+    m.add_class::<PyTtcf>()?;
     m.add_class::<PyReorientationAcf>()?;
     m.add_class::<PyRotationalAutocorrelation>()?;
     m.add_class::<PySurvival>()?;

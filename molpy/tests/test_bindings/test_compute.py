@@ -37,6 +37,7 @@ REQUIRED: dict[str, dict[str, object]] = {
     "OnsagerCorrelation": {"max_lag": 4},
     "DipoleAcf": {"max_lag": 4},
     "CurrentAcf": {"max_lag": 4},
+    "Ttcf": {"max_lag": 4},
     "ReorientationAcf": {"l": 2, "max_lag": 4},
     "RotationalAutocorrelation": {"l": 2, "max_lag": 4},
     "Survival": {"kind": "continuous", "max_lag": 4},
