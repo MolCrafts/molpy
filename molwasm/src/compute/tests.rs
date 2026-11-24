@@ -131,6 +131,7 @@ fn bound_specs() -> Vec<(&'static str, molrs::compute::ComputeSpec)> {
         OnsagerCorrelation,
         DipoleAcf,
         CurrentAcf,
+        Ttcf,
         ReorientationAcf,
         RotationalAutocorrelation,
         Survival,
@@ -299,6 +300,7 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
     holds_spec_defaults(ok(OnsagerCorrelation::new(4, None)), &[]);
     holds_spec_defaults(ok(DipoleAcf::new(4, None, None, None)), &[]);
     holds_spec_defaults(ok(CurrentAcf::new(4, None, None, None)), &[]);
+    holds_spec_defaults(Ttcf::new(4), &[]);
     holds_spec_defaults(ok(ReorientationAcf::new(2, 4, None, None)), &[]);
     holds_spec_defaults(ok(RotationalAutocorrelation::new(2, 4, None)), &[]);
     holds_spec_defaults(ok(Survival::new("continuous", 4, None, None)), &[]);
@@ -499,6 +501,36 @@ fn time_series_curve_feeds_a_fit_through_its_handle() {
     ])));
     // One channel in, one channel out (the stencil sets the row count).
     assert_eq!(derivative.shape()[1], 1);
+}
+
+/// `Ttcf` reads `T × trajectories` matrices; `observable` is optional and
+/// pairs with the flux of its own trajectory at frame zero.
+#[wasm_bindgen_test]
+fn ttcf_reads_an_optional_observable() {
+    let flux = || shaped(vec![2.0, -2.0, 3.0, 1.0, 1.0, 3.0], &[3, 2]);
+    let dt = || JsValue::from(0.5);
+    let ttcf = Ttcf::new(2);
+
+    let auto = ok(ttcf.compute(&object(vec![("flux", flux()), ("dt", dt())])));
+    assert_eq!(auto.inner.lag_times.to_vec(), [0.0, 0.5, 1.0]);
+    assert_eq!(auto.inner.values.column(0).to_vec(), [4.0, 2.0, -2.0]);
+
+    let observable = shaped(vec![1.0, -1.0, 0.0, 4.0, 5.0, 2.0], &[3, 2]);
+    let cross = ok(ttcf.compute(&object(vec![
+        ("flux", flux()),
+        ("observable", observable),
+        ("dt", dt()),
+    ])));
+    assert_eq!(cross.inner.values.column(0).to_vec(), [2.0, -4.0, 3.0]);
+
+    // An observable on another grid is the core's refusal.
+    let short = shaped(vec![1.0, 0.0, 5.0], &[3, 1]);
+    let err = message(ttcf.compute(&object(vec![
+        ("flux", flux()),
+        ("observable", short),
+        ("dt", dt()),
+    ])));
+    assert!(err.contains("shape"), "{err}");
 }
 
 /// `Vacf` folds one `{ a, dt }` record per frame through the core

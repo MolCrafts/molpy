@@ -312,6 +312,38 @@ impl CurrentAcf {
     }
 }
 
+/// Transient time-correlation function of switch-on trajectories.
+#[wasm_bindgen]
+pub struct Ttcf {
+    inner: mc::Ttcf,
+}
+
+#[wasm_bindgen]
+impl Ttcf {
+    /// Lags `0 … max_lag` frames after the switch, inclusive.
+    #[wasm_bindgen(constructor)]
+    pub fn new(max_lag: usize) -> Ttcf {
+        Self {
+            inner: mc::Ttcf::new(max_lag),
+        }
+    }
+
+    /// `{ flux, observable?, dt }`: `flux`, `observable` are
+    /// `T × trajectories`, row zero the switch-on frame; `observable`
+    /// defaults to `flux`.
+    pub fn compute(&self, data: &JsValue) -> Result<TimeCorrelation, JsError> {
+        let data = Fields::new(data, "Ttcf")?;
+        let flux = data.matrix("flux", None)?;
+        let observable = data.opt_matrix("observable", None)?;
+        let input = mc::TtcfInput {
+            flux: flux.view(),
+            observable: observable.as_ref().map(|obs| obs.view()),
+            dt: data.scalar("dt")?,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
 /// Legendre reorientation correlation of per-molecule vectors.
 #[wasm_bindgen]
 pub struct ReorientationAcf {
@@ -515,6 +547,7 @@ described!(
     OnsagerCorrelation => mc::OnsagerCorrelation,
     DipoleAcf => mc::DipoleAcf,
     CurrentAcf => mc::CurrentAcf,
+    Ttcf => mc::Ttcf,
     ReorientationAcf => mc::ReorientationAcf,
     RotationalAutocorrelation => mc::RotationalAutocorrelation,
     Survival => mc::Survival,
